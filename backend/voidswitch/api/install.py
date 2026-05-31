@@ -75,6 +75,18 @@ PLUGIN="$CONFIG_DIR/voidswitch.plugin.ts"
 
 mkdir -p "$CONFIG_DIR" "$DATA_DIR"
 
+# Back up existing config + auth BEFORE touching anything. Timestamped so repeat
+# runs never clobber an earlier backup.
+STAMP="$(date +%Y%m%d%H%M%S)"
+backup() {
+  if [ -f "$1" ]; then
+    cp -p "$1" "$1.$STAMP.bak"
+    echo "✓ backed up $1 → $1.$STAMP.bak"
+  fi
+}
+backup "$CONFIG"
+backup "$AUTH"
+
 # Download the VoidSwitch plugin (single self-contained .ts file Bun loads directly).
 if command -v curl >/dev/null 2>&1; then
   curl -fsSL "$GATEWAY/opencode/voidswitch.ts" -o "$PLUGIN"
@@ -84,18 +96,24 @@ else
   echo "Need curl or wget to download the plugin." >&2; exit 1
 fi
 
-if command -v python3 >/dev/null 2>&1; then
+# Merge our entries into the existing JSON — never blast it away. Prefer python3,
+# then a JS runtime (node/bun). All of them refuse to overwrite a config that
+# exists but can't be parsed; a backup was just made, so nothing is lost.
+merge_py() {
   python3 - "$CONFIG" "$AUTH" "$PLUGIN" "$GATEWAY" "$TOKEN" <<'PY'
 import json, os, sys
 config, auth, plugin, gateway, token = sys.argv[1:6]
 
 def load(path):
+    if not os.path.exists(path):
+        return {}
     try:
         with open(path) as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
     except Exception:
-        return {}
+        sys.stderr.write("Refusing to overwrite unparseable JSON: %s\n" % path)
+        sys.exit(2)
+    return data if isinstance(data, dict) else {}
 
 cfg = load(config)
 cfg["$schema"] = "https://opencode.ai/config.json"
@@ -142,10 +160,68 @@ if token:
     with open(auth, "w") as f:
         json.dump(a, f, indent=2)
     print("✓ token stored in " + auth)
-print("✓ VoidSwitch plugin wired into " + config)
+print("✓ VoidSwitch plugin merged into " + config)
 PY
+}
+
+merge_js() {
+  local rt="$1" tmp rc
+  tmp="$(mktemp)"
+  cat > "$tmp" <<'JS'
+const fs = require("fs");
+const [config, auth, plugin, gateway, token] = process.argv.slice(2);
+function load(path) {
+  if (!fs.existsSync(path)) return {};
+  try {
+    const d = JSON.parse(fs.readFileSync(path, "utf8"));
+    return d && typeof d === "object" && !Array.isArray(d) ? d : {};
+  } catch {
+    process.stderr.write("Refusing to overwrite unparseable JSON: " + path + "\n");
+    process.exit(2);
+  }
+}
+const cfg = load(config);
+cfg["$schema"] = "https://opencode.ai/config.json";
+if (!cfg.model) cfg.model = "voidswitch/claude-opus-4-8";
+const ref = (p) => (Array.isArray(p) && p.length ? p[0] : p);
+let plugins = Array.isArray(cfg.plugin) ? cfg.plugin : [];
+plugins = plugins.filter((p) => !(typeof ref(p) === "string" && ref(p).endsWith("voidswitch.plugin.ts")));
+plugins.push(plugin);
+cfg.plugin = plugins;
+if (typeof cfg.provider !== "object" || cfg.provider === null) cfg.provider = {};
+cfg.provider.voidswitch = {
+  npm: "@ai-sdk/anthropic",
+  name: "VoidSwitch",
+  options: { baseURL: gateway + "/v1" },
+  models: Object.fromEntries(
+    ["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"].map((m) => [m, {}])
+  ),
+};
+fs.writeFileSync(config, JSON.stringify(cfg, null, 2));
+if (token) {
+  const a = load(auth);
+  a.voidswitch = { type: "api", key: token };
+  fs.writeFileSync(auth, JSON.stringify(a, null, 2));
+  console.log("✓ token stored in " + auth);
+}
+console.log("✓ VoidSwitch plugin merged into " + config);
+JS
+  "$rt" "$tmp" "$CONFIG" "$AUTH" "$PLUGIN" "$GATEWAY" "$TOKEN" || { rc=$?; rm -f "$tmp"; exit "$rc"; }
+  rm -f "$tmp"
+}
+
+if command -v python3 >/dev/null 2>&1; then
+  merge_py
+elif command -v node >/dev/null 2>&1; then
+  merge_js node
+elif command -v bun >/dev/null 2>&1; then
+  merge_js bun
+elif [ -f "$CONFIG" ]; then
+  echo "Need python3, node, or bun to merge into an existing $CONFIG without overwriting it." >&2
+  echo "Install one and re-run. Your config is untouched (backup at $CONFIG.$STAMP.bak)." >&2
+  exit 1
 else
-  [ -f "$CONFIG" ] && cp "$CONFIG" "$CONFIG.bak"
+  # No existing config — safe to write a fresh one directly.
   cat > "$CONFIG" <<JSON
 {
   "\$schema": "https://opencode.ai/config.json",
@@ -165,12 +241,11 @@ else
 }
 JSON
   if [ -n "$TOKEN" ]; then
-    [ -f "$AUTH" ] && cp "$AUTH" "$AUTH.bak"
     cat > "$AUTH" <<JSON
 { "voidswitch": { "type": "api", "key": "$TOKEN" } }
 JSON
   fi
-  echo "Wrote $CONFIG (python3 not found; existing config replaced, see .bak)."
+  echo "✓ Wrote fresh $CONFIG."
 fi
 
 echo ""
@@ -198,13 +273,36 @@ foreach ($d in @($ConfigDir, $DataDir)) {
   if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
 }
 
+# Back up existing config + auth BEFORE touching anything. Timestamped so repeat
+# runs never clobber an earlier backup.
+$Stamp = Get-Date -Format "yyyyMMddHHmmss"
+function Backup-File($path) {
+  if (Test-Path $path) {
+    $b = "$path.$Stamp.bak"
+    Copy-Item -LiteralPath $path -Destination $b -Force
+    Write-Host "OK backed up $path -> $b"
+  }
+}
+Backup-File $Config
+Backup-File $Auth
+
 # Download the VoidSwitch plugin (single self-contained .ts file Bun loads directly).
 Invoke-WebRequest -UseBasicParsing -Uri "$Gateway/opencode/voidswitch.ts" -OutFile $Plugin
 
-$cfg = if (Test-Path $Config) {
-  try { Get-Content -Raw -- $Config | ConvertFrom-Json } catch { [pscustomobject]@{} }
-} else { [pscustomobject]@{} }
-if ($null -eq $cfg) { $cfg = [pscustomobject]@{} }
+# Load existing JSON, but REFUSE to overwrite a file that exists yet can't be
+# parsed (a backup was just made) — so we never silently wipe a real config.
+function Load-Json($path) {
+  if (-not (Test-Path $path)) { return [pscustomobject]@{} }
+  try {
+    $o = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+    if ($null -eq $o) { return [pscustomobject]@{} }
+    return $o
+  } catch {
+    Write-Error "Refusing to overwrite unparseable JSON: $path (backup at $path.$Stamp.bak)"
+  }
+}
+
+$cfg = Load-Json $Config
 
 $cfg | Add-Member -NotePropertyName '$schema' -NotePropertyValue 'https://opencode.ai/config.json' -Force
 if (-not $cfg.PSObject.Properties['model']) {
@@ -242,10 +340,7 @@ $cfg | Add-Member -NotePropertyName 'provider' -NotePropertyValue $provider -For
 
 # Token -> auth store, so the plugin's loader (and effort/thinking rewriting) runs.
 if ($Token) {
-  $auth = if (Test-Path $Auth) {
-    try { Get-Content -Raw -- $Auth | ConvertFrom-Json } catch { [pscustomobject]@{} }
-  } else { [pscustomobject]@{} }
-  if ($null -eq $auth) { $auth = [pscustomobject]@{} }
+  $auth = Load-Json $Auth
   $entry = [pscustomobject]@{ type = 'api'; key = $Token }
   $auth | Add-Member -NotePropertyName 'voidswitch' -NotePropertyValue $entry -Force
   [System.IO.File]::WriteAllText($Auth, ($auth | ConvertTo-Json -Depth 12))
