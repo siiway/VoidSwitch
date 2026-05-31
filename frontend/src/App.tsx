@@ -1,0 +1,127 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+import { Spinner } from "@fluentui/react-components";
+import { useAuth } from "./auth/AuthContext";
+import { Layout } from "./components/Layout";
+import { Login } from "./pages/Login";
+import { LoginCallback } from "./pages/LoginCallback";
+import { Dashboard } from "./pages/Dashboard";
+import { Providers } from "./pages/Providers";
+import { ProviderKeys } from "./pages/ProviderKeys";
+import { Proxies } from "./pages/Proxies";
+import { Tokens } from "./pages/Tokens";
+import { Users } from "./pages/Users";
+import { SettingsPage } from "./pages/Settings";
+import { Logs } from "./pages/Logs";
+import { MyToken } from "./pages/MyToken";
+import { Chat } from "./pages/Chat";
+import type { ReactNode } from "react";
+
+function Protected({
+  children,
+  staff,
+}: {
+  children: ReactNode;
+  staff?: boolean;
+}) {
+  const { user, loading, isStaff } = useAuth();
+  if (loading) {
+    return (
+      <div style={{ display: "grid", placeItems: "center", height: "100vh" }}>
+        <Spinner label="Loading…" />
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  if (staff && !isStaff) return <Navigate to="/token" replace />;
+  return <>{children}</>;
+}
+
+function Home() {
+  const { isStaff } = useAuth();
+  return <Navigate to={isStaff ? "/dashboard" : "/token"} replace />;
+}
+
+export function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/login/callback" element={<LoginCallback />} />
+      <Route
+        element={
+          <Protected>
+            <Layout />
+          </Protected>
+        }
+      >
+        <Route path="/" element={<Home />} />
+        <Route
+          path="/dashboard"
+          element={
+            <Protected staff>
+              <Dashboard />
+            </Protected>
+          }
+        />
+        <Route
+          path="/providers"
+          element={
+            <Protected staff>
+              <Providers />
+            </Protected>
+          }
+        />
+        <Route
+          path="/providers/:id/keys"
+          element={
+            <Protected staff>
+              <ProviderKeys />
+            </Protected>
+          }
+        />
+        <Route
+          path="/proxies"
+          element={
+            <Protected staff>
+              <Proxies />
+            </Protected>
+          }
+        />
+        <Route
+          path="/tokens"
+          element={
+            <Protected staff>
+              <Tokens />
+            </Protected>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <Protected staff>
+              <Users />
+            </Protected>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <Protected staff>
+              <SettingsPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/logs"
+          element={
+            <Protected staff>
+              <Logs />
+            </Protected>
+          }
+        />
+        <Route path="/token" element={<MyToken />} />
+        <Route path="/chat" element={<Chat />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}

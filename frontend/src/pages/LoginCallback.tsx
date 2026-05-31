@@ -1,0 +1,64 @@
+import { Card, Spinner, Text, tokens } from "@fluentui/react-components";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { setToken } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
+
+export function LoginCallback() {
+  const navigate = useNavigate();
+  const { reload } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const token = hash.get("access_token");
+    const err = hash.get("error");
+    if (err) {
+      setError(err);
+      return;
+    }
+    if (token) {
+      setToken(token);
+      void reload().then(() => navigate("/", { replace: true }));
+    } else {
+      setError("missing_token");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div style={{ height: "100vh", display: "grid", placeItems: "center" }}>
+      <Card style={{ padding: 32, textAlign: "center", width: 360 }}>
+        {error ? (
+          <>
+            <Text
+              size={500}
+              weight="semibold"
+              block
+              style={{ marginBottom: 8 }}
+            >
+              Sign-in failed
+            </Text>
+            <Text style={{ color: tokens.colorPaletteRedForeground1 }} block>
+              {error}
+            </Text>
+            <Text
+              as="span"
+              onClick={() => navigate("/login", { replace: true })}
+              style={{
+                cursor: "pointer",
+                marginTop: 16,
+                display: "block",
+                color: tokens.colorBrandForeground1,
+              }}
+            >
+              Try again
+            </Text>
+          </>
+        ) : (
+          <Spinner label="Completing sign-in…" />
+        )}
+      </Card>
+    </div>
+  );
+}

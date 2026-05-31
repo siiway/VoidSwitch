@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# VoidSwitch runtime
+.secret_key
+*.db
+*.db-wal
+*.db-shm
+smoke.*
+
+# Local config with real credentials
+config.yaml
