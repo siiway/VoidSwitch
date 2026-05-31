@@ -68,7 +68,7 @@ class DatabaseSettings(BaseSettings):
 
 
 class PrismSettings(BaseSettings):
-    issuer: str = "https://prism.wss.moe"
+    issuer: str = "https://prism.siiway.org"
     client_id: str = ""
     client_secret: str = ""
     redirect_uri: str = ""

@@ -1,0 +1,35 @@
+# Build context is the repo root. Keep it to backend/ + opencode-plugin/src.
+
+# --- not part of the backend image ---
+frontend/
+opencode-plugin/node_modules/
+opencode-plugin/bun.lock
+
+# --- Python build artifacts / caches ---
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.ruff_cache/
+**/.pytest_cache/
+
+# --- local runtime state — must never be baked into the image ---
+**/.secret_key
+**/*.db
+**/*.db-wal
+**/*.db-shm
+backend/smoke.*
+
+# --- local config with real credentials (supply via env or a mount) ---
+backend/config.yaml
+
+# --- VCS / tooling / docs ---
+.git/
+.gitignore
+**/.gitignore
+Dockerfile
+.dockerignore
+backend/tests/
+
+# NOTE: backend/README.md is intentionally NOT ignored — pyproject.toml declares
+# `readme = "README.md"`, so hatchling needs it to build the project.

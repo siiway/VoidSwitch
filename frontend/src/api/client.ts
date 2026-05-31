@@ -1,8 +1,15 @@
 // Thin fetch wrapper that attaches the dashboard session token and
 // centralises error handling.
 
+// When VITE_API_BASE is set (local dev points it at :8080), use it. Otherwise
+// fall back to the current origin so a single-origin deployment — where a proxy
+// serves the dashboard and forwards the API on the same host — just works, and
+// the copyable snippets below show the real public URL.
 export const API_BASE =
-  import.meta.env.VITE_API_BASE?.replace(/\/$/, "") || "http://localhost:8080";
+  import.meta.env.VITE_API_BASE?.replace(/\/$/, "") ||
+  (typeof window !== "undefined"
+    ? window.location.origin
+    : "http://localhost:8080");
 
 const TOKEN_KEY = "voidswitch.token";
 

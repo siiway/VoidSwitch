@@ -1,0 +1,16 @@
+# Keep the build context lean and deterministic.
+node_modules/
+dist/
+tsconfig.tsbuildinfo
+
+# Never bake local env into the build — VITE_* vars would be inlined. The image
+# relies on the same-origin fallback in src/api/client.ts instead.
+.env
+.env.*
+!.env.example
+
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+README.md

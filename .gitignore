@@ -13,3 +13,4 @@ dist/
 *.db-shm
 .DS_Store
 backend/config.yaml
+.env

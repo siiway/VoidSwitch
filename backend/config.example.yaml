@@ -37,7 +37,7 @@ database:
 
 prism:
   # Your Prism instance. Endpoints are derived from this issuer.
-  issuer: "https://prism.wss.moe"
+  issuer: "https://prism.siiway.org"
   client_id: "your-prism-client-id"
   client_secret: "your-prism-client-secret"
   # Must exactly match a redirect URI registered on the Prism app.
