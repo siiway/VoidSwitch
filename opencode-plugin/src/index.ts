@@ -116,6 +116,14 @@ interface VoidSwitchOptions {
 
 const isClaude = (id: string) => /claude/i.test(id)
 const isOpus = (id: string) => /opus/i.test(id)
+/**
+ * Non-Claude upstreams that stream `reasoning_content` (DeepSeek R-series, etc.).
+ * They must be marked reasoning-capable so OpenCode persists and *replays* their
+ * thinking blocks: DeepSeek's interleaved thinking mode rejects any follow-up turn
+ * whose assistant message dropped the prior `reasoning_content`
+ * ("The reasoning_content in the thinking mode must be passed back to the API.").
+ */
+const isReasoningModel = (id: string) => isClaude(id) || /deepseek|reasoner|-r1\b|qwq|thinking/i.test(id)
 /** Effort param is GA on Opus 4.6+ and Sonnet 4.6 ("Opus 4.6+, Sonnet 4.6"). */
 const effortCapable = (id: string) => /opus-4-[6-9]/.test(id) || /sonnet-4-[6-9]/.test(id)
 /** `xhigh` is "Opus 4.8/4.7 only". */
@@ -159,6 +167,7 @@ function prettyName(id: string): string {
 
 function buildModel(id: string, gatewayV1: string): Record<string, any> {
   const claude = isClaude(id)
+  const reasoning = isReasoningModel(id)
   const model: Record<string, any> = {
     id,
     providerID: PROVIDER_ID,
@@ -168,7 +177,7 @@ function buildModel(id: string, gatewayV1: string): Record<string, any> {
     release_date: "2025-01-01",
     capabilities: {
       temperature: true,
-      reasoning: claude,
+      reasoning,
       attachment: true,
       toolcall: true,
       input: { text: true, image: claude, audio: false, video: false, pdf: claude },

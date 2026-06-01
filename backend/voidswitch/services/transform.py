@@ -40,6 +40,17 @@ _OPENAI_FINISH_TO_ANTHROPIC = {
 
 _DEFAULT_MAX_TOKENS = 4096
 
+# Opaque placeholder attached to Anthropic "thinking" blocks reconstructed from an
+# OpenAI upstream's ``reasoning_content``. Anthropic-dialect clients (e.g.
+# @ai-sdk/anthropic, which OpenCode uses) only persist and *replay* a thinking block
+# when it carries a signature; the gateway ignores the value when translating the
+# block back to ``reasoning_content`` on the next turn. Without that round-trip,
+# DeepSeek-style thinking upstreams reject the follow-up request with
+# "The reasoning_content in the thinking mode must be passed back to the API.".
+# The placeholder never reaches a real Anthropic upstream — only this gateway and the
+# client see it — so a synthetic value is safe here.
+_THINKING_SIGNATURE = "voidswitch"
+
 
 def _gen_id(prefix: str) -> str:
     return f"{prefix}-{int(time.time() * 1000):x}"
@@ -116,6 +127,10 @@ def openai_request_to_anthropic(payload: dict[str, Any]) -> dict[str, Any]:
             )
             continue
         if role == "assistant" and msg.get("tool_calls"):
+            # Note: an assistant's reasoning_content is intentionally NOT replayed as a
+            # thinking block toward an Anthropic upstream — real Anthropic rejects
+            # thinking blocks without its own cryptographic signature, which a plain
+            # OpenAI client cannot supply.
             blocks: list[dict[str, Any]] = []
             text = msg.get("content")
             if isinstance(text, str) and text:
@@ -201,12 +216,19 @@ def anthropic_request_to_openai(payload: dict[str, Any]) -> dict[str, Any]:
         tool_calls: list[dict[str, Any]] = []
         text_parts: list[dict[str, Any]] = []
         tool_results: list[dict[str, Any]] = []
+        reasoning_parts: list[str] = []
         for block in content:
             if not isinstance(block, dict):
                 continue
             btype = block.get("type")
             if btype == "text":
                 text_parts.append({"type": "text", "text": block.get("text", "")})
+            elif btype in ("thinking", "redacted_thinking"):
+                # Carry prior reasoning back to thinking-mode upstreams (DeepSeek et al.),
+                # which require the assistant turn's reasoning_content to be replayed.
+                thinking_text = block.get("thinking") or ""
+                if thinking_text:
+                    reasoning_parts.append(thinking_text)
             elif btype == "image":
                 src = block.get("source", {})
                 if src.get("type") == "base64":
@@ -235,11 +257,17 @@ def anthropic_request_to_openai(payload: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
 
+        reasoning_text = "".join(reasoning_parts)
         if role == "assistant" and tool_calls:
             text = "".join(p["text"] for p in text_parts if p.get("type") == "text")
-            messages.append(
-                {"role": "assistant", "content": text or None, "tool_calls": tool_calls}
-            )
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": text or None,
+                "tool_calls": tool_calls,
+            }
+            if reasoning_text:
+                assistant_msg["reasoning_content"] = reasoning_text
+            messages.append(assistant_msg)
         elif tool_results:
             messages.extend(tool_results)
             leftover = [p for p in text_parts if p.get("type") != "image_url" or True]
@@ -247,7 +275,10 @@ def anthropic_request_to_openai(payload: dict[str, Any]) -> dict[str, Any]:
                 messages.append({"role": role, "content": leftover})
         else:
             simple = _collapse_openai_content(text_parts)
-            messages.append({"role": role, "content": simple})
+            simple_msg: dict[str, Any] = {"role": role, "content": simple}
+            if role == "assistant" and reasoning_text:
+                simple_msg["reasoning_content"] = reasoning_text
+            messages.append(simple_msg)
 
     out: dict[str, Any] = {"model": payload.get("model"), "messages": messages}
     if payload.get("max_tokens"):
@@ -308,10 +339,13 @@ def _anthropic_tool_choice_to_openai(choice: Any) -> Any:
 
 def anthropic_response_to_openai(resp: dict[str, Any], *, model: str) -> dict[str, Any]:
     content_text = ""
+    reasoning_text = ""
     tool_calls: list[dict[str, Any]] = []
     for block in resp.get("content", []):
         if block.get("type") == "text":
             content_text += block.get("text", "")
+        elif block.get("type") == "thinking":
+            reasoning_text += block.get("thinking", "")
         elif block.get("type") == "tool_use":
             tool_calls.append(
                 {
@@ -324,6 +358,8 @@ def anthropic_response_to_openai(resp: dict[str, Any], *, model: str) -> dict[st
                 }
             )
     message: dict[str, Any] = {"role": "assistant", "content": content_text or None}
+    if reasoning_text:
+        message["reasoning_content"] = reasoning_text
     if tool_calls:
         message["tool_calls"] = tool_calls
     usage = resp.get("usage", {})
@@ -353,6 +389,12 @@ def openai_response_to_anthropic(resp: dict[str, Any], *, model: str) -> dict[st
     choice = (resp.get("choices") or [{}])[0]
     message = choice.get("message", {})
     blocks: list[dict[str, Any]] = []
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning:
+        # Thinking blocks must precede text/tool_use; sign it so the client replays it.
+        blocks.append(
+            {"type": "thinking", "thinking": reasoning, "signature": _THINKING_SIGNATURE}
+        )
     text = message.get("content")
     if isinstance(text, str) and text:
         blocks.append({"type": "text", "text": text})
@@ -508,6 +550,19 @@ async def anthropic_stream_to_openai(
                         ],
                     }
                 )
+            elif delta.get("type") == "thinking_delta":
+                yield _data(
+                    {
+                        **base,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"reasoning_content": delta.get("thinking", "")},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                )
             elif delta.get("type") == "input_json_delta":
                 tidx = tool_indexes.get(idx, 0)
                 yield _data(
@@ -594,10 +649,27 @@ async def openai_stream_to_anthropic(
 
     text_block_open = False
     text_index = 0
+    thinking_block_open = False
+    thinking_index = 0
     tool_blocks: dict[int, int] = {}  # openai tool index -> anthropic block index
     next_block = 0
     finish_reason = "stop"
     usage_out = {"input_tokens": 0, "output_tokens": 0}
+
+    def _close_thinking() -> list[bytes]:
+        # Seal the thinking block with a signature_delta so anthropic-dialect clients
+        # persist and replay it — the round-trip thinking-mode upstreams require.
+        return [
+            _sse(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": thinking_index,
+                    "delta": {"type": "signature_delta", "signature": _THINKING_SIGNATURE},
+                },
+            ),
+            _sse("content_block_stop", {"type": "content_block_stop", "index": thinking_index}),
+        ]
 
     async for _event, data in iter_sse(stream):
         if data == "[DONE]":
@@ -613,7 +685,36 @@ async def openai_stream_to_anthropic(
             }
         choice = (chunk.get("choices") or [{}])[0]
         delta = choice.get("delta", {})
+        reasoning = delta.get("reasoning_content")
+        if reasoning:
+            # reasoning_content always streams before content/tool_calls — open a
+            # leading thinking block (index 0) the first time we see it.
+            if not thinking_block_open and not text_block_open and not tool_blocks:
+                yield _sse(
+                    "content_block_start",
+                    {
+                        "type": "content_block_start",
+                        "index": next_block,
+                        "content_block": {"type": "thinking", "thinking": ""},
+                    },
+                )
+                thinking_block_open = True
+                thinking_index = next_block
+                next_block += 1
+            if thinking_block_open:
+                yield _sse(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": thinking_index,
+                        "delta": {"type": "thinking_delta", "thinking": reasoning},
+                    },
+                )
         if delta.get("content"):
+            if thinking_block_open:
+                for _b in _close_thinking():
+                    yield _b
+                thinking_block_open = False
             if not text_block_open:
                 yield _sse(
                     "content_block_start",
@@ -637,6 +738,10 @@ async def openai_stream_to_anthropic(
         for call in delta.get("tool_calls") or []:
             oai_idx = call.get("index", 0)
             if oai_idx not in tool_blocks:
+                if thinking_block_open:
+                    for _b in _close_thinking():
+                        yield _b
+                    thinking_block_open = False
                 if text_block_open:
                     yield _sse(
                         "content_block_stop", {"type": "content_block_stop", "index": text_index}
@@ -671,6 +776,9 @@ async def openai_stream_to_anthropic(
         if choice.get("finish_reason"):
             finish_reason = _OPENAI_FINISH_TO_ANTHROPIC.get(choice["finish_reason"], "end_turn")
 
+    if thinking_block_open:
+        for _b in _close_thinking():
+            yield _b
     if text_block_open:
         yield _sse("content_block_stop", {"type": "content_block_stop", "index": text_index})
     for block_index in tool_blocks.values():

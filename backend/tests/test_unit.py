@@ -195,6 +195,112 @@ async def test_openai_stream_to_anthropic():
 
 
 # --------------------------------------------------------------------------- #
+# Transform — reasoning / thinking round-trip
+# --------------------------------------------------------------------------- #
+
+
+async def test_anthropic_request_thinking_becomes_reasoning_content():
+    """A replayed thinking block must reach an OpenAI upstream as reasoning_content
+    so DeepSeek-style thinking mode accepts the follow-up turn."""
+    payload = {
+        "model": "deepseek-v4-pro",
+        "max_tokens": 64,
+        "messages": [
+            {"role": "user", "content": "weather?"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "let me check", "signature": "sig"},
+                    {"type": "tool_use", "id": "tu_1", "name": "get_weather", "input": {"q": "x"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "tu_1", "content": "sunny"}
+                ],
+            },
+        ],
+    }
+    out = transform.anthropic_request_to_openai(payload)
+    assistant = next(m for m in out["messages"] if m["role"] == "assistant")
+    assert assistant["reasoning_content"] == "let me check"
+    assert assistant["tool_calls"][0]["function"]["name"] == "get_weather"
+
+
+async def test_openai_response_reasoning_becomes_thinking_block():
+    resp = {
+        "id": "chatcmpl_1",
+        "model": "deepseek-v4-pro",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "the answer",
+                    "reasoning_content": "thinking hard",
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 4},
+    }
+    out = transform.openai_response_to_anthropic(resp, model="x")
+    assert out["content"][0]["type"] == "thinking"
+    assert out["content"][0]["thinking"] == "thinking hard"
+    assert out["content"][0]["signature"]  # signed so clients replay it
+    assert out["content"][1] == {"type": "text", "text": "the answer"}
+
+
+async def test_openai_stream_reasoning_becomes_thinking_block():
+    chunks = [
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n',
+        'data: {"choices":[{"index":0,"delta":{"reasoning_content":"hmm"}}]}\n\n',
+        'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],'
+        '"usage":{"prompt_tokens":3,"completion_tokens":1}}\n\n',
+        "data: [DONE]\n\n",
+    ]
+    out = await _collect(transform.openai_stream_to_anthropic(_byte_iter(chunks), model="ds"))
+    assert '"type": "thinking"' in out
+    assert "thinking_delta" in out
+    assert "signature_delta" in out  # thinking block sealed before text starts
+    assert "text_delta" in out
+    # thinking block (index 0) precedes the text block (index 1)
+    assert out.index('"thinking"') < out.index("text_delta")
+
+
+async def test_anthropic_response_thinking_becomes_reasoning_content():
+    resp = {
+        "id": "msg_1",
+        "model": "claude-x",
+        "content": [
+            {"type": "thinking", "thinking": "deep thought", "signature": "s"},
+            {"type": "text", "text": "answer"},
+        ],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 5, "output_tokens": 3},
+    }
+    out = transform.anthropic_response_to_openai(resp, model="x")
+    msg = out["choices"][0]["message"]
+    assert msg["reasoning_content"] == "deep thought"
+    assert msg["content"] == "answer"
+
+
+async def test_anthropic_stream_thinking_becomes_reasoning_content():
+    events = [
+        'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":3}}}\n\n',
+        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}\n\n',
+        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ]
+    out = await _collect(transform.anthropic_stream_to_openai(_byte_iter(events), model="gpt-4o"))
+    assert "reasoning_content" in out
+    assert "hmm" in out
+
+
+# --------------------------------------------------------------------------- #
 # Providers
 # --------------------------------------------------------------------------- #
 
