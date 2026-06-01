@@ -40,6 +40,11 @@ services:
       # Public URL of this gateway — used to build the OAuth redirect_uri. Set to
       # your real https origin (e.g. https://voidswitch.siiway.org).
       VOIDSWITCH_SERVER__BASE_URL: "${VOIDSWITCH_BASE_URL:-http://localhost:8080}"
+      # Where to send the browser after OAuth login (it serves the SPA's
+      # /login/callback). On a single origin this is the same as BASE_URL, so it
+      # defaults to that — otherwise the backend would fall back to the dev URL
+      # (localhost:5173). Override only if the dashboard lives elsewhere.
+      VOIDSWITCH_SERVER__FRONTEND_URL: "${VOIDSWITCH_FRONTEND_URL:-${VOIDSWITCH_BASE_URL:-http://localhost:8080}}"
       # Trust the dashboard/nginx X-Forwarded-* headers so request URLs resolve to
       # the public https origin (correct OAuth redirect + /install gateway URL).
       # Safe here because only the nginx container can reach this port.
