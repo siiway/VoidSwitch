@@ -1,0 +1,16 @@
+/* Global reset. The browser's default `body { margin: 8px }` otherwise shows the
+   page background as a frame around the full-height FluentProvider, and pushes
+   the 100vh app past the viewport (extra scrollbar). */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
