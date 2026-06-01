@@ -6,15 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import KeyStatus
+from voidswitch.constants import KeyStatus, ProxyMode
 from voidswitch.core.audit import record_audit
 from voidswitch.core.auth import require_staff
 from voidswitch.core.database import get_session
-from voidswitch.models.db import Provider, User
+from voidswitch.models.db import Provider, Proxy, User
 from voidswitch.models.schemas import ProviderCreate, ProviderOut, ProviderUpdate
 from voidswitch.services.providers.registry import adapter_catalog, adapter_class
 
 router = APIRouter(prefix="/api/admin/providers", tags=["admin:providers"])
+
+_PROXY_MODES = {m.value for m in ProxyMode}
 
 
 def _to_out(provider: Provider) -> ProviderOut:
@@ -22,6 +24,26 @@ def _to_out(provider: Provider) -> ProviderOut:
     out.key_count = len(provider.keys)
     out.active_key_count = sum(1 for k in provider.keys if k.status == KeyStatus.ACTIVE.value)
     return out
+
+
+async def _validate_proxy_config(
+    session: AsyncSession, mode: str | None, proxy_ids: list[int] | None
+) -> None:
+    """Reject an unknown proxy_mode or proxy_ids that don't reference real proxies."""
+    if mode is not None and mode not in _PROXY_MODES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"proxy_mode must be one of {sorted(_PROXY_MODES)}.",
+        )
+    if proxy_ids:
+        found = (
+            (await session.execute(select(Proxy.id).where(Proxy.id.in_(proxy_ids)))).scalars().all()
+        )
+        missing = sorted(set(proxy_ids) - set(found))
+        if missing:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown proxy id(s): {missing}."
+            )
 
 
 @router.get("", response_model=list[ProviderOut])
@@ -53,6 +75,7 @@ async def create_provider(
     cls = adapter_class(body.type)
     models = body.models or list(cls.default_models)
     base_url = body.base_url or cls.default_base_url
+    await _validate_proxy_config(session, body.proxy_mode, body.proxy_ids)
 
     provider = Provider(
         name=body.name,
@@ -67,6 +90,8 @@ async def create_provider(
         extra_headers=body.extra_headers,
         timeout_seconds=body.timeout_seconds,
         drop_opencode_identity_block=body.drop_opencode_identity_block,
+        proxy_mode=body.proxy_mode,
+        proxy_ids=body.proxy_ids,
     )
     session.add(provider)
     await session.flush()
@@ -96,6 +121,12 @@ async def update_provider(
     if provider is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found.")
     changes = body.model_dump(exclude_unset=True)
+    if "proxy_mode" in changes or "proxy_ids" in changes:
+        await _validate_proxy_config(
+            session,
+            changes.get("proxy_mode", provider.proxy_mode),
+            changes.get("proxy_ids", provider.proxy_ids),
+        )
     for field, value in changes.items():
         setattr(provider, field, value)
     await session.flush()

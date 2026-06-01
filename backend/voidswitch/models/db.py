@@ -24,7 +24,7 @@ from sqlalchemy.orm import (
     relationship,
 )
 
-from voidswitch.constants import KeyStatus, ProxyStatus, Role
+from voidswitch.constants import KeyStatus, ProxyMode, ProxyStatus, Role
 
 
 def _utcnow() -> dt.datetime:
@@ -108,6 +108,11 @@ class Provider(Base, TimestampMixin):
     # claude-code masquerade only: when True, drop the inbound client's entire
     # "You are OpenCode…" system block instead of scrubbing it in place.
     drop_opencode_identity_block: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Outbound routing: "all" (any active proxy), "direct" (never proxy), or
+    # "selected" (only the proxy IDs in proxy_ids). See constants.ProxyMode.
+    proxy_mode: Mapped[str] = mapped_column(String(16), default=ProxyMode.ALL.value)
+    # Proxy IDs this provider may use when proxy_mode == "selected".
+    proxy_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
 
     keys: Mapped[list[ApiKey]] = relationship(
         back_populates="provider", cascade="all, delete-orphan", lazy="selectin"

@@ -57,6 +57,10 @@ class ProviderBase(BaseModel):
     timeout_seconds: int = 0
     # claude-code only: drop the whole "You are OpenCode…" system block.
     drop_opencode_identity_block: bool = False
+    # Outbound routing: "all" | "direct" | "selected" (see constants.ProxyMode).
+    proxy_mode: str = "all"
+    # Proxy IDs used when proxy_mode == "selected".
+    proxy_ids: list[int] = Field(default_factory=list)
 
 
 class ProviderCreate(ProviderBase):
@@ -76,6 +80,8 @@ class ProviderUpdate(BaseModel):
     extra_headers: dict[str, str] | None = None
     timeout_seconds: int | None = None
     drop_opencode_identity_block: bool | None = None
+    proxy_mode: str | None = None
+    proxy_ids: list[int] | None = None
 
 
 class ProviderOut(ProviderBase):

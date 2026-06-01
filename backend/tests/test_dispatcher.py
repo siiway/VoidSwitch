@@ -144,6 +144,81 @@ async def test_dispatch_proxy_failover_on_network_error(db, seeded):
     assert any(p.failed_count >= 1 for p in proxies)
 
 
+async def _set_provider_proxy(db, provider_id, mode, proxy_ids):
+    from voidswitch.models.db import Provider
+
+    async with db.session() as session:
+        provider = await session.get(Provider, provider_id)
+        provider.proxy_mode = mode
+        provider.proxy_ids = proxy_ids
+        await session.flush()
+
+
+async def _last_log(db):
+    from voidswitch.models.db import RequestLog
+
+    async with db.session() as session:
+        return (
+            (await session.execute(select(RequestLog).order_by(RequestLog.id.desc())))
+            .scalars()
+            .first()
+        )
+
+
+async def _dispatch_hi(seeded):
+    return await dispatch(
+        DispatchRequest(
+            inbound_style=ApiStyle.OPENAI,
+            model="deepseek-chat",
+            payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+            stream=False,
+            token_id=seeded["token_id"],
+        )
+    )
+
+
+async def test_dispatch_selected_proxy_mode_pins_to_assigned_proxy(db, seeded):
+    await _add_proxy(db, "http://127.0.0.1:38080")
+    p2 = await _add_proxy(db, "http://127.0.0.1:38081")
+    await _set_provider_proxy(db, seeded["provider_id"], "selected", [p2])
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 200
+    log = await _last_log(db)
+    assert log is not None and log.proxy_id == p2  # used the assigned proxy, not p1
+
+
+async def test_dispatch_direct_proxy_mode_uses_no_proxy(db, seeded):
+    await _add_proxy(db, "http://127.0.0.1:38080")  # exists but must be ignored
+    await _set_provider_proxy(db, seeded["provider_id"], "direct", [])
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 200
+    log = await _last_log(db)
+    assert log is not None and log.proxy_id is None  # went direct
+
+
+async def test_dispatch_selected_with_all_assigned_down_skips_provider(db, seeded):
+    # Assign a proxy, then disable it: no active assigned proxy remains, and a
+    # "selected" provider must NOT fall back to direct — it is skipped → 502.
+    pid = await _add_proxy(db, "http://127.0.0.1:38080")
+    async with db.session() as session:
+        proxy = await session.get(Proxy, pid)
+        proxy.status = ProxyStatus.DISABLED.value
+        await session.flush()
+    await _set_provider_proxy(db, seeded["provider_id"], "selected", [pid])
+
+    result = await _dispatch_hi(seeded)
+    assert result.status_code == 502
+    assert result.attempts == 0  # never attempted — no route available
+
+
 async def test_dispatch_no_provider_returns_404(db, seeded):
     # Narrow the seeded provider so it no longer matches via the "*" wildcard.
     from voidswitch.models.db import Provider

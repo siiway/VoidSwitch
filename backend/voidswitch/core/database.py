@@ -78,6 +78,8 @@ class Database:
 # and safe to run on every boot. SQLite/Postgres both accept this form.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("providers", "drop_opencode_identity_block", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("providers", "proxy_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
+    ("providers", "proxy_ids", "JSON NOT NULL DEFAULT '[]'"),
 )
 
 

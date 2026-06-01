@@ -30,7 +30,7 @@ import {
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-import type { AdapterMeta, Provider } from "../api/types";
+import type { AdapterMeta, Provider, Proxy, ProxyMode } from "../api/types";
 import {
   DataTable,
   ErrorText,
@@ -51,6 +51,8 @@ interface FormState {
   weight: number;
   enabled: boolean;
   drop_opencode_identity_block: boolean;
+  proxy_mode: ProxyMode;
+  proxy_ids: number[];
 }
 
 const EMPTY: FormState = {
@@ -62,6 +64,14 @@ const EMPTY: FormState = {
   weight: 1,
   enabled: true,
   drop_opencode_identity_block: false,
+  proxy_mode: "all",
+  proxy_ids: [],
+};
+
+const PROXY_MODE_LABEL: Record<ProxyMode, string> = {
+  all: "All active proxies (default)",
+  direct: "Direct — never use a proxy",
+  selected: "Only selected proxies",
 };
 
 export function Providers() {
@@ -72,6 +82,7 @@ export function Providers() {
   const catalog = useAsync<AdapterMeta[]>(() =>
     api.get("/api/admin/providers/catalog/types"),
   );
+  const proxies = useAsync<Proxy[]>(() => api.get("/api/admin/proxies"));
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -90,6 +101,8 @@ export function Providers() {
       weight: p.weight,
       enabled: p.enabled,
       drop_opencode_identity_block: p.drop_opencode_identity_block,
+      proxy_mode: p.proxy_mode,
+      proxy_ids: p.proxy_ids ?? [],
     });
   }
 
@@ -122,6 +135,8 @@ export function Providers() {
       weight: form.weight,
       enabled: form.enabled,
       drop_opencode_identity_block: form.drop_opencode_identity_block,
+      proxy_mode: form.proxy_mode,
+      proxy_ids: form.proxy_mode === "selected" ? form.proxy_ids : [],
     };
     setSaving(true);
     try {
@@ -335,6 +350,64 @@ export function Providers() {
                   setForm((f) => (f ? { ...f, enabled: d.checked } : f))
                 }
               />
+              <Field label="Outbound proxy">
+                <Dropdown
+                  value={
+                    form ? PROXY_MODE_LABEL[form.proxy_mode] : PROXY_MODE_LABEL.all
+                  }
+                  selectedOptions={form ? [form.proxy_mode] : ["all"]}
+                  onOptionSelect={(_, d) =>
+                    d.optionValue &&
+                    setForm((f) =>
+                      f ? { ...f, proxy_mode: d.optionValue as ProxyMode } : f,
+                    )
+                  }
+                >
+                  {(Object.keys(PROXY_MODE_LABEL) as ProxyMode[]).map((m) => (
+                    <Option key={m} value={m} text={PROXY_MODE_LABEL[m]}>
+                      {PROXY_MODE_LABEL[m]}
+                    </Option>
+                  ))}
+                </Dropdown>
+              </Field>
+              {form?.proxy_mode === "selected" && (
+                <Field
+                  label="Proxies for this provider"
+                  hint="Requests use only these (best-first, with failover). If all are down, this provider is skipped — it never falls back to a direct connection."
+                >
+                  <Dropdown
+                    multiselect
+                    placeholder="Select one or more proxies"
+                    value={
+                      (form?.proxy_ids ?? [])
+                        .map(
+                          (id) =>
+                            (proxies.data ?? []).find((p) => p.id === id)?.url ??
+                            `#${id}`,
+                        )
+                        .join(", ") || ""
+                    }
+                    selectedOptions={(form?.proxy_ids ?? []).map(String)}
+                    onOptionSelect={(_, d) =>
+                      setForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              proxy_ids: d.selectedOptions.map((s) => Number(s)),
+                            }
+                          : f,
+                      )
+                    }
+                  >
+                    {(proxies.data ?? []).map((p) => (
+                      <Option key={p.id} value={String(p.id)} text={p.url}>
+                        {p.url}
+                        {p.status !== "active" ? ` (${p.status})` : ""}
+                      </Option>
+                    ))}
+                  </Dropdown>
+                </Field>
+              )}
               {form?.type === "claude-code" && (
                 <Switch
                   label="Drop OpenCode identity block (send only the Claude Code identity, not the caller's system prompt)"

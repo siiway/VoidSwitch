@@ -29,6 +29,14 @@ class ApiStyle(StrEnum):
     ANTHROPIC = "anthropic"
 
 
+class ProxyMode(StrEnum):
+    """How a provider chooses its outbound route."""
+
+    ALL = "all"  # use any active proxy (global pool), direct only if none exist
+    DIRECT = "direct"  # never use a proxy — always connect directly
+    SELECTED = "selected"  # only the proxies assigned in Provider.proxy_ids
+
+
 # Default operational thresholds; seeded into the settings table on first boot
 # and editable at runtime from the dashboard.
 DEFAULT_SETTINGS: dict[str, object] = {

@@ -12,7 +12,7 @@ from fnmatch import fnmatch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import KeyStatus, ProxyStatus
+from voidswitch.constants import KeyStatus, ProxyMode, ProxyStatus
 from voidswitch.models.db import ApiKey, Provider, Proxy
 from voidswitch.services.network import Route
 
@@ -59,8 +59,8 @@ def select_keys(provider: Provider) -> list[ApiKey]:
     return active
 
 
-async def select_routes(session: AsyncSession) -> list[tuple[Route, Proxy | None]]:
-    """Ordered outbound routes. Uses active proxies; falls back to direct."""
+async def active_proxies(session: AsyncSession) -> list[Proxy]:
+    """All enabled+active proxies (the global pool), unsorted."""
     rows = (
         (
             await session.execute(
@@ -73,8 +73,43 @@ async def select_routes(session: AsyncSession) -> list[tuple[Route, Proxy | None
         .scalars()
         .all()
     )
-    proxies = list(rows)
+    return list(rows)
+
+
+def _routes(proxies: list[Proxy]) -> list[tuple[Route, Proxy | None]]:
+    ordered = sorted(proxies, key=lambda p: (p.failed_count, _lru_key(p.last_used_at)))
+    return [(Route(proxy_url=p.url or None, local_address=p.local_address), p) for p in ordered]
+
+
+def routes_for_provider(
+    provider: Provider, proxies: list[Proxy]
+) -> list[tuple[Route, Proxy | None]]:
+    """Ordered outbound routes for one provider, honouring its proxy_mode.
+
+    * ``direct``   → always [direct], never a proxy.
+    * ``selected`` → only the assigned (and still-active) proxies, in best-first
+      order; NO direct fallback (so a provider pinned to proxies never leaks the
+      real IP). An empty result means the caller should skip this provider.
+    * ``all`` (default) → the whole active pool, best-first; direct only if the
+      pool is empty.
+    """
+    mode = provider.proxy_mode or ProxyMode.ALL.value
+    if mode == ProxyMode.DIRECT.value:
+        return [(Route(), None)]
+    if mode == ProxyMode.SELECTED.value:
+        ids = set(provider.proxy_ids or [])
+        return _routes([p for p in proxies if p.id in ids])
     if not proxies:
         return [(Route(), None)]
-    proxies.sort(key=lambda p: (p.failed_count, _lru_key(p.last_used_at)))
-    return [(Route(proxy_url=p.url or None, local_address=p.local_address), p) for p in proxies]
+    return _routes(proxies)
+
+
+async def select_routes(
+    session: AsyncSession, provider: Provider | None = None
+) -> list[tuple[Route, Proxy | None]]:
+    """Ordered outbound routes. Honours ``provider.proxy_mode`` when given;
+    otherwise uses the full active pool (direct fallback)."""
+    proxies = await active_proxies(session)
+    if provider is None:
+        return _routes(proxies) if proxies else [(Route(), None)]
+    return routes_for_provider(provider, proxies)

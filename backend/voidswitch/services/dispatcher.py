@@ -35,7 +35,12 @@ from voidswitch.services import oauth_tokens, settings_store, transform
 from voidswitch.services.network import Route, get_pool
 from voidswitch.services.providers.base import BaseProvider, ErrorClass
 from voidswitch.services.providers.registry import get_adapter
-from voidswitch.services.selector import select_keys, select_providers, select_routes
+from voidswitch.services.selector import (
+    active_proxies,
+    routes_for_provider,
+    select_keys,
+    select_providers,
+)
 
 log = get_logger("dispatcher")
 
@@ -186,9 +191,17 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                 ),
                 model=req.model,
             )
-        routes = await select_routes(session)
+        proxy_pool = await active_proxies(session)
 
         for provider in providers:
+            # Per-provider outbound routes — honours proxy_mode (all/direct/selected).
+            routes = routes_for_provider(provider, proxy_pool)
+            if not routes:
+                last_error = (
+                    f"provider '{provider.name}': no available proxy (mode={provider.proxy_mode})"
+                )
+                last_status = 502
+                continue
             adapter = get_adapter(provider)
             keys = select_keys(provider)
             upstream_style = adapter.style

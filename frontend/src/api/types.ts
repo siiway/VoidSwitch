@@ -29,11 +29,15 @@ export interface Provider {
   extra_headers: Record<string, string>;
   timeout_seconds: number;
   drop_opencode_identity_block: boolean;
+  proxy_mode: ProxyMode;
+  proxy_ids: number[];
   created_at: string;
   updated_at: string;
   key_count: number;
   active_key_count: number;
 }
+
+export type ProxyMode = "all" | "direct" | "selected";
 
 export interface ApiKey {
   id: number;

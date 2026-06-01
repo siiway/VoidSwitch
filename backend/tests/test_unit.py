@@ -230,6 +230,40 @@ async def test_anthropic_adapter_headers():
     assert adapter.upstream_url == "https://api.anthropic.com/v1/messages"
 
 
+async def test_routes_for_provider_proxy_modes():
+    from voidswitch.constants import ProxyMode
+    from voidswitch.models.db import Proxy
+    from voidswitch.services.selector import routes_for_provider
+
+    p1 = Proxy(url="http://a:1", status="active")
+    p1.id = 1
+    p2 = Proxy(url="http://b:2", status="active")
+    p2.id = 2
+    pool = [p1, p2]
+
+    # all → whole pool (both proxies, no direct).
+    routes = routes_for_provider(Provider(name="x", proxy_mode=ProxyMode.ALL.value), pool)
+    assert [pr.id for _, pr in routes] == [1, 2]
+
+    # all with empty pool → single direct route.
+    routes = routes_for_provider(Provider(name="x", proxy_mode=ProxyMode.ALL.value), [])
+    assert routes == [(routes[0][0], None)] and routes[0][0].proxy_url is None
+
+    # direct → always direct, ignores the pool.
+    routes = routes_for_provider(Provider(name="x", proxy_mode=ProxyMode.DIRECT.value), pool)
+    assert len(routes) == 1 and routes[0][1] is None and routes[0][0].proxy_url is None
+
+    # selected → only the assigned proxy, no direct fallback.
+    prov = Provider(name="x", proxy_mode=ProxyMode.SELECTED.value, proxy_ids=[2])
+    routes = routes_for_provider(prov, pool)
+    assert [pr.id for _, pr in routes] == [2]
+    assert routes[0][0].proxy_url == "http://b:2"
+
+    # selected with no active assigned proxy → empty (caller skips the provider).
+    prov = Provider(name="x", proxy_mode=ProxyMode.SELECTED.value, proxy_ids=[99])
+    assert routes_for_provider(prov, pool) == []
+
+
 async def test_adapter_catalog_nonempty():
     catalog = adapter_catalog()
     types = {c["type"] for c in catalog}
