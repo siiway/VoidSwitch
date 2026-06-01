@@ -233,7 +233,45 @@ async def test_anthropic_adapter_headers():
 async def test_adapter_catalog_nonempty():
     catalog = adapter_catalog()
     types = {c["type"] for c in catalog}
-    assert {"openai", "anthropic", "deepseek", "claude-code"} <= types
+    assert {"openai", "anthropic", "deepseek", "claude-code", "mimo", "nvidia"} <= types
+
+
+async def test_openai_compatible_presets():
+    # OpenAI-style presets, standard Bearer auth, no balance endpoint (so the
+    # balance probe skips them); invalid keys fall back to KEY_INVALID via classify.
+    presets = {
+        "mimo": "https://api.xiaomimimo.com/v1",
+        "nvidia": "https://integrate.api.nvidia.com/v1",
+        "mistral": "https://api.mistral.ai/v1",
+        "together": "https://api.together.xyz/v1",
+        "fireworks": "https://api.fireworks.ai/inference/v1",
+        "perplexity": "https://api.perplexity.ai",
+        "cerebras": "https://api.cerebras.ai/v1",
+        "deepinfra": "https://api.deepinfra.com/v1/openai",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "novita": "https://api.novita.ai/v3/openai",
+        "sambanova": "https://api.sambanova.ai/v1",
+        "hyperbolic": "https://api.hyperbolic.xyz/v1",
+        "nebius": "https://api.studio.nebius.com/v1",
+        "github-models": "https://models.github.ai/inference",
+        "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+        "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "volcengine": "https://ark.cn-beijing.volces.com/api/v3",
+        "minimax": "https://api.minimax.io/v1",
+    }
+    catalog = {c["type"]: c for c in adapter_catalog()}
+    for ptype, base in presets.items():
+        adapter = get_adapter(Provider(name=ptype, type=ptype))
+        assert adapter.style is ApiStyle.OPENAI, ptype
+        assert adapter.base_url == base, ptype
+        assert adapter.upstream_url == base + "/chat/completions", ptype
+        assert adapter.balance_url is None, ptype
+        assert adapter.default_models, ptype
+        assert adapter.headers("k")["Authorization"] == "Bearer k", ptype
+        assert adapter.classify(401, {}) == ErrorClass.KEY_INVALID, ptype
+        assert adapter.classify(200, {}) == ErrorClass.OK, ptype
+        assert catalog[ptype]["type"] == ptype
+        assert catalog[ptype]["supports_balance"] is False, ptype
 
 
 async def test_claude_code_oauth_headers_and_identity():

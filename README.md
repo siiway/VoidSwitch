@@ -28,9 +28,12 @@ Each has its own README with full details.
 
 ## Feature summary
 
-- **Multi-provider adapters** — OpenAI, Anthropic, DeepSeek (with strict balance /
-  auth edge-case handling), SiliconFlow, OpenRouter, Groq, xAI, Moonshot, and a
-  generic OpenAI-compatible catch-all. Add more by subclassing `BaseProvider`.
+- **Multi-provider adapters** — OpenAI, Anthropic, Claude Code (subscription
+  OAuth), DeepSeek (with strict balance / auth edge-case handling), plus presets
+  for SiliconFlow, OpenRouter, Groq, xAI, Moonshot, MiMo, NVIDIA, Mistral,
+  Together, Fireworks, Perplexity, Cerebras, DeepInfra, Gemini, Novita, SambaNova,
+  Hyperbolic, Nebius, GitHub Models, Zhipu/GLM, Qwen, Volcengine/Doubao, MiniMax,
+  and a generic OpenAI-compatible catch-all. Add more by subclassing `BaseProvider`.
 - **Bidirectional translation** — OpenAI ⇄ Anthropic for requests, responses, and
   **streaming SSE**, including tool/function calls and token usage.
 - **Resilient dispatcher** — auth/balance errors rotate the *key*; network/timeout

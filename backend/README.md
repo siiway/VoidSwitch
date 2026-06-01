@@ -9,8 +9,10 @@ optional HTTP/SOCKS proxies or specific local source IPs.
 ## Highlights
 
 - **Multi-provider** adapters: OpenAI, Anthropic, **Claude Code (subscription
-  OAuth)**, DeepSeek, SiliconFlow, OpenRouter, Groq, xAI, Moonshot, plus a generic
-  OpenAI-compatible catch-all.
+  OAuth)**, DeepSeek, SiliconFlow, OpenRouter, Groq, xAI, Moonshot, MiMo, NVIDIA,
+  Mistral, Together, Fireworks, Perplexity, Cerebras, DeepInfra, Gemini, Novita,
+  SambaNova, Hyperbolic, Nebius, GitHub Models, Zhipu/GLM, Qwen, Volcengine/Doubao,
+  MiniMax, plus a generic OpenAI-compatible catch-all.
 - **Bidirectional translation** OpenAI ⇄ Anthropic for requests, responses, and
   streaming (SSE), so a client of either dialect can reach a provider of either
   dialect. Point Claude Code's `ANTHROPIC_BASE_URL` here.
