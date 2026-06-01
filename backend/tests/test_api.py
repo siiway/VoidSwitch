@@ -147,6 +147,79 @@ async def test_admin_create_token_returns_secret(client, seeded):
 
 
 # --------------------------------------------------------------------------- #
+# Upstream key management: inline ``# comment`` descriptions, listing, editing.
+# --------------------------------------------------------------------------- #
+
+
+async def test_add_keys_parses_inline_comment(client, seeded):
+    pid = seeded["provider_id"]
+    resp = await client.post(
+        f"/api/admin/providers/{pid}/keys",
+        headers=_session_headers(),
+        json={"keys": ["sk-aaa111bbb # alice's key", "sk-ccc222ddd"], "pool": "members"},
+    )
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    by_preview = {k["note"]: k for k in created}
+    # The line with a ``#`` carries its comment as the note; the bare line has none.
+    assert "alice's key" in by_preview
+    assert by_preview["alice's key"]["pool"] == "members"
+    assert None in by_preview  # the comment-less key
+
+
+async def test_add_keys_inline_comment_overrides_batch_note(client, seeded):
+    pid = seeded["provider_id"]
+    resp = await client.post(
+        f"/api/admin/providers/{pid}/keys",
+        headers=_session_headers(),
+        json={"keys": ["sk-zzz999 # specific", "sk-yyy888"], "note": "batch"},
+    )
+    assert resp.status_code == 201, resp.text
+    notes = sorted((k["note"] or "") for k in resp.json())
+    assert notes == ["batch", "specific"]
+
+
+async def test_list_keys_returns_saved_keys(client, seeded):
+    pid = seeded["provider_id"]
+    resp = await client.get(
+        f"/api/admin/providers/{pid}/keys", headers=_session_headers()
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert any(k["id"] == seeded["key_id"] for k in rows)
+
+
+async def test_update_key_edits_comment_pool_and_secret(client, seeded):
+    pid, kid = seeded["provider_id"], seeded["key_id"]
+    resp = await client.patch(
+        f"/api/admin/providers/{pid}/keys/{kid}",
+        headers=_session_headers(),
+        json={"key": "sk-rotated-9999", "note": "renamed", "pool": "leaked"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["note"] == "renamed"
+    assert body["pool"] == "leaked"
+    # The preview reflects the new secret material.
+    assert body["key_preview"] == "sk-r…9999"
+
+
+async def test_update_key_rejects_duplicate_secret(client, seeded):
+    pid, kid = seeded["provider_id"], seeded["key_id"]
+    await client.post(
+        f"/api/admin/providers/{pid}/keys",
+        headers=_session_headers(),
+        json={"keys": ["sk-other-key-1234"]},
+    )
+    resp = await client.patch(
+        f"/api/admin/providers/{pid}/keys/{kid}",
+        headers=_session_headers(),
+        json={"key": "sk-other-key-1234"},
+    )
+    assert resp.status_code == 409, resp.text
+
+
+# --------------------------------------------------------------------------- #
 # One-line OpenCode installer (curl | bash / irm | iex)
 # --------------------------------------------------------------------------- #
 

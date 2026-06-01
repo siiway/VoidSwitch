@@ -39,6 +39,18 @@ def _preview(raw: str) -> str:
     return f"{raw[:4]}…{raw[-4:]}"
 
 
+def _parse_key_line(line: str) -> tuple[str, str | None]:
+    """Split an inbound key line into its secret and an optional ``# comment``.
+
+    A ``#`` introduces an inline description, e.g. ``sk-abc123 # alice's key``.
+    The secret is everything before the first ``#``; the trimmed remainder is the
+    comment (``None`` when absent or blank).
+    """
+    secret, sep, comment = line.partition("#")
+    comment = comment.strip()
+    return secret.strip(), (comment if sep and comment else None)
+
+
 def _oauth_preview(bundle: dict[str, object]) -> str:
     """A short, non-secret label for an OAuth key (column is 32 chars)."""
     return f"oauth·{_preview(str(bundle.get('access_token', '')))}"[:32]
@@ -90,8 +102,8 @@ async def add_keys(
     }
     created: list[ApiKey] = []
     seen: set[str] = set()
-    for raw in body.keys:
-        raw = raw.strip()
+    for line in body.keys:
+        raw, comment = _parse_key_line(line)
         if not raw:
             continue
         digest = hash_token(raw)
@@ -105,7 +117,7 @@ async def add_keys(
             key_preview=_preview(raw),
             status=KeyStatus.ACTIVE.value,
             weight=body.weight,
-            note=body.note,
+            note=comment or body.note,
             pool=body.pool or "",
         )
         session.add(key)
@@ -220,10 +232,35 @@ async def update_key(
     body: ApiKeyUpdate,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
+    settings: Settings = Depends(get_settings),
 ) -> ApiKey:
     key = await session.get(ApiKey, key_id)
     if key is None or key.provider_id != provider_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+    if body.key is not None:
+        raw = body.key.strip()
+        if not raw:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Key cannot be empty.")
+        digest = hash_token(raw)
+        clash = (
+            await session.execute(
+                select(ApiKey.id).where(
+                    ApiKey.provider_id == provider_id,
+                    ApiKey.key_hash == digest,
+                    ApiKey.id != key_id,
+                )
+            )
+        ).first()
+        if clash is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Another key with this value already exists."
+            )
+        # A fresh secret invalidates prior failures tied to the old credential.
+        key.key_ciphertext = encrypt_secret(raw, secret=settings.server.secret_key)
+        key.key_hash = digest
+        key.key_preview = _preview(raw)
+        key.failed_count = 0
+        key.disabled_reason = None
     if body.enabled is not None:
         key.status = KeyStatus.ACTIVE.value if body.enabled else KeyStatus.DISABLED.value
         if body.enabled:

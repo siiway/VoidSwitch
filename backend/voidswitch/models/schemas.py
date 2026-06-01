@@ -111,7 +111,9 @@ class ProviderOut(ProviderBase):
 
 
 class ApiKeyCreate(BaseModel):
-    # Accept many keys at once: newline-separated input from the UI.
+    # Accept many keys at once: newline-separated input from the UI. Each line
+    # may carry an inline description after a ``#`` (e.g. ``sk-abc # alice``),
+    # which becomes that key's note and overrides the batch-level ``note``.
     keys: list[str]
     weight: int = 1
     note: str | None = None
@@ -119,6 +121,7 @@ class ApiKeyCreate(BaseModel):
 
 
 class ApiKeyUpdate(BaseModel):
+    key: str | None = None  # replace the stored secret (re-encrypted on save)
     status: str | None = None
     weight: int | None = None
     note: str | None = None

@@ -1,6 +1,12 @@
 import {
   Button,
   Card,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   Field,
   Input,
   TableBody,
@@ -15,6 +21,7 @@ import {
 import {
   ArrowLeftRegular,
   DeleteRegular,
+  EditRegular,
   PersonRegular,
 } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
@@ -47,6 +54,13 @@ export function ProviderKeys() {
   const [bulk, setBulk] = useState("");
   const [pool, setPool] = useState("");
   const [adding, setAdding] = useState(false);
+
+  // Edit-key dialog state.
+  const [editing, setEditing] = useState<ApiKey | null>(null);
+  const [editSecret, setEditSecret] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editPool, setEditPool] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
 
   // Claude subscription OAuth login state.
   const [oauthState, setOauthState] = useState<string | null>(null);
@@ -131,6 +145,41 @@ export function ProviderKeys() {
     }
   }
 
+  function openEdit(k: ApiKey) {
+    setEditing(k);
+    setEditSecret("");
+    setEditNote(k.note ?? "");
+    setEditPool(k.pool ?? "");
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    setEditBusy(true);
+    try {
+      const patch: {
+        key?: string;
+        note: string;
+        pool: string;
+      } = { note: editNote.trim(), pool: editPool.trim() };
+      if (editSecret.trim()) patch.key = editSecret.trim();
+      await api.patch(
+        `/api/admin/providers/${providerId}/keys/${editing.id}`,
+        patch,
+      );
+      notify("Key updated", editing.key_preview, "success");
+      setEditing(null);
+      keys.reload();
+    } catch (e) {
+      notify(
+        "Update failed",
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
   async function toggle(k: ApiKey) {
     const enabled = k.status !== "active";
     await api.patch(`/api/admin/providers/${providerId}/keys/${k.id}`, {
@@ -166,7 +215,7 @@ export function ProviderKeys() {
         subtitle={
           isClaudeCode
             ? "Sign in with a Claude subscription, or paste setup-tokens / credential bundles below"
-            : "Paste one API key per line to add in bulk"
+            : "Paste one API key per line to add in bulk. Add an inline description with # (e.g. sk-abc # alice's key)"
         }
       />
 
@@ -238,7 +287,7 @@ export function ProviderKeys() {
           placeholder={
             isClaudeCode
               ? 'sk-ant-oat01-...\n{"access_token":...}'
-              : "sk-...\nsk-...\nsk-..."
+              : "sk-...\nsk-... # optional description\nsk-..."
           }
           onChange={(_, d) => setBulk(d.value)}
         />
@@ -271,6 +320,7 @@ export function ProviderKeys() {
           <TableHeader>
             <TableRow>
               <TableHeaderCell>Key</TableHeaderCell>
+              <TableHeaderCell>Comment</TableHeaderCell>
               <TableHeaderCell>Pool</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
               <TableHeaderCell>Fails</TableHeaderCell>
@@ -285,6 +335,9 @@ export function ProviderKeys() {
               <TableRow key={k.id}>
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {k.key_preview}
+                </TableCell>
+                <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                  {k.note || "—"}
                 </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {k.pool || "—"}
@@ -304,6 +357,14 @@ export function ProviderKeys() {
                   <Button
                     size="small"
                     appearance="subtle"
+                    icon={<EditRegular />}
+                    onClick={() => openEdit(k)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="small"
+                    appearance="subtle"
                     onClick={() => toggle(k)}
                   >
                     {k.status === "active" ? "Disable" : "Enable"}
@@ -320,6 +381,64 @@ export function ProviderKeys() {
           </TableBody>
         </DataTable>
       )}
+
+      <Dialog
+        open={editing !== null}
+        onOpenChange={(_, d) => {
+          if (!d.open) setEditing(null);
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Edit key {editing?.key_preview}</DialogTitle>
+            <DialogContent
+              style={{ display: "flex", flexDirection: "column", gap: 12 }}
+            >
+              <Field
+                label="Key"
+                hint="Leave blank to keep the current secret unchanged"
+              >
+                <Input
+                  value={editSecret}
+                  type="password"
+                  placeholder={`Current: ${editing?.key_preview ?? ""}`}
+                  onChange={(_, d) => setEditSecret(d.value)}
+                />
+              </Field>
+              <Field label="Comment">
+                <Input
+                  value={editNote}
+                  placeholder="(none)"
+                  onChange={(_, d) => setEditNote(d.value)}
+                />
+              </Field>
+              <Field label="Pool">
+                <Input
+                  value={editPool}
+                  placeholder="(untagged)"
+                  onChange={(_, d) => setEditPool(d.value)}
+                />
+              </Field>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="subtle"
+                disabled={editBusy}
+                onClick={() => setEditing(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                appearance="primary"
+                disabled={editBusy}
+                onClick={saveEdit}
+              >
+                Save
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   );
 }
