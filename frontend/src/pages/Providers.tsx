@@ -30,7 +30,13 @@ import {
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-import type { AdapterMeta, Provider, Proxy, ProxyMode } from "../api/types";
+import type {
+  AdapterMeta,
+  ModelRoute,
+  Provider,
+  Proxy,
+  ProxyMode,
+} from "../api/types";
 import {
   DataTable,
   ErrorText,
@@ -53,6 +59,7 @@ interface FormState {
   drop_opencode_identity_block: boolean;
   proxy_mode: ProxyMode;
   proxy_ids: number[];
+  model_routes: string;
 }
 
 const EMPTY: FormState = {
@@ -66,7 +73,46 @@ const EMPTY: FormState = {
   drop_opencode_identity_block: false,
   proxy_mode: "all",
   proxy_ids: [],
+  model_routes: "",
 };
+
+// Model routes use one line per route: `alias => upstream @ pool`
+// (`=> upstream` and `@ pool` are both optional).
+function parseRoutes(text: string): ModelRoute[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      let rest = line;
+      let pool = "";
+      const at = rest.lastIndexOf("@");
+      if (at >= 0) {
+        pool = rest.slice(at + 1).trim();
+        rest = rest.slice(0, at).trim();
+      }
+      let alias = rest;
+      let upstream = "";
+      const arrow = rest.indexOf("=>");
+      if (arrow >= 0) {
+        alias = rest.slice(0, arrow).trim();
+        upstream = rest.slice(arrow + 2).trim();
+      }
+      return { alias, upstream, pool };
+    })
+    .filter((r) => r.alias);
+}
+
+function formatRoutes(routes: ModelRoute[]): string {
+  return (routes ?? [])
+    .map((r) => {
+      let s = r.alias;
+      if (r.upstream) s += ` => ${r.upstream}`;
+      if (r.pool) s += ` @ ${r.pool}`;
+      return s;
+    })
+    .join("\n");
+}
 
 const PROXY_MODE_LABEL: Record<ProxyMode, string> = {
   all: "All active proxies (default)",
@@ -103,6 +149,7 @@ export function Providers() {
       drop_opencode_identity_block: p.drop_opencode_identity_block,
       proxy_mode: p.proxy_mode,
       proxy_ids: p.proxy_ids ?? [],
+      model_routes: formatRoutes(p.model_routes),
     });
   }
 
@@ -137,6 +184,7 @@ export function Providers() {
       drop_opencode_identity_block: form.drop_opencode_identity_block,
       proxy_mode: form.proxy_mode,
       proxy_ids: form.proxy_mode === "selected" ? form.proxy_ids : [],
+      model_routes: parseRoutes(form.model_routes),
     };
     setSaving(true);
     try {
@@ -320,6 +368,21 @@ export function Providers() {
                   }
                 />
               </Field>
+              <Field
+                label="Model routes (alias → upstream, key pool)"
+                hint="One per line: alias => upstream @ pool. '=> upstream' and '@ pool' are optional. e.g. deepseek-v4-flash-lkd => deepseek-v4-flash @ leaked — routes that alias to the upstream model using only keys tagged 'leaked'."
+              >
+                <Textarea
+                  value={form?.model_routes ?? ""}
+                  rows={3}
+                  placeholder={
+                    "deepseek-v4-flash-lkd => deepseek-v4-flash @ leaked\ndeepseek-v4-flash => deepseek-v4-flash @ members"
+                  }
+                  onChange={(_, d) =>
+                    setForm((f) => (f ? { ...f, model_routes: d.value } : f))
+                  }
+                />
+              </Field>
               <div style={{ display: "flex", gap: 12 }}>
                 <Field label="Priority (lower = preferred)">
                   <SpinButton
@@ -353,7 +416,9 @@ export function Providers() {
               <Field label="Outbound proxy">
                 <Dropdown
                   value={
-                    form ? PROXY_MODE_LABEL[form.proxy_mode] : PROXY_MODE_LABEL.all
+                    form
+                      ? PROXY_MODE_LABEL[form.proxy_mode]
+                      : PROXY_MODE_LABEL.all
                   }
                   selectedOptions={form ? [form.proxy_mode] : ["all"]}
                   onOptionSelect={(_, d) =>
@@ -382,8 +447,8 @@ export function Providers() {
                       (form?.proxy_ids ?? [])
                         .map(
                           (id) =>
-                            (proxies.data ?? []).find((p) => p.id === id)?.url ??
-                            `#${id}`,
+                            (proxies.data ?? []).find((p) => p.id === id)
+                              ?.url ?? `#${id}`,
                         )
                         .join(", ") || ""
                     }
@@ -393,7 +458,9 @@ export function Providers() {
                         f
                           ? {
                               ...f,
-                              proxy_ids: d.selectedOptions.map((s) => Number(s)),
+                              proxy_ids: d.selectedOptions.map((s) =>
+                                Number(s),
+                              ),
                             }
                           : f,
                       )

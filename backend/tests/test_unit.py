@@ -243,7 +243,7 @@ async def test_routes_for_provider_proxy_modes():
 
     # all → whole pool (both proxies, no direct).
     routes = routes_for_provider(Provider(name="x", proxy_mode=ProxyMode.ALL.value), pool)
-    assert [pr.id for _, pr in routes] == [1, 2]
+    assert [pr.id for _, pr in routes if pr] == [1, 2]
 
     # all with empty pool → single direct route.
     routes = routes_for_provider(Provider(name="x", proxy_mode=ProxyMode.ALL.value), [])
@@ -256,12 +256,79 @@ async def test_routes_for_provider_proxy_modes():
     # selected → only the assigned proxy, no direct fallback.
     prov = Provider(name="x", proxy_mode=ProxyMode.SELECTED.value, proxy_ids=[2])
     routes = routes_for_provider(prov, pool)
-    assert [pr.id for _, pr in routes] == [2]
+    assert [pr.id for _, pr in routes if pr] == [2]
     assert routes[0][0].proxy_url == "http://b:2"
 
     # selected with no active assigned proxy → empty (caller skips the provider).
     prov = Provider(name="x", proxy_mode=ProxyMode.SELECTED.value, proxy_ids=[99])
     assert routes_for_provider(prov, pool) == []
+
+
+async def test_model_routes_and_key_pools():
+    from voidswitch.models.db import ApiKey
+    from voidswitch.services.selector import (
+        provider_serves_model,
+        resolve_model,
+        select_keys,
+    )
+
+    prov = Provider(
+        name="ds",
+        type="deepseek",
+        models=["deepseek-v4-flash"],
+        model_map={},
+        model_routes=[
+            {"alias": "deepseek-v4-flash-lkd", "upstream": "deepseek-v4-flash", "pool": "leaked"},
+            {"alias": "deepseek-v4-flash", "upstream": "deepseek-v4-flash", "pool": "members"},
+        ],
+    )
+    # An alias is served even if it isn't in `models`.
+    assert provider_serves_model(prov, "deepseek-v4-flash-lkd")
+    # Route resolution → (upstream, pool).
+    assert resolve_model(prov, "deepseek-v4-flash-lkd") == ("deepseek-v4-flash", "leaked")
+    assert resolve_model(prov, "deepseek-v4-flash") == ("deepseek-v4-flash", "members")
+    # No route → unchanged model, no pool.
+    assert resolve_model(prov, "other") == ("other", "")
+
+    def _key(h: str, pool: str) -> ApiKey:
+        return ApiKey(
+            provider_id=1,
+            key_ciphertext="x",
+            key_hash=h,
+            pool=pool,
+            status="active",
+            weight=1,
+            failed_count=0,
+            total_requests=0,
+        )
+
+    prov.keys = [_key("leaked-1", "leaked"), _key("member-1", "members")]
+    assert [k.key_hash for k in select_keys(prov, "leaked")] == ["leaked-1"]
+    assert [k.key_hash for k in select_keys(prov, "members")] == ["member-1"]
+    assert {k.key_hash for k in select_keys(prov, "")} == {"leaked-1", "member-1"}
+
+
+async def test_deleting_proxy_scrubs_provider_references(db):
+    from voidswitch.api.admin.proxies import delete_proxy
+    from voidswitch.models.db import Provider, Proxy, User
+
+    async with db.session() as session:
+        proxy = Proxy(url="http://gone:1", status="active")
+        session.add(proxy)
+        prov = Provider(name="p", type="openai", proxy_mode="selected")
+        session.add(prov)
+        await session.flush()
+        pid, provider_id = proxy.id, prov.id
+        prov.proxy_ids = [pid, 999]  # 999 is an already-dangling ref
+        await session.flush()
+
+    async with db.session() as session:
+        await delete_proxy(pid, session=session, _=User(sub="admin", role="owner"))
+
+    async with db.session() as session:
+        prov = await session.get(Provider, provider_id)
+        assert pid not in prov.proxy_ids  # the deleted proxy is scrubbed
+        assert prov.proxy_ids == [999]  # other entries are left untouched
 
 
 async def test_adapter_catalog_nonempty():

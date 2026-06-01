@@ -31,6 +31,7 @@ export interface Provider {
   drop_opencode_identity_block: boolean;
   proxy_mode: ProxyMode;
   proxy_ids: number[];
+  model_routes: ModelRoute[];
   created_at: string;
   updated_at: string;
   key_count: number;
@@ -39,10 +40,17 @@ export interface Provider {
 
 export type ProxyMode = "all" | "direct" | "selected";
 
+export interface ModelRoute {
+  alias: string;
+  upstream: string;
+  pool: string;
+}
+
 export interface ApiKey {
   id: number;
   provider_id: number;
   key_preview: string;
+  pool: string;
   status: string;
   failed_count: number;
   weight: number;

@@ -106,6 +106,7 @@ async def add_keys(
             status=KeyStatus.ACTIVE.value,
             weight=body.weight,
             note=body.note,
+            pool=body.pool or "",
         )
         session.add(key)
         created.append(key)
@@ -237,6 +238,8 @@ async def update_key(
         key.weight = body.weight
     if body.note is not None:
         key.note = body.note
+    if body.pool is not None:
+        key.pool = body.pool
     await session.flush()
     return key
 

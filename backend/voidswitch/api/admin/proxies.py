@@ -12,7 +12,7 @@ from voidswitch.constants import ProxyStatus
 from voidswitch.core.audit import record_audit
 from voidswitch.core.auth import require_staff
 from voidswitch.core.database import get_session
-from voidswitch.models.db import Proxy, User
+from voidswitch.models.db import Provider, Proxy, User
 from voidswitch.models.schemas import ProxyCreate, ProxyOut, ProxyUpdate
 from voidswitch.services.network import Route, probe_route
 
@@ -101,6 +101,12 @@ async def delete_proxy(
     proxy = await session.get(Proxy, proxy_id)
     if proxy is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Proxy not found.")
+    # Scrub this id from any provider's selected proxy_ids so no dangling
+    # reference is left behind. (proxy_ids is JSON — there's no FK to cascade.)
+    providers = (await session.execute(select(Provider))).scalars().all()
+    for p in providers:
+        if p.proxy_ids and proxy_id in p.proxy_ids:
+            p.proxy_ids = [pid for pid in p.proxy_ids if pid != proxy_id]
     await session.delete(proxy)
 
 

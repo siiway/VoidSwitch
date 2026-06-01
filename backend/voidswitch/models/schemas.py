@@ -43,6 +43,14 @@ class SessionOut(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
+class ModelRoute(BaseModel):
+    """Maps an inbound model alias to an upstream model + key pool."""
+
+    alias: str
+    upstream: str = ""  # "" → send the alias name unchanged
+    pool: str = ""  # "" → use any key; else only keys tagged with this pool
+
+
 class ProviderBase(BaseModel):
     name: str
     type: str = "openai"
@@ -61,6 +69,8 @@ class ProviderBase(BaseModel):
     proxy_mode: str = "all"
     # Proxy IDs used when proxy_mode == "selected".
     proxy_ids: list[int] = Field(default_factory=list)
+    # Alias → upstream model + key-pool routes.
+    model_routes: list[ModelRoute] = Field(default_factory=list)
 
 
 class ProviderCreate(ProviderBase):
@@ -82,6 +92,7 @@ class ProviderUpdate(BaseModel):
     drop_opencode_identity_block: bool | None = None
     proxy_mode: str | None = None
     proxy_ids: list[int] | None = None
+    model_routes: list[ModelRoute] | None = None
 
 
 class ProviderOut(ProviderBase):
@@ -104,12 +115,14 @@ class ApiKeyCreate(BaseModel):
     keys: list[str]
     weight: int = 1
     note: str | None = None
+    pool: str = ""  # optional tag applied to every key in this batch
 
 
 class ApiKeyUpdate(BaseModel):
     status: str | None = None
     weight: int | None = None
     note: str | None = None
+    pool: str | None = None
     enabled: bool | None = None  # convenience: maps to active/disabled
 
 
@@ -119,6 +132,7 @@ class ApiKeyOut(BaseModel):
     id: int
     provider_id: int
     key_preview: str
+    pool: str = ""
     status: str
     failed_count: int
     weight: int

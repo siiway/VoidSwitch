@@ -37,6 +37,7 @@ from voidswitch.services.providers.base import BaseProvider, ErrorClass
 from voidswitch.services.providers.registry import get_adapter
 from voidswitch.services.selector import (
     active_proxies,
+    resolve_model,
     routes_for_provider,
     select_keys,
     select_providers,
@@ -203,7 +204,9 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                 last_status = 502
                 continue
             adapter = get_adapter(provider)
-            keys = select_keys(provider)
+            # Alias routing: pick the upstream model + key pool for this inbound model.
+            upstream_model, key_pool = resolve_model(provider, req.model)
+            keys = select_keys(provider, key_pool)
             upstream_style = adapter.style
             timeout_override = provider.timeout_seconds or 0
             read_timeout = float(timeout_override) if timeout_override else request_timeout
@@ -222,7 +225,6 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                     last_status = 401
                     await session.flush()
                     continue  # next key
-                upstream_model = adapter.map_model(req.model)
                 body = _prepare_body(req, adapter, upstream_style, upstream_model)
                 headers = adapter.headers(plaintext, req.passthrough_headers or None)
 

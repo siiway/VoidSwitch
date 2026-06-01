@@ -27,7 +27,18 @@ def _lru_key(last_used: dt.datetime | None) -> dt.datetime:
     return last_used
 
 
+def match_model_route(provider: Provider, model: str) -> dict | None:
+    """The provider's alias route whose ``alias`` exactly equals ``model``, if any."""
+    for route in provider.model_routes or []:
+        if isinstance(route, dict) and route.get("alias") == model:
+            return route
+    return None
+
+
 def provider_serves_model(provider: Provider, model: str) -> bool:
+    # An exact model-route alias always counts (even if not in `models`).
+    if match_model_route(provider, model) is not None:
+        return True
     patterns = provider.models or []
     if not patterns:
         return False
@@ -35,6 +46,21 @@ def provider_serves_model(provider: Provider, model: str) -> bool:
         if pattern == "*" or pattern == model or fnmatch(model, pattern):
             return True
     return False
+
+
+def resolve_model(provider: Provider, model: str) -> tuple[str, str]:
+    """Resolve an inbound model to ``(upstream_model, key_pool)``.
+
+    A matching alias route wins (its ``upstream`` / ``pool``); otherwise the
+    upstream comes from ``model_map`` and the pool is empty (any key).
+    """
+    route = match_model_route(provider, model)
+    if route is not None:
+        upstream = route.get("upstream") or model
+        return upstream, route.get("pool", "") or ""
+    if provider.model_map:
+        return provider.model_map.get(model, model), ""
+    return model, ""
 
 
 async def select_providers(session: AsyncSession, model: str) -> list[Provider]:
@@ -47,9 +73,16 @@ async def select_providers(session: AsyncSession, model: str) -> list[Provider]:
     return matched
 
 
-def select_keys(provider: Provider) -> list[ApiKey]:
-    """Active keys for a provider, weighted-least-used first."""
+def select_keys(provider: Provider, pool: str = "") -> list[ApiKey]:
+    """Active keys for a provider, weighted-least-used first.
+
+    When ``pool`` is non-empty, only keys carrying that pool tag are used (so an
+    alias route can target e.g. just the "leaked" or "members" keys). An empty
+    pool uses every active key regardless of tag.
+    """
     active = [k for k in provider.keys if k.status == KeyStatus.ACTIVE.value]
+    if pool:
+        active = [k for k in active if (k.pool or "") == pool]
 
     def sort_key(k: ApiKey) -> tuple[int, float, dt.datetime]:
         weight = max(k.weight, 1)

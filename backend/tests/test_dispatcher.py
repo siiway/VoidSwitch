@@ -41,6 +41,21 @@ async def _add_key(db, provider_id: int, raw: str) -> int:
         return key.id
 
 
+async def _add_key_pool(db, provider_id: int, raw: str, pool: str) -> int:
+    async with db.session() as session:
+        key = ApiKey(
+            provider_id=provider_id,
+            key_ciphertext=encrypt_secret(raw, secret=get_settings().server.secret_key),
+            key_hash=hash_token(raw),
+            key_preview=raw[:4],
+            status=KeyStatus.ACTIVE.value,
+            pool=pool,
+        )
+        session.add(key)
+        await session.flush()
+        return key.id
+
+
 async def _add_proxy(db, url: str) -> int:
     async with db.session() as session:
         proxy = Proxy(url=url, status=ProxyStatus.ACTIVE.value)
@@ -217,6 +232,34 @@ async def test_dispatch_selected_with_all_assigned_down_skips_provider(db, seede
     result = await _dispatch_hi(seeded)
     assert result.status_code == 502
     assert result.attempts == 0  # never attempted — no route available
+
+
+async def test_dispatch_model_route_targets_key_pool(db, seeded):
+    from voidswitch.models.db import Provider
+
+    # A "leaked"-pooled key, plus an alias route to the deepseek upstream on it.
+    leaked_id = await _add_key_pool(db, seeded["provider_id"], "sk-leaked-1", "leaked")
+    async with db.session() as session:
+        prov = await session.get(Provider, seeded["provider_id"])
+        prov.model_routes = [{"alias": "ds-lkd", "upstream": "deepseek-chat", "pool": "leaked"}]
+        await session.flush()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.OPENAI,
+                model="ds-lkd",
+                payload={"model": "ds-lkd", "messages": [{"role": "user", "content": "hi"}]},
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+
+    assert result.status_code == 200
+    log = await _last_log(db)
+    # Used the leaked-pool key, not the seeded untagged one.
+    assert log is not None and log.key_id == leaked_id
 
 
 async def test_dispatch_no_provider_returns_404(db, seeded):

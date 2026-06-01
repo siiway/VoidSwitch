@@ -23,7 +23,9 @@ class DeepSeekProvider(BaseProvider):
     type = "deepseek"
     style = ApiStyle.OPENAI  # DeepSeek speaks the OpenAI Chat Completions dialect.
     default_base_url = "https://api.deepseek.com"
-    default_models = ("deepseek-chat", "deepseek-reasoner")
+    # V4 model IDs. The legacy deepseek-chat / deepseek-reasoner aliases are retired
+    # after 2026-07-24 (they map to deepseek-v4-flash non-thinking / thinking).
+    default_models = ("deepseek-v4-flash", "deepseek-v4-pro")
     chat_suffix = "/chat/completions"
     models_suffix = "/models"
     balance_suffix = "/user/balance"

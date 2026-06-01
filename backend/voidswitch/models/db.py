@@ -102,6 +102,11 @@ class Provider(Base, TimestampMixin):
     models: Mapped[list[str]] = mapped_column(JSON, default=list)
     # Optional remap of inbound model name -> upstream model name.
     model_map: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Alias routes: each {"alias", "upstream", "pool"} maps an inbound model name
+    # to an upstream model served by a specific key pool. Lets e.g.
+    # "deepseek-v4-flash-lkd" → "deepseek-v4-flash" on the "leaked" key pool, while
+    # "deepseek-v4-flash" → same upstream on the "members" pool. See ApiKey.pool.
+    model_routes: Mapped[list[Any]] = mapped_column(JSON, default=list)
     balance_url: Mapped[str | None] = mapped_column(String(512), default=None)
     extra_headers: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=0)  # 0 = use global
@@ -130,6 +135,9 @@ class ApiKey(Base, TimestampMixin):
     key_ciphertext: Mapped[str] = mapped_column(Text)
     key_hash: Mapped[str] = mapped_column(String(64), index=True)
     key_preview: Mapped[str] = mapped_column(String(32), default="")
+    # Optional pool tag, e.g. "leaked" / "members". Empty = untagged. A model
+    # route with a matching pool restricts dispatch to keys carrying that tag.
+    pool: Mapped[str] = mapped_column(String(64), default="", index=True)
     status: Mapped[str] = mapped_column(String(32), default=KeyStatus.ACTIVE.value, index=True)
     failed_count: Mapped[int] = mapped_column(Integer, default=0)
     weight: Mapped[int] = mapped_column(Integer, default=1)

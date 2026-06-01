@@ -92,6 +92,7 @@ async def create_provider(
         drop_opencode_identity_block=body.drop_opencode_identity_block,
         proxy_mode=body.proxy_mode,
         proxy_ids=body.proxy_ids,
+        model_routes=[r.model_dump() for r in body.model_routes],
     )
     session.add(provider)
     await session.flush()

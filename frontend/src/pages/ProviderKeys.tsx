@@ -45,6 +45,7 @@ export function ProviderKeys() {
     [providerId],
   );
   const [bulk, setBulk] = useState("");
+  const [pool, setPool] = useState("");
   const [adding, setAdding] = useState(false);
 
   // Claude subscription OAuth login state.
@@ -114,9 +115,13 @@ export function ProviderKeys() {
     try {
       const created = await api.post<ApiKey[]>(
         `/api/admin/providers/${providerId}/keys`,
-        { keys: list },
+        { keys: list, pool: pool.trim() },
       );
-      notify("Keys added", `${created.length} new key(s)`, "success");
+      notify(
+        "Keys added",
+        `${created.length} new key(s)${pool.trim() ? ` in pool "${pool.trim()}"` : ""}`,
+        "success",
+      );
       setBulk("");
       keys.reload();
     } catch (e) {
@@ -238,6 +243,16 @@ export function ProviderKeys() {
           onChange={(_, d) => setBulk(d.value)}
         />
       </Field>
+      <Field
+        label="Key pool (optional tag — e.g. leaked, members)"
+        style={{ marginBottom: 8, maxWidth: 320 }}
+      >
+        <Input
+          value={pool}
+          placeholder="(untagged)"
+          onChange={(_, d) => setPool(d.value)}
+        />
+      </Field>
       <Button
         appearance="primary"
         disabled={adding || !bulk.trim()}
@@ -256,6 +271,7 @@ export function ProviderKeys() {
           <TableHeader>
             <TableRow>
               <TableHeaderCell>Key</TableHeaderCell>
+              <TableHeaderCell>Pool</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
               <TableHeaderCell>Fails</TableHeaderCell>
               <TableHeaderCell>Requests</TableHeaderCell>
@@ -269,6 +285,9 @@ export function ProviderKeys() {
               <TableRow key={k.id}>
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {k.key_preview}
+                </TableCell>
+                <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                  {k.pool || "—"}
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={k.status} />

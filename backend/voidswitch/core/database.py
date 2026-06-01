@@ -80,6 +80,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("providers", "drop_opencode_identity_block", "BOOLEAN NOT NULL DEFAULT 0"),
     ("providers", "proxy_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
     ("providers", "proxy_ids", "JSON NOT NULL DEFAULT '[]'"),
+    ("providers", "model_routes", "JSON NOT NULL DEFAULT '[]'"),
+    ("api_keys", "pool", "VARCHAR(64) NOT NULL DEFAULT ''"),
 )
 
 
