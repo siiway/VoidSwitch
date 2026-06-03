@@ -304,6 +304,51 @@ async def test_dispatch_translates_anthropic_inbound_to_openai_upstream(db, seed
     assert b'"type": "message"' in (result.content or b"")
 
 
+async def test_dispatch_backfills_reasoning_for_deepseek_tool_turn(db, seeded):
+    """OpenCode (Anthropic dialect) replaying a tool-call turn whose reasoning was
+    dropped by the AI SDK must still reach DeepSeek with reasoning_content, or
+    thinking-mode rejects it with a 400."""
+    captured: dict = {}
+
+    def _cb(request: httpx.Request) -> httpx.Response:
+        import json
+
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=OAI_RESPONSE)
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(side_effect=_cb)
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.ANTHROPIC,
+                model="deepseek-chat",
+                payload={
+                    "model": "deepseek-chat",
+                    "max_tokens": 64,
+                    "messages": [
+                        {"role": "user", "content": "weather?"},
+                        # assistant tool call with NO thinking block (dropped upstream)
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "tool_use", "id": "tu_1",
+                                 "name": "get_weather", "input": {"q": "x"}}
+                            ],
+                        },
+                        {"role": "user", "content": [
+                            {"type": "tool_result", "tool_use_id": "tu_1", "content": "sunny"}
+                        ]},
+                    ],
+                },
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+    assert result.status_code == 200
+    assistant = next(m for m in captured["body"]["messages"] if m["role"] == "assistant")
+    assert assistant.get("reasoning_content")  # backfilled so DeepSeek accepts it
+
+
 async def test_dispatch_streaming_passthrough(db, seeded):
     sse = (
         b'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'

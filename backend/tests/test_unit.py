@@ -305,6 +305,64 @@ async def test_anthropic_stream_thinking_becomes_reasoning_content():
 # --------------------------------------------------------------------------- #
 
 
+async def test_deepseek_prepare_body_backfills_missing_reasoning():
+    """A tool-calling assistant turn that lost its reasoning_content (the AI-SDK
+    multi-step bug) must be backfilled, or thinking-mode DeepSeek returns 400."""
+    adapter = DeepSeekProvider(
+        Provider(name="ds", type="deepseek", base_url="https://api.deepseek.com")
+    )
+    payload = {
+        "model": "deepseek-v4-pro",
+        "messages": [
+            {"role": "user", "content": "weather?"},
+            # tool call WITHOUT reasoning_content (dropped upstream)
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "t1", "type": "function",
+                     "function": {"name": "get_weather", "arguments": "{}"}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "t1", "content": "sunny"},
+        ],
+    }
+    out = adapter.prepare_body(payload)
+    assistant = next(m for m in out["messages"] if m["role"] == "assistant")
+    assert assistant["reasoning_content"]  # backfilled, non-empty
+    # The inbound payload is never mutated in place (copy-on-write).
+    src_assistant = next(m for m in payload["messages"] if m["role"] == "assistant")
+    assert "reasoning_content" not in src_assistant
+
+
+async def test_deepseek_prepare_body_preserves_real_reasoning():
+    """Reasoning the client DID preserve is left untouched (no placeholder)."""
+    adapter = DeepSeekProvider(
+        Provider(name="ds", type="deepseek", base_url="https://api.deepseek.com")
+    )
+    payload = {
+        "model": "deepseek-v4-pro",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": "the real chain of thought",
+                "tool_calls": [
+                    {"id": "t1", "type": "function",
+                     "function": {"name": "f", "arguments": "{}"}}
+                ],
+            },
+        ],
+    }
+    out = adapter.prepare_body(payload)
+    assert out["messages"][0]["reasoning_content"] == "the real chain of thought"
+    # A plain assistant turn (no tool calls) is never given a placeholder.
+    plain = adapter.prepare_body(
+        {"messages": [{"role": "assistant", "content": "hi"}]}
+    )
+    assert "reasoning_content" not in plain["messages"][0]
+
+
 async def test_deepseek_classify():
     provider = Provider(name="ds", type="deepseek", base_url="https://api.deepseek.com")
     adapter = DeepSeekProvider(provider)
