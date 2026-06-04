@@ -124,6 +124,17 @@ const isOpus = (id: string) => /opus/i.test(id)
  * ("The reasoning_content in the thinking mode must be passed back to the API.").
  */
 const isReasoningModel = (id: string) => isClaude(id) || /deepseek|reasoner|-r1\b|qwq|thinking/i.test(id)
+/**
+ * Reasoning models that VoidSwitch serves in the *OpenAI* dialect (DeepSeek &c).
+ * These must be driven through `@ai-sdk/openai-compatible`, not Anthropic, because
+ * their chain-of-thought round-trips as the `reasoning_content` field. OpenCode's
+ * `interleaved:{field}` mechanism only re-attaches that field on the openai-compatible
+ * SDK; on the Anthropic SDK it is silently dropped, so the upstream rejects the next
+ * turn with "The reasoning_content in the thinking mode must be passed back to the API."
+ * We keep them inside this single provider via a per-model `provider.npm` override
+ * (which OpenCode honours above the provider-level npm), so they reuse the same token.
+ */
+const isOpenAICompatModel = (id: string) => /deepseek/i.test(id)
 /** Effort param is GA on Opus 4.6+ and Sonnet 4.6 ("Opus 4.6+, Sonnet 4.6"). */
 const effortCapable = (id: string) => /opus-4-[6-9]/.test(id) || /sonnet-4-[6-9]/.test(id)
 /** `xhigh` is "Opus 4.8/4.7 only". */
@@ -168,11 +179,13 @@ function prettyName(id: string): string {
 function buildModel(id: string, gatewayV1: string): Record<string, any> {
   const claude = isClaude(id)
   const reasoning = isReasoningModel(id)
+  const oaiCompat = isOpenAICompatModel(id)
+  const npm = oaiCompat ? "@ai-sdk/openai-compatible" : "@ai-sdk/anthropic"
   const model: Record<string, any> = {
     id,
     providerID: PROVIDER_ID,
     name: prettyName(id),
-    api: { id, url: gatewayV1, npm: "@ai-sdk/anthropic" },
+    api: { id, url: gatewayV1, npm },
     status: "active",
     release_date: "2025-01-01",
     capabilities: {
@@ -182,12 +195,20 @@ function buildModel(id: string, gatewayV1: string): Record<string, any> {
       toolcall: true,
       input: { text: true, image: claude, audio: false, video: false, pdf: claude },
       output: { text: true, image: false, audio: false, video: false, pdf: false },
+      // OpenAI-dialect reasoners (DeepSeek) re-attach CoT via `reasoning_content`.
+      ...(oaiCompat ? { interleaved: { field: "reasoning_content" } } : {}),
     },
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
     limit: { context: claude ? 1_000_000 : 200_000, output: isOpus(id) ? 128_000 : claude ? 64_000 : 8_192 },
     options: {},
     headers: {},
   }
+
+  // Per-model SDK override: keep these inside the single VoidSwitch provider (one
+  // token, one auth) but route them through the openai-compatible SDK → the gateway's
+  // OpenAI `/chat/completions` endpoint. OpenCode resolves `provider.npm` ahead of the
+  // provider-level npm, so the Anthropic default does not apply to these models.
+  if (oaiCompat) model.provider = { npm: "@ai-sdk/openai-compatible", api: gatewayV1 }
 
   // Expose effort levels (and fast mode) as picker variants for capable models.
   if (claude && effortCapable(id)) {
@@ -293,6 +314,22 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         existing.models && Object.keys(existing.models).length
           ? existing.models
           : Object.fromEntries(FALLBACK_MODELS.map((id) => [id, {}]))
+      // Auto-wire OpenAI-dialect reasoners (DeepSeek): a user only has to list the id
+      // (e.g. "deepseek-v4-flash-lkd": {}). We force the per-model openai-compatible
+      // SDK override + the `reasoning_content` interleaved field so chain-of-thought
+      // round-trips correctly — while everything else stays on the Anthropic dialect
+      // and the single shared VoidSwitch token. (User-supplied fields win, except the
+      // provider override, which must point at this gateway's OpenAI endpoint.)
+      for (const [mid, mcfg] of Object.entries(models)) {
+        if (!isOpenAICompatModel(mid)) continue
+        models[mid] = {
+          reasoning: true,
+          tool_call: true,
+          interleaved: { field: "reasoning_content" },
+          ...(mcfg as Record<string, any>),
+          provider: { npm: "@ai-sdk/openai-compatible", api: gatewayV1 },
+        }
+      }
       cfg.provider[PROVIDER_ID] = {
         name: "VoidSwitch",
         ...existing,

@@ -106,6 +106,43 @@ Unsupported levels are **clamped exactly as Claude Code does** — e.g. selectin
 `xhigh` or `max` on Sonnet falls back to `high`; only Opus 4.8/4.7 expose
 `xhigh`/`ultracode`.
 
+## DeepSeek & other OpenAI-dialect reasoners
+
+Claude (and MiMo) speak the **Anthropic** dialect, so they ride the provider's
+`@ai-sdk/anthropic` path. DeepSeek, however, is served by VoidSwitch in the
+**OpenAI** dialect, and its chain-of-thought round-trips as the `reasoning_content`
+field. OpenCode only re-attaches that field (its `interleaved` mechanism) on the
+`@ai-sdk/openai-compatible` SDK — on the Anthropic SDK it is silently dropped, and
+the upstream then rejects the next tool-call turn with:
+
+> `The reasoning_content in the thinking mode must be passed back to the API.`
+
+To handle this, just **list the DeepSeek model id** under the `voidswitch` provider.
+The plugin auto-wires it: it forces a per-model `@ai-sdk/openai-compatible` override
+(routing it to the gateway's OpenAI `/chat/completions` endpoint) and enables the
+`reasoning_content` interleaved field — all while reusing the **same** VoidSwitch
+token and auth as your Claude models.
+
+```jsonc
+{
+  "provider": {
+    "voidswitch": {
+      "models": {
+        // Claude / MiMo need nothing — they use the Anthropic dialect.
+        // DeepSeek: id is enough; the plugin sets the openai-compatible override
+        // + reasoning_content passback automatically.
+        "deepseek-v4-flash-lkd": { "name": "DeepSeek V4 Flash" },
+        "deepseek-v4-pro-lkd":   { "name": "DeepSeek V4 Pro" }
+      }
+    }
+  }
+}
+```
+
+Any model id matching `deepseek` is auto-wired this way; everything else stays on
+the Anthropic dialect. (Effort/fast/thinking variants are Claude-only and are not
+applied to DeepSeek.)
+
 ## Slash commands
 
 The plugin also registers Claude Code-style slash commands that set the effort/mode
