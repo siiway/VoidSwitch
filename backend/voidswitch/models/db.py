@@ -86,6 +86,14 @@ class VoidToken(Base, TimestampMixin):
 
     user: Mapped[User] = relationship(back_populates="tokens", lazy="selectin")
 
+    @property
+    def username(self) -> str | None:
+        """Human-friendly owner label for API output."""
+        user = self.user
+        if user is None:
+            return None
+        return user.username or user.name or user.email
+
 
 class Provider(Base, TimestampMixin):
     __tablename__ = "providers"

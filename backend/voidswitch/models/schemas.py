@@ -236,6 +236,7 @@ class VoidTokenOut(BaseModel):
 
     id: int
     user_id: int
+    username: str | None = None
     name: str
     token_prefix: str
     enabled: bool

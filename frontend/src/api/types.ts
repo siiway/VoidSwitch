@@ -82,6 +82,7 @@ export interface Proxy {
 export interface VoidToken {
   id: number;
   user_id: number;
+  username?: string | null;
   name: string;
   token_prefix: string;
   enabled: boolean;

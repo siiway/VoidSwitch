@@ -45,7 +45,7 @@ async def create_token(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Target user not found.")
     secret = generate_void_token()
     token = VoidToken(
-        user_id=target_user_id,
+        user=owner,
         name=body.name,
         token_hash=hash_token(secret),
         token_prefix=token_fingerprint(secret),

@@ -127,7 +127,7 @@ export function Tokens() {
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {t.token_prefix}
                 </TableCell>
-                <TableCell>{t.user_id}</TableCell>
+                <TableCell>{t.username ?? `#${t.user_id}`}</TableCell>
                 <TableCell>{t.total_requests}</TableCell>
                 <TableCell>{t.total_tokens}</TableCell>
                 <TableCell>
