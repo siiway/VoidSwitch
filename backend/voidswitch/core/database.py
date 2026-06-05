@@ -86,6 +86,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("api_keys", "pool", "VARCHAR(64) NOT NULL DEFAULT ''"),
     ("api_keys", "added_by", "INTEGER"),
     ("api_keys", "added_by_name", "VARCHAR(255)"),
+    ("audit_logs", "sensitive_ciphertext", "TEXT"),
 )
 
 

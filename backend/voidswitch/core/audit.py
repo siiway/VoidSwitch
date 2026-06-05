@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voidswitch.core.security import encrypt_secret
 from voidswitch.models.db import AuditLog
 
 
@@ -19,8 +21,20 @@ async def record_audit(
     target_id: str | int | None = None,
     detail: dict[str, Any] | None = None,
     ip: str | None = None,
+    sensitive: dict[str, Any] | None = None,
+    secret_key: str | None = None,
 ) -> None:
-    """Append an administrative audit entry. Caller owns the transaction."""
+    """Append an administrative audit entry. Caller owns the transaction.
+
+    ``sensitive`` carries owner-only context (e.g. plaintext keys). It is stored
+    encrypted at rest and only ever decrypted for owners on an explicit request;
+    it is never returned in the normal audit listing. Encryption requires
+    ``secret_key`` (the app secret) — without it the sensitive blob is dropped.
+    """
+    sensitive_ciphertext: str | None = None
+    if sensitive and secret_key:
+        sensitive_ciphertext = encrypt_secret(json.dumps(sensitive), secret=secret_key)
+
     session.add(
         AuditLog(
             action=action,
@@ -30,5 +44,6 @@ async def record_audit(
             target_id=str(target_id) if target_id is not None else None,
             detail=detail or {},
             ip=ip,
+            sensitive_ciphertext=sensitive_ciphertext,
         )
     )

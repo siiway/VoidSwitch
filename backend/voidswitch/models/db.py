@@ -212,6 +212,10 @@ class AuditLog(Base):
     target_id: Mapped[str | None] = mapped_column(String(64), default=None)
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     ip: Mapped[str | None] = mapped_column(String(64), default=None)
+    # Encrypted (Fernet) JSON blob with owner-only sensitive context, e.g. the
+    # plaintext of keys added or the full details of a deleted key. Never exposed
+    # to admins or members; revealed to owners on explicit, confirmed request.
+    sensitive_ciphertext: Mapped[str | None] = mapped_column(Text, default=None)
 
 
 class RequestLog(Base):

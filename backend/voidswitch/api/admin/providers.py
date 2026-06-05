@@ -31,7 +31,7 @@ def _to_out(provider: Provider, *, redact: bool = False) -> ProviderOut:
     if redact:
         # Members may view providers (to add keys) but must not see potentially
         # secret config such as custom auth headers.
-        out.extra_headers = {k: "***" for k in out.extra_headers}
+        out.extra_headers = dict.fromkeys(out.extra_headers, "***")
     return out
 
 

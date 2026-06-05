@@ -15,10 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus
 from voidswitch.core.audit import record_audit
-from voidswitch.core.auth import actor_display_name, get_current_user, is_staff
+from voidswitch.core.auth import (
+    actor_display_name,
+    get_current_user,
+    is_staff,
+    require_owner,
+)
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
-from voidswitch.core.security import encrypt_secret, hash_token
+from voidswitch.core.security import decrypt_secret, encrypt_secret, hash_token
 from voidswitch.models.db import ApiKey, Provider, User
 from voidswitch.models.schemas import (
     ApiKeyCreate,
@@ -105,6 +110,7 @@ async def add_keys(
     }
     created: list[ApiKey] = []
     seen: set[str] = set()
+    sensitive_keys: list[dict[str, str | None]] = []
     for line in body.keys:
         raw, comment = _parse_key_line(line)
         if not raw:
@@ -113,6 +119,14 @@ async def add_keys(
         if digest in existing_hashes or digest in seen:
             continue
         seen.add(digest)
+        sensitive_keys.append(
+            {
+                "key": raw,
+                "preview": _preview(raw),
+                "note": comment or body.note,
+                "pool": body.pool or "",
+            }
+        )
         key = ApiKey(
             provider_id=provider_id,
             key_ciphertext=encrypt_secret(raw, secret=settings.server.secret_key),
@@ -140,6 +154,8 @@ async def add_keys(
         target_type="provider",
         target_id=provider_id,
         detail={"added": len(created)},
+        sensitive={"keys": sensitive_keys},
+        secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
     )
     return created
@@ -227,6 +243,8 @@ async def oauth_complete(
         target_type="provider",
         target_id=provider_id,
         detail={"key_id": key.id, "scopes": bundle.get("scopes", [])},
+        sensitive={"keys": [{"key": plaintext, "preview": _oauth_preview(bundle)}]},
+        secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
     )
     return key
@@ -293,11 +311,67 @@ async def update_key(
 async def delete_key(
     provider_id: int,
     key_id: int,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> None:
     key = await session.get(ApiKey, key_id)
     if key is None or key.provider_id != provider_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
     _ensure_can_manage_key(user, key)
+    # Capture the full (decrypted) key so an owner can recover/inspect it later.
+    plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
+    await record_audit(
+        session,
+        action="key.delete",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="provider",
+        target_id=provider_id,
+        detail={"key_id": key.id, "preview": key.key_preview, "pool": key.pool},
+        sensitive={
+            "keys": [
+                {
+                    "key": plaintext,
+                    "preview": key.key_preview,
+                    "note": key.note,
+                    "pool": key.pool,
+                    "added_by_name": key.added_by_name,
+                }
+            ]
+        },
+        secret_key=settings.server.secret_key,
+        ip=request.client.host if request.client else None,
+    )
     await session.delete(key)
+
+
+@router.post("/{key_id}/reveal")
+async def reveal_key(
+    provider_id: int,
+    key_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    actor: User = Depends(require_owner),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    """Owner-only: decrypt and return an existing provider key's plaintext.
+
+    Guarded behind a secondary confirmation in the UI; every reveal is audited.
+    """
+    key = await session.get(ApiKey, key_id)
+    if key is None or key.provider_id != provider_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+    plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
+    await record_audit(
+        session,
+        action="key.reveal",
+        actor_sub=actor.sub,
+        actor_name=actor_display_name(actor),
+        target_type="provider",
+        target_id=provider_id,
+        detail={"key_id": key.id, "preview": key.key_preview},
+        ip=request.client.host if request.client else None,
+    )
+    return {"id": key.id, "preview": key.key_preview, "key": plaintext}

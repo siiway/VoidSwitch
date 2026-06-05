@@ -287,6 +287,9 @@ class AuditLogOut(BaseModel):
     target_id: str | None = None
     detail: dict = Field(default_factory=dict)
     ip: str | None = None
+    # True when this entry carries an owner-only sensitive payload that can be
+    # revealed via the dedicated endpoint. The payload itself is never inlined.
+    has_sensitive: bool = False
 
 
 class RequestLogOut(BaseModel):
@@ -295,6 +298,10 @@ class RequestLogOut(BaseModel):
     id: int
     ts: dt.datetime
     user_sub: str | None = None
+    # Resolved, human-friendly caller identity + the Void-Token used.
+    user_name: str | None = None
+    token_id: int | None = None
+    token_name: str | None = None
     provider_name: str | None = None
     model: str | None = None
     inbound_style: str | None = None

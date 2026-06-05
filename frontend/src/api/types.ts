@@ -128,12 +128,16 @@ export interface AuditLog {
   target_id?: string | null;
   detail: Record<string, unknown>;
   ip?: string | null;
+  has_sensitive?: boolean;
 }
 
 export interface RequestLog {
   id: number;
   ts: string;
   user_sub?: string | null;
+  user_name?: string | null;
+  token_id?: number | null;
+  token_name?: string | null;
   provider_name?: string | null;
   model?: string | null;
   inbound_style?: string | null;

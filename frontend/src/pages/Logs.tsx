@@ -1,6 +1,12 @@
 import {
   Badge,
   Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   Tab,
   TabList,
   TableBody,
@@ -9,8 +15,10 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  Textarea,
   tokens,
 } from "@fluentui/react-components";
+import { EyeRegular } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -22,6 +30,8 @@ import {
   PageHeader,
   formatDate,
   useAsync,
+  useConfirm,
+  useNotify,
 } from "../components/ui";
 
 const PAGE = 50;
@@ -73,10 +83,12 @@ function RequestLogs() {
 
   return (
     <>
-      <DataTable ariaLabel="Requests" minWidth={900}>
+      <DataTable ariaLabel="Requests" minWidth={1040}>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Time</TableHeaderCell>
+            <TableHeaderCell>User</TableHeaderCell>
+            <TableHeaderCell>Token</TableHeaderCell>
             <TableHeaderCell>Model</TableHeaderCell>
             <TableHeaderCell>Provider</TableHeaderCell>
             <TableHeaderCell>Route</TableHeaderCell>
@@ -91,6 +103,10 @@ function RequestLogs() {
             <TableRow key={r.id}>
               <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                 {formatDate(r.ts)}
+              </TableCell>
+              <TableCell>{r.user_name ?? r.user_sub ?? "—"}</TableCell>
+              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                {r.token_name ?? (r.token_id != null ? `#${r.token_id}` : "—")}
               </TableCell>
               <TableCell>{r.model ?? "—"}</TableCell>
               <TableCell>{r.provider_name ?? "—"}</TableCell>
@@ -125,11 +141,46 @@ function RequestLogs() {
 }
 
 function AuditLogs() {
+  const { isOwner } = useAuth();
+  const confirm = useConfirm();
+  const notify = useNotify();
   const [offset, setOffset] = useState(0);
+  const [revealed, setRevealed] = useState<{
+    action: string;
+    sensitive: unknown;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
   const logs = useAsync<Page<AuditLog>>(
     () => api.get("/api/admin/logs/audit", { limit: PAGE, offset }),
     [offset],
   );
+
+  async function reveal(a: AuditLog) {
+    const ok = await confirm({
+      title: "Reveal sensitive data",
+      message:
+        "This shows protected secrets (e.g. plaintext API keys). The reveal is " +
+        "recorded in the audit trail. Continue?",
+      confirmLabel: "Reveal",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ action: string; sensitive: unknown }>(
+        `/api/admin/logs/audit/${a.id}/reveal`,
+      );
+      setRevealed({ action: r.action, sensitive: r.sensitive });
+    } catch (e) {
+      notify(
+        "Reveal failed",
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
   if (logs.loading) return <Loading />;
   if (logs.error) return <ErrorText error={logs.error} />;
@@ -147,6 +198,7 @@ function AuditLogs() {
             <TableHeaderCell>Target</TableHeaderCell>
             <TableHeaderCell>Detail</TableHeaderCell>
             <TableHeaderCell>IP</TableHeaderCell>
+            {isOwner ? <TableHeaderCell>Sensitive</TableHeaderCell> : null}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -166,11 +218,61 @@ function AuditLogs() {
                 {JSON.stringify(a.detail)}
               </TableCell>
               <TableCell>{a.ip ?? "—"}</TableCell>
+              {isOwner ? (
+                <TableCell>
+                  {a.has_sensitive ? (
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<EyeRegular />}
+                      disabled={busy}
+                      onClick={() => reveal(a)}
+                    >
+                      Reveal
+                    </Button>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+              ) : null}
             </TableRow>
           ))}
         </TableBody>
       </DataTable>
       <Pager total={data.total} offset={offset} onChange={setOffset} />
+
+      <Dialog
+        open={revealed !== null}
+        onOpenChange={(_, d) => !d.open && setRevealed(null)}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Sensitive data · {revealed?.action}</DialogTitle>
+            <DialogContent>
+              <Text
+                size={200}
+                block
+                style={{ color: tokens.colorNeutralForeground3, marginBottom: 8 }}
+              >
+                Handle with care — these are plaintext secrets.
+              </Text>
+              <Textarea
+                readOnly
+                value={
+                  revealed ? JSON.stringify(revealed.sensitive, null, 2) : ""
+                }
+                rows={12}
+                style={{ width: "100%", fontFamily: "monospace" }}
+              />
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="primary" onClick={() => setRevealed(null)}>
+                Close
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </>
   );
 }

@@ -22,6 +22,7 @@ import {
   ArrowLeftRegular,
   DeleteRegular,
   EditRegular,
+  EyeRegular,
   PersonRegular,
 } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
@@ -47,7 +48,7 @@ export function ProviderKeys() {
   const navigate = useNavigate();
   const notify = useNotify();
   const confirm = useConfirm();
-  const { user: me, isStaff } = useAuth();
+  const { user: me, isStaff, isOwner } = useAuth();
   const canManage = (k: ApiKey) => isStaff || k.added_by === me?.id;
   const provider = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
   const keys = useAsync<ApiKey[]>(
@@ -64,6 +65,13 @@ export function ProviderKeys() {
   const [editNote, setEditNote] = useState("");
   const [editPool, setEditPool] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+
+  // Reveal-key dialog state (owner-only).
+  const [revealed, setRevealed] = useState<{
+    preview: string;
+    key: string;
+  } | null>(null);
+  const [revealBusy, setRevealBusy] = useState(false);
 
   // Claude subscription OAuth login state.
   const [oauthState, setOauthState] = useState<string | null>(null);
@@ -201,6 +209,33 @@ export function ProviderKeys() {
     if (!ok) return;
     await api.del(`/api/admin/providers/${providerId}/keys/${k.id}`);
     keys.reload();
+  }
+
+  async function reveal(k: ApiKey) {
+    const ok = await confirm({
+      title: "Reveal key",
+      message:
+        `Show the full plaintext secret for ${k.key_preview}? ` +
+        "This reveal is recorded in the audit trail.",
+      confirmLabel: "Reveal",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setRevealBusy(true);
+    try {
+      const r = await api.post<{ preview: string; key: string }>(
+        `/api/admin/providers/${providerId}/keys/${k.id}/reveal`,
+      );
+      setRevealed({ preview: r.preview, key: r.key });
+    } catch (e) {
+      notify(
+        "Reveal failed",
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setRevealBusy(false);
+    }
   }
 
   return (
@@ -361,6 +396,17 @@ export function ProviderKeys() {
                   {k.disabled_reason ?? "—"}
                 </TableCell>
                 <TableCell>
+                  {isOwner && (
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<EyeRegular />}
+                      disabled={revealBusy}
+                      onClick={() => reveal(k)}
+                    >
+                      Reveal
+                    </Button>
+                  )}
                   {canManage(k) ? (
                     <>
                       <Button
@@ -386,9 +432,11 @@ export function ProviderKeys() {
                       />
                     </>
                   ) : (
-                    <span style={{ color: tokens.colorNeutralForeground3 }}>
-                      —
-                    </span>
+                    !isOwner && (
+                      <span style={{ color: tokens.colorNeutralForeground3 }}>
+                        —
+                      </span>
+                    )
                   )}
                 </TableCell>
               </TableRow>
@@ -449,6 +497,40 @@ export function ProviderKeys() {
                 onClick={saveEdit}
               >
                 Save
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={revealed !== null}
+        onOpenChange={(_, d) => !d.open && setRevealed(null)}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Key · {revealed?.preview}</DialogTitle>
+            <DialogContent>
+              <Text
+                size={200}
+                block
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  marginBottom: 8,
+                }}
+              >
+                Plaintext secret — handle with care.
+              </Text>
+              <Textarea
+                readOnly
+                value={revealed?.key ?? ""}
+                rows={6}
+                style={{ width: "100%", fontFamily: "monospace" }}
+              />
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="primary" onClick={() => setRevealed(null)}>
+                Close
               </Button>
             </DialogActions>
           </DialogBody>
