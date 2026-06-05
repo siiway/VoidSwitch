@@ -51,6 +51,7 @@ async def dev_login(
         actor_sub=user.sub,
         actor_name=user.name,
         ip=request.client.host if request.client else None,
+        scope="self",
     )
     ttl = settings.server.session_ttl_minutes
     token = create_session_token(
@@ -97,6 +98,7 @@ async def callback(
             actor_sub=user.sub,
             actor_name=user.name or user.username,
             ip=request.client.host if request.client else None,
+            scope="self",
         )
     except Exception as exc:
         log.warning("oauth_callback_failed", error=str(exc))
@@ -120,6 +122,19 @@ async def me(user: User = Depends(auth.get_current_user)) -> User:
 
 
 @router.post("/logout")
-async def logout(user: User = Depends(auth.get_current_user)) -> dict[str, bool]:
-    # Stateless JWTs: the client discards the token. Endpoint exists for symmetry.
+async def logout(
+    request: Request,
+    user: User = Depends(auth.get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    # Stateless JWTs: the client discards the token. Endpoint exists for symmetry,
+    # and to leave a trail of who signed out and when.
+    await record_audit(
+        session,
+        action="auth.logout",
+        actor_sub=user.sub,
+        actor_name=user.name or user.username,
+        ip=request.client.host if request.client else None,
+        scope="self",
+    )
     return {"ok": True}

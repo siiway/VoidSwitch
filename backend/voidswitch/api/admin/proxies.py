@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import ProxyStatus
 from voidswitch.core.audit import record_audit
-from voidswitch.core.auth import require_staff
+from voidswitch.core.auth import actor_display_name, require_staff
 from voidswitch.core.database import get_session
 from voidswitch.models.db import Provider, Proxy, User
 from voidswitch.models.schemas import ProxyCreate, ProxyOut, ProxyUpdate
@@ -71,8 +71,9 @@ async def add_proxies(
 async def update_proxy(
     proxy_id: int,
     body: ProxyUpdate,
+    request: Request,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    user: User = Depends(require_staff),
 ) -> Proxy:
     proxy = await session.get(Proxy, proxy_id)
     if proxy is None:
@@ -89,14 +90,25 @@ async def update_proxy(
     if "enabled" in changes:
         proxy.enabled = changes["enabled"]
     await session.flush()
+    await record_audit(
+        session,
+        action="proxy.update",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="proxy",
+        target_id=proxy_id,
+        detail={"changes": list(changes)},
+        ip=request.client.host if request.client else None,
+    )
     return proxy
 
 
 @router.delete("/{proxy_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_proxy(
     proxy_id: int,
+    request: Request,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    user: User = Depends(require_staff),
 ) -> None:
     proxy = await session.get(Proxy, proxy_id)
     if proxy is None:
@@ -107,14 +119,25 @@ async def delete_proxy(
     for p in providers:
         if p.proxy_ids and proxy_id in p.proxy_ids:
             p.proxy_ids = [pid for pid in p.proxy_ids if pid != proxy_id]
+    await record_audit(
+        session,
+        action="proxy.delete",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="proxy",
+        target_id=proxy_id,
+        detail={"url": proxy.url},
+        ip=request.client.host if request.client else None,
+    )
     await session.delete(proxy)
 
 
 @router.post("/{proxy_id}/probe", response_model=ProxyOut)
 async def probe_proxy(
     proxy_id: int,
+    request: Request,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    user: User = Depends(require_staff),
 ) -> Proxy:
     proxy = await session.get(Proxy, proxy_id)
     if proxy is None:
@@ -130,4 +153,14 @@ async def probe_proxy(
     else:
         proxy.disabled_reason = error
     await session.flush()
+    await record_audit(
+        session,
+        action="proxy.probe",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="proxy",
+        target_id=proxy_id,
+        detail={"ok": ok, "latency_ms": latency},
+        ip=request.client.host if request.client else None,
+    )
     return proxy

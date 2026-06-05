@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.auth import get_current_user
+from voidswitch.core.audit import record_audit
+from voidswitch.core.auth import actor_display_name, get_current_user
 from voidswitch.core.database import get_session
 from voidswitch.core.security import (
     generate_void_token,
@@ -50,6 +51,7 @@ async def my_tokens(
 @router.post("/tokens", response_model=VoidTokenWithSecret, status_code=status.HTTP_201_CREATED)
 async def create_my_token(
     body: VoidTokenCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> VoidTokenWithSecret:
@@ -66,6 +68,17 @@ async def create_my_token(
     )
     session.add(token)
     await session.flush()
+    await record_audit(
+        session,
+        action="me.token.create",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="token",
+        target_id=token.id,
+        detail={"name": token.name},
+        ip=request.client.host if request.client else None,
+        scope="self",
+    )
     # The plaintext secret lives only here; the ORM row stores its hash. Build
     # the public view from the row, then attach the one-time secret.
     return VoidTokenWithSecret(**VoidTokenOut.model_validate(token).model_dump(), token=secret)
@@ -75,6 +88,7 @@ async def create_my_token(
 async def update_my_token(
     token_id: int,
     body: VoidTokenUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> VoidToken:
@@ -84,12 +98,24 @@ async def update_my_token(
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(token, field, value)
     await session.flush()
+    await record_audit(
+        session,
+        action="me.token.update",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="token",
+        target_id=token.id,
+        detail={"changes": body.model_dump(mode="json", exclude_unset=True)},
+        ip=request.client.host if request.client else None,
+        scope="self",
+    )
     return token
 
 
 @router.post("/tokens/{token_id}/rotate", response_model=VoidTokenWithSecret)
 async def rotate_my_token(
     token_id: int,
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> VoidTokenWithSecret:
@@ -100,18 +126,40 @@ async def rotate_my_token(
     token.token_hash = hash_token(secret)
     token.token_prefix = token_fingerprint(secret)
     await session.flush()
+    await record_audit(
+        session,
+        action="me.token.rotate",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="token",
+        target_id=token.id,
+        ip=request.client.host if request.client else None,
+        scope="self",
+    )
     return VoidTokenWithSecret(**VoidTokenOut.model_validate(token).model_dump(), token=secret)
 
 
 @router.delete("/tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_my_token(
     token_id: int,
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     token = await session.get(VoidToken, token_id)
     if token is None or token.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found.")
+    await record_audit(
+        session,
+        action="me.token.delete",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="token",
+        target_id=token.id,
+        detail={"name": token.name},
+        ip=request.client.host if request.client else None,
+        scope="self",
+    )
     await session.delete(token)
 
 

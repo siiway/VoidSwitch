@@ -30,6 +30,7 @@ async def audit_logs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     action: str | None = None,
+    scope: str | None = Query(default=None, description="Filter by scope, e.g. 'admin'."),
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
 ) -> Page[AuditLogOut]:
@@ -38,6 +39,9 @@ async def audit_logs(
     if action:
         stmt = stmt.where(AuditLog.action == action)
         count_stmt = count_stmt.where(AuditLog.action == action)
+    if scope:
+        stmt = stmt.where(AuditLog.scope == scope)
+        count_stmt = count_stmt.where(AuditLog.scope == scope)
     total = (await session.execute(count_stmt)).scalar_one()
     rows = (await session.execute(stmt.limit(limit).offset(offset))).scalars().all()
     items: list[AuditLogOut] = []

@@ -255,6 +255,7 @@ async def update_key(
     provider_id: int,
     key_id: int,
     body: ApiKeyUpdate,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
@@ -304,6 +305,19 @@ async def update_key(
     if body.pool is not None:
         key.pool = body.pool
     await session.flush()
+    # Record which fields changed (names only). A replaced secret shows up as
+    # the "key" field name; its value is never logged — it stays in the
+    # encrypted ciphertext column.
+    await record_audit(
+        session,
+        action="key.update",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="provider",
+        target_id=provider_id,
+        detail={"key_id": key.id, "changes": list(body.model_dump(exclude_unset=True))},
+        ip=request.client.host if request.client else None,
+    )
     return key
 
 

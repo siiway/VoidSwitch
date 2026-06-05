@@ -208,6 +208,10 @@ class AuditLog(Base):
     actor_sub: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
     actor_name: Mapped[str | None] = mapped_column(String(255), default=None)
     action: Mapped[str] = mapped_column(String(120), default="")
+    # "admin" for management-surface actions, "self" for self-service ones
+    # (sign-in/out, a user's own Void-Tokens). Lets the dashboard filter the
+    # trail down to administrative actions only.
+    scope: Mapped[str] = mapped_column(String(16), default="admin", index=True)
     target_type: Mapped[str | None] = mapped_column(String(64), default=None)
     target_id: Mapped[str | None] = mapped_column(String(64), default=None)
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

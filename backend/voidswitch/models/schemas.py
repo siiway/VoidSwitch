@@ -283,6 +283,8 @@ class AuditLogOut(BaseModel):
     actor_sub: str | None = None
     actor_name: str | None = None
     action: str
+    # "admin" (management surface) or "self" (a user's own account/tokens).
+    scope: str = "admin"
     target_type: str | None = None
     target_id: str | None = None
     detail: dict = Field(default_factory=dict)

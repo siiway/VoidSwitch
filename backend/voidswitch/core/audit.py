@@ -23,8 +23,19 @@ async def record_audit(
     ip: str | None = None,
     sensitive: dict[str, Any] | None = None,
     secret_key: str | None = None,
+    scope: str = "admin",
 ) -> None:
-    """Append an administrative audit entry. Caller owns the transaction.
+    """Append an audit entry. Caller owns the transaction.
+
+    ``scope`` classifies the entry so the dashboard can separate administrative
+    actions from ordinary self-service ones:
+
+    * ``"admin"`` — an action on the management surface (providers, keys, proxies,
+      settings, other users' resources). Default, so existing call sites stay
+      administrative without change.
+    * ``"self"`` — a user acting on their own account (signing in/out, managing
+      their own Void-Tokens). Surfaced in the audit trail but hidden when the
+      viewer filters to administrative actions only.
 
     ``sensitive`` carries owner-only context (e.g. plaintext keys). It is stored
     encrypted at rest and only ever decrypted for owners on an explicit request;
@@ -45,5 +56,6 @@ async def record_audit(
             detail=detail or {},
             ip=ip,
             sensitive_ciphertext=sensitive_ciphertext,
+            scope=scope,
         )
     )

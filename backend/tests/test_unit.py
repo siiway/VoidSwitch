@@ -415,8 +415,11 @@ async def test_model_routes_and_key_pools():
 
 
 async def test_deleting_proxy_scrubs_provider_references(db):
+    from starlette.requests import Request
     from voidswitch.api.admin.proxies import delete_proxy
     from voidswitch.models.db import Provider, Proxy, User
+
+    request = Request({"type": "http", "client": ("test", 0), "headers": []})
 
     async with db.session() as session:
         proxy = Proxy(url="http://gone:1", status="active")
@@ -429,7 +432,9 @@ async def test_deleting_proxy_scrubs_provider_references(db):
         await session.flush()
 
     async with db.session() as session:
-        await delete_proxy(pid, session=session, _=User(sub="admin", role="owner"))
+        await delete_proxy(
+            pid, request=request, session=session, user=User(sub="admin", role="owner")
+        )
 
     async with db.session() as session:
         prov = await session.get(Provider, provider_id)

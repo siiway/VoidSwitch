@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -145,14 +146,22 @@ function AuditLogs() {
   const confirm = useConfirm();
   const notify = useNotify();
   const [offset, setOffset] = useState(0);
+  // When checked, restrict the trail to administrative actions and hide ordinary
+  // self-service ones (sign-in/out, a user's own Void-Tokens).
+  const [adminOnly, setAdminOnly] = useState(false);
   const [revealed, setRevealed] = useState<{
     action: string;
     sensitive: unknown;
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const logs = useAsync<Page<AuditLog>>(
-    () => api.get("/api/admin/logs/audit", { limit: PAGE, offset }),
-    [offset],
+    () =>
+      api.get("/api/admin/logs/audit", {
+        limit: PAGE,
+        offset,
+        ...(adminOnly ? { scope: "admin" } : {}),
+      }),
+    [offset, adminOnly],
   );
 
   async function reveal(a: AuditLog) {
@@ -182,64 +191,94 @@ function AuditLogs() {
     }
   }
 
-  if (logs.loading) return <Loading />;
-  if (logs.error) return <ErrorText error={logs.error} />;
   const data = logs.data;
-  if (!data) return null;
 
   return (
     <>
-      <DataTable ariaLabel="Audit" minWidth={900}>
-        <TableHeader>
-          <TableRow>
-            <TableHeaderCell>Time</TableHeaderCell>
-            <TableHeaderCell>Actor</TableHeaderCell>
-            <TableHeaderCell>Action</TableHeaderCell>
-            <TableHeaderCell>Target</TableHeaderCell>
-            <TableHeaderCell>Detail</TableHeaderCell>
-            <TableHeaderCell>IP</TableHeaderCell>
-            {isOwner ? <TableHeaderCell>Sensitive</TableHeaderCell> : null}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data.items.map((a) => (
-            <TableRow key={a.id}>
-              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
-                {formatDate(a.ts)}
-              </TableCell>
-              <TableCell>{a.actor_name ?? a.actor_sub ?? "—"}</TableCell>
-              <TableCell>{a.action}</TableCell>
-              <TableCell>
-                {a.target_type ? `${a.target_type}#${a.target_id ?? ""}` : "—"}
-              </TableCell>
-              <TableCell
-                style={{ color: tokens.colorNeutralForeground3, maxWidth: 280 }}
-              >
-                {JSON.stringify(a.detail)}
-              </TableCell>
-              <TableCell>{a.ip ?? "—"}</TableCell>
-              {isOwner ? (
-                <TableCell>
-                  {a.has_sensitive ? (
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<EyeRegular />}
-                      disabled={busy}
-                      onClick={() => reveal(a)}
+      <div style={{ marginBottom: 12 }}>
+        <Checkbox
+          label="Administrative actions only"
+          checked={adminOnly}
+          onChange={(_, d) => {
+            setOffset(0);
+            setAdminOnly(Boolean(d.checked));
+          }}
+        />
+      </div>
+
+      {logs.loading ? (
+        <Loading />
+      ) : logs.error ? (
+        <ErrorText error={logs.error} />
+      ) : !data ? null : (
+        <>
+          <DataTable ariaLabel="Audit" minWidth={960}>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>Time</TableHeaderCell>
+                <TableHeaderCell>Actor</TableHeaderCell>
+                <TableHeaderCell>Scope</TableHeaderCell>
+                <TableHeaderCell>Action</TableHeaderCell>
+                <TableHeaderCell>Target</TableHeaderCell>
+                <TableHeaderCell>Detail</TableHeaderCell>
+                <TableHeaderCell>IP</TableHeaderCell>
+                {isOwner ? <TableHeaderCell>Sensitive</TableHeaderCell> : null}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.items.map((a) => (
+                <TableRow key={a.id}>
+                  <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                    {formatDate(a.ts)}
+                  </TableCell>
+                  <TableCell>{a.actor_name ?? a.actor_sub ?? "—"}</TableCell>
+                  <TableCell>
+                    <Badge
+                      appearance="tint"
+                      color={a.scope === "admin" ? "brand" : "informative"}
                     >
-                      Reveal
-                    </Button>
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
-              ) : null}
-            </TableRow>
-          ))}
-        </TableBody>
-      </DataTable>
-      <Pager total={data.total} offset={offset} onChange={setOffset} />
+                      {a.scope === "admin" ? "admin" : "self"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{a.action}</TableCell>
+                  <TableCell>
+                    {a.target_type
+                      ? `${a.target_type}#${a.target_id ?? ""}`
+                      : "—"}
+                  </TableCell>
+                  <TableCell
+                    style={{
+                      color: tokens.colorNeutralForeground3,
+                      maxWidth: 280,
+                    }}
+                  >
+                    {JSON.stringify(a.detail)}
+                  </TableCell>
+                  <TableCell>{a.ip ?? "—"}</TableCell>
+                  {isOwner ? (
+                    <TableCell>
+                      {a.has_sensitive ? (
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<EyeRegular />}
+                          disabled={busy}
+                          onClick={() => reveal(a)}
+                        >
+                          Reveal
+                        </Button>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+          <Pager total={data.total} offset={offset} onChange={setOffset} />
+        </>
+      )}
 
       <Dialog
         open={revealed !== null}

@@ -124,6 +124,8 @@ export interface AuditLog {
   actor_sub?: string | null;
   actor_name?: string | null;
   action: string;
+  // "admin" (management surface) or "self" (a user's own account/tokens).
+  scope: string;
   target_type?: string | null;
   target_id?: string | null;
   detail: Record<string, unknown>;

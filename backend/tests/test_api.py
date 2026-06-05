@@ -220,6 +220,60 @@ async def test_update_key_rejects_duplicate_secret(client, seeded):
 
 
 # --------------------------------------------------------------------------- #
+# Audit trail: management actions are recorded, and the scope filter separates
+# administrative actions from ordinary self-service ones.
+# --------------------------------------------------------------------------- #
+
+
+async def _audit_items(client, **query) -> list[dict]:
+    resp = await client.get("/api/admin/logs/audit", headers=_session_headers(), params=query)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["items"]
+
+
+async def test_admin_disable_token_is_audited(client, seeded):
+    """Regression: disabling another user's token via the admin page now logs."""
+    tid = seeded["token_id"]
+    resp = await client.patch(
+        f"/api/admin/tokens/{tid}", headers=_session_headers(), json={"enabled": False}
+    )
+    assert resp.status_code == 200, resp.text
+
+    items = await _audit_items(client, action="token.update")
+    assert items, "expected a token.update audit entry"
+    entry = items[0]
+    assert entry["scope"] == "admin"
+    assert entry["target_type"] == "token"
+    assert entry["target_id"] == str(tid)
+    assert entry["detail"]["changes"] == {"enabled": False}
+
+
+async def test_self_service_token_ops_are_audited_with_self_scope(client, seeded):
+    resp = await client.post(
+        "/api/me/tokens", headers=_session_headers(), json={"name": "laptop"}
+    )
+    assert resp.status_code == 201, resp.text
+
+    items = await _audit_items(client, action="me.token.create")
+    assert items, "expected a me.token.create audit entry"
+    assert items[0]["scope"] == "self"
+
+
+async def test_audit_scope_filter_excludes_self_actions(client, seeded):
+    # One admin action and one self-service action.
+    tid = seeded["token_id"]
+    await client.patch(
+        f"/api/admin/tokens/{tid}", headers=_session_headers(), json={"enabled": False}
+    )
+    await client.post("/api/me/tokens", headers=_session_headers(), json={"name": "phone"})
+
+    admin_only = await _audit_items(client, scope="admin")
+    assert admin_only, "expected at least one admin-scoped entry"
+    assert all(item["scope"] == "admin" for item in admin_only)
+    assert not any(item["action"].startswith("me.") for item in admin_only)
+
+
+# --------------------------------------------------------------------------- #
 # One-line OpenCode installer (curl | bash / irm | iex)
 # --------------------------------------------------------------------------- #
 
