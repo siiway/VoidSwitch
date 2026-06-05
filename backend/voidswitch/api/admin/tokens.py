@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.auth import require_staff
+from voidswitch.core.auth import require_owner
 from voidswitch.core.database import get_session
 from voidswitch.core.security import generate_void_token, hash_token, token_fingerprint
 from voidswitch.models.db import User, VoidToken
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/admin/tokens", tags=["admin:tokens"])
 async def list_tokens(
     user_id: int | None = None,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_owner),
 ) -> list[VoidToken]:
     stmt = select(VoidToken).order_by(VoidToken.id)
     if user_id is not None:
@@ -37,7 +37,7 @@ async def list_tokens(
 async def create_token(
     body: VoidTokenCreate,
     session: AsyncSession = Depends(get_session),
-    actor: User = Depends(require_staff),
+    actor: User = Depends(require_owner),
 ) -> VoidTokenWithSecret:
     target_user_id = body.user_id or actor.id
     owner = await session.get(User, target_user_id)
@@ -65,7 +65,7 @@ async def update_token(
     token_id: int,
     body: VoidTokenUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_owner),
 ) -> VoidToken:
     token = await session.get(VoidToken, token_id)
     if token is None:
@@ -80,7 +80,7 @@ async def update_token(
 async def delete_token(
     token_id: int,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_owner),
 ) -> None:
     token = await session.get(VoidToken, token_id)
     if token is None:

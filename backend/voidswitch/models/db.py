@@ -126,6 +126,10 @@ class Provider(Base, TimestampMixin):
     proxy_mode: Mapped[str] = mapped_column(String(16), default=ProxyMode.ALL.value)
     # Proxy IDs this provider may use when proxy_mode == "selected".
     proxy_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    # Who created this provider (id + a display-name snapshot). Lets members
+    # manage only the providers they added; null for legacy/seeded rows.
+    added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
+    added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
 
     keys: Mapped[list[ApiKey]] = relationship(
         back_populates="provider", cascade="all, delete-orphan", lazy="selectin"
@@ -157,6 +161,10 @@ class ApiKey(Base, TimestampMixin):
     last_checked_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # Who added this key (id + a display-name snapshot). Lets members manage
+    # only the keys they added; null for legacy/seeded rows.
+    added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
+    added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
 
     provider: Mapped[Provider] = relationship(back_populates="keys", lazy="selectin")
 

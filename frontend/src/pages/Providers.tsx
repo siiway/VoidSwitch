@@ -30,6 +30,7 @@ import {
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import type {
   AdapterMeta,
   ModelRoute,
@@ -124,6 +125,8 @@ export function Providers() {
   const navigate = useNavigate();
   const notify = useNotify();
   const confirm = useConfirm();
+  const { user: me, isStaff, isOwner } = useAuth();
+  const canEdit = (p: Provider) => isStaff || p.added_by === me?.id;
   const providers = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
   const catalog = useAsync<AdapterMeta[]>(() =>
     api.get("/api/admin/providers/catalog/types"),
@@ -257,6 +260,7 @@ export function Providers() {
               <TableHeaderCell>Type</TableHeaderCell>
               <TableHeaderCell>Base URL</TableHeaderCell>
               <TableHeaderCell>Keys</TableHeaderCell>
+              <TableHeaderCell>Added by</TableHeaderCell>
               <TableHeaderCell>Priority</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
               <TableHeaderCell>Actions</TableHeaderCell>
@@ -272,6 +276,9 @@ export function Providers() {
                 </TableCell>
                 <TableCell>
                   {p.active_key_count}/{p.key_count}
+                </TableCell>
+                <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                  {p.added_by_name ?? "—"}
                 </TableCell>
                 <TableCell>{p.priority}</TableCell>
                 <TableCell>
@@ -291,18 +298,22 @@ export function Providers() {
                   >
                     Keys
                   </Button>
-                  <Button
-                    size="small"
-                    icon={<EditRegular />}
-                    appearance="subtle"
-                    onClick={() => openEdit(p)}
-                  />
-                  <Button
-                    size="small"
-                    icon={<DeleteRegular />}
-                    appearance="subtle"
-                    onClick={() => remove(p)}
-                  />
+                  {canEdit(p) && (
+                    <Button
+                      size="small"
+                      icon={<EditRegular />}
+                      appearance="subtle"
+                      onClick={() => openEdit(p)}
+                    />
+                  )}
+                  {isOwner && (
+                    <Button
+                      size="small"
+                      icon={<DeleteRegular />}
+                      appearance="subtle"
+                      onClick={() => remove(p)}
+                    />
+                  )}
                 </TableCell>
               </TableRow>
             ))}

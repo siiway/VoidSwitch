@@ -1,6 +1,6 @@
 // Types mirroring the backend Pydantic schemas.
 
-export type Role = "owner" | "admin" | "member";
+export type Role = "owner" | "co-owner" | "admin" | "member";
 
 export interface User {
   id: number;
@@ -10,6 +10,7 @@ export interface User {
   name?: string | null;
   picture?: string | null;
   role: Role;
+  prism_role?: string | null;
   enabled: boolean;
   last_login_at?: string | null;
   created_at: string;
@@ -36,6 +37,8 @@ export interface Provider {
   updated_at: string;
   key_count: number;
   active_key_count: number;
+  added_by?: number | null;
+  added_by_name?: string | null;
 }
 
 export type ProxyMode = "all" | "direct" | "selected";
@@ -61,6 +64,8 @@ export interface ApiKey {
   last_used_at?: string | null;
   last_checked_at?: string | null;
   created_at: string;
+  added_by?: number | null;
+  added_by_name?: string | null;
 }
 
 export interface Proxy {

@@ -1,14 +1,24 @@
-"""Admin: user listing and role/enable management."""
+"""Admin: user listing and role/enable management.
+
+Viewing the user list is staff-level. *Mutating* a user — granting the local
+admin override or disabling an account — is owner-only.
+"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import Role
-from voidswitch.core.auth import STAFF_ROLES, require_staff
+from voidswitch.core.audit import record_audit
+from voidswitch.core.auth import (
+    LOCAL_ASSIGNABLE_ROLES,
+    OWNER_ROLES,
+    actor_display_name,
+    require_owner,
+    require_staff,
+)
 from voidswitch.core.database import get_session
 from voidswitch.models.db import User
 from voidswitch.models.schemas import UserOut
@@ -34,28 +44,52 @@ async def list_users(
 async def update_user(
     user_id: int,
     body: UserUpdate,
+    request: Request,
     session: AsyncSession = Depends(get_session),
-    actor: User = Depends(require_staff),
+    actor: User = Depends(require_owner),
 ) -> User:
     target = await session.get(User, user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
 
-    if body.role is not None:
-        if body.role not in {r.value for r in Role}:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid role.")
-        # Only owners may grant or revoke staff-level roles.
-        grants_staff = body.role in STAFF_ROLES or target.role in STAFF_ROLES
-        if grants_staff and actor.role != Role.OWNER.value:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only owners can change staff roles.")
-        if target.id == actor.id and body.role != Role.OWNER.value:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot demote yourself.")
+    changes: dict[str, object] = {}
+
+    if body.role is not None and body.role != target.role:
+        # Only the local-override roles can be set here. Owner/co-owner are
+        # authoritative from Prism (or a direct DB edit) and must not be granted
+        # or revoked through the dashboard.
+        if body.role not in LOCAL_ASSIGNABLE_ROLES:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Only 'admin' or 'member' can be set here; owner/co-owner come from Prism.",
+            )
+        if target.role in OWNER_ROLES:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Cannot change an owner/co-owner's role here; manage it in Prism or the database.",
+            )
+        if target.id == actor.id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot change your own role.")
+        changes["role"] = body.role
         target.role = body.role
 
-    if body.enabled is not None:
+    if body.enabled is not None and body.enabled != target.enabled:
         if target.id == actor.id and not body.enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot disable yourself.")
+        changes["enabled"] = body.enabled
         target.enabled = body.enabled
+
+    if changes:
+        await record_audit(
+            session,
+            action="user.update",
+            actor_sub=actor.sub,
+            actor_name=actor_display_name(actor),
+            target_type="user",
+            target_id=target.id,
+            detail=changes,
+            ip=request.client.host if request.client else None,
+        )
 
     await session.flush()
     return target

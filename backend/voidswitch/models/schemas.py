@@ -26,6 +26,9 @@ class UserOut(BaseModel):
     name: str | None = None
     picture: str | None = None
     role: str
+    # The role Prism reported at last login. Surfaced so the dashboard can flag
+    # a "local admin override" (VS role=admin while Prism still says member).
+    prism_role: str | None = None
     enabled: bool
     last_login_at: dt.datetime | None = None
     created_at: dt.datetime
@@ -103,6 +106,8 @@ class ProviderOut(ProviderBase):
     updated_at: dt.datetime
     key_count: int = 0
     active_key_count: int = 0
+    added_by: int | None = None
+    added_by_name: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -146,6 +151,8 @@ class ApiKeyOut(BaseModel):
     last_used_at: dt.datetime | None = None
     last_checked_at: dt.datetime | None = None
     created_at: dt.datetime
+    added_by: int | None = None
+    added_by_name: str | None = None
 
 
 # --------------------------------------------------------------------------- #

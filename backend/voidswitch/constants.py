@@ -7,6 +7,7 @@ from enum import StrEnum
 
 class Role(StrEnum):
     OWNER = "owner"
+    CO_OWNER = "co-owner"
     ADMIN = "admin"
     MEMBER = "member"
 

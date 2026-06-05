@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.auth import require_staff
+from voidswitch.core.auth import get_current_user, is_staff, require_staff
 from voidswitch.core.database import get_session
 from voidswitch.models.db import AuditLog, RequestLog, User
 from voidswitch.models.schemas import AuditLogOut, Page, RequestLogOut
@@ -44,10 +44,14 @@ async def request_logs(
     success: bool | None = None,
     model: str | None = None,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    user: User = Depends(get_current_user),
 ) -> Page[RequestLogOut]:
     stmt = select(RequestLog).order_by(RequestLog.id.desc())
     count_stmt = select(func.count(RequestLog.id))
+    if not is_staff(user):
+        # Members may browse the request log, but only their own traffic.
+        stmt = stmt.where(RequestLog.user_sub == user.sub)
+        count_stmt = count_stmt.where(RequestLog.user_sub == user.sub)
     if success is not None:
         stmt = stmt.where(RequestLog.success.is_(success))
         count_stmt = count_stmt.where(RequestLog.success.is_(success))

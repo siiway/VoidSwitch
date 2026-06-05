@@ -81,7 +81,11 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("providers", "proxy_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
     ("providers", "proxy_ids", "JSON NOT NULL DEFAULT '[]'"),
     ("providers", "model_routes", "JSON NOT NULL DEFAULT '[]'"),
+    ("providers", "added_by", "INTEGER"),
+    ("providers", "added_by_name", "VARCHAR(255)"),
     ("api_keys", "pool", "VARCHAR(64) NOT NULL DEFAULT ''"),
+    ("api_keys", "added_by", "INTEGER"),
+    ("api_keys", "added_by_name", "VARCHAR(255)"),
 )
 
 

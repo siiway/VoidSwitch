@@ -38,7 +38,41 @@ from voidswitch.services.network import Route, get_pool
 
 log = get_logger("auth")
 
-STAFF_ROLES = {Role.OWNER.value, Role.ADMIN.value}
+# Owner tier: full control, including the sensitive owner-only operations
+# (disabling users, managing global tokens, deleting providers). Prism "owner"
+# and "co-owner" both land here; they have identical powers but stay visually
+# distinct in the dashboard.
+OWNER_ROLES = {Role.OWNER.value, Role.CO_OWNER.value}
+# Staff tier: owner tier + locally-granted admins. May manage the day-to-day
+# routing surface (providers, keys, proxies, settings, logs, the user list).
+STAFF_ROLES = {Role.OWNER.value, Role.CO_OWNER.value, Role.ADMIN.value}
+# Roles an owner may assign through the dashboard ("local admin override").
+# Owner/co-owner are authoritative from Prism (or a direct DB edit) and cannot
+# be granted via the API.
+LOCAL_ASSIGNABLE_ROLES = {Role.ADMIN.value, Role.MEMBER.value}
+
+# Comparable rank used when reconciling a freshly-resolved role with the one
+# already stored, so a login never silently demotes a privileged account and a
+# local admin override survives even when Prism still reports "member".
+_ROLE_RANK = {
+    Role.MEMBER.value: 1,
+    Role.ADMIN.value: 2,
+    Role.CO_OWNER.value: 3,
+    Role.OWNER.value: 3,
+}
+
+
+def is_owner(user: User) -> bool:
+    return user.role in OWNER_ROLES
+
+
+def is_staff(user: User) -> bool:
+    return user.role in STAFF_ROLES
+
+
+def actor_display_name(user: User) -> str | None:
+    """A human-friendly label for ``added_by`` snapshots and audit entries."""
+    return user.name or user.username or user.email or user.sub
 
 
 # --------------------------------------------------------------------------- #
@@ -234,11 +268,25 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
     existing.picture = identity.picture or existing.picture
     existing.prism_role = identity.prism_role
     existing.last_login_at = dt.datetime.now(dt.UTC)
-    # Promote (never silently demote) based on config-derived role.
-    if existing.role not in STAFF_ROLES and role.value in STAFF_ROLES:
-        existing.role = role.value
+    existing.role = _merge_role(existing.role, role)
     await session.flush()
     return existing
+
+
+def _merge_role(existing: str, resolved: Role) -> str:
+    """Reconcile the stored role with the one resolved from this login.
+
+    * Owner-tier (owner/co-owner) is authoritative from Prism/config — always
+      take the resolved value so a promotion (or a switch between owner and
+      co-owner) lands immediately.
+    * Otherwise keep whichever role ranks higher. This preserves a local admin
+      override (Prism still says "member") and never demotes a DB-set owner.
+    """
+    if resolved.value in OWNER_ROLES:
+        return resolved.value
+    if _ROLE_RANK.get(existing, 0) >= _ROLE_RANK.get(resolved.value, 0):
+        return existing
+    return resolved.value
 
 
 DEV_USER_SUB = "dev-mode-user"
@@ -275,14 +323,39 @@ async def dev_login_user(session: AsyncSession, settings: Settings) -> User:
     return user
 
 
+# Prism role strings (case/separator-insensitive) → VoidSwitch role.
+_PRISM_ROLE_MAP = {
+    "owner": Role.OWNER,
+    "coowner": Role.CO_OWNER,
+    "admin": Role.ADMIN,
+}
+
+
+def _normalise_prism_role(value: str | None) -> Role | None:
+    """Map a Prism ``role`` claim onto a VoidSwitch role.
+
+    Accepts ``owner``, ``co-owner``/``co_owner``/``coowner`` and ``admin`` in any
+    case; everything else (incl. ``member``) returns ``None``.
+    """
+    if not value:
+        return None
+    key = value.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    return _PRISM_ROLE_MAP.get(key)
+
+
 def _resolve_role(settings: Settings, identity: PrismIdentity, is_first_user: bool) -> Role:
     admin = settings.admin
     if identity.sub in admin.owner_subs:
         return Role.OWNER
     if identity.email and identity.email in admin.owner_emails:
         return Role.OWNER
-    if admin.trust_prism_admin and identity.prism_role == "admin":
-        return Role.OWNER
+    prism = _normalise_prism_role(identity.prism_role)
+    # Prism owners/co-owners map straight onto the VoidSwitch owner tier.
+    if prism in (Role.OWNER, Role.CO_OWNER):
+        return prism
+    # Prism instance admins become local admins (staff, not owner) when trusted.
+    if prism == Role.ADMIN and admin.trust_prism_admin:
+        return Role.ADMIN
     if is_first_user and admin.bootstrap_first_user:
         return Role.OWNER
     return Role.MEMBER
@@ -329,7 +402,7 @@ async def require_staff(user: User = Depends(get_current_user)) -> User:
 
 
 async def require_owner(user: User = Depends(get_current_user)) -> User:
-    if user.role != Role.OWNER.value:
+    if user.role not in OWNER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner privileges required.")
     return user
 

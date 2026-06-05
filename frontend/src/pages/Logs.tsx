@@ -11,8 +11,9 @@ import {
   Text,
   tokens,
 } from "@fluentui/react-components";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import type { AuditLog, Page, RequestLog } from "../api/types";
 import {
   DataTable,
@@ -26,19 +27,30 @@ import {
 const PAGE = 50;
 
 export function Logs() {
+  const { isStaff } = useAuth();
   const [tab, setTab] = useState<"requests" | "audit">("requests");
+
+  // Members never see the administrative audit trail; keep them on Requests.
+  useEffect(() => {
+    if (!isStaff && tab === "audit") setTab("requests");
+  }, [isStaff, tab]);
+
   return (
     <div>
       <PageHeader
         title="Logs"
-        subtitle="Request traffic and administrative audit trail"
+        subtitle={
+          isStaff
+            ? "Request traffic and administrative audit trail"
+            : "Your request traffic"
+        }
       />
       <TabList
         selectedValue={tab}
         onTabSelect={(_, d) => setTab(d.value as typeof tab)}
       >
         <Tab value="requests">Requests</Tab>
-        <Tab value="audit">Audit</Tab>
+        {isStaff ? <Tab value="audit">Audit</Tab> : null}
       </TabList>
       <div style={{ marginTop: 16 }}>
         {tab === "requests" ? <RequestLogs /> : <AuditLogs />}

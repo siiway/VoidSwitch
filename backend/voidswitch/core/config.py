@@ -92,8 +92,13 @@ class PrismSettings(BaseSettings):
 
 
 class AdminSettings(BaseSettings):
+    # Prism subjects / emails that are always VoidSwitch owners. Prism roles
+    # ``owner`` and ``co-owner`` are also recognised automatically and map to the
+    # VoidSwitch owner tier (owner → owner, co-owner → co-owner).
     owner_subs: list[str] = Field(default_factory=list)
     owner_emails: list[str] = Field(default_factory=list)
+    # When true, a Prism instance admin (role == "admin") becomes a VoidSwitch
+    # *admin* (staff, not owner). Owner-only actions stay reserved for owners.
     trust_prism_admin: bool = True
     bootstrap_first_user: bool = True
 

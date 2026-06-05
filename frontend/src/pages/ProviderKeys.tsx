@@ -27,6 +27,7 @@ import {
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import type { ApiKey, Provider } from "../api/types";
 import {
   DataTable,
@@ -46,6 +47,8 @@ export function ProviderKeys() {
   const navigate = useNavigate();
   const notify = useNotify();
   const confirm = useConfirm();
+  const { user: me, isStaff } = useAuth();
+  const canManage = (k: ApiKey) => isStaff || k.added_by === me?.id;
   const provider = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
   const keys = useAsync<ApiKey[]>(
     () => api.get(`/api/admin/providers/${providerId}/keys`),
@@ -322,6 +325,7 @@ export function ProviderKeys() {
               <TableHeaderCell>Key</TableHeaderCell>
               <TableHeaderCell>Comment</TableHeaderCell>
               <TableHeaderCell>Pool</TableHeaderCell>
+              <TableHeaderCell>Added by</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
               <TableHeaderCell>Fails</TableHeaderCell>
               <TableHeaderCell>Requests</TableHeaderCell>
@@ -342,6 +346,9 @@ export function ProviderKeys() {
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {k.pool || "—"}
                 </TableCell>
+                <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                  {k.added_by_name ?? "—"}
+                </TableCell>
                 <TableCell>
                   <StatusBadge status={k.status} />
                 </TableCell>
@@ -354,27 +361,35 @@ export function ProviderKeys() {
                   {k.disabled_reason ?? "—"}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    icon={<EditRegular />}
-                    onClick={() => openEdit(k)}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    onClick={() => toggle(k)}
-                  >
-                    {k.status === "active" ? "Disable" : "Enable"}
-                  </Button>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    icon={<DeleteRegular />}
-                    onClick={() => remove(k)}
-                  />
+                  {canManage(k) ? (
+                    <>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<EditRegular />}
+                        onClick={() => openEdit(k)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        onClick={() => toggle(k)}
+                      >
+                        {k.status === "active" ? "Disable" : "Enable"}
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<DeleteRegular />}
+                        onClick={() => remove(k)}
+                      />
+                    </>
+                  ) : (
+                    <span style={{ color: tokens.colorNeutralForeground3 }}>
+                      —
+                    </span>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

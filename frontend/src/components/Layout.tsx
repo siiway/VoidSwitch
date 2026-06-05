@@ -28,11 +28,15 @@ import { useTheme } from "../theme/ThemeContext";
 import { ConfirmProvider, ToastProvider } from "./ui";
 import type { ReactElement } from "react";
 
+// "member" = visible to everyone, "staff" = owner/co-owner/admin, "owner" =
+// owner/co-owner only.
+type NavScope = "member" | "staff" | "owner";
+
 interface NavItem {
   to: string;
   label: string;
   icon: ReactElement;
-  staff: boolean;
+  scope: NavScope;
 }
 
 interface NavSection {
@@ -48,7 +52,7 @@ const SECTIONS: NavSection[] = [
         to: "/dashboard",
         label: "Dashboard",
         icon: <BoardRegular />,
-        staff: true,
+        scope: "staff",
       },
     ],
   },
@@ -59,35 +63,35 @@ const SECTIONS: NavSection[] = [
         to: "/providers",
         label: "Providers",
         icon: <PlugConnectedRegular />,
-        staff: true,
+        scope: "member",
       },
-      { to: "/proxies", label: "Proxies", icon: <CloudRegular />, staff: true },
-      { to: "/tokens", label: "Tokens", icon: <KeyRegular />, staff: true },
+      { to: "/proxies", label: "Proxies", icon: <CloudRegular />, scope: "staff" },
+      { to: "/tokens", label: "Tokens", icon: <KeyRegular />, scope: "owner" },
     ],
   },
   {
     heading: "Operations",
     items: [
-      { to: "/users", label: "Users", icon: <PeopleRegular />, staff: true },
+      { to: "/users", label: "Users", icon: <PeopleRegular />, scope: "staff" },
       {
         to: "/logs",
         label: "Logs",
         icon: <DocumentBulletListRegular />,
-        staff: true,
+        scope: "member",
       },
       {
         to: "/settings",
         label: "Settings",
         icon: <SettingsRegular />,
-        staff: true,
+        scope: "staff",
       },
     ],
   },
   {
     heading: "Account",
     items: [
-      { to: "/chat", label: "Chat", icon: <ChatRegular />, staff: false },
-      { to: "/token", label: "My API Key", icon: <KeyRegular />, staff: false },
+      { to: "/chat", label: "Chat", icon: <ChatRegular />, scope: "member" },
+      { to: "/token", label: "My API Key", icon: <KeyRegular />, scope: "member" },
     ],
   },
 ];
@@ -216,21 +220,25 @@ const useStyles = makeStyles({
 
 export function Layout() {
   const styles = useStyles();
-  const { user, isStaff, logout } = useAuth();
+  const { user, isStaff, isOwner, logout } = useAuth();
   const { mode, toggle } = useTheme();
   const location = useLocation();
 
+  const canSee = (scope: NavScope) =>
+    scope === "member" || (scope === "staff" && isStaff) || (scope === "owner" && isOwner);
   const sections = SECTIONS.map((s) => ({
     ...s,
-    items: s.items.filter((i) => (i.staff ? isStaff : true)),
+    items: s.items.filter((i) => canSee(i.scope)),
   })).filter((s) => s.items.length > 0);
 
   const roleColor =
     user?.role === "owner"
       ? "brand"
-      : user?.role === "admin"
-        ? "informative"
-        : "subtle";
+      : user?.role === "co-owner"
+        ? "brand"
+        : user?.role === "admin"
+          ? "informative"
+          : "subtle";
 
   return (
     <ToastProvider>

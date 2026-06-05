@@ -18,6 +18,7 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   isStaff: boolean;
+  isOwner: boolean;
   login: () => void;
   devLogin: () => Promise<void>;
   logout: () => void;
@@ -66,11 +67,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     location.assign("/login");
   }
 
-  const isStaff = user?.role === "owner" || user?.role === "admin";
+  const isOwner = user?.role === "owner" || user?.role === "co-owner";
+  const isStaff = isOwner || user?.role === "admin";
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, isStaff, login, devLogin, logout, reload }}
+      value={{ user, loading, isStaff, isOwner, login, devLogin, logout, reload }}
     >
       {children}
     </AuthContext.Provider>

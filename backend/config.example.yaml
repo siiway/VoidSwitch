@@ -53,7 +53,13 @@ admin:
   owner_subs: []
   # Email addresses that always receive owner rights.
   owner_emails: []
-  # Treat Prism instance admins (id_token role == "admin") as VoidSwitch owners.
+  # Prism roles "owner" and "co-owner" are recognised automatically and map to
+  # the VoidSwitch owner tier (owner → owner, co-owner → co-owner) — both can
+  # perform owner-only actions. Multiple owners/co-owners are supported.
+  #
+  # Treat a Prism instance admin (id_token role == "admin") as a VoidSwitch
+  # *admin* (staff, not owner). Owners can also grant this admin role locally to
+  # any member from the dashboard ("local admin override").
   trust_prism_admin: true
   # When the user table is empty, the first user to log in becomes an owner
   # (bootstrap convenience for fresh deployments).

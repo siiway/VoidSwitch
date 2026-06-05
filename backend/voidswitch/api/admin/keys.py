@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus
 from voidswitch.core.audit import record_audit
-from voidswitch.core.auth import require_staff
+from voidswitch.core.auth import actor_display_name, get_current_user, is_staff
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.security import encrypt_secret, hash_token
@@ -63,22 +63,25 @@ async def _get_provider(session: AsyncSession, provider_id: int) -> Provider:
     return provider
 
 
+def _ensure_can_manage_key(user: User, key: ApiKey) -> None:
+    """Staff manage any key; members only the ones they added."""
+    if is_staff(user) or key.added_by == user.id:
+        return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only modify keys you added.")
+
+
 @router.get("", response_model=list[ApiKeyOut])
 async def list_keys(
     provider_id: int,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    user: User = Depends(get_current_user),
 ) -> list[ApiKey]:
     await _get_provider(session, provider_id)
-    rows = (
-        (
-            await session.execute(
-                select(ApiKey).where(ApiKey.provider_id == provider_id).order_by(ApiKey.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    stmt = select(ApiKey).where(ApiKey.provider_id == provider_id)
+    if not is_staff(user):
+        # Members only see the keys they added, never other users' credentials.
+        stmt = stmt.where(ApiKey.added_by == user.id)
+    rows = (await session.execute(stmt.order_by(ApiKey.id))).scalars().all()
     return list(rows)
 
 
@@ -88,7 +91,7 @@ async def add_keys(
     body: ApiKeyCreate,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_staff),
+    user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> list[ApiKey]:
     await _get_provider(session, provider_id)
@@ -119,6 +122,8 @@ async def add_keys(
             weight=body.weight,
             note=comment or body.note,
             pool=body.pool or "",
+            added_by=user.id,
+            added_by_name=actor_display_name(user),
         )
         session.add(key)
         created.append(key)
@@ -158,7 +163,7 @@ async def oauth_start(
     provider_id: int,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_staff),
+    user: User = Depends(get_current_user),
 ) -> ClaudeOAuthStart:
     """Begin a Claude subscription OAuth login: return the authorize URL + state."""
     provider = await _get_provider(session, provider_id)
@@ -182,7 +187,7 @@ async def oauth_complete(
     body: ClaudeOAuthComplete,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_staff),
+    user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> ApiKey:
     """Exchange the pasted code for a credential bundle and store it as a key."""
@@ -209,6 +214,8 @@ async def oauth_complete(
         key_preview=_oauth_preview(bundle),
         status=KeyStatus.ACTIVE.value,
         note=body.note or "Claude subscription (OAuth)",
+        added_by=user.id,
+        added_by_name=actor_display_name(user),
     )
     session.add(key)
     await session.flush()
@@ -231,12 +238,13 @@ async def update_key(
     key_id: int,
     body: ApiKeyUpdate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_staff),
+    user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> ApiKey:
     key = await session.get(ApiKey, key_id)
     if key is None or key.provider_id != provider_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+    _ensure_can_manage_key(user, key)
     if body.key is not None:
         raw = body.key.strip()
         if not raw:
@@ -286,9 +294,10 @@ async def delete_key(
     provider_id: int,
     key_id: int,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_staff),
+    user: User = Depends(get_current_user),
 ) -> None:
     key = await session.get(ApiKey, key_id)
     if key is None or key.provider_id != provider_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+    _ensure_can_manage_key(user, key)
     await session.delete(key)

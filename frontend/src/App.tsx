@@ -19,11 +19,13 @@ import type { ReactNode } from "react";
 function Protected({
   children,
   staff,
+  owner,
 }: {
   children: ReactNode;
   staff?: boolean;
+  owner?: boolean;
 }) {
-  const { user, loading, isStaff } = useAuth();
+  const { user, loading, isStaff, isOwner } = useAuth();
   if (loading) {
     return (
       <div style={{ display: "grid", placeItems: "center", height: "100vh" }}>
@@ -32,13 +34,14 @@ function Protected({
     );
   }
   if (!user) return <Navigate to="/login" replace />;
-  if (staff && !isStaff) return <Navigate to="/token" replace />;
+  if (owner && !isOwner) return <Navigate to="/providers" replace />;
+  if (staff && !isStaff) return <Navigate to="/providers" replace />;
   return <>{children}</>;
 }
 
 function Home() {
   const { isStaff } = useAuth();
-  return <Navigate to={isStaff ? "/dashboard" : "/token"} replace />;
+  return <Navigate to={isStaff ? "/dashboard" : "/providers"} replace />;
 }
 
 export function App() {
@@ -65,7 +68,7 @@ export function App() {
         <Route
           path="/providers"
           element={
-            <Protected staff>
+            <Protected>
               <Providers />
             </Protected>
           }
@@ -73,7 +76,7 @@ export function App() {
         <Route
           path="/providers/:id/keys"
           element={
-            <Protected staff>
+            <Protected>
               <ProviderKeys />
             </Protected>
           }
@@ -89,7 +92,7 @@ export function App() {
         <Route
           path="/tokens"
           element={
-            <Protected staff>
+            <Protected owner>
               <Tokens />
             </Protected>
           }
@@ -113,7 +116,7 @@ export function App() {
         <Route
           path="/logs"
           element={
-            <Protected staff>
+            <Protected>
               <Logs />
             </Protected>
           }
