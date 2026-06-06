@@ -27,6 +27,7 @@ import {
   EditRegular,
   SearchRegular,
 } from "@fluentui/react-icons";
+import JSON5 from "json5";
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -79,6 +80,7 @@ const useStyles = makeStyles({
 
 interface EditState {
   model_id: string;
+  mapped_id: string;
   description: string;
   enabled: boolean;
   config: string;
@@ -97,12 +99,17 @@ function prettyJson(value: unknown): string {
   }
 }
 
-/** Parse the OpenCode-config textarea; returns `undefined` (with an error) on bad JSON. */
+/**
+ * Parse the OpenCode-config textarea. Accepts JSONC / JSON5 (trailing commas,
+ * comments, unquoted keys, single quotes) — the same lenient dialect OpenCode's
+ * own `opencode.json` uses — so a config copied from there validates as-is.
+ * Returns `"INVALID"` when it can't be parsed into a JSON object.
+ */
 function parseConfig(text: string): Record<string, unknown> | "INVALID" {
   const trimmed = text.trim();
   if (!trimmed) return {};
   try {
-    const parsed = JSON.parse(trimmed);
+    const parsed = JSON5.parse(trimmed);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
@@ -138,6 +145,7 @@ export function Models() {
     return items.filter(
       (m) =>
         m.model_id.toLowerCase().includes(q) ||
+        m.public_id.toLowerCase().includes(q) ||
         (m.description ?? "").toLowerCase().includes(q) ||
         m.providers.some((p) => p.toLowerCase().includes(q)),
     );
@@ -172,6 +180,7 @@ export function Models() {
   function openEdit(m: ModelEntry) {
     setEdit({
       model_id: m.model_id,
+      mapped_id: m.mapped_id ?? "",
       description: m.description ?? "",
       enabled: m.enabled,
       config: prettyJson(m.opencode_config),
@@ -182,13 +191,22 @@ export function Models() {
     if (!edit) return;
     const config = parseConfig(edit.config);
     if (config === "INVALID") {
-      notify("Invalid JSON", "The OpenCode config must be a JSON object.", "error");
+      notify(
+        "Invalid config",
+        "The OpenCode config must be a JSON / JSONC object.",
+        "error",
+      );
+      return;
+    }
+    if (edit.mapped_id.trim() === edit.model_id) {
+      notify("Invalid mapping", "The public id must differ from the model id.", "error");
       return;
     }
     setSaving(true);
     try {
       await api.put("/api/models", {
         model_id: edit.model_id,
+        mapped_id: edit.mapped_id.trim(),
         description: edit.description,
         opencode_config: config,
         enabled: edit.enabled,
@@ -304,9 +322,16 @@ export function Models() {
             return (
               <Card key={m.model_id} className={styles.card}>
                 <div className={styles.head}>
-                  <Text weight="semibold" className={styles.modelId}>
-                    {m.model_id}
-                  </Text>
+                  <div style={{ minWidth: 0 }}>
+                    <Text weight="semibold" className={styles.modelId}>
+                      {m.public_id}
+                    </Text>
+                    {m.mapped_id ? (
+                      <Text size={100} className={styles.dim} block>
+                        ← {m.model_id}
+                      </Text>
+                    ) : null}
+                  </div>
                   {isStaff && (
                     <Checkbox
                       checked={selected.has(m.model_id)}
@@ -326,6 +351,11 @@ export function Models() {
                   {!m.enabled && (
                     <Badge appearance="filled" color="subtle">
                       hidden
+                    </Badge>
+                  )}
+                  {m.mapped_id && (
+                    <Badge appearance="tint" color="success">
+                      mapped
                     </Badge>
                   )}
                   {!m.served && (
@@ -382,6 +412,18 @@ export function Models() {
               <Field label="Model id">
                 <Input value={edit?.model_id ?? ""} disabled />
               </Field>
+              <Field
+                label="Public id (mapping)"
+                hint="Rename this model: when set, clients see and call only this id; the original id above is hidden and rejected. Leave blank for no mapping."
+              >
+                <Input
+                  value={edit?.mapped_id ?? ""}
+                  placeholder="e.g. fast-coder (blank = no mapping)"
+                  onChange={(_, d) =>
+                    setEdit((f) => (f ? { ...f, mapped_id: d.value } : f))
+                  }
+                />
+              </Field>
               <Field label="Description">
                 <Textarea
                   value={edit?.description ?? ""}
@@ -392,8 +434,8 @@ export function Models() {
                 />
               </Field>
               <Field
-                label="Custom OpenCode config (JSON)"
-                hint="Deep-merged into the model block the OpenCode plugin builds — e.g. {&quot;name&quot;: &quot;…&quot;, &quot;limit&quot;: {&quot;context&quot;: 200000}, &quot;cost&quot;: {&quot;input&quot;: 3}}."
+                label="Custom OpenCode config (JSON / JSONC)"
+                hint="Deep-merged into the model block the OpenCode plugin builds. Accepts JSONC/JSON5 (trailing commas & comments OK) — e.g. {&quot;name&quot;: &quot;…&quot;, &quot;limit&quot;: {&quot;context&quot;: 200000}}."
               >
                 <Textarea
                   value={edit?.config ?? ""}

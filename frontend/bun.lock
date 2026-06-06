@@ -7,6 +7,7 @@
       "dependencies": {
         "@fluentui/react-components": "^9.54.0",
         "@fluentui/react-icons": "^2.0.270",
+        "json5": "^2.2.3",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "react-markdown": "^10.1.0",

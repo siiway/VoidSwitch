@@ -127,6 +127,10 @@ class ModelOut(BaseModel):
     # served by a provider and has no metadata row yet.
     id: int | None = None
     model_id: str
+    # Public alias; when set, this is the only id clients see / may call.
+    mapped_id: str | None = None
+    # The id clients actually see (``mapped_id`` if set, else ``model_id``).
+    public_id: str
     description: str | None = None
     opencode_config: dict = Field(default_factory=dict)
     enabled: bool = True
@@ -145,6 +149,8 @@ class ModelUpsert(BaseModel):
     """Create or update the metadata for one model id."""
 
     model_id: str
+    # Send "" to clear an existing mapping; omit (null) to leave it unchanged.
+    mapped_id: str | None = None
     description: str | None = None
     opencode_config: dict | None = None
     enabled: bool | None = None

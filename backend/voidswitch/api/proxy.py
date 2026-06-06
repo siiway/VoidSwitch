@@ -60,6 +60,24 @@ def _check_model_allowed(token: VoidToken, model: str) -> None:
     )
 
 
+async def _resolve_public_model(session: AsyncSession, model: str) -> str:
+    """Map a public alias to its real upstream id; reject a hidden raw id.
+
+    When an admin maps ``deepseek-v4`` → public ``ds``, callers must use ``ds``;
+    ``ds`` resolves back to ``deepseek-v4`` for dispatch, and calling the raw
+    ``deepseek-v4`` is rejected so the upstream id can't be reached directly.
+    """
+    alias_to_source, hidden_sources = await models_catalog.mapping_tables(session)
+    if model in alias_to_source:
+        return alias_to_source[model]
+    if model in hidden_sources:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"Model '{model}' is not available under this id.",
+        )
+    return model
+
+
 async def _body(request: Request) -> dict:
     try:
         data = await request.json()
@@ -91,8 +109,12 @@ async def _handle(
     if not isinstance(model, str) or not model:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing 'model'.")
 
+    # Allow-list and rate-limit are checked against the *public* id the caller
+    # used, then the model is resolved to its real upstream id (if it's an alias).
     _check_model_allowed(authed.token, model)
     _check_rpm(authed.token)
+    model = await _resolve_public_model(session, model)
+    payload["model"] = model
 
     stream = bool(payload.get("stream", False))
     passthrough: dict[str, str] = {}
@@ -197,16 +219,23 @@ async def list_models(
     allowed = token.allowed_models or []
     for provider in providers:
         for model in provider.models or []:
-            if model == "*" or model in seen:
-                continue
-            if allowed and not any(p == "*" or p == model or fnmatch(model, p) for p in allowed):
+            if model == "*":
                 continue
             entry = entries.get(model)
             if entry is not None and not entry.enabled:
                 continue
-            seen.add(model)
+            # Advertise (and accept) the public alias when one is set; the raw
+            # upstream id is hidden so it never leaks and can't be called directly.
+            public_id = entry.mapped_id if entry is not None and entry.mapped_id else model
+            if public_id in seen:
+                continue
+            if allowed and not any(
+                p == "*" or p == public_id or fnmatch(public_id, p) for p in allowed
+            ):
+                continue
+            seen.add(public_id)
             item: dict[str, object] = {
-                "id": model,
+                "id": public_id,
                 "object": "model",
                 "created": 0,
                 "owned_by": provider.name,

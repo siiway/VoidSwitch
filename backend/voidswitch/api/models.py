@@ -34,6 +34,8 @@ def _to_out(item: models_catalog.CatalogItem) -> ModelOut:
     return ModelOut(
         id=entry.id if entry is not None else None,
         model_id=item.model_id,
+        mapped_id=item.mapped_id,
+        public_id=item.public_id,
         description=entry.description if entry is not None else None,
         opencode_config=entry.opencode_config if entry is not None else {},
         enabled=item.enabled,
@@ -82,6 +84,15 @@ async def upsert_model(
     if not model_id:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "model_id is required.")
     entry = await _get_or_create_entry(session, model_id, user)
+    if body.mapped_id is not None:
+        mapped = body.mapped_id.strip()
+        if mapped == model_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "mapped_id must differ from the model id "
+                "(use it to rename, not to alias to itself).",
+            )
+        entry.mapped_id = mapped or None
     if body.description is not None:
         entry.description = body.description
     if body.opencode_config is not None:

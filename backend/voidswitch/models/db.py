@@ -110,6 +110,11 @@ class ModelEntry(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     model_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # Optional public alias. When set, the model is advertised (and must be
+    # called) under this id instead of ``model_id``; the raw ``model_id`` is
+    # hidden from /v1/models and rejected at the gateway, so the upstream id
+    # never leaks and two providers' colliding ids can be disambiguated.
+    mapped_id: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     # Custom OpenCode model config, deep-merged into the plugin's built model.
     opencode_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

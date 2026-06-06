@@ -38,6 +38,16 @@ class CatalogItem:
     def enabled(self) -> bool:
         return self.entry.enabled if self.entry is not None else True
 
+    @property
+    def mapped_id(self) -> str | None:
+        return self.entry.mapped_id if self.entry is not None else None
+
+    @property
+    def public_id(self) -> str:
+        """The id clients see / must call: the mapped alias if set, else the raw id."""
+        mapped = self.mapped_id
+        return mapped if mapped else self.model_id
+
 
 def served_model_ids(providers: list[Provider]) -> set[str]:
     """Explicit model ids (and alias-route aliases) served by the providers.
@@ -88,6 +98,27 @@ async def build_catalog(session: AsyncSession) -> list[CatalogItem]:
     # Stable, human-friendly ordering.
     items.sort(key=lambda i: i.model_id.lower())
     return items
+
+
+async def mapping_tables(session: AsyncSession) -> tuple[dict[str, str], set[str]]:
+    """Return the gateway's model-aliasing tables.
+
+    * ``alias_to_source`` — public alias → the real (upstream) model id.
+    * ``hidden_sources``  — real ids that have an alias, so they are no longer
+      callable under their original name (only via the alias).
+    """
+    result = await session.execute(
+        select(ModelEntry.model_id, ModelEntry.mapped_id).where(ModelEntry.mapped_id.is_not(None))
+    )
+    rows = result.all()
+    alias_to_source: dict[str, str] = {}
+    hidden_sources: set[str] = set()
+    for model_id, mapped_id in rows:
+        if not mapped_id:
+            continue
+        alias_to_source[mapped_id] = model_id
+        hidden_sources.add(model_id)
+    return alias_to_source, hidden_sources
 
 
 async def sync_from_providers(

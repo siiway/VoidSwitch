@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
+import respx
 from voidswitch.core.config import get_settings
 from voidswitch.core.security import create_session_token
 from voidswitch.models.db import User
@@ -124,6 +126,98 @@ async def test_v1_models_sync_with_token(client, seeded):
     assert resp.status_code == 200, resp.text
     assert "added" in resp.json()
     assert "total" in resp.json()
+
+
+DS_URL = "https://api.deepseek.com/chat/completions"
+OAI_RESPONSE = {
+    "id": "chatcmpl-1",
+    "object": "chat.completion",
+    "model": "deepseek-chat",
+    "choices": [
+        {"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}
+    ],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+}
+
+
+async def test_mapping_hides_source_and_exposes_alias(client, seeded):
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "mapped_id": "ds-pub"},
+    )
+    # Dashboard catalog exposes both the source and its public id.
+    listed = (await client.get("/api/models", headers=_session_headers())).json()
+    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
+    assert chat["mapped_id"] == "ds-pub"
+    assert chat["public_id"] == "ds-pub"
+
+    # /v1/models advertises only the alias, never the raw upstream id.
+    data = (await client.get("/v1/models", headers={"x-api-key": seeded["token"]})).json()["data"]
+    ids = {m["id"] for m in data}
+    assert "ds-pub" in ids
+    assert "deepseek-chat" not in ids
+
+
+async def test_mapping_self_alias_rejected(client, seeded):
+    resp = await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "mapped_id": "deepseek-chat"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_call_via_alias_routes_to_source(client, seeded):
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "mapped_id": "ds-pub"},
+    )
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        resp = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {seeded['token']}"},
+            json={"model": "ds-pub", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert resp.status_code == 200, resp.text
+        # The upstream received the real model id, not the public alias.
+        sent = route.calls.last.request
+        import json as _json
+
+        assert _json.loads(sent.content)["model"] == "deepseek-chat"
+
+
+async def test_call_via_hidden_source_rejected(client, seeded):
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "mapped_id": "ds-pub"},
+    )
+    resp = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {seeded['token']}"},
+        json={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == 404
+
+
+async def test_clear_mapping(client, seeded):
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "mapped_id": "ds-pub"},
+    )
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "mapped_id": ""},
+    )
+    listed = (await client.get("/api/models", headers=_session_headers())).json()
+    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
+    assert chat["mapped_id"] is None
+    assert chat["public_id"] == "deepseek-chat"
 
 
 async def test_delete_metadata(client, seeded):

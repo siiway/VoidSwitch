@@ -110,6 +110,8 @@ export interface VoidTokenWithSecret extends VoidToken {
 export interface ModelEntry {
   id: number | null;
   model_id: string;
+  mapped_id?: string | null;
+  public_id: string;
   description?: string | null;
   opencode_config: Record<string, unknown>;
   enabled: boolean;
