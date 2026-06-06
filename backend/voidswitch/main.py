@@ -47,6 +47,7 @@ from voidswitch.core.logging import configure_logging, get_logger
 from voidswitch.services import settings_store
 from voidswitch.services.network import get_pool
 from voidswitch.tasks.balance_probe import run_balance_probe
+from voidswitch.tasks.balance_rescan import run_balance_rescan
 from voidswitch.tasks.manager import PeriodicTask, TaskManager
 from voidswitch.tasks.proxy_resurrector import run_proxy_resurrector
 
@@ -71,6 +72,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             interval_key="balance_probe_interval_seconds",
             enabled_key="balance_probe_enabled",
             min_interval=30,
+        )
+    )
+    manager.register(
+        PeriodicTask(
+            name="balance_rescan",
+            tick=run_balance_rescan,
+            interval_key="balance_rescan_interval_seconds",
+            enabled_key="balance_rescan_enabled",
+            min_interval=60,
         )
     )
     manager.register(

@@ -7,10 +7,11 @@ bundle and stores it as a provider key.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus
@@ -26,13 +27,22 @@ from voidswitch.core.database import get_session
 from voidswitch.core.security import decrypt_secret, encrypt_secret, hash_token
 from voidswitch.models.db import ApiKey, Provider, User
 from voidswitch.models.schemas import (
+    ApiKeyCleanup,
+    ApiKeyCleanupResult,
     ApiKeyCreate,
     ApiKeyOut,
     ApiKeyUpdate,
     ClaudeOAuthComplete,
     ClaudeOAuthStart,
 )
-from voidswitch.services import oauth_tokens
+from voidswitch.services import oauth_tokens, settings_store
+from voidswitch.services.balance import refresh_key_balance
+from voidswitch.services.network import Route, get_pool
+from voidswitch.services.providers.registry import get_adapter
+
+
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
 
 router = APIRouter(prefix="/api/admin/providers/{provider_id}/keys", tags=["admin:keys"])
 
@@ -159,6 +169,148 @@ async def add_keys(
         ip=request.client.host if request.client else None,
     )
     return created
+
+
+# --------------------------------------------------------------------------- #
+# Balance refresh (providers with a balance endpoint)
+# --------------------------------------------------------------------------- #
+
+
+async def _refresh_one(
+    key: ApiKey,
+    provider: Provider,
+    settings: Settings,
+) -> bool | None:
+    """Probe a single key's balance, applying auto enable/disable. Never raises."""
+    auto_disable = settings_store.get_bool("auto_disable_zero_balance", True)
+    pool = get_pool()
+    client = await pool.get(Route(), connect_timeout=15.0, read_timeout=30.0)
+    try:
+        return await refresh_key_balance(
+            key, provider, client, settings, auto_disable=auto_disable
+        )
+    except Exception:
+        return None
+
+
+@router.post("/refresh-balance", response_model=list[ApiKeyOut])
+async def refresh_balances(
+    provider_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> list[ApiKey]:
+    """Refresh the balance for every (manageable) key under this provider."""
+    provider = await _get_provider(session, provider_id)
+    if get_adapter(provider).balance_url is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This provider does not support balance queries.",
+        )
+    stmt = select(ApiKey).where(ApiKey.provider_id == provider_id)
+    if not is_staff(user):
+        stmt = stmt.where(ApiKey.added_by == user.id)
+    keys = (await session.execute(stmt.order_by(ApiKey.id))).scalars().all()
+    for key in keys:
+        await _refresh_one(key, provider, settings)
+    await session.flush()
+    return list(keys)
+
+
+@router.post("/{key_id}/refresh-balance", response_model=ApiKeyOut)
+async def refresh_balance_one(
+    provider_id: int,
+    key_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> ApiKey:
+    """Refresh a single key's balance on demand."""
+    key = await session.get(ApiKey, key_id)
+    if key is None or key.provider_id != provider_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+    _ensure_can_manage_key(user, key)
+    provider = await _get_provider(session, provider_id)
+    if get_adapter(provider).balance_url is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This provider does not support balance queries.",
+        )
+    await _refresh_one(key, provider, settings)
+    await session.flush()
+    return key
+
+
+# --------------------------------------------------------------------------- #
+# Bulk cleanup of dead keys (invalid / out-of-balance)
+# --------------------------------------------------------------------------- #
+
+
+_CLEANUP_TARGETS = {KeyStatus.INVALID.value, KeyStatus.INSUFFICIENT_BALANCE.value}
+
+
+@router.post("/cleanup", response_model=ApiKeyCleanupResult)
+async def cleanup_keys(
+    provider_id: int,
+    body: ApiKeyCleanup,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> ApiKeyCleanupResult:
+    """Delete keys stuck in a dead state: ``invalid`` or ``insufficient_balance``.
+
+    For ``insufficient_balance`` an optional ``min_days`` requires the key to have
+    been disabled for at least that many days (based on ``disabled_since``) before
+    it is removed. Members only clean up keys they added; staff clean up any.
+    """
+    await _get_provider(session, provider_id)
+    if body.target not in _CLEANUP_TARGETS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"target must be one of {sorted(_CLEANUP_TARGETS)}.",
+        )
+    stmt = select(ApiKey).where(
+        ApiKey.provider_id == provider_id,
+        ApiKey.status == body.target,
+    )
+    if not is_staff(user):
+        stmt = stmt.where(ApiKey.added_by == user.id)
+    keys = (await session.execute(stmt)).scalars().all()
+
+    cutoff: dt.datetime | None = None
+    if body.target == KeyStatus.INSUFFICIENT_BALANCE.value and body.min_days > 0:
+        cutoff = _utcnow() - dt.timedelta(days=body.min_days)
+
+    doomed: list[ApiKey] = []
+    for key in keys:
+        if cutoff is not None:
+            since = key.disabled_since
+            # Without a recorded disable time we cannot prove the age — skip it.
+            if since is None:
+                continue
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=dt.UTC)
+            if since > cutoff:
+                continue
+        doomed.append(key)
+
+    if not doomed:
+        return ApiKeyCleanupResult(deleted=0)
+
+    ids = [k.id for k in doomed]
+    await session.execute(delete(ApiKey).where(ApiKey.id.in_(ids)))
+    await record_audit(
+        session,
+        action="key.cleanup",
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="provider",
+        target_id=provider_id,
+        detail={"target": body.target, "min_days": body.min_days, "deleted": len(ids)},
+        ip=request.client.host if request.client else None,
+    )
+    return ApiKeyCleanupResult(deleted=len(ids))
 
 
 # --------------------------------------------------------------------------- #
@@ -293,11 +445,17 @@ async def update_key(
         if body.enabled:
             key.failed_count = 0
             key.disabled_reason = None
+            key.disabled_since = None
+        elif key.disabled_since is None:
+            key.disabled_since = _utcnow()
     if body.status is not None:
         key.status = body.status
         if body.status == KeyStatus.ACTIVE.value:
             key.failed_count = 0
             key.disabled_reason = None
+            key.disabled_since = None
+        elif key.disabled_since is None:
+            key.disabled_since = _utcnow()
     if body.weight is not None:
         key.weight = body.weight
     if body.note is not None:

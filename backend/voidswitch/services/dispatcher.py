@@ -140,6 +140,8 @@ def _disable_key(key: ApiKey, status: KeyStatus, reason: str) -> None:
     key.status = status.value
     key.disabled_reason = reason
     key.last_checked_at = _utcnow()
+    if key.disabled_since is None:
+        key.disabled_since = _utcnow()
 
 
 def _penalize_proxy(proxy: Proxy | None, reason: str, threshold: int) -> None:

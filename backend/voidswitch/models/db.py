@@ -156,6 +156,12 @@ class ApiKey(Base, TimestampMixin):
     note: Mapped[str | None] = mapped_column(String(255), default=None)
     balance: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     disabled_reason: Mapped[str | None] = mapped_column(String(255), default=None)
+    # When the key was first moved out of the active state (insufficient balance,
+    # invalid, etc.). Used to age out long-dead keys (e.g. "no balance for N days")
+    # and cleared whenever the key is re-enabled. Null while active.
+    disabled_since: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     total_requests: Mapped[int] = mapped_column(Integer, default=0)
     last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_checked_at: Mapped[dt.datetime | None] = mapped_column(

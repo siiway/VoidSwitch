@@ -37,6 +37,7 @@ export interface Provider {
   updated_at: string;
   key_count: number;
   active_key_count: number;
+  supports_balance: boolean;
   added_by?: number | null;
   added_by_name?: string | null;
 }
@@ -64,6 +65,7 @@ export interface ApiKey {
   last_used_at?: string | null;
   last_checked_at?: string | null;
   created_at: string;
+  disabled_since?: string | null;
   added_by?: number | null;
   added_by_name?: string | null;
 }

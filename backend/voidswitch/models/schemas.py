@@ -106,6 +106,9 @@ class ProviderOut(ProviderBase):
     updated_at: dt.datetime
     key_count: int = 0
     active_key_count: int = 0
+    # True when this provider's adapter can query a balance endpoint, so the
+    # dashboard can surface a balance column and a "refresh balances" action.
+    supports_balance: bool = False
     added_by: int | None = None
     added_by_name: str | None = None
 
@@ -151,8 +154,24 @@ class ApiKeyOut(BaseModel):
     last_used_at: dt.datetime | None = None
     last_checked_at: dt.datetime | None = None
     created_at: dt.datetime
+    disabled_since: dt.datetime | None = None
     added_by: int | None = None
     added_by_name: str | None = None
+
+
+class ApiKeyCleanup(BaseModel):
+    """Bulk-delete keys in a given disabled state for one provider."""
+
+    # "invalid" → keys whose secret was rejected; "insufficient_balance" → keys
+    # that ran out of balance. Only these two targets are accepted.
+    target: str
+    # For "insufficient_balance": only delete keys that have been disabled for at
+    # least this many days (based on ``disabled_since``). 0 = no age requirement.
+    min_days: int = 0
+
+
+class ApiKeyCleanupResult(BaseModel):
+    deleted: int
 
 
 # --------------------------------------------------------------------------- #

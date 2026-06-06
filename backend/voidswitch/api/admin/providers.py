@@ -17,7 +17,11 @@ from voidswitch.core.auth import (
 from voidswitch.core.database import get_session
 from voidswitch.models.db import Provider, Proxy, User
 from voidswitch.models.schemas import ProviderCreate, ProviderOut, ProviderUpdate
-from voidswitch.services.providers.registry import adapter_catalog, adapter_class
+from voidswitch.services.providers.registry import (
+    adapter_catalog,
+    adapter_class,
+    get_adapter,
+)
 
 router = APIRouter(prefix="/api/admin/providers", tags=["admin:providers"])
 
@@ -28,6 +32,7 @@ def _to_out(provider: Provider, *, redact: bool = False) -> ProviderOut:
     out = ProviderOut.model_validate(provider)
     out.key_count = len(provider.keys)
     out.active_key_count = sum(1 for k in provider.keys if k.status == KeyStatus.ACTIVE.value)
+    out.supports_balance = get_adapter(provider).balance_url is not None
     if redact:
         # Members may view providers (to add keys) but must not see potentially
         # secret config such as custom auth headers.

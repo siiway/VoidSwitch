@@ -9,6 +9,7 @@ import {
   DialogTitle,
   Field,
   Input,
+  SpinButton,
   TableBody,
   TableCell,
   TableHeader,
@@ -16,10 +17,12 @@ import {
   TableRow,
   Text,
   Textarea,
+  Tooltip,
   tokens,
 } from "@fluentui/react-components";
 import {
   ArrowLeftRegular,
+  ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
   EyeRegular,
@@ -42,6 +45,30 @@ import {
   useNotify,
 } from "../components/ui";
 
+/** Render a key's stored balance blob into a short human string. */
+function formatBalance(balance: Record<string, unknown> | undefined): string {
+  if (!balance || Object.keys(balance).length === 0) return "—";
+  // DeepSeek-style: { is_available, balance_infos: [{ currency, total_balance }] }
+  const infos = balance.balance_infos;
+  if (Array.isArray(infos) && infos.length) {
+    const parts = infos
+      .map((i) => {
+        const info = i as Record<string, unknown>;
+        const amount =
+          info.total_balance ?? info.totalBalance ?? info.balance ?? "?";
+        const currency = info.currency ?? "";
+        return `${amount} ${currency}`.trim();
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join(", ");
+  }
+  if (balance.error) return String(balance.error);
+  if ("is_available" in balance) {
+    return balance.is_available ? "available" : "empty";
+  }
+  return JSON.stringify(balance);
+}
+
 export function ProviderKeys() {
   const { id } = useParams();
   const providerId = Number(id);
@@ -58,6 +85,12 @@ export function ProviderKeys() {
   const [bulk, setBulk] = useState("");
   const [pool, setPool] = useState("");
   const [adding, setAdding] = useState(false);
+
+  // Balance-refresh + cleanup state.
+  const [refreshingAll, setRefreshingAll] = useState(false);
+  const [refreshingId, setRefreshingId] = useState<number | null>(null);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanDays, setCleanDays] = useState(0);
 
   // Edit-key dialog state.
   const [editing, setEditing] = useState<ApiKey | null>(null);
@@ -86,6 +119,79 @@ export function ProviderKeys() {
 
   const current = provider.data?.find((p) => p.id === providerId);
   const isClaudeCode = current?.type === "claude-code";
+  const supportsBalance = current?.supports_balance ?? false;
+
+  async function refreshAllBalances() {
+    setRefreshingAll(true);
+    try {
+      await api.post(`/api/admin/providers/${providerId}/keys/refresh-balance`);
+      notify("Balances refreshed", undefined, "success");
+      keys.reload();
+    } catch (e) {
+      notify(
+        "Refresh failed",
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setRefreshingAll(false);
+    }
+  }
+
+  async function refreshOneBalance(k: ApiKey) {
+    setRefreshingId(k.id);
+    try {
+      await api.post(
+        `/api/admin/providers/${providerId}/keys/${k.id}/refresh-balance`,
+      );
+      keys.reload();
+    } catch (e) {
+      notify(
+        "Refresh failed",
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setRefreshingId(null);
+    }
+  }
+
+  async function cleanup(target: "invalid" | "insufficient_balance") {
+    const isBalance = target === "insufficient_balance";
+    const label = isBalance ? "no-balance" : "invalid";
+    const ok = await confirm({
+      title: `Clean ${label} keys`,
+      message: isBalance
+        ? `Delete keys with no balance for at least ${cleanDays} day(s)? This cannot be undone.`
+        : "Delete all keys whose secret was rejected (invalid)? This cannot be undone.",
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setCleaning(true);
+    try {
+      const r = await api.post<{ deleted: number }>(
+        `/api/admin/providers/${providerId}/keys/cleanup`,
+        isBalance
+          ? { target, min_days: cleanDays }
+          : { target, min_days: 0 },
+      );
+      notify(
+        "Cleanup complete",
+        `${r.deleted} ${label} key(s) removed`,
+        "success",
+      );
+      keys.reload();
+    } catch (e) {
+      notify(
+        "Cleanup failed",
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setCleaning(false);
+    }
+  }
 
   async function startOAuth() {
     setOauthBusy(true);
@@ -255,6 +361,18 @@ export function ProviderKeys() {
             ? "Sign in with a Claude subscription, or paste setup-tokens / credential bundles below"
             : "Paste one API key per line to add in bulk. Add an inline description with # (e.g. sk-abc # alice's key)"
         }
+        action={
+          supportsBalance ? (
+            <Button
+              appearance="secondary"
+              icon={<ArrowSyncRegular />}
+              disabled={refreshingAll}
+              onClick={refreshAllBalances}
+            >
+              {refreshingAll ? "Refreshing…" : "Refresh balances"}
+            </Button>
+          ) : undefined
+        }
       />
 
       {isClaudeCode ? (
@@ -330,16 +448,76 @@ export function ProviderKeys() {
           onChange={(_, d) => setBulk(d.value)}
         />
       </Field>
-      <Field
-        label="Key pool (optional tag — e.g. leaked, members)"
-        style={{ marginBottom: 8, maxWidth: 320 }}
+      <div
+        style={{
+          display: "flex",
+          gap: 16,
+          alignItems: "flex-end",
+          flexWrap: "wrap",
+          marginBottom: 8,
+        }}
       >
-        <Input
-          value={pool}
-          placeholder="(untagged)"
-          onChange={(_, d) => setPool(d.value)}
-        />
-      </Field>
+        <Field
+          label="Key pool (optional tag — e.g. leaked, members)"
+          style={{ flex: "1 1 240px", maxWidth: 320 }}
+        >
+          <Input
+            value={pool}
+            placeholder="(untagged)"
+            onChange={(_, d) => setPool(d.value)}
+          />
+        </Field>
+        {/* Bulk cleanup of dead keys — fills the empty space beside the pool tag. */}
+        <div
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            gap: 8,
+            alignItems: "flex-end",
+            flexWrap: "wrap",
+          }}
+        >
+          <Tooltip
+            content="Delete every key whose secret was rejected (invalid)"
+            relationship="label"
+          >
+            <Button
+              appearance="secondary"
+              icon={<DeleteRegular />}
+              disabled={cleaning}
+              onClick={() => cleanup("invalid")}
+            >
+              Clean invalid
+            </Button>
+          </Tooltip>
+          <Field label="No balance for ≥ (days)">
+            <SpinButton
+              value={cleanDays}
+              min={0}
+              max={365}
+              style={{ width: 110 }}
+              onChange={(_, d) => {
+                const next =
+                  d.value ?? (d.displayValue ? Number(d.displayValue) : 0);
+                if (!Number.isNaN(next)) setCleanDays(Math.max(0, next));
+              }}
+            />
+          </Field>
+          <Tooltip
+            content="Delete keys that have had no balance for at least the given number of days"
+            relationship="label"
+          >
+            <Button
+              appearance="secondary"
+              icon={<DeleteRegular />}
+              disabled={cleaning}
+              onClick={() => cleanup("insufficient_balance")}
+            >
+              Clean no-balance
+            </Button>
+          </Tooltip>
+        </div>
+      </div>
       <Button
         appearance="primary"
         disabled={adding || !bulk.trim()}
@@ -362,6 +540,9 @@ export function ProviderKeys() {
               <TableHeaderCell>Pool</TableHeaderCell>
               <TableHeaderCell>Added by</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
+              {supportsBalance && (
+                <TableHeaderCell>Balance</TableHeaderCell>
+              )}
               <TableHeaderCell>Fails</TableHeaderCell>
               <TableHeaderCell>Requests</TableHeaderCell>
               <TableHeaderCell>Last used</TableHeaderCell>
@@ -387,6 +568,31 @@ export function ProviderKeys() {
                 <TableCell>
                   <StatusBadge status={k.status} />
                 </TableCell>
+                {supportsBalance && (
+                  <TableCell>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <span>{formatBalance(k.balance)}</span>
+                      <Tooltip
+                        content="Refresh this key's balance"
+                        relationship="label"
+                      >
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<ArrowSyncRegular />}
+                          disabled={refreshingId === k.id || refreshingAll}
+                          onClick={() => refreshOneBalance(k)}
+                        />
+                      </Tooltip>
+                    </div>
+                  </TableCell>
+                )}
                 <TableCell>{k.failed_count}</TableCell>
                 <TableCell>{k.total_requests}</TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>

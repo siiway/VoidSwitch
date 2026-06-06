@@ -235,10 +235,32 @@ const STATUS_COLORS: Record<
   disabled: "subtle",
 };
 
+const useBadgeStyles = makeStyles({
+  // Fluent's Badge is a fixed-height pill with `white-space: nowrap`, so a long
+  // status like "insufficient balance" overflows and gets clipped. Let it grow
+  // and wrap inside its cell instead.
+  wrap: {
+    height: "auto",
+    minHeight: "20px",
+    whiteSpace: "normal",
+    textAlign: "center",
+    overflowWrap: "anywhere",
+    paddingTop: "2px",
+    paddingBottom: "2px",
+    lineHeight: "1.2",
+  },
+});
+
 export function StatusBadge({ status }: { status: string }) {
+  const styles = useBadgeStyles();
   const color = STATUS_COLORS[status] ?? "informative";
   return (
-    <Badge appearance="filled" color={color}>
+    <Badge
+      appearance="filled"
+      color={color}
+      shape="rounded"
+      className={styles.wrap}
+    >
       {status.replace(/_/g, " ")}
     </Badge>
   );
