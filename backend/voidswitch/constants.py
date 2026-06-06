@@ -48,6 +48,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # Slow background rescan that re-checks keys disabled for insufficient balance
     # and re-enables any that have been topped up. Defaults to once per day.
     "balance_rescan_interval_seconds": 86400,
+    # Throttle for on-demand "rescan all balances": at most this many balance
+    # requests per second. 0 = unthrottled (fire as fast as possible).
+    "balance_scan_rate_per_second": 5,
     "request_timeout_seconds": 300,
     "connect_timeout_seconds": 15,
     "max_retries": 6,

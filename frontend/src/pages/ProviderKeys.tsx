@@ -7,8 +7,10 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Dropdown,
   Field,
   Input,
+  Option,
   SpinButton,
   TableBody,
   TableCell,
@@ -91,6 +93,9 @@ export function ProviderKeys() {
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [cleanDays, setCleanDays] = useState(0);
+  // Which pool a "rescan all" targets: "__all__" = whole provider,
+  // "__untagged__" = the empty pool, otherwise a specific pool tag.
+  const [scanPool, setScanPool] = useState("__all__");
 
   // Edit-key dialog state.
   const [editing, setEditing] = useState<ApiKey | null>(null);
@@ -120,16 +125,31 @@ export function ProviderKeys() {
   const current = provider.data?.find((p) => p.id === providerId);
   const isClaudeCode = current?.type === "claude-code";
   const supportsBalance = current?.supports_balance ?? false;
+  // Distinct pool tags present among this provider's keys (for the rescan picker).
+  const pools = Array.from(
+    new Set((keys.data ?? []).map((k) => k.pool ?? "")),
+  ).sort();
 
   async function refreshAllBalances() {
     setRefreshingAll(true);
     try {
-      await api.post(`/api/admin/providers/${providerId}/keys/refresh-balance`);
-      notify("Balances refreshed", undefined, "success");
+      let query = "";
+      let scope = "all keys";
+      if (scanPool === "__untagged__") {
+        query = "?pool=";
+        scope = "untagged pool";
+      } else if (scanPool !== "__all__") {
+        query = `?pool=${encodeURIComponent(scanPool)}`;
+        scope = `pool "${scanPool}"`;
+      }
+      await api.post(
+        `/api/admin/providers/${providerId}/keys/refresh-balance${query}`,
+      );
+      notify("Balances rescanned", scope, "success");
       keys.reload();
     } catch (e) {
       notify(
-        "Refresh failed",
+        "Rescan failed",
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -160,7 +180,7 @@ export function ProviderKeys() {
     const isBalance = target === "insufficient_balance";
     const label = isBalance ? "no-balance" : "invalid";
     const ok = await confirm({
-      title: `Clean ${label} keys`,
+      title: `Clear ${label} keys`,
       message: isBalance
         ? `Delete keys with no balance for at least ${cleanDays} day(s)? This cannot be undone.`
         : "Delete all keys whose secret was rejected (invalid)? This cannot be undone.",
@@ -363,14 +383,45 @@ export function ProviderKeys() {
         }
         action={
           supportsBalance ? (
-            <Button
-              appearance="secondary"
-              icon={<ArrowSyncRegular />}
-              disabled={refreshingAll}
-              onClick={refreshAllBalances}
-            >
-              {refreshingAll ? "Refreshing…" : "Refresh balances"}
-            </Button>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+              <Field label="Rescan scope">
+                <Dropdown
+                  style={{ minWidth: 150 }}
+                  selectedOptions={[scanPool]}
+                  value={
+                    scanPool === "__all__"
+                      ? "All pools"
+                      : scanPool === "__untagged__"
+                        ? "(untagged)"
+                        : scanPool
+                  }
+                  onOptionSelect={(_, d) =>
+                    setScanPool(d.optionValue ?? "__all__")
+                  }
+                >
+                  <Option value="__all__" text="All pools">
+                    All pools
+                  </Option>
+                  {pools.map((p) => (
+                    <Option
+                      key={p === "" ? "__untagged__" : p}
+                      value={p === "" ? "__untagged__" : p}
+                      text={p === "" ? "(untagged)" : p}
+                    >
+                      {p === "" ? "(untagged)" : p}
+                    </Option>
+                  ))}
+                </Dropdown>
+              </Field>
+              <Button
+                appearance="secondary"
+                icon={<ArrowSyncRegular />}
+                disabled={refreshingAll}
+                onClick={refreshAllBalances}
+              >
+                {refreshingAll ? "Rescanning…" : "Rescan balances"}
+              </Button>
+            </div>
           ) : undefined
         }
       />
@@ -477,19 +528,6 @@ export function ProviderKeys() {
             flexWrap: "wrap",
           }}
         >
-          <Tooltip
-            content="Delete every key whose secret was rejected (invalid)"
-            relationship="label"
-          >
-            <Button
-              appearance="secondary"
-              icon={<DeleteRegular />}
-              disabled={cleaning}
-              onClick={() => cleanup("invalid")}
-            >
-              Clean invalid
-            </Button>
-          </Tooltip>
           <Field label="No balance for ≥ (days)">
             <SpinButton
               value={cleanDays}
@@ -513,7 +551,20 @@ export function ProviderKeys() {
               disabled={cleaning}
               onClick={() => cleanup("insufficient_balance")}
             >
-              Clean no-balance
+              Clear no-balance
+            </Button>
+          </Tooltip>
+          <Tooltip
+            content="Delete every key whose secret was rejected (invalid)"
+            relationship="label"
+          >
+            <Button
+              appearance="secondary"
+              icon={<DeleteRegular />}
+              disabled={cleaning}
+              onClick={() => cleanup("invalid")}
+            >
+              Clear invalid
             </Button>
           </Tooltip>
         </div>

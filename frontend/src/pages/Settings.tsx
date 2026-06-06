@@ -28,6 +28,7 @@ const LABELS: Record<string, string> = {
   proxy_probe_interval_seconds: "Proxy resurrector interval (s)",
   balance_probe_interval_seconds: "Balance probe interval (s)",
   balance_rescan_interval_seconds: "Balance rescan interval (s)",
+  balance_scan_rate_per_second: "Manual balance rescan rate (req/s)",
   request_timeout_seconds: "Request timeout (s)",
   connect_timeout_seconds: "Connect timeout (s)",
   max_retries: "Max retries per request",

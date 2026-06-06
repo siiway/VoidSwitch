@@ -7,6 +7,7 @@ bundle and stores it as a provider key.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 
@@ -196,11 +197,16 @@ async def _refresh_one(
 @router.post("/refresh-balance", response_model=list[ApiKeyOut])
 async def refresh_balances(
     provider_id: int,
+    pool: str | None = None,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> list[ApiKey]:
-    """Refresh the balance for every (manageable) key under this provider."""
+    """Rescan balances for this provider's keys (optionally one ``pool`` only).
+
+    Throttled to ``balance_scan_rate_per_second`` requests/second so a large pool
+    cannot hammer the upstream balance endpoint.
+    """
     provider = await _get_provider(session, provider_id)
     if get_adapter(provider).balance_url is None:
         raise HTTPException(
@@ -208,10 +214,17 @@ async def refresh_balances(
             "This provider does not support balance queries.",
         )
     stmt = select(ApiKey).where(ApiKey.provider_id == provider_id)
+    if pool is not None:
+        stmt = stmt.where(ApiKey.pool == pool)
     if not is_staff(user):
         stmt = stmt.where(ApiKey.added_by == user.id)
     keys = (await session.execute(stmt.order_by(ApiKey.id))).scalars().all()
-    for key in keys:
+
+    rate = settings_store.get_int("balance_scan_rate_per_second", 5)
+    delay = 1.0 / rate if rate > 0 else 0.0
+    for index, key in enumerate(keys):
+        if delay and index:
+            await asyncio.sleep(delay)
         await _refresh_one(key, provider, settings)
     await session.flush()
     return list(keys)
