@@ -13,6 +13,7 @@ from voidswitch import __version__
 from voidswitch.api import auth as auth_api
 from voidswitch.api import install as install_api
 from voidswitch.api import me as me_api
+from voidswitch.api import models as models_api
 from voidswitch.api import proxy as proxy_api
 from voidswitch.api.admin import (
     keys as keys_api,
@@ -143,6 +144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Auth + self-service.
     app.include_router(auth_api.router)
     app.include_router(me_api.router)
+    app.include_router(models_api.router)
     # Admin.
     app.include_router(providers_api.router)
     app.include_router(keys_api.router)

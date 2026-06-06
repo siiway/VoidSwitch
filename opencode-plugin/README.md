@@ -155,6 +155,7 @@ for the rest of the session:
 | `/effort auto` | Clears the override (model decides) |
 | `/fast` · `/fast off` | Turns fast mode on / off for the session |
 | `/ultracode` | xhigh effort for the session |
+| `/sync-models` | Refresh the platform's available-model list from the gateway (then reopen the model picker) |
 
 Precedence: a per-turn model-variant pick (e.g. `…:low`) overrides the session
 command, which overrides the `effort` plugin option.

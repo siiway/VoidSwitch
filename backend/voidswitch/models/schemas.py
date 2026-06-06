@@ -114,6 +114,61 @@ class ProviderOut(ProviderBase):
 
 
 # --------------------------------------------------------------------------- #
+# Models (platform-wide model catalog + per-model metadata)
+# --------------------------------------------------------------------------- #
+
+
+class ModelOut(BaseModel):
+    """A single model id in the catalog, merged with any stored metadata."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    # Numeric id of the backing metadata row, or null when the model is only
+    # served by a provider and has no metadata row yet.
+    id: int | None = None
+    model_id: str
+    description: str | None = None
+    opencode_config: dict = Field(default_factory=dict)
+    enabled: bool = True
+    # Names of enabled providers that currently serve this model.
+    providers: list[str] = Field(default_factory=list)
+    # True when at least one enabled provider serves it right now.
+    served: bool = False
+    # True when a metadata row exists for it.
+    registered: bool = False
+    added_by_name: str | None = None
+    created_at: dt.datetime | None = None
+    updated_at: dt.datetime | None = None
+
+
+class ModelUpsert(BaseModel):
+    """Create or update the metadata for one model id."""
+
+    model_id: str
+    description: str | None = None
+    opencode_config: dict | None = None
+    enabled: bool | None = None
+
+
+class ModelBatchUpdate(BaseModel):
+    """Apply the same metadata to many model ids at once."""
+
+    model_ids: list[str]
+    description: str | None = None
+    opencode_config: dict | None = None
+    enabled: bool | None = None
+
+
+class ModelBatchResult(BaseModel):
+    updated: int
+
+
+class ModelSyncResult(BaseModel):
+    added: int
+    total: int
+
+
+# --------------------------------------------------------------------------- #
 # API keys (upstream provider credentials)
 # --------------------------------------------------------------------------- #
 

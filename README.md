@@ -45,6 +45,11 @@ Each has its own README with full details.
   with per-token model allow-lists and RPM limits.
 - **Background crons** — balance probe (fast-fails empty keys) and proxy
   resurrector (re-enables recovered proxies). Intervals tunable at runtime.
+- **Model catalog** — a **Models** page (visible to every signed-in user) collects
+  every model id served across the platform as cards. Admins set per-model
+  descriptions (individually or in batch) and a custom OpenCode model config that
+  the plugin deep-merges into each model. Any user can refresh the catalog from the
+  dashboard, the `POST /v1/models/sync` endpoint, or the OpenCode `/sync-models` command.
 - **Observability** — request/usage logs, administrative audit trail, live stats.
 - **OpenCode plugin** — registers VoidSwitch as a first-class OpenCode provider and
   reproduces the full Claude Code request surface (effort levels, fast mode, adaptive

@@ -107,6 +107,25 @@ export interface VoidTokenWithSecret extends VoidToken {
   token: string;
 }
 
+export interface ModelEntry {
+  id: number | null;
+  model_id: string;
+  description?: string | null;
+  opencode_config: Record<string, unknown>;
+  enabled: boolean;
+  providers: string[];
+  served: boolean;
+  registered: boolean;
+  added_by_name?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ModelSyncResult {
+  added: number;
+  total: number;
+}
+
 export interface Stats {
   providers: number;
   active_keys: number;

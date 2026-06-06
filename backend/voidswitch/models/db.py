@@ -95,6 +95,32 @@ class VoidToken(Base, TimestampMixin):
         return user.username or user.name or user.email
 
 
+class ModelEntry(Base, TimestampMixin):
+    """Catalog metadata for a model id offered across the platform.
+
+    The *available* model ids come from the providers' ``models`` lists (and
+    alias routes); this table layers human-facing metadata on top of them: a
+    description and a custom OpenCode model config (deep-merged into the model
+    block the OpenCode plugin builds). Rows are created on demand — either by an
+    admin editing a model, by the "sync from providers" action, or by a user
+    refreshing the catalog through the OpenCode ``/models`` command.
+    """
+
+    __tablename__ = "models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    model_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    # Custom OpenCode model config, deep-merged into the plugin's built model.
+    opencode_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # When False the model is hidden from the advertised list (/v1/models) and
+    # the OpenCode picker, even if a provider still serves it.
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Who first registered metadata for this model (id + display-name snapshot).
+    added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
+    added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
+
+
 class Provider(Base, TimestampMixin):
     __tablename__ = "providers"
 

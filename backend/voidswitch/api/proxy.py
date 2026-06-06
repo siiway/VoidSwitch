@@ -21,7 +21,8 @@ from voidswitch.core import auth
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
 from voidswitch.core.security import hash_token
-from voidswitch.models.db import Provider, VoidToken
+from voidswitch.models.db import ModelEntry, Provider, VoidToken
+from voidswitch.services import models_catalog
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
 router = APIRouter(tags=["gateway"])
@@ -160,12 +161,9 @@ async def messages(
     return await _handle(request, session, authorization, x_api_key, ApiStyle.ANTHROPIC)
 
 
-@router.get("/v1/models")
-async def list_models(
-    session: AsyncSession = Depends(get_session),
-    authorization: str | None = Header(default=None),
-    x_api_key: str | None = Header(default=None, alias="x-api-key"),
-) -> JSONResponse:
+async def _authenticate_token(
+    session: AsyncSession, authorization: str | None, x_api_key: str | None
+) -> VoidToken:
     # Authenticate, tolerating either credential header.
     raw = (authorization or "").removeprefix("Bearer ").strip() or x_api_key
     if not raw:
@@ -175,10 +173,25 @@ async def list_models(
     ).scalar_one_or_none()
     if token is None or not token.enabled:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API key.")
+    return token
+
+
+@router.get("/v1/models")
+async def list_models(
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+) -> JSONResponse:
+    token = await _authenticate_token(session, authorization, x_api_key)
 
     providers = (
         (await session.execute(select(Provider).where(Provider.enabled.is_(True)))).scalars().all()
     )
+    # Per-model metadata (description + OpenCode config). A disabled entry hides
+    # the model from the advertised list entirely.
+    entries = {
+        e.model_id: e for e in (await session.execute(select(ModelEntry))).scalars().all()
+    }
     seen: set[str] = set()
     data: list[dict[str, object]] = []
     allowed = token.allowed_models or []
@@ -188,13 +201,38 @@ async def list_models(
                 continue
             if allowed and not any(p == "*" or p == model or fnmatch(model, p) for p in allowed):
                 continue
+            entry = entries.get(model)
+            if entry is not None and not entry.enabled:
+                continue
             seen.add(model)
-            data.append(
-                {
-                    "id": model,
-                    "object": "model",
-                    "created": 0,
-                    "owned_by": provider.name,
-                }
-            )
+            item: dict[str, object] = {
+                "id": model,
+                "object": "model",
+                "created": 0,
+                "owned_by": provider.name,
+            }
+            if entry is not None:
+                if entry.description:
+                    item["description"] = entry.description
+                if entry.opencode_config:
+                    # OpenCode plugin deep-merges this into the model block it builds.
+                    item["opencode"] = entry.opencode_config
+            data.append(item)
     return JSONResponse({"object": "list", "data": data})
+
+
+@router.post("/v1/models/sync")
+async def sync_models(
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+) -> JSONResponse:
+    """Refresh the platform model catalog from the providers (token-authed).
+
+    Lets the OpenCode ``/models`` slash command keep the catalog in sync with
+    what the providers currently serve. Only discovers already-served models, so
+    it is safe to expose to any valid client token.
+    """
+    await _authenticate_token(session, authorization, x_api_key)
+    added, total = await models_catalog.sync_from_providers(session)
+    return JSONResponse({"added": added, "total": total})

@@ -81,6 +81,28 @@ const FALLBACK_MODELS = [
   "claude-haiku-4-5",
 ]
 
+/**
+ * A model id plus its optional VoidSwitch catalog metadata: a human description
+ * and a custom OpenCode model config (deep-merged into the built model block, so
+ * admins can tune name/limit/cost/capabilities/variants per model from the
+ * dashboard's Models page). Both come from `<gateway>/v1/models`.
+ */
+type ModelInfo = { id: string; description?: string; opencode?: Record<string, any> }
+
+const FALLBACK_MODEL_INFOS: ModelInfo[] = FALLBACK_MODELS.map((id) => ({ id }))
+
+const isPlainObject = (v: unknown): v is Record<string, any> =>
+  typeof v === "object" && v !== null && !Array.isArray(v)
+
+/** Recursively merge `source` onto `target` (objects merge; arrays/scalars replace). */
+function deepMerge<T extends Record<string, any>>(target: T, source: Record<string, any>): T {
+  const out: Record<string, any> = { ...target }
+  for (const [k, v] of Object.entries(source)) {
+    out[k] = isPlainObject(v) && isPlainObject(out[k]) ? deepMerge(out[k], v) : v
+  }
+  return out as T
+}
+
 // Per-session overrides set by the /effort, /fast, /ultracode slash commands. The
 // command hook and chat.headers run in the same plugin instance, so this module Map
 // bridges them (command sets it → the next turn's headers read it).
@@ -176,7 +198,8 @@ function prettyName(id: string): string {
 // Model construction (shape mirrors built-in dynamic-model plugins)
 // --------------------------------------------------------------------------- //
 
-function buildModel(id: string, gatewayV1: string): Record<string, any> {
+function buildModel(info: ModelInfo, gatewayV1: string): Record<string, any> {
+  const id = info.id
   const claude = isClaude(id)
   const reasoning = isReasoningModel(id)
   const oaiCompat = isOpenAICompatModel(id)
@@ -222,7 +245,12 @@ function buildModel(id: string, gatewayV1: string): Record<string, any> {
     variants[FAST_VARIANT] = {}
     model.variants = variants
   }
-  return model
+
+  // Carry the dashboard-set description (shown by pickers that support it).
+  if (info.description) model.description = info.description
+  // Deep-merge the admin's custom OpenCode config last, so it wins over the
+  // computed defaults (name, limit, cost, capabilities, variants, …).
+  return info.opencode ? deepMerge(model, info.opencode) : model
 }
 
 // --------------------------------------------------------------------------- //
@@ -272,18 +300,44 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
   // which the later models()/fetch closures then observe.
   let gateway = (opt.url ?? process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
   let gatewayV1 = `${gateway}/v1`
+  // Last vs-… token observed (from the auth loader / models ctx), so the
+  // /models slash command can authenticate its refresh call to the gateway.
+  let lastToken: string | undefined
 
-  async function fetchModelIds(token: string | undefined): Promise<string[]> {
+  async function fetchModels(token: string | undefined): Promise<ModelInfo[]> {
     try {
       const res = await fetch(`${gatewayV1}/models`, {
         headers: token ? { "x-api-key": token } : {},
       })
-      if (!res.ok) return FALLBACK_MODELS
+      if (!res.ok) return FALLBACK_MODEL_INFOS
       const json: any = await res.json()
-      const ids = (json?.data ?? []).map((m: any) => m?.id).filter((x: any): x is string => typeof x === "string")
-      return ids.length ? ids : FALLBACK_MODELS
+      const infos: ModelInfo[] = (json?.data ?? [])
+        .map((m: any): ModelInfo => ({
+          id: m?.id,
+          description: typeof m?.description === "string" ? m.description : undefined,
+          opencode: isPlainObject(m?.opencode) ? m.opencode : undefined,
+        }))
+        .filter((m: ModelInfo) => typeof m.id === "string" && m.id.length > 0)
+      return infos.length ? infos : FALLBACK_MODEL_INFOS
     } catch {
-      return FALLBACK_MODELS
+      return FALLBACK_MODEL_INFOS
+    }
+  }
+
+  /** Ask the gateway to refresh its catalog from the providers; returns a status line. */
+  async function syncModels(): Promise<string> {
+    try {
+      const res = await fetch(`${gatewayV1}/models/sync`, {
+        method: "POST",
+        headers: lastToken ? { "x-api-key": lastToken } : {},
+      })
+      if (res.status === 401)
+        return "couldn't refresh models — not authenticated. Run /connect and paste a vs-… token first."
+      if (!res.ok) return `couldn't refresh models (gateway returned ${res.status}).`
+      const j: any = await res.json()
+      return `model catalog refreshed — ${j?.added ?? 0} new, ${j?.total ?? "?"} total. Reopen the model picker to see changes.`
+    } catch {
+      return "couldn't reach the VoidSwitch gateway to refresh models."
     }
   }
 
@@ -347,6 +401,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       addCommand("effort", "VoidSwitch reasoning effort: low|medium|high|xhigh|max|ultracode|auto [+ optional prompt]")
       addCommand("fast", "VoidSwitch fast mode: on|off [+ optional prompt]")
       addCommand("ultracode", "VoidSwitch ultracode — xhigh effort [+ optional prompt]")
+      addCommand("sync-models", "VoidSwitch: refresh the available model list from the gateway")
     },
 
     // /effort, /fast, /ultracode — set the per-session override, then either run the
@@ -357,6 +412,15 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       input: { command: string; sessionID: string; arguments: string },
       output: { parts: any[] },
     ) => {
+      // /sync-models — refresh the platform catalog from the providers, then have
+      // the model relay a one-line status (or run the optional appended prompt).
+      // (Named `sync-models`, not `models`, so it never shadows OpenCode's built-in
+      // model picker.)
+      if (input.command === "sync-models") {
+        const arg = (input.arguments ?? "").trim()
+        const note = await syncModels()
+        return setCommandText(output, arg || `Reply with exactly this line and nothing else: "VoidSwitch: ${note}"`)
+      }
       if (input.command !== "effort" && input.command !== "fast" && input.command !== "ultracode") return
       const arg = (input.arguments ?? "").trim()
       const [first, ...restWords] = arg.split(/\s+/).filter(Boolean)
@@ -406,6 +470,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       async loader(getAuth) {
         const auth = await getAuth()
         const apiKey = auth?.type === "api" ? auth.key : ""
+        if (apiKey) lastToken = apiKey
         return {
           apiKey,
           async fetch(reqInput: RequestInfo | URL, init?: RequestInit) {
@@ -506,9 +571,10 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       id: PROVIDER_ID,
       async models(_provider, ctx) {
         const token = ctx.auth?.type === "api" ? ctx.auth.key : undefined
-        const ids = await fetchModelIds(token)
+        if (token) lastToken = token
+        const infos = await fetchModels(token)
         const out: Record<string, any> = {}
-        for (const id of ids) out[id] = buildModel(id, gatewayV1)
+        for (const info of infos) out[info.id] = buildModel(info, gatewayV1)
         return out
       },
     },

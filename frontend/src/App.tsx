@@ -6,6 +6,7 @@ import { Login } from "./pages/Login";
 import { LoginCallback } from "./pages/LoginCallback";
 import { Dashboard } from "./pages/Dashboard";
 import { Providers } from "./pages/Providers";
+import { Models } from "./pages/Models";
 import { ProviderKeys } from "./pages/ProviderKeys";
 import { Proxies } from "./pages/Proxies";
 import { Tokens } from "./pages/Tokens";
@@ -70,6 +71,14 @@ export function App() {
           element={
             <Protected>
               <Providers />
+            </Protected>
+          }
+        />
+        <Route
+          path="/models"
+          element={
+            <Protected>
+              <Models />
             </Protected>
           }
         />
