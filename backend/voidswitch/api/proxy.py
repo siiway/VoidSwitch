@@ -247,6 +247,40 @@ async def list_models(
                     # OpenCode plugin deep-merges this into the model block it builds.
                     item["opencode"] = entry.opencode_config
             data.append(item)
+        # Also advertise alias-route models (they may only exist in model_routes,
+        # not models). Each alias gets a ModelEntry row during sync, looked up by
+        # its alias name so mapped_id / description / opencode_config still apply.
+        for route in provider.model_routes or []:
+            if not isinstance(route, dict):
+                continue
+            alias = route.get("alias")
+            if not isinstance(alias, str) or not alias:
+                continue
+            entry = entries.get(alias)
+            if entry is not None and not entry.enabled:
+                continue
+            # If the alias also appears as a raw model name on this provider it is
+            # already listed above; skip the duplicate.
+            public_id = entry.mapped_id if entry is not None and entry.mapped_id else alias
+            if public_id in seen:
+                continue
+            if allowed and not any(
+                p == "*" or p == public_id or fnmatch(public_id, p) for p in allowed
+            ):
+                continue
+            seen.add(public_id)
+            item: dict[str, object] = {
+                "id": public_id,
+                "object": "model",
+                "created": 0,
+                "owned_by": provider.name,
+            }
+            if entry is not None:
+                if entry.description:
+                    item["description"] = entry.description
+                if entry.opencode_config:
+                    item["opencode"] = entry.opencode_config
+            data.append(item)
     return JSONResponse({"object": "list", "data": data})
 
 

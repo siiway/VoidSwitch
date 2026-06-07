@@ -287,8 +287,14 @@ function setCommandText(output: { parts: any[] }, text: string): void {
   else output.parts = [{ type: "text", text }]
 }
 
-const confirmText = (what: string) =>
-  `Reply with one short line confirming VoidSwitch ${what} is set for this session. Do nothing else.`
+/** Keep only the user's appended prompt, dropping the command-argument prefix.
+ *  When the user typed extra text (e.g. "/effort high review this file") we
+ *  want "review this file" to become the LLM prompt; the command keyword first
+ *  word) has already been consumed by the handler. */
+function setUserPrompt(output: { parts: any[] }, text: string): void {
+  if (text) setCommandText(output, text)
+  else output.parts = []
+}
 
 function opencodeConfigPath(): string {
   return (
@@ -359,6 +365,7 @@ const stripV1 = (u: unknown): string | undefined =>
 
 const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOptions): Promise<Hooks> => {
   const opt = (options ?? {}) as VoidSwitchOptions
+  const opn = _input.client
   // Gateway precedence: plugin option → env → persisted state → existing config
   // baseURL (adopted in the config hook) → default.
   let gateway = (
@@ -473,28 +480,28 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       addCommand("switch-base-url", "VoidSwitch: switch gateway base URL (blank to reset to default)")
     },
 
-    // /effort, /fast, /ultracode — set the per-session override, then either run the
-    // appended prompt or emit a one-line confirmation. (OpenCode has no no-LLM
-    // command, so a bare set costs one cheap turn; the model-variant picker is the
-    // zero-cost alternative.)
+    // /effort, /fast, /ultracode — set the per-session override, then show a
+    // toast. If the user appended a prompt it flows through to the LLM;
+    // otherwise no LLM turn is triggered.
     "command.execute.before": async (
       input: { command: string; sessionID: string; arguments: string },
       output: { parts: any[] },
     ) => {
-      // /sync-models — refresh the platform catalog from the providers, then have
-      // the model relay a one-line status (or run the optional appended prompt).
-      // (Named `sync-models`, not `models`, so it never shadows OpenCode's built-in
-      // model picker.)
+      // /sync-models — refresh the platform catalog from the providers, then
+      // show a toast with the result. If the user appended a prompt it flows
+      // through; otherwise no LLM turn is triggered.
       if (input.command === "sync-models") {
         const arg = (input.arguments ?? "").trim()
         const note = await syncModels()
-        return setCommandText(output, arg || `Reply with exactly this line and nothing else: "VoidSwitch: ${note}"`)
+        void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: note.includes("couldn't") || note.includes("not authenticated") ? "error" : "success" } })
+        return setUserPrompt(output, arg)
       }
       // /switch-base-url — override the gateway base URL (e.g. to use a local IP on
       // the same network). Blank resets to default. Persisted to opencode.json.
       if (input.command === "switch-base-url") {
         const arg = (input.arguments ?? "").trim()
         const st = sessionState.get(input.sessionID) ?? {}
+        let note: string
         if (!arg) {
           persistBaseUrl(undefined)
           delete st.baseUrl
@@ -502,16 +509,19 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
           gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
           gatewayV1 = `${gateway}/v1`
           sessionState.set(input.sessionID, st)
-          return setCommandText(output, confirmText("base URL reset to default"))
+          note = "base URL reset to default"
+        } else {
+          const normalised = arg.replace(/\/+$/, "")
+          persistBaseUrl(normalised)
+          st.baseUrl = normalised
+          opt.url = normalised
+          gateway = normalised
+          gatewayV1 = `${gateway}/v1`
+          sessionState.set(input.sessionID, st)
+          note = `base URL set to ${gateway}`
         }
-        const normalised = arg.replace(/\/+$/, "")
-        persistBaseUrl(normalised)
-        st.baseUrl = normalised
-        opt.url = normalised
-        gateway = normalised
-        gatewayV1 = `${gateway}/v1`
-        sessionState.set(input.sessionID, st)
-        return setCommandText(output, confirmText(`base URL set to ${gateway}`))
+        void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } })
+        return output.parts = []
       }
       if (input.command !== "effort" && input.command !== "fast" && input.command !== "ultracode") return
       const arg = (input.arguments ?? "").trim()
@@ -525,14 +535,16 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         st.effort = "xhigh"
         note = "ultracode (xhigh effort)"
         sessionState.set(input.sessionID, st)
-        return setCommandText(output, arg || confirmText(note))
+        void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } })
+        return setUserPrompt(output, arg)
       }
       if (input.command === "fast") {
         const isFlag = ["on", "off", "true", "false"].includes(head)
         st.fast = !(head === "off" || head === "false")
         note = `fast mode ${st.fast ? "ON" : "OFF"}`
         sessionState.set(input.sessionID, st)
-        return setCommandText(output, (isFlag ? rest : arg) || confirmText(note))
+        void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } })
+        return setUserPrompt(output, isFlag ? rest : arg)
       }
       // /effort
       let prompt = arg
@@ -552,7 +564,8 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         note = `effort ${st.effort ?? "auto"}` // unrecognized level → treat whole arg as prompt
       }
       sessionState.set(input.sessionID, st)
-      setCommandText(output, prompt || confirmText(note))
+      void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } })
+      setUserPrompt(output, prompt)
     },
 
     // Auth: paste a vs-… token. The loader hands the AI SDK the apiKey (sent as
