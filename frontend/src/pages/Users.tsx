@@ -36,7 +36,7 @@ export function Users() {
   async function setRole(u: User, role: Role) {
     try {
       await api.patch(`/api/admin/users/${u.id}`, { role });
-      notify("Role updated", `${u.username ?? u.sub} → ${role}`, "success");
+      notify("Role updated", `${u.username ?? u.sub}#${u.id} → ${role}`, "success");
       users.reload();
     } catch (e) {
       notify(
@@ -86,7 +86,7 @@ export function Users() {
           <TableBody>
             {(users.data ?? []).map((u) => (
               <TableRow key={u.id}>
-                <TableCell>{u.name || u.username || u.sub}</TableCell>
+                <TableCell>{(u.name || u.username || u.sub)}#{u.id}</TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {u.email ?? "—"}
                 </TableCell>

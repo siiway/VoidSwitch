@@ -28,6 +28,9 @@
  */
 
 import type { Hooks, Plugin, PluginInput, PluginOptions } from "@opencode-ai/plugin"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 // --------------------------------------------------------------------------- //
 // Constants mirrored from the Claude Code CLI wire format
@@ -69,6 +72,7 @@ const LONG_CONTEXT_CHARS = 600_000
 const H_EFFORT = "x-voidswitch-effort"
 const H_SPEED = "x-voidswitch-speed"
 const H_THINKING = "x-voidswitch-thinking"
+const H_BASE_URL = "x-voidswitch-base-url"
 
 const DEFAULT_GATEWAY = "http://localhost:8080"
 
@@ -106,7 +110,7 @@ function deepMerge<T extends Record<string, any>>(target: T, source: Record<stri
 // Per-session overrides set by the /effort, /fast, /ultracode slash commands. The
 // command hook and chat.headers run in the same plugin instance, so this module Map
 // bridges them (command sets it → the next turn's headers read it).
-type SessionOverride = { effort?: Effort | "auto"; fast?: boolean }
+type SessionOverride = { effort?: Effort | "auto"; fast?: boolean; baseUrl?: string }
 const sessionState = new Map<string, SessionOverride>()
 
 // --------------------------------------------------------------------------- //
@@ -286,6 +290,66 @@ function setCommandText(output: { parts: any[] }, text: string): void {
 const confirmText = (what: string) =>
   `Reply with one short line confirming VoidSwitch ${what} is set for this session. Do nothing else.`
 
+function opencodeConfigPath(): string {
+  return (
+    process.env.OPENCODE_CONFIG ??
+    join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "opencode", "opencode.json")
+  )
+}
+
+function loadPersistedBaseUrl(): string | undefined {
+  try {
+    if (!existsSync(opencodeConfigPath())) return undefined
+    const raw = readFileSync(opencodeConfigPath(), "utf8")
+    const cfg = JSON.parse(raw)
+    if (!cfg || !Array.isArray(cfg.plugin)) return undefined
+    for (const p of cfg.plugin) {
+      const isArr = Array.isArray(p)
+      const name: string | undefined = isArr ? p[0] : typeof p === "string" ? p : undefined
+      if (name && (name.includes("voidswitch") || name === "opencode-voidswitch")) {
+        if (isArr && p[1] && typeof p[1] === "object" && typeof p[1].url === "string") {
+          return p[1].url.replace(/\/+$/, "")
+        }
+        break
+      }
+    }
+  } catch {
+    // can't read/parse — skip
+  }
+  return undefined
+}
+
+function persistBaseUrl(url: string | undefined): void {
+  try {
+    const path = opencodeConfigPath()
+    if (!existsSync(path)) return
+    const raw = readFileSync(path, "utf8")
+    const cfg = JSON.parse(raw)
+    if (!cfg || !Array.isArray(cfg.plugin)) return
+    for (const p of cfg.plugin) {
+      const isArr = Array.isArray(p)
+      const name: string | undefined = isArr ? p[0] : typeof p === "string" ? p : undefined
+      if (name && (name.includes("voidswitch") || name === "opencode-voidswitch")) {
+        if (isArr) {
+          if (url) {
+            p[1] = p[1] && typeof p[1] === "object" ? { ...p[1], url } : { url }
+          } else if (p[1] && typeof p[1] === "object") {
+            delete (p[1] as Record<string, unknown>).url
+          }
+        } else if (url) {
+          // plain string → wrap as [name, { url }]
+          const idx = cfg.plugin.indexOf(p)
+          cfg.plugin[idx] = [name, { url }]
+        }
+        break
+      }
+    }
+    writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
+  } catch {
+    // can't write — skip
+  }
+}
+
 // --------------------------------------------------------------------------- //
 // Plugin
 // --------------------------------------------------------------------------- //
@@ -295,10 +359,14 @@ const stripV1 = (u: unknown): string | undefined =>
 
 const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOptions): Promise<Hooks> => {
   const opt = (options ?? {}) as VoidSwitchOptions
-  // Gateway precedence: plugin option → env → existing config baseURL (adopted in
-  // the config hook) → default. `let` so the config hook can adopt the config URL,
-  // which the later models()/fetch closures then observe.
-  let gateway = (opt.url ?? process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
+  // Gateway precedence: plugin option → env → persisted state → existing config
+  // baseURL (adopted in the config hook) → default.
+  let gateway = (
+    opt.url ??
+    process.env.VOIDSWITCH_URL ??
+    loadPersistedBaseUrl() ??
+    DEFAULT_GATEWAY
+  ).replace(/\/+$/, "")
   let gatewayV1 = `${gateway}/v1`
   // Last vs-… token observed (from the auth loader / models ctx), so the
   // /models slash command can authenticate its refresh call to the gateway.
@@ -402,6 +470,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       addCommand("fast", "VoidSwitch fast mode: on|off [+ optional prompt]")
       addCommand("ultracode", "VoidSwitch ultracode — xhigh effort [+ optional prompt]")
       addCommand("sync-models", "VoidSwitch: refresh the available model list from the gateway")
+      addCommand("switch-base-url", "VoidSwitch: switch gateway base URL (blank to reset to default)")
     },
 
     // /effort, /fast, /ultracode — set the per-session override, then either run the
@@ -420,6 +489,29 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         const arg = (input.arguments ?? "").trim()
         const note = await syncModels()
         return setCommandText(output, arg || `Reply with exactly this line and nothing else: "VoidSwitch: ${note}"`)
+      }
+      // /switch-base-url — override the gateway base URL (e.g. to use a local IP on
+      // the same network). Blank resets to default. Persisted to opencode.json.
+      if (input.command === "switch-base-url") {
+        const arg = (input.arguments ?? "").trim()
+        const st = sessionState.get(input.sessionID) ?? {}
+        if (!arg) {
+          persistBaseUrl(undefined)
+          delete st.baseUrl
+          opt.url = undefined
+          gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
+          gatewayV1 = `${gateway}/v1`
+          sessionState.set(input.sessionID, st)
+          return setCommandText(output, confirmText("base URL reset to default"))
+        }
+        const normalised = arg.replace(/\/+$/, "")
+        persistBaseUrl(normalised)
+        st.baseUrl = normalised
+        opt.url = normalised
+        gateway = normalised
+        gatewayV1 = `${gateway}/v1`
+        sessionState.set(input.sessionID, st)
+        return setCommandText(output, confirmText(`base URL set to ${gateway}`))
       }
       if (input.command !== "effort" && input.command !== "fast" && input.command !== "ultracode") return
       const arg = (input.arguments ?? "").trim()
@@ -480,6 +572,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
             const effort = takeHeader(headers, H_EFFORT)
             const speed = takeHeader(headers, H_SPEED)
             const thinking = takeHeader(headers, H_THINKING)
+            const baseUrlOverride = takeHeader(headers, H_BASE_URL)
 
             let bodyText: string | undefined
             if (typeof init?.body === "string") bodyText = init.body
@@ -557,7 +650,20 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
               }
             }
 
-            const url = typeof reqInput === "string" ? reqInput : reqInput instanceof URL ? reqInput.toString() : reqInput.url
+            let url = typeof reqInput === "string" ? reqInput : reqInput instanceof URL ? reqInput.toString() : reqInput.url
+            if (baseUrlOverride) {
+              try {
+                const parsed = new URL(url)
+                const over = new URL(baseUrlOverride)
+                parsed.protocol = over.protocol
+                parsed.host = over.host
+                parsed.hostname = over.hostname
+                parsed.port = over.port
+                url = parsed.toString()
+              } catch {
+                // keep original on malformed URL
+              }
+            }
             const method = init?.method ?? (reqInput instanceof Request ? reqInput.method : "POST")
             return fetch(url, { ...init, method, headers, body: bodyText ?? init?.body })
           },
@@ -599,10 +705,12 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
 
       const fast = variant === FAST_VARIANT || (st.fast ?? opt.fast === true)
       const thinking = opt.thinking !== false && adaptiveCapable(id)
+      const baseUrl = st.baseUrl
 
       if (effort) output.headers[H_EFFORT] = effort
       if (fast) output.headers[H_SPEED] = "fast"
       if (thinking) output.headers[H_THINKING] = "adaptive"
+      if (baseUrl) output.headers[H_BASE_URL] = baseUrl
     },
 
     // Anthropic requires temperature == 1 once extended thinking is enabled.

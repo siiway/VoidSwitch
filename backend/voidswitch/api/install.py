@@ -118,6 +118,7 @@ def load(path):
 cfg = load(config)
 cfg["$schema"] = "https://opencode.ai/config.json"
 cfg.setdefault("model", "voidswitch/claude-opus-4-8")
+cfg.pop("small_model", None)
 
 # Reference the downloaded plugin by absolute path, deduped.
 def ref(p):
@@ -183,6 +184,7 @@ function load(path) {
 const cfg = load(config);
 cfg["$schema"] = "https://opencode.ai/config.json";
 if (!cfg.model) cfg.model = "voidswitch/claude-opus-4-8";
+delete cfg.small_model;
 const ref = (p) => (Array.isArray(p) && p.length ? p[0] : p);
 let plugins = Array.isArray(cfg.plugin) ? cfg.plugin : [];
 plugins = plugins.filter((p) => !(typeof ref(p) === "string" && ref(p).endsWith("voidswitch.plugin.ts")));
@@ -307,6 +309,9 @@ $cfg = Load-Json $Config
 $cfg | Add-Member -NotePropertyName '$schema' -NotePropertyValue 'https://opencode.ai/config.json' -Force
 if (-not $cfg.PSObject.Properties['model']) {
   $cfg | Add-Member -NotePropertyName 'model' -NotePropertyValue 'voidswitch/claude-opus-4-8' -Force
+}
+if ($cfg.PSObject.Properties['small_model']) {
+  $cfg.PSObject.Properties.Remove('small_model')
 }
 
 # plugin: drop any prior voidswitch.plugin.ts entry, then append ours (plain path).

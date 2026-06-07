@@ -312,7 +312,9 @@ export function Layout() {
                     wrap={false}
                     block
                   >
-                    {user?.name || user?.username || "User"}
+                    {user?.username || user?.name || user?.email
+                      ? `${user.username || user.name || user.email}#${user.id}`
+                      : "User"}
                   </Text>
                   <Badge appearance="tint" color={roleColor} size="small">
                     {user?.role}

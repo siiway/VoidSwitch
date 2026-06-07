@@ -201,6 +201,7 @@ export interface UsageBucket extends UsageTotals {
 export interface UsageGroupRow extends UsageTotals {
   key: string;
   label: string;
+  sublabel?: string | null;
 }
 
 export interface UsageAnalytics {

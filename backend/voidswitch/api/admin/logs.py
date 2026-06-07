@@ -136,7 +136,8 @@ async def request_logs(
         for u in (
             (await session.execute(select(User).where(User.sub.in_(subs)))).scalars().all()
         ):
-            user_names[u.sub] = u.name or u.username or u.email
+            label = u.username or u.name or u.email or u.sub
+            user_names[u.sub] = f"{label}#{u.id}"
 
     items: list[RequestLogOut] = []
     for r in rows:

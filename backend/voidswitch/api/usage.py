@@ -126,21 +126,35 @@ async def usage_analytics(
     token_rows = await _group(session, user, RequestLog.token_id)
     model_rows = await _group(session, user, RequestLog.model)
 
-    # Resolve human-friendly labels for users and tokens in two batched queries.
+    # Resolve human-friendly labels for users and tokens in batched queries.
     subs = {r[0] for r in user_rows if r[0]}
     user_names: dict[str, str] = {}
     if subs:
         for u in (await session.execute(select(User).where(User.sub.in_(subs)))).scalars().all():
-            user_names[u.sub] = u.name or u.username or u.email or u.sub
+            label = u.username or u.name or u.email or u.sub
+            user_names[u.sub] = f"{label}#{u.id}"
     token_ids = {r[0] for r in token_rows if r[0] is not None}
     token_names: dict[int, str] = {}
+    token_owners: dict[int, str | None] = {}
     if token_ids:
-        for tid, tname in (
+        for tid, tname, uid in (
             await session.execute(
-                select(VoidToken.id, VoidToken.name).where(VoidToken.id.in_(token_ids))
+                select(VoidToken.id, VoidToken.name, VoidToken.user_id).where(
+                    VoidToken.id.in_(token_ids)
+                )
             )
         ).all():
             token_names[tid] = tname
+            token_owners[tid] = uid
+
+    user_by_id: dict[int, str] = {}
+    owner_ids = {o for o in token_owners.values() if o is not None}
+    if owner_ids:
+        for u in (
+            await session.execute(select(User).where(User.id.in_(owner_ids)))
+        ).scalars().all():
+            label = u.username or u.name or u.email or u.sub
+            user_by_id[u.id] = f"{label}#{u.id}"
 
     by_user = [
         UsageGroupRow(
@@ -154,6 +168,11 @@ async def usage_analytics(
         UsageGroupRow(
             key=str(r[0]) if r[0] is not None else "",
             label=token_names.get(r[0], f"#{r[0]}") if r[0] is not None else "(none)",
+            sublabel=(
+                user_by_id.get(token_owners.get(r[0]))
+                if r[0] is not None and token_owners.get(r[0]) is not None
+                else None
+            ),
             **_totals_from_row(r[1:]),
         )
         for r in token_rows

@@ -446,6 +446,7 @@ class UsageGroupRow(UsageTotals):
 
     key: str
     label: str
+    sublabel: str | None = None
 
 
 class UsageAnalyticsOut(BaseModel):

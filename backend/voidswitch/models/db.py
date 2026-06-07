@@ -92,7 +92,8 @@ class VoidToken(Base, TimestampMixin):
         user = self.user
         if user is None:
             return None
-        return user.username or user.name or user.email
+        label = user.username or user.name or user.email
+        return f"{label}#{user.id}" if label else None
 
 
 class ModelEntry(Base, TimestampMixin):
