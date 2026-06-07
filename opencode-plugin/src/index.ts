@@ -38,6 +38,16 @@ import { join } from "node:path"
 
 const PROVIDER_ID = "voidswitch"
 
+/** Thrown in command.execute.before to cancel the LLM turn after a side-effect-only
+ *  command (toast shown, state mutated). OpenCode catches this and does not forward
+ *  the command to the model. */
+class CommandHandledError extends Error {
+  constructor() {
+    super("voidswitch-command-handled")
+    this.name = "CommandHandledError"
+  }
+}
+
 /** Claude Code's effort enum (`sN`), lowest → highest. */
 const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const
 type Effort = (typeof EFFORT_LEVELS)[number]
@@ -287,15 +297,6 @@ function setCommandText(output: { parts: any[] }, text: string): void {
   else output.parts = [{ type: "text", text }]
 }
 
-/** Keep only the user's appended prompt, dropping the command-argument prefix.
- *  When the user typed extra text (e.g. "/effort high review this file") we
- *  want "review this file" to become the LLM prompt; the command keyword first
- *  word) has already been consumed by the handler. */
-function setUserPrompt(output: { parts: any[] }, text: string): void {
-  if (text) setCommandText(output, text)
-  else output.parts = []
-}
-
 function opencodeConfigPath(): string {
   return (
     process.env.OPENCODE_CONFIG ??
@@ -480,21 +481,22 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       addCommand("switch-base-url", "VoidSwitch: switch gateway base URL (blank to reset to default)")
     },
 
-    // /effort, /fast, /ultracode — set the per-session override, then show a
-    // toast. If the user appended a prompt it flows through to the LLM;
-    // otherwise no LLM turn is triggered.
+    // /effort, /fast, /ultracode — set the per-session override, show a toast,
+    // and throw to skip the LLM turn. If the user appended a prompt it flows
+    // through to the model.
     "command.execute.before": async (
       input: { command: string; sessionID: string; arguments: string },
       output: { parts: any[] },
     ) => {
-      // /sync-models — refresh the platform catalog from the providers, then
-      // show a toast with the result. If the user appended a prompt it flows
-      // through; otherwise no LLM turn is triggered.
+      // /sync-models — refresh the platform catalog from the providers,
+      // show a toast, and throw to skip the LLM turn. If the user appended
+      // a prompt it flows through to the model.
       if (input.command === "sync-models") {
         const arg = (input.arguments ?? "").trim()
         const note = await syncModels()
         void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: note.includes("couldn't") || note.includes("not authenticated") ? "error" : "success" } })
-        return setUserPrompt(output, arg)
+        if (arg) setCommandText(output, arg)
+        else throw new CommandHandledError()
       }
       // /switch-base-url — override the gateway base URL (e.g. to use a local IP on
       // the same network). Blank resets to default. Persisted to opencode.json.
@@ -521,7 +523,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
           note = `base URL set to ${gateway}`
         }
         void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } })
-        return output.parts = []
+        throw new CommandHandledError()
       }
       if (input.command !== "effort" && input.command !== "fast" && input.command !== "ultracode") return
       const arg = (input.arguments ?? "").trim()
@@ -536,7 +538,8 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         note = "ultracode (xhigh effort)"
         sessionState.set(input.sessionID, st)
         void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } })
-        return setUserPrompt(output, arg)
+        if (arg) setCommandText(output, arg)
+        else throw new CommandHandledError()
       }
       if (input.command === "fast") {
         const isFlag = ["on", "off", "true", "false"].includes(head)
@@ -544,7 +547,9 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         note = `fast mode ${st.fast ? "ON" : "OFF"}`
         sessionState.set(input.sessionID, st)
         void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } })
-        return setUserPrompt(output, isFlag ? rest : arg)
+        const prompt = isFlag ? rest : arg
+        if (prompt) setCommandText(output, prompt)
+        else throw new CommandHandledError()
       }
       // /effort
       let prompt = arg
@@ -565,7 +570,8 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       }
       sessionState.set(input.sessionID, st)
       void opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } })
-      setUserPrompt(output, prompt)
+      if (prompt) setCommandText(output, prompt)
+      else throw new CommandHandledError()
     },
 
     // Auth: paste a vs-… token. The loader hands the AI SDK the apiKey (sent as

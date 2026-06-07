@@ -218,8 +218,11 @@ async def list_models(
     data: list[dict[str, object]] = []
     allowed = token.allowed_models or []
     for provider in providers:
+        # Raw upstream ids hidden behind alias routes must not be advertised;
+        # only the alias (listed below via model_routes) is callable.
+        hidden = models_catalog.routed_upstreams(provider)
         for model in provider.models or []:
-            if model == "*":
+            if model == "*" or model in hidden:
                 continue
             entry = entries.get(model)
             if entry is not None and not entry.enabled:
@@ -247,9 +250,9 @@ async def list_models(
                     # OpenCode plugin deep-merges this into the model block it builds.
                     item["opencode"] = entry.opencode_config
             data.append(item)
-        # Also advertise alias-route models (they may only exist in model_routes,
-        # not models). Each alias gets a ModelEntry row during sync, looked up by
-        # its alias name so mapped_id / description / opencode_config still apply.
+        # Also advertise alias-route models. Each alias gets a ModelEntry row
+        # during sync, looked up by its alias name so mapped_id / description /
+        # opencode_config still apply.
         for route in provider.model_routes or []:
             if not isinstance(route, dict):
                 continue
@@ -259,8 +262,9 @@ async def list_models(
             entry = entries.get(alias)
             if entry is not None and not entry.enabled:
                 continue
-            # If the alias also appears as a raw model name on this provider it is
-            # already listed above; skip the duplicate.
+            # Skip if the alias's public id is already listed (e.g. alias also
+            # appears as a raw model name on another provider, or the mapped_id
+            # collides).
             public_id = entry.mapped_id if entry is not None and entry.mapped_id else alias
             if public_id in seen:
                 continue
