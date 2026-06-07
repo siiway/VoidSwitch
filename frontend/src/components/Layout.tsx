@@ -11,6 +11,7 @@ import {
 } from "@fluentui/react-components";
 import {
   BoardRegular,
+  ChartMultipleRegular,
   ChatRegular,
   CloudRegular,
   CubeRegular,
@@ -75,6 +76,12 @@ const SECTIONS: NavSection[] = [
     heading: "Operations",
     items: [
       { to: "/users", label: "Users", icon: <PeopleRegular />, scope: "staff" },
+      {
+        to: "/stats",
+        label: "Statistics",
+        icon: <ChartMultipleRegular />,
+        scope: "member",
+      },
       {
         to: "/logs",
         label: "Logs",

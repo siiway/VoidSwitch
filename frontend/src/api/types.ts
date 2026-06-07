@@ -185,6 +185,37 @@ export interface Page<T> {
   offset: number;
 }
 
+export interface UsageTotals {
+  requests: number;
+  success: number;
+  failures: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface UsageBucket extends UsageTotals {
+  period: string;
+}
+
+export interface UsageGroupRow extends UsageTotals {
+  key: string;
+  label: string;
+}
+
+export interface UsageAnalytics {
+  // "all" (staff, platform-wide) or "self" (member, own traffic only).
+  scope: "all" | "self";
+  totals: UsageTotals;
+  daily: UsageBucket[];
+  weekly: UsageBucket[];
+  monthly: UsageBucket[];
+  yearly: UsageBucket[];
+  by_user: UsageGroupRow[];
+  by_token: UsageGroupRow[];
+  by_model: UsageGroupRow[];
+}
+
 export interface AdapterMeta {
   type: string;
   style: string;

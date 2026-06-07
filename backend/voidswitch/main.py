@@ -15,6 +15,7 @@ from voidswitch.api import install as install_api
 from voidswitch.api import me as me_api
 from voidswitch.api import models as models_api
 from voidswitch.api import proxy as proxy_api
+from voidswitch.api import usage as usage_api
 from voidswitch.api.admin import (
     keys as keys_api,
 )
@@ -154,6 +155,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(logs_api.router)
     app.include_router(users_api.router)
     app.include_router(stats_api.router)
+    app.include_router(usage_api.router)
     app.include_router(system_api.router)
 
     @app.get("/healthz", tags=["system"])

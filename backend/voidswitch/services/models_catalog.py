@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.models.db import ModelEntry, Provider
-from voidswitch.services.selector import provider_serves_model
+from voidswitch.services.selector import provider_serves_model, routed_upstreams
 
 
 @dataclass(slots=True)
@@ -52,12 +52,15 @@ class CatalogItem:
 def served_model_ids(providers: list[Provider]) -> set[str]:
     """Explicit model ids (and alias-route aliases) served by the providers.
 
-    Wildcards (``*``) are skipped — they match anything but name nothing.
+    Wildcards (``*``) are skipped — they match anything but name nothing. A raw
+    model id that an alias route hides behind itself (its ``upstream``) is
+    skipped too: only the alias is advertised, never the upstream id.
     """
     ids: set[str] = set()
     for provider in providers:
+        hidden = routed_upstreams(provider)
         for name in provider.models or []:
-            if isinstance(name, str) and name and name != "*":
+            if isinstance(name, str) and name and name != "*" and name not in hidden:
                 ids.add(name)
         for route in provider.model_routes or []:
             if isinstance(route, dict):
@@ -65,6 +68,16 @@ def served_model_ids(providers: list[Provider]) -> set[str]:
                 if isinstance(alias, str) and alias:
                     ids.add(alias)
     return ids
+
+
+def _hidden_upstreams(providers: list[Provider]) -> set[str]:
+    """Upstream ids hidden behind an alias route on *some* provider but not
+    served plainly by *any* provider."""
+    served = served_model_ids(providers)
+    hidden: set[str] = set()
+    for provider in providers:
+        hidden |= routed_upstreams(provider)
+    return hidden - served
 
 
 def providers_serving(providers: list[Provider], model_id: str) -> list[str]:
@@ -86,7 +99,11 @@ async def build_catalog(session: AsyncSession) -> list[CatalogItem]:
     providers = await _enabled_providers(session)
     entries = {e.model_id: e for e in (await session.execute(select(ModelEntry))).scalars().all()}
 
-    all_ids = served_model_ids(providers) | set(entries)
+    # A stale metadata row for an upstream id that is now hidden behind an alias
+    # route (and served by nobody under its raw name) should not resurface in the
+    # catalog — only its alias is advertised. The row stays deletable.
+    hidden = _hidden_upstreams(providers)
+    all_ids = served_model_ids(providers) | (set(entries) - hidden)
     items = [
         CatalogItem(
             model_id=mid,

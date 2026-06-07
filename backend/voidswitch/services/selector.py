@@ -35,10 +35,33 @@ def match_model_route(provider: Provider, model: str) -> dict | None:
     return None
 
 
+def routed_upstreams(provider: Provider) -> set[str]:
+    """Upstream model ids that are only reachable through one of this provider's
+    alias routes.
+
+    When a route maps ``deepseek-v4-flash-lkd`` → upstream ``deepseek-v4-flash``,
+    the raw ``deepseek-v4-flash`` is considered "behind" the route: it is no
+    longer advertised or callable under its own name — only via the alias(es).
+    A model id that is *also* a route alias on the same provider stays callable
+    (the alias check in :func:`provider_serves_model` wins).
+    """
+    ups: set[str] = set()
+    for route in provider.model_routes or []:
+        if isinstance(route, dict):
+            upstream = route.get("upstream")
+            if isinstance(upstream, str) and upstream:
+                ups.add(upstream)
+    return ups
+
+
 def provider_serves_model(provider: Provider, model: str) -> bool:
     # An exact model-route alias always counts (even if not in `models`).
     if match_model_route(provider, model) is not None:
         return True
+    # A raw upstream that's been put behind an alias route is no longer callable
+    # under its own id — only through the alias.
+    if model in routed_upstreams(provider):
+        return False
     patterns = provider.models or []
     if not patterns:
         return False

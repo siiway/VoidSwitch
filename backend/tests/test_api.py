@@ -381,3 +381,62 @@ async def test_install_rejects_malformed_token(client):
     resp = await client.get("/install.sh", params={"token": "$(rm -rf /)"})
     assert "rm -rf" not in resp.text
     assert 'TOKEN="${VOIDSWITCH_TOKEN:-}"' in resp.text
+
+
+async def _seed_request_logs(db) -> None:
+    from voidswitch.models.db import RequestLog, User
+
+    async with db.session() as session:
+        session.add(User(sub="user-2", username="bob", email="b@example.com", role="member"))
+        rows = [
+            # alice (owner) — two calls on token 1.
+            RequestLog(
+                user_sub="user-1", token_id=1, model="deepseek-chat",
+                success=True, prompt_tokens=5, completion_tokens=2, total_tokens=7,
+            ),
+            RequestLog(
+                user_sub="user-1", token_id=1, model="deepseek-chat",
+                success=False, prompt_tokens=3, completion_tokens=0, total_tokens=3,
+            ),
+            # bob (member) — one call on token 2.
+            RequestLog(
+                user_sub="user-2", token_id=2, model="gpt-4o",
+                success=True, prompt_tokens=10, completion_tokens=4, total_tokens=14,
+            ),
+        ]
+        for r in rows:
+            session.add(r)
+
+
+async def test_usage_analytics_staff_sees_everything(client, db, seeded):
+    await _seed_request_logs(db)
+    resp = await client.get("/api/usage", headers=_session_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["scope"] == "all"
+    assert body["totals"]["requests"] == 3
+    assert body["totals"]["success"] == 2
+    assert body["totals"]["failures"] == 1
+    assert body["totals"]["total_tokens"] == 24
+    # Time-series buckets are present (all three calls land in today's bucket).
+    assert sum(b["requests"] for b in body["daily"]) == 3
+    assert sum(b["requests"] for b in body["yearly"]) == 3
+    # Both users and both tokens appear in the breakdowns.
+    assert {r["key"] for r in body["by_user"]} == {"user-1", "user-2"}
+    assert {r["key"] for r in body["by_token"]} == {"1", "2"}
+    assert {r["key"] for r in body["by_model"]} == {"deepseek-chat", "gpt-4o"}
+
+
+async def test_usage_analytics_member_sees_only_self(client, db, seeded):
+    await _seed_request_logs(db)
+    resp = await client.get(
+        "/api/usage", headers=_session_headers(sub="user-2", role="member", name="bob")
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["scope"] == "self"
+    assert body["totals"]["requests"] == 1
+    assert body["totals"]["total_tokens"] == 14
+    assert {r["key"] for r in body["by_user"]} == {"user-2"}
+    assert {r["key"] for r in body["by_token"]} == {"2"}
+    assert {r["key"] for r in body["by_model"]} == {"gpt-4o"}

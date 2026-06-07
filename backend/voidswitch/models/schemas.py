@@ -417,3 +417,45 @@ class Page[T](BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --------------------------------------------------------------------------- #
+# Usage analytics
+# --------------------------------------------------------------------------- #
+
+
+class UsageTotals(BaseModel):
+    """Aggregate call counters for one slice (a period, a user, a token, …)."""
+
+    requests: int = 0
+    success: int = 0
+    failures: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class UsageBucket(UsageTotals):
+    """One point on a time series, labelled by its calendar period."""
+
+    period: str
+
+
+class UsageGroupRow(UsageTotals):
+    """Per-entity breakdown row (a user, a token, or a model)."""
+
+    key: str
+    label: str
+
+
+class UsageAnalyticsOut(BaseModel):
+    # "all" for staff (platform-wide) or "self" for a member (own traffic only).
+    scope: str
+    totals: UsageTotals
+    daily: list[UsageBucket]
+    weekly: list[UsageBucket]
+    monthly: list[UsageBucket]
+    yearly: list[UsageBucket]
+    by_user: list[UsageGroupRow]
+    by_token: list[UsageGroupRow]
+    by_model: list[UsageGroupRow]

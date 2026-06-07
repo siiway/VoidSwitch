@@ -13,6 +13,7 @@ import { Tokens } from "./pages/Tokens";
 import { Users } from "./pages/Users";
 import { SettingsPage } from "./pages/Settings";
 import { Logs } from "./pages/Logs";
+import { Statistics } from "./pages/Statistics";
 import { MyToken } from "./pages/MyToken";
 import { Chat } from "./pages/Chat";
 import type { ReactNode } from "react";
@@ -127,6 +128,14 @@ export function App() {
           element={
             <Protected>
               <Logs />
+            </Protected>
+          }
+        />
+        <Route
+          path="/stats"
+          element={
+            <Protected>
+              <Statistics />
             </Protected>
           }
         />

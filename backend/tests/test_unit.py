@@ -414,6 +414,41 @@ async def test_model_routes_and_key_pools():
     assert {k.key_hash for k in select_keys(prov, "")} == {"leaked-1", "member-1"}
 
 
+async def test_route_upstream_hidden_from_catalog_and_dispatch():
+    from voidswitch.services.models_catalog import served_model_ids
+    from voidswitch.services.selector import provider_serves_model
+
+    # Raw upstreams put behind alias routes: only the aliases are advertised /
+    # callable, never the bare upstream id.
+    prov = Provider(
+        name="ds",
+        type="deepseek",
+        models=["deepseek-v4-flash", "deepseek-v4-pro"],
+        model_map={},
+        model_routes=[
+            {"alias": "deepseek-v4-flash-lkd", "upstream": "deepseek-v4-flash", "pool": "lkd"},
+            {"alias": "deepseek-v4-pro-lkd", "upstream": "deepseek-v4-pro", "pool": "lkd"},
+        ],
+    )
+    assert served_model_ids([prov]) == {"deepseek-v4-flash-lkd", "deepseek-v4-pro-lkd"}
+    assert provider_serves_model(prov, "deepseek-v4-flash-lkd")
+    assert not provider_serves_model(prov, "deepseek-v4-flash")
+    assert not provider_serves_model(prov, "deepseek-v4-pro")
+
+    # A model id that is itself a route alias stays served even if another route
+    # uses it as an upstream.
+    prov.model_routes = [
+        {"alias": "deepseek-v4-flash-lkd", "upstream": "deepseek-v4-flash", "pool": "lkd"},
+        {"alias": "deepseek-v4-flash", "upstream": "deepseek-v4-flash", "pool": "members"},
+    ]
+    assert provider_serves_model(prov, "deepseek-v4-flash")
+    assert served_model_ids([prov]) == {
+        "deepseek-v4-flash-lkd",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+    }
+
+
 async def test_deleting_proxy_scrubs_provider_references(db):
     from starlette.requests import Request
     from voidswitch.api.admin.proxies import delete_proxy
