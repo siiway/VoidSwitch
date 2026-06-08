@@ -107,7 +107,7 @@ class _StateStore:
             self._store.pop(key, None)
 
 
-_state_store = _StateStore()
+_state_store = _StateStore(ttl_seconds=1800)
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -152,6 +152,7 @@ class PrismIdentity:
 async def exchange_code(settings: Settings, code: str, state: str) -> PrismIdentity:
     verifier = _state_store.pop(state)
     if verifier is None:
+        log.warning("state_not_found", state_hint=state[:8] if state else "")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown or expired login state.")
 
     data = {

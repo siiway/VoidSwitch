@@ -101,7 +101,8 @@ async def callback(
             scope="self",
         )
     except Exception as exc:
-        log.warning("oauth_callback_failed", error=str(exc))
+        detail = getattr(exc, "detail", "") or str(exc) or repr(exc)
+        log.warning("oauth_callback_failed", type=type(exc).__name__, error=detail, detail=detail)
         params = urlencode({"error": "login_failed"})
         return RedirectResponse(f"{target}#{params}", status_code=302)
 
