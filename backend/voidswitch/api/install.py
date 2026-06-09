@@ -87,6 +87,42 @@ backup() {
 backup "$CONFIG"
 backup "$AUTH"
 
+# --------------------------------------------------------------------------- #
+# Manual snippet — shown when automatic merge fails.  Print it so the user
+# can copy-paste into their opencode.json by hand.
+# --------------------------------------------------------------------------- #
+print_manual_snippet() {
+  cat <<SNIPPET
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  Automatic merge failed.  Add this to your opencode.json manually:          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  1. In "plugin" array, add:                                                  ║
+║     "$PLUGIN"                                                                ║
+║                                                                              ║
+║  2. In "provider" object, add:                                               ║
+║     "voidswitch": {                                                          ║
+║       "npm": "@ai-sdk/anthropic",                                            ║
+║       "name": "VoidSwitch",                                                  ║
+║       "options": { "baseURL": "$GATEWAY/v1" },                               ║
+║       "models": {                                                            ║
+║         "claude-opus-4-8": {}, "claude-opus-4-7": {},                       ║
+║         "claude-opus-4-6": {}, "claude-sonnet-4-6": {},                     ║
+║         "claude-haiku-4-5": {}                                               ║
+║       }                                                                      ║
+║     }                                                                        ║
+║                                                                              ║
+║  3. (optional) In "\$HOME/.local/share/opencode/auth.json":                  ║
+║     "voidswitch": { "type": "api", "key": "vs-..." }                         ║
+║                                                                              ║
+║  Your original config is backed up at $CONFIG.$STAMP.bak                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+SNIPPET
+}
+
+echo "Note: JSONC comments/trailing-commas in your config will be removed (original preserved in .bak)" >&2
+
 # Download the VoidSwitch plugin (single self-contained .ts file Bun loads directly).
 if command -v curl >/dev/null 2>&1; then
   curl -fsSL "$GATEWAY/opencode/voidswitch.ts" -o "$PLUGIN"
@@ -100,27 +136,47 @@ fi
 # then a JS runtime (node/bun). All of them refuse to overwrite a config that
 # exists but can't be parsed; a backup was just made, so nothing is lost.
 merge_py() {
-  python3 - "$CONFIG" "$AUTH" "$PLUGIN" "$GATEWAY" "$TOKEN" <<'PY'
-import json, os, sys
+  local rc=0
+  python3 - "$CONFIG" "$AUTH" "$PLUGIN" "$GATEWAY" "$TOKEN" <<'PY' || rc=$?
+import json, os, re, sys
 config, auth, plugin, gateway, token = sys.argv[1:6]
+
+def strip_jsonc(text):
+    text = re.sub(r'(?<!:)//.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'/\*[\s\S]*?\*/', '', text)
+    text = re.sub(r',(\s*[}\]])', r'\1', text)
+    return text
 
 def load(path):
     if not os.path.exists(path):
-        return {}
+        return {}, None
+    raw = None
+    warned = None
     try:
         with open(path) as f:
-            data = json.load(f)
+            raw = f.read()
+            data = json.loads(raw)
     except Exception:
-        sys.stderr.write("Refusing to overwrite unparseable JSON: %s\n" % path)
-        sys.exit(2)
-    return data if isinstance(data, dict) else {}
+        if raw is not None:
+            try:
+                cleaned = strip_jsonc(raw)
+                data = json.loads(cleaned)
+                warned = "Note: JSONC comments/trailing-commas were removed from %s (original in backup)" % path
+            except Exception:
+                sys.stderr.write("Refusing to overwrite unparseable JSON: %s\n" % path)
+                sys.exit(2)
+        else:
+            sys.stderr.write("Refusing to overwrite unparseable JSON: %s\n" % path)
+            sys.exit(2)
+    if warned:
+        sys.stderr.write(warned + "\n")
+    return (data if isinstance(data, dict) else {}), warned
 
-cfg = load(config)
+cfg, _warn = load(config)
 cfg["$schema"] = "https://opencode.ai/config.json"
 cfg.setdefault("model", "voidswitch/claude-opus-4-8")
 cfg.pop("small_model", None)
 
-# Reference the downloaded plugin by absolute path, deduped.
 def ref(p):
     return p[0] if isinstance(p, list) and p else p
 plugins = cfg.get("plugin") if isinstance(cfg.get("plugin"), list) else []
@@ -128,9 +184,6 @@ plugins = [p for p in plugins if not (isinstance(ref(p), str) and ref(p).endswit
 plugins.append(plugin)
 cfg["plugin"] = plugins
 
-# Full provider block (Anthropic dialect). The `models` map is REQUIRED — OpenCode
-# drops a provider with no models, so it would never show in /connect or the picker.
-# No apiKey here: the token lives in the auth store so the plugin's loader runs.
 provider = cfg.get("provider")
 if not isinstance(provider, dict):
     provider = cfg["provider"] = {}
@@ -153,34 +206,55 @@ provider["voidswitch"] = {
 with open(config, "w") as f:
     json.dump(cfg, f, indent=2)
 
-# The token must live in the auth store (not config) so the plugin's loader — and
-# its effort/thinking body rewriting — actually runs.
 if token:
-    a = load(auth)
+    a, _ = load(auth)
     a["voidswitch"] = {"type": "api", "key": token}
     with open(auth, "w") as f:
         json.dump(a, f, indent=2)
     print("✓ token stored in " + auth)
 print("✓ VoidSwitch plugin merged into " + config)
 PY
+  if [ $rc -ne 0 ]; then
+    if [ $rc -eq 2 ]; then print_manual_snippet; fi
+    return $rc
+  fi
 }
 
 merge_js() {
-  local rt="$1" tmp rc
+  local rt="$1" tmp rc=0
   tmp="$(mktemp)"
   cat > "$tmp" <<'JS'
 const fs = require("fs");
 const [config, auth, plugin, gateway, token] = process.argv.slice(2);
+
+function stripJsonc(text) {
+  return text
+    .replace(/(?<!:)\/\/.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/,(\s*[}\]])/g, '$1');
+}
+
 function load(path) {
   if (!fs.existsSync(path)) return {};
+  let raw = null;
   try {
-    const d = JSON.parse(fs.readFileSync(path, "utf8"));
+    raw = fs.readFileSync(path, "utf8");
+    const d = JSON.parse(raw);
     return d && typeof d === "object" && !Array.isArray(d) ? d : {};
   } catch {
+    if (raw !== null) {
+      try {
+        const cleaned = stripJsonc(raw);
+        const d = JSON.parse(cleaned);
+        process.stderr.write("Note: JSONC comments/trailing-commas were removed from " + path + " (original in backup)\n");
+        return d && typeof d === "object" && !Array.isArray(d) ? d : {};
+      } catch {}
+    }
     process.stderr.write("Refusing to overwrite unparseable JSON: " + path + "\n");
     process.exit(2);
   }
 }
+
 const cfg = load(config);
 cfg["$schema"] = "https://opencode.ai/config.json";
 if (!cfg.model) cfg.model = "voidswitch/claude-opus-4-8";
@@ -208,8 +282,12 @@ if (token) {
 }
 console.log("✓ VoidSwitch plugin merged into " + config);
 JS
-  "$rt" "$tmp" "$CONFIG" "$AUTH" "$PLUGIN" "$GATEWAY" "$TOKEN" || { rc=$?; rm -f "$tmp"; exit "$rc"; }
+  "$rt" "$tmp" "$CONFIG" "$AUTH" "$PLUGIN" "$GATEWAY" "$TOKEN" || rc=$?
   rm -f "$tmp"
+  if [ $rc -ne 0 ]; then
+    if [ $rc -eq 2 ]; then print_manual_snippet; fi
+    return $rc
+  fi
 }
 
 if command -v python3 >/dev/null 2>&1; then
@@ -221,6 +299,7 @@ elif command -v bun >/dev/null 2>&1; then
 elif [ -f "$CONFIG" ]; then
   echo "Need python3, node, or bun to merge into an existing $CONFIG without overwriting it." >&2
   echo "Install one and re-run. Your config is untouched (backup at $CONFIG.$STAMP.bak)." >&2
+  print_manual_snippet
   exit 1
 else
   # No existing config — safe to write a fresh one directly.
@@ -291,6 +370,15 @@ Backup-File $Auth
 # Download the VoidSwitch plugin (single self-contained .ts file Bun loads directly).
 Invoke-WebRequest -UseBasicParsing -Uri "$Gateway/opencode/voidswitch.ts" -OutFile $Plugin
 
+# Strip JSONC comments and trailing commas so standard JSON parsers can handle it.
+function Strip-Jsonc {
+  param([string]$text)
+  $text = $text -replace '(?<!:)//.*$', ''
+  $text = $text -replace '(?s)/\*.*?\*/', ''
+  $text = $text -replace ',(\s*[}\]])', '$1'
+  return $text
+}
+
 # Load existing JSON, but REFUSE to overwrite a file that exists yet can't be
 # parsed (a backup was just made) — so we never silently wipe a real config.
 function Load-Json($path) {
@@ -300,7 +388,28 @@ function Load-Json($path) {
     if ($null -eq $o) { return [pscustomobject]@{} }
     return $o
   } catch {
-    Write-Error "Refusing to overwrite unparseable JSON: $path (backup at $path.$Stamp.bak)"
+    try {
+      $raw = Get-Content -Raw -LiteralPath $path
+      $cleaned = Strip-Jsonc $raw
+      $o = $cleaned | ConvertFrom-Json
+      Write-Host "Note: JSONC comments/trailing-commas were removed from $path (original in backup)"
+      if ($null -eq $o) { return [pscustomobject]@{} }
+      return $o
+    } catch {
+      Write-Host ""
+      Write-Host "Could not parse $path (backup at $path.$Stamp.bak)"
+      Write-Host "Add this to your opencode.json manually:"
+      Write-Host "  1. In 'plugin' array, add: '$Plugin'"
+      Write-Host "  2. In 'provider' object, add:"
+      Write-Host '     "voidswitch": {'
+      Write-Host '       "npm": "@ai-sdk/anthropic",'
+      Write-Host '       "name": "VoidSwitch",'
+      Write-Host "       ""options"": { ""baseURL"": ""$Gateway/v1"" },"
+      Write-Host '       "models": { "claude-opus-4-8":{}, "claude-opus-4-7":{},'
+      Write-Host '                  "claude-opus-4-6":{}, "claude-sonnet-4-6":{},'
+      Write-Host '                  "claude-haiku-4-5":{} } }'
+      throw "Refusing to overwrite unparseable JSON: $path"
+    }
   }
 }
 
