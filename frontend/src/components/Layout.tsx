@@ -17,6 +17,7 @@ import {
   CubeRegular,
   DocumentBulletListRegular,
   KeyRegular,
+  NavigationRegular,
   PeopleRegular,
   PlugConnectedRegular,
   SettingsRegular,
@@ -24,6 +25,7 @@ import {
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from "@fluentui/react-icons";
+import { useCallback, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -111,14 +113,6 @@ const useStyles = makeStyles({
     height: "100vh",
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground1,
-  },
-  sidebar: {
-    width: "256px",
-    flexShrink: 0,
-    display: "flex",
-    flexDirection: "column",
-    backgroundColor: tokens.colorNeutralBackground2,
-    ...shorthands.borderRight("1px", "solid", tokens.colorNeutralStroke2),
   },
   brand: {
     display: "flex",
@@ -224,6 +218,63 @@ const useStyles = makeStyles({
     flex: 1,
     overflowY: "auto",
     ...shorthands.padding("28px", "32px"),
+    "@media (max-width: 768px)": {
+      ...shorthands.padding("52px", "16px", "16px"),
+    },
+  },
+  backdrop: {
+    display: "none",
+    "@media (max-width: 768px)": {
+      display: "block",
+      position: "fixed",
+      inset: 0,
+      zIndex: 90,
+      backgroundColor: "rgba(0,0,0,0.45)",
+      opacity: 0,
+      pointerEvents: "none",
+      transitionProperty: "opacity",
+      transitionDuration: tokens.durationNormal,
+    },
+  },
+  backdropVisible: {
+    "@media (max-width: 768px)": {
+      opacity: 1,
+      pointerEvents: "auto",
+    },
+  },
+  hamburger: {
+    display: "none",
+    "@media (max-width: 768px)": {
+      display: "flex",
+      position: "fixed",
+      top: "12px",
+      left: "12px",
+      zIndex: 80,
+    },
+  },
+  sidebar: {
+    width: "256px",
+    flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
+    backgroundColor: tokens.colorNeutralBackground2,
+    ...shorthands.borderRight("1px", "solid", tokens.colorNeutralStroke2),
+    "@media (max-width: 768px)": {
+      position: "fixed",
+      top: 0,
+      left: 0,
+      bottom: 0,
+      zIndex: 100,
+      transform: "translateX(-100%)",
+      transitionProperty: "transform",
+      transitionDuration: tokens.durationNormal,
+      boxShadow: tokens.shadow64,
+    },
+  },
+  sidebarOpen: {
+    "@media (max-width: 768px)": {
+      transform: "translateX(0)",
+    },
   },
 });
 
@@ -232,6 +283,28 @@ export function Layout() {
   const { user, isStaff, isOwner, logout } = useAuth();
   const { mode, toggle } = useTheme();
   const location = useLocation();
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isNarrow, setIsNarrow] = useState(
+    () => window.matchMedia("(max-width: 768px)").matches,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    const handler = (e: MediaQueryListEvent) => {
+      setIsNarrow(e.matches);
+      if (!e.matches) setSidebarOpen(false);
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  const toggleSidebar = useCallback(() => setSidebarOpen((p) => !p), []);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+
+  const handleNavClick = useCallback(() => {
+    if (isNarrow) closeSidebar();
+  }, [isNarrow, closeSidebar]);
 
   const canSee = (scope: NavScope) =>
     scope === "member" || (scope === "staff" && isStaff) || (scope === "owner" && isOwner);
@@ -253,7 +326,28 @@ export function Layout() {
     <ToastProvider>
       <ConfirmProvider>
         <div className={styles.shell}>
-          <aside className={styles.sidebar}>
+          <div
+            className={mergeClasses(
+              styles.backdrop,
+              sidebarOpen && styles.backdropVisible,
+            )}
+            onClick={closeSidebar}
+          />
+
+          <Button
+            appearance="subtle"
+            icon={<NavigationRegular />}
+            onClick={toggleSidebar}
+            className={styles.hamburger}
+            aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+          />
+
+          <aside
+            className={mergeClasses(
+              styles.sidebar,
+              sidebarOpen && styles.sidebarOpen,
+            )}
+          >
             <div className={styles.brand}>
               <span className={styles.brandMark}>⚡</span>
               <div>
@@ -287,6 +381,7 @@ export function Layout() {
                           styles.item,
                           active ? styles.itemActive : undefined,
                         )}
+                        onClick={handleNavClick}
                       >
                         <span className={styles.itemIcon}>{item.icon}</span>
                         {item.label}

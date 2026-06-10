@@ -6,7 +6,6 @@ import {
   Input,
   Tab,
   TabList,
-  Table,
   TableBody,
   TableCell,
   TableHeader,
@@ -27,6 +26,7 @@ import { api, API_BASE } from "../api/client";
 import type { VoidToken, VoidTokenWithSecret } from "../api/types";
 import {
   ErrorText,
+  DataTable,
   Loading,
   PageHeader,
   formatDate,
@@ -349,7 +349,7 @@ export function MyToken() {
       ) : tokensList.error ? (
         <ErrorText error={tokensList.error} />
       ) : (
-        <Table size="small" aria-label="My tokens">
+        <DataTable ariaLabel="My tokens">
           <TableHeader>
             <TableRow>
               <TableHeaderCell>Name</TableHeaderCell>
@@ -391,7 +391,7 @@ export function MyToken() {
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+        </DataTable>
       )}
 
       <SecretDialog secret={secret} onClose={() => setSecret(null)} />

@@ -15,6 +15,8 @@ import {
   ToastTitle,
   Toaster,
   makeStyles,
+  mergeClasses,
+  tokens,
   useId,
   useToastController,
 } from "@fluentui/react-components";
@@ -289,22 +291,63 @@ const useTableStyles = makeStyles({
     width: "100%",
     maxWidth: "100%",
     overflowX: "auto",
+    WebkitOverflowScrolling: "touch",
+    scrollBehavior: "smooth",
+    backgroundImage: `linear-gradient(to right, ${tokens.colorNeutralBackground1} 30%, transparent),
+      linear-gradient(to left, ${tokens.colorNeutralBackground1} 30%, transparent),
+      radial-gradient(farthest-side at 0% 50%, rgba(0,0,0,0.12), transparent),
+      radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,0.12), transparent)`,
+    backgroundPosition: "0 0, 100% 0, 0 0, 100% 0",
+    backgroundRepeat: "no-repeat",
+    backgroundSize: "40px 100%, 40px 100%, 16px 100%, 16px 100%",
+    backgroundAttachment: "local, local, scroll, scroll",
+    "&::-webkit-scrollbar": {
+      height: "6px",
+    },
+    "&::-webkit-scrollbar-thumb": {
+      backgroundColor: tokens.colorNeutralStroke1,
+      borderRadius: "3px",
+    },
+    "&::-webkit-scrollbar-track": {
+      backgroundColor: "transparent",
+    },
   },
   table: {
     width: "100%",
-    // `auto` lets each column size to its content — a short "status" column
-    // stays narrow while a long "base URL" column gets the space it needs —
-    // instead of `fixed`'s equal-width columns.
     tableLayout: "auto",
-    // Keep long, unbreakable strings (URLs, tokens, JSON, errors) wrapping
-    // inside their cell instead of spilling across columns.
-    "& td, & th": {
+    borderCollapse: "separate",
+    borderSpacing: 0,
+    "& th": {
+      whiteSpace: "nowrap",
+      verticalAlign: "top",
+      position: "relative",
+    },
+    "& th:first-child": {
+      position: "sticky",
+      left: 0,
+      zIndex: 3,
+      backgroundColor: tokens.colorNeutralBackground1,
+    },
+    "& td": {
       overflowWrap: "anywhere",
       wordBreak: "break-word",
       verticalAlign: "top",
+      position: "relative",
+    },
+    "& td:first-child": {
+      position: "sticky",
+      left: 0,
+      zIndex: 2,
+      backgroundColor: tokens.colorNeutralBackground1,
     },
     "& td > *, & th > *": {
       minWidth: 0,
+    },
+  },
+  stickyShadow: {
+    "& th:first-child, & td:first-child": {
+      boxShadow: "4px 0 12px -6px rgba(0,0,0,0.18)",
+      clipPath: "inset(0 -16px 0 0)",
     },
   },
 });
@@ -324,12 +367,24 @@ export function DataTable({
   minWidth?: number;
 }) {
   const styles = useTableStyles();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const check = () => setScrolled(el.scrollLeft > 0);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    return () => el.removeEventListener("scroll", check);
+  }, []);
+
   return (
-    <div className={styles.scroll}>
+    <div ref={scrollRef} className={styles.scroll}>
       <Table
         aria-label={ariaLabel}
         size="small"
-        className={styles.table}
+        className={mergeClasses(styles.table, scrolled && styles.stickyShadow)}
         style={minWidth ? { minWidth } : undefined}
       >
         {children}
