@@ -12,9 +12,13 @@
   "dependencies": {
     "@fluentui/react-components": "^9.54.0",
     "@fluentui/react-icons": "^2.0.270",
+    "@types/node": "^25.9.2",
+    "i18next": "^26.3.1",
+    "i18next-browser-languagedetector": "^8.2.1",
     "json5": "^2.2.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-i18next": "^17.0.8",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.1.0",
     "remark-gfm": "^4.0.1"

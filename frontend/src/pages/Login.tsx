@@ -8,10 +8,14 @@ import {
 } from "@fluentui/react-components";
 import { WeatherMoonRegular, WeatherSunnyRegular } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
+import type { Translations } from "../i18n/locales/en";
+
+type TK = keyof Translations;
 
 interface AuthConfig {
   configured: boolean;
@@ -20,6 +24,7 @@ interface AuthConfig {
 }
 
 export function Login() {
+  const { t } = useTranslation();
   const { user, loading, login, devLogin } = useAuth();
   const { mode, toggle } = useTheme();
   const navigate = useNavigate();
@@ -63,7 +68,7 @@ export function Login() {
     >
       <Button
         appearance="subtle"
-        aria-label="Toggle theme"
+        aria-label={t("login.toggleTheme" as TK)}
         icon={
           mode === "dark" ? <WeatherSunnyRegular /> : <WeatherMoonRegular />
         }
@@ -72,17 +77,17 @@ export function Login() {
       />
       <Card style={{ width: 380, padding: 32, textAlign: "center" }}>
         <Text size={700} weight="bold" block style={{ marginBottom: 6 }}>
-          ⚡ VoidSwitch
+          {t("login.brand" as TK)}
         </Text>
         <Text
           size={300}
           block
           style={{ color: tokens.colorNeutralForeground3, marginBottom: 28 }}
         >
-          Multi-provider LLM API gateway
+          {t("login.tagline" as TK)}
         </Text>
         {loading ? (
-          <Spinner label="Checking session…" />
+          <Spinner label={t("login.checking" as TK)} />
         ) : (
           <>
             <Button
@@ -92,11 +97,13 @@ export function Login() {
               disabled={busy}
               style={{ width: "100%" }}
             >
-              Sign in with Prism
+              {t("login.signIn" as TK)}
             </Button>
             {config?.dev_mode ? (
               <>
-                <Divider style={{ margin: "20px 0" }}>dev mode</Divider>
+                <Divider style={{ margin: "20px 0" }}>
+                  {t("login.devMode" as TK)}
+                </Divider>
                 <Button
                   appearance="outline"
                   size="large"
@@ -104,7 +111,7 @@ export function Login() {
                   disabled={busy}
                   style={{ width: "100%" }}
                 >
-                  Developer sign-in (no OAuth)
+                  {t("login.devSignIn" as TK)}
                 </Button>
                 <Text
                   size={200}
@@ -114,7 +121,7 @@ export function Login() {
                     marginTop: 10,
                   }}
                 >
-                  Bypasses Prism — local development only.
+                  {t("login.devHint" as TK)}
                 </Text>
               </>
             ) : null}

@@ -31,10 +31,12 @@ import {
   PersonRegular,
 } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { ApiKey, Provider } from "../api/types";
+import type { Translations } from "../i18n/locales/en";
 import {
   DataTable,
   ErrorText,
@@ -79,6 +81,8 @@ export function ProviderKeys() {
   const confirm = useConfirm();
   const { user: me, isStaff, isOwner } = useAuth();
   const canManage = (k: ApiKey) => isStaff || k.added_by === me?.id;
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const provider = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
   const keys = useAsync<ApiKey[]>(
     () => api.get(`/api/admin/providers/${providerId}/keys`),
@@ -145,11 +149,11 @@ export function ProviderKeys() {
       await api.post(
         `/api/admin/providers/${providerId}/keys/refresh-balance${query}`,
       );
-      notify("Balances rescanned", scope, "success");
+      notify(t("providerKeys.rescanSuccess" as TK), scope, "success");
       keys.reload();
     } catch (e) {
       notify(
-        "Rescan failed",
+        t("providerKeys.rescanFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -167,7 +171,7 @@ export function ProviderKeys() {
       keys.reload();
     } catch (e) {
       notify(
-        "Refresh failed",
+        t("providerKeys.refreshFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -183,8 +187,8 @@ export function ProviderKeys() {
       title: `Clear ${label} keys`,
       message: isBalance
         ? `Delete keys with no balance for at least ${cleanDays} day(s)? This cannot be undone.`
-        : "Delete all keys whose secret was rejected (invalid)? This cannot be undone.",
-      confirmLabel: "Delete",
+        : t("providerKeys.cleanupConfirmMsg" as TK),
+      confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
@@ -197,14 +201,14 @@ export function ProviderKeys() {
           : { target, min_days: 0 },
       );
       notify(
-        "Cleanup complete",
+        t("providerKeys.cleanupComplete" as TK),
         `${r.deleted} ${label} key(s) removed`,
         "success",
       );
       keys.reload();
     } catch (e) {
       notify(
-        "Cleanup failed",
+        t("providerKeys.cleanupFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -224,7 +228,7 @@ export function ProviderKeys() {
       window.open(r.authorize_url, "_blank", "noopener,noreferrer");
     } catch (e) {
       notify(
-        "Could not start sign-in",
+        t("providerKeys.oauthStartFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -241,13 +245,13 @@ export function ProviderKeys() {
         code: oauthCode.trim(),
         state: oauthState,
       });
-      notify("Signed in", "Claude subscription credential added", "success");
+      notify(t("providerKeys.oauthSignedIn" as TK), t("providerKeys.oauthCredentialAdded" as TK), "success");
       setOauthState(null);
       setOauthCode("");
       keys.reload();
     } catch (e) {
       notify(
-        "Sign-in failed",
+        t("providerKeys.oauthSignInFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -269,14 +273,14 @@ export function ProviderKeys() {
         { keys: list, pool: pool.trim() },
       );
       notify(
-        "Keys added",
+        t("providerKeys.created" as TK),
         `${created.length} new key(s)${pool.trim() ? ` in pool "${pool.trim()}"` : ""}`,
         "success",
       );
       setBulk("");
       keys.reload();
     } catch (e) {
-      notify("Add failed", e instanceof Error ? e.message : String(e), "error");
+      notify(t("providerKeys.addFailed" as TK), e instanceof Error ? e.message : String(e), "error");
     } finally {
       setAdding(false);
     }
@@ -303,12 +307,12 @@ export function ProviderKeys() {
         `/api/admin/providers/${providerId}/keys/${editing.id}`,
         patch,
       );
-      notify("Key updated", editing.key_preview, "success");
+      notify(t("providerKeys.updated" as TK), editing.key_preview, "success");
       setEditing(null);
       keys.reload();
     } catch (e) {
       notify(
-        "Update failed",
+        t("common.updateFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -327,9 +331,12 @@ export function ProviderKeys() {
 
   async function remove(k: ApiKey) {
     const ok = await confirm({
-      title: "Delete key",
-      message: `Delete key ${k.key_preview}?`,
-      confirmLabel: "Delete",
+      title: t("providerKeys.deleteTitle" as TK),
+      message: t("providerKeys.deleteMsg" as TK).replace(
+        "{preview}",
+        k.key_preview,
+      ),
+      confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
@@ -339,11 +346,9 @@ export function ProviderKeys() {
 
   async function reveal(k: ApiKey) {
     const ok = await confirm({
-      title: "Reveal key",
-      message:
-        `Show the full plaintext secret for ${k.key_preview}? ` +
-        "This reveal is recorded in the audit trail.",
-      confirmLabel: "Reveal",
+      title: t("providerKeys.revealTitle" as TK),
+      message: t("providerKeys.revealMsg" as TK),
+      confirmLabel: t("providerKeys.revealLabel" as TK),
       tone: "danger",
     });
     if (!ok) return;
@@ -355,7 +360,7 @@ export function ProviderKeys() {
       setRevealed({ preview: r.preview, key: r.key });
     } catch (e) {
       notify(
-        "Reveal failed",
+        t("providerKeys.revealFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -375,22 +380,22 @@ export function ProviderKeys() {
         Back to providers
       </Button>
       <PageHeader
-        title={`Keys · ${current?.name ?? `#${providerId}`}`}
+        title={`${t("providerKeys.title" as TK)} · ${current?.name ?? `#${providerId}`}`}
         subtitle={
           isClaudeCode
-            ? "Sign in with a Claude subscription, or paste setup-tokens / credential bundles below"
-            : "Paste one API key per line to add in bulk. Add an inline description with # (e.g. sk-abc # alice's key)"
+            ? t("providerKeys.claudeOAuthHint" as TK)
+            : t("providerKeys.bulkPasteHint" as TK)
         }
         action={
           supportsBalance ? (
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-              <Field label="Rescan scope">
+              <Field label={t("providerKeys.rescanScope" as TK)}>
                 <Dropdown
                   style={{ minWidth: 150 }}
                   selectedOptions={[scanPool]}
                   value={
                     scanPool === "__all__"
-                      ? "All pools"
+                      ? t("providerKeys.allPools" as TK)
                       : scanPool === "__untagged__"
                         ? "(untagged)"
                         : scanPool
@@ -399,8 +404,8 @@ export function ProviderKeys() {
                     setScanPool(d.optionValue ?? "__all__")
                   }
                 >
-                  <Option value="__all__" text="All pools">
-                    All pools
+                      <Option value="__all__" text={t("providerKeys.allPools" as TK)}>
+                        {t("providerKeys.allPools" as TK)}
                   </Option>
                   {pools.map((p) => (
                     <Option
@@ -419,7 +424,9 @@ export function ProviderKeys() {
                 disabled={refreshingAll}
                 onClick={refreshAllBalances}
               >
-                {refreshingAll ? "Rescanning…" : "Rescan balances"}
+                {refreshingAll
+                  ? t("providerKeys.rescanning" as TK)
+                  : t("providerKeys.rescanBalances" as TK)}
               </Button>
             </div>
           ) : undefined
@@ -454,7 +461,7 @@ export function ProviderKeys() {
           ) : (
             <>
               <Field
-                label="Paste the code from Claude"
+                label={t("providerKeys.pasteClaudeCode" as TK)}
                 style={{ marginTop: 4 }}
               >
                 <Input
@@ -479,7 +486,7 @@ export function ProviderKeys() {
                     setOauthCode("");
                   }}
                 >
-                  Cancel
+                  {t("common.cancel" as TK)}
                 </Button>
               </div>
             </>
@@ -509,7 +516,7 @@ export function ProviderKeys() {
         }}
       >
         <Field
-          label="Key pool (optional tag — e.g. leaked, members)"
+          label={t("providerKeys.keyPoolHint" as TK)}
           style={{ flex: "1 1 240px", maxWidth: 320 }}
         >
           <Input
@@ -528,7 +535,7 @@ export function ProviderKeys() {
             flexWrap: "wrap",
           }}
         >
-          <Field label="No balance for ≥ (days)">
+          <Field label={t("providerKeys.noBalanceDays" as TK)}>
             <SpinButton
               value={cleanDays}
               min={0}
@@ -542,7 +549,7 @@ export function ProviderKeys() {
             />
           </Field>
           <Tooltip
-            content="Delete keys that have had no balance for at least the given number of days"
+            content={t("providerKeys.noBalanceDaysHint" as TK)}
             relationship="label"
           >
             <Button
@@ -551,11 +558,11 @@ export function ProviderKeys() {
               disabled={cleaning}
               onClick={() => cleanup("insufficient_balance")}
             >
-              Clear no-balance
+              {t("providerKeys.clearNoBalance" as TK)}
             </Button>
           </Tooltip>
           <Tooltip
-            content="Delete every key whose secret was rejected (invalid)"
+            content={t("providerKeys.deleteAllRejectedTip" as TK)}
             relationship="label"
           >
             <Button
@@ -564,7 +571,7 @@ export function ProviderKeys() {
               disabled={cleaning}
               onClick={() => cleanup("invalid")}
             >
-              Clear invalid
+              {t("providerKeys.clearInvalid" as TK)}
             </Button>
           </Tooltip>
         </div>
@@ -575,7 +582,7 @@ export function ProviderKeys() {
         onClick={addKeys}
         style={{ marginBottom: 24 }}
       >
-        Add keys
+        {t("providerKeys.add" as TK)}
       </Button>
 
       {keys.loading ? (
@@ -583,22 +590,44 @@ export function ProviderKeys() {
       ) : keys.error ? (
         <ErrorText error={keys.error} />
       ) : (
-        <DataTable ariaLabel="Keys">
+        <DataTable ariaLabel={t("providerKeys.title" as TK)}>
           <TableHeader>
             <TableRow>
-              <TableHeaderCell>Key</TableHeaderCell>
-              <TableHeaderCell>Comment</TableHeaderCell>
-              <TableHeaderCell>Pool</TableHeaderCell>
-              <TableHeaderCell>Added by</TableHeaderCell>
-              <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.key" as TK)}
+              </TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.comment" as TK)}
+              </TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.pool" as TK)}
+              </TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.addedBy" as TK)}
+              </TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.status" as TK)}
+              </TableHeaderCell>
               {supportsBalance && (
-                <TableHeaderCell>Balance</TableHeaderCell>
+                <TableHeaderCell>
+                  {t("providerKeys.balance" as TK)}
+                </TableHeaderCell>
               )}
-              <TableHeaderCell>Fails</TableHeaderCell>
-              <TableHeaderCell>Requests</TableHeaderCell>
-              <TableHeaderCell>Last used</TableHeaderCell>
-              <TableHeaderCell>Reason</TableHeaderCell>
-              <TableHeaderCell>Actions</TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.fails" as TK)}
+              </TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.requests" as TK)}
+              </TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.lastUsed" as TK)}
+              </TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.reason" as TK)}
+              </TableHeaderCell>
+              <TableHeaderCell>
+                {t("providerKeys.actions" as TK)}
+              </TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -630,7 +659,7 @@ export function ProviderKeys() {
                     >
                       <span>{formatBalance(k.balance)}</span>
                       <Tooltip
-                        content="Refresh this key's balance"
+                        content={t("providerKeys.refreshBalanceTip" as TK)}
                         relationship="label"
                       >
                         <Button
@@ -661,7 +690,7 @@ export function ProviderKeys() {
                       disabled={revealBusy}
                       onClick={() => reveal(k)}
                     >
-                      Reveal
+                      {t("common.reveal" as TK)}
                     </Button>
                   )}
                   {canManage(k) ? (
@@ -672,14 +701,16 @@ export function ProviderKeys() {
                         icon={<EditRegular />}
                         onClick={() => openEdit(k)}
                       >
-                        Edit
+                        {t("common.edit" as TK)}
                       </Button>
                       <Button
                         size="small"
                         appearance="subtle"
                         onClick={() => toggle(k)}
                       >
-                        {k.status === "active" ? "Disable" : "Enable"}
+                        {k.status === "active"
+                          ? t("common.disable" as TK)
+                          : t("common.enable" as TK)}
                       </Button>
                       <Button
                         size="small"
@@ -710,13 +741,15 @@ export function ProviderKeys() {
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Edit key {editing?.key_preview}</DialogTitle>
+            <DialogTitle>
+              {t("providerKeys.editKeyTitle" as TK).replace("{preview}", editing?.key_preview ?? "")}
+            </DialogTitle>
             <DialogContent
               style={{ display: "flex", flexDirection: "column", gap: 12 }}
             >
               <Field
-                label="Key"
-                hint="Leave blank to keep the current secret unchanged"
+                label={t("providerKeys.editKeyField" as TK)}
+                hint={t("providerKeys.editKeyHint" as TK)}
               >
                 <Input
                   value={editSecret}
@@ -725,14 +758,14 @@ export function ProviderKeys() {
                   onChange={(_, d) => setEditSecret(d.value)}
                 />
               </Field>
-              <Field label="Comment">
+              <Field label={t("providerKeys.comment" as TK)}>
                 <Input
                   value={editNote}
                   placeholder="(none)"
                   onChange={(_, d) => setEditNote(d.value)}
                 />
               </Field>
-              <Field label="Pool">
+              <Field label={t("providerKeys.pool" as TK)}>
                 <Input
                   value={editPool}
                   placeholder="(untagged)"
@@ -746,14 +779,14 @@ export function ProviderKeys() {
                 disabled={editBusy}
                 onClick={() => setEditing(null)}
               >
-                Cancel
+                {t("common.cancel" as TK)}
               </Button>
               <Button
                 appearance="primary"
                 disabled={editBusy}
                 onClick={saveEdit}
               >
-                Save
+                {t("common.save" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -766,7 +799,9 @@ export function ProviderKeys() {
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Key · {revealed?.preview}</DialogTitle>
+            <DialogTitle>
+              {t("providerKeys.keyDetailTitle" as TK).replace("{preview}", revealed?.preview ?? "")}
+            </DialogTitle>
             <DialogContent>
               <Text
                 size={200}
@@ -787,7 +822,7 @@ export function ProviderKeys() {
             </DialogContent>
             <DialogActions>
               <Button appearance="primary" onClick={() => setRevealed(null)}>
-                Close
+                {t("common.close" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

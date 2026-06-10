@@ -20,6 +20,8 @@ import {
 } from "@fluentui/react-components";
 import { AddRegular, CopyRegular, DeleteRegular } from "@fluentui/react-icons";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
 import type { VoidToken, VoidTokenWithSecret } from "../api/types";
 import {
@@ -34,6 +36,8 @@ import {
 } from "../components/ui";
 
 export function Tokens() {
+  const { t: tr } = useTranslation();
+  type TK = keyof Translations;
   const notify = useNotify();
   const confirm = useConfirm();
   const list = useAsync<VoidToken[]>(() => api.get("/api/admin/tokens"));
@@ -62,7 +66,7 @@ export function Tokens() {
       list.reload();
     } catch (e) {
       notify(
-        "Create failed",
+        tr("tokens.mintFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -76,9 +80,9 @@ export function Tokens() {
 
   async function remove(t: VoidToken) {
     const ok = await confirm({
-      title: "Delete token",
-      message: `Delete token "${t.name}"? Clients using it will stop working.`,
-      confirmLabel: "Delete",
+      title: tr("tokens.deleteTitle" as TK),
+      message: tr("tokens.deleteMsg" as TK).replace("{name}", t.name),
+      confirmLabel: tr("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
@@ -89,15 +93,15 @@ export function Tokens() {
   return (
     <div>
       <PageHeader
-        title="Void-Tokens"
-        subtitle="Client credentials for the gateway, across all users"
+        title={tr("tokens.title" as TK)}
+        subtitle={tr("tokens.subtitle" as TK)}
         action={
           <Button
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setCreating(true)}
           >
-            Mint token
+            {tr("tokens.mint" as TK)}
           </Button>
         }
       />
@@ -107,17 +111,17 @@ export function Tokens() {
       ) : list.error ? (
         <ErrorText error={list.error} />
       ) : (
-        <DataTable ariaLabel="Tokens">
+        <DataTable ariaLabel={tr("tokens.title" as TK)}>
           <TableHeader>
             <TableRow>
-              <TableHeaderCell>Name</TableHeaderCell>
-              <TableHeaderCell>Fingerprint</TableHeaderCell>
-              <TableHeaderCell>User</TableHeaderCell>
-              <TableHeaderCell>Requests</TableHeaderCell>
-              <TableHeaderCell>Tokens</TableHeaderCell>
-              <TableHeaderCell>Status</TableHeaderCell>
-              <TableHeaderCell>Created</TableHeaderCell>
-              <TableHeaderCell>Actions</TableHeaderCell>
+              <TableHeaderCell>{tr("tokens.name" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{tr("tokens.fingerprint" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{tr("tokens.user" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{tr("tokens.requests" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{tr("tokens.tokens" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{tr("tokens.status" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{tr("tokens.created" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{tr("tokens.actions" as TK)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -135,7 +139,9 @@ export function Tokens() {
                     color={t.enabled ? "success" : "subtle"}
                     appearance="filled"
                   >
-                    {t.enabled ? "enabled" : "disabled"}
+                    {t.enabled
+                      ? tr("common.enabled" as TK)
+                      : tr("common.disabled" as TK)}
                   </Badge>
                 </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
@@ -147,7 +153,9 @@ export function Tokens() {
                     appearance="subtle"
                     onClick={() => toggle(t)}
                   >
-                    {t.enabled ? "Disable" : "Enable"}
+                    {t.enabled
+                      ? tr("common.disable" as TK)
+                      : tr("common.enable" as TK)}
                   </Button>
                   <Button
                     size="small"
@@ -165,17 +173,21 @@ export function Tokens() {
       <Dialog open={creating} onOpenChange={(_, d) => setCreating(d.open)}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Mint Void-Token</DialogTitle>
+            <DialogTitle>{tr("tokens.mintTitle" as TK)}</DialogTitle>
             <DialogContent
               style={{ display: "flex", flexDirection: "column", gap: 12 }}
             >
-              <Field label="Name">
-                <Input value={name} onChange={(_, d) => setName(d.value)} />
+              <Field label={tr("tokens.mintName" as TK)}>
+                <Input
+                  placeholder={tr("tokens.mintNamePlaceholder" as TK)}
+                  value={name}
+                  onChange={(_, d) => setName(d.value)}
+                />
               </Field>
-              <Field label="User ID (blank = yourself)">
+              <Field label={tr("tokens.userIdHint" as TK)}>
                 <Input value={userId} onChange={(_, d) => setUserId(d.value)} />
               </Field>
-              <Field label="Allowed models (blank = all; one per line)">
+              <Field label={tr("tokens.allowedModelsHint" as TK)}>
                 <Textarea
                   value={allowed}
                   rows={3}
@@ -185,10 +197,10 @@ export function Tokens() {
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setCreating(false)}>
-                Cancel
+                {tr("common.cancel" as TK)}
               </Button>
               <Button appearance="primary" onClick={create}>
-                Create
+                {tr("common.create" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -207,6 +219,8 @@ export function SecretDialog({
   secret: VoidTokenWithSecret | null;
   onClose: () => void;
 }) {
+  const { t: tr } = useTranslation();
+  type TK = keyof Translations;
   const notify = useNotify();
   return (
     <Dialog
@@ -221,7 +235,7 @@ export function SecretDialog({
               block
               style={{ color: tokens.colorNeutralForeground3, marginBottom: 8 }}
             >
-              Copy it now — it will not be shown again.
+              {tr("tokens.secretWarning" as TK)}
             </Text>
             <div
               style={{
@@ -242,7 +256,7 @@ export function SecretDialog({
                 onClick={() => {
                   if (secret) {
                     void navigator.clipboard.writeText(secret.token);
-                    notify("Copied", undefined, "success");
+                    notify(tr("tokens.copied" as TK), undefined, "success");
                   }
                 }}
               />

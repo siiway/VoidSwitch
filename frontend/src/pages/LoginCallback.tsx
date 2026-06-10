@@ -1,10 +1,15 @@
 import { Card, Spinner, Text, tokens } from "@fluentui/react-components";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { setToken } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import type { Translations } from "../i18n/locales/en";
+
+type TK = keyof Translations;
 
 export function LoginCallback() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { reload } = useAuth();
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +42,7 @@ export function LoginCallback() {
               block
               style={{ marginBottom: 8 }}
             >
-              Sign-in failed
+              {t("login.signInFailed" as TK)}
             </Text>
             <Text style={{ color: tokens.colorPaletteRedForeground1 }} block>
               {error}
@@ -52,11 +57,11 @@ export function LoginCallback() {
                 color: tokens.colorBrandForeground1,
               }}
             >
-              Try again
+              {t("login.tryAgain" as TK)}
             </Text>
           </>
         ) : (
-          <Spinner label="Completing sign-in…" />
+          <Spinner label={t("login.completing" as TK)} />
         )}
       </Card>
     </div>

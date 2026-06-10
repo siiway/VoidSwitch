@@ -10,9 +10,11 @@ import {
   TableRow,
   tokens,
 } from "@fluentui/react-components";
+import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { Role, User } from "../api/types";
+import type { Translations } from "../i18n/locales/en";
 import {
   DataTable,
   ErrorText,
@@ -23,12 +25,12 @@ import {
   useNotify,
 } from "../components/ui";
 
-// Owner/co-owner are authoritative from Prism (or a direct DB edit). Only the
-// "local admin override" roles can be assigned from the dashboard.
 const ASSIGNABLE_ROLES: Role[] = ["admin", "member"];
 const OWNER_TIER: Role[] = ["owner", "co-owner"];
 
 export function Users() {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const notify = useNotify();
   const { user: me, isOwner } = useAuth();
   const users = useAsync<User[]>(() => api.get("/api/admin/users"));
@@ -36,11 +38,11 @@ export function Users() {
   async function setRole(u: User, role: Role) {
     try {
       await api.patch(`/api/admin/users/${u.id}`, { role });
-      notify("Role updated", `${u.username ?? u.sub}#${u.id} → ${role}`, "success");
+      notify(t("users.roleUpdated" as TK), `${u.username ?? u.sub}#${u.id} → ${role}`, "success");
       users.reload();
     } catch (e) {
       notify(
-        "Update failed",
+        t("common.updateFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -53,7 +55,7 @@ export function Users() {
       users.reload();
     } catch (e) {
       notify(
-        "Update failed",
+        t("common.updateFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -63,24 +65,24 @@ export function Users() {
   return (
     <div>
       <PageHeader
-        title="Users"
-        subtitle="Prism-authenticated accounts and their roles"
+        title={t("users.title" as TK)}
+        subtitle={t("users.subtitle" as TK)}
       />
       {users.loading ? (
         <Loading />
       ) : users.error ? (
         <ErrorText error={users.error} />
       ) : (
-        <DataTable ariaLabel="Users">
+        <DataTable ariaLabel={t("users.title" as TK)}>
           <TableHeader>
             <TableRow>
-              <TableHeaderCell>User</TableHeaderCell>
-              <TableHeaderCell>Email</TableHeaderCell>
-              <TableHeaderCell>Role</TableHeaderCell>
-              <TableHeaderCell>Prism role</TableHeaderCell>
-              <TableHeaderCell>Status</TableHeaderCell>
-              <TableHeaderCell>Last login</TableHeaderCell>
-              <TableHeaderCell>Actions</TableHeaderCell>
+              <TableHeaderCell>{t("users.user" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("users.email" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("users.role" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("users.prismRole" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("users.status" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("users.lastLogin" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("users.actions" as TK)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -123,7 +125,7 @@ export function Users() {
                       size="small"
                       style={{ marginLeft: 6 }}
                     >
-                      local override
+                      {t("common.localOverride" as TK)}
                     </Badge>
                   ) : null}
                 </TableCell>
@@ -132,7 +134,7 @@ export function Users() {
                     color={u.enabled ? "success" : "danger"}
                     appearance="filled"
                   >
-                    {u.enabled ? "active" : "disabled"}
+                    {u.enabled ? t("common.active" as TK) : t("common.disabled" as TK)}
                   </Badge>
                 </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
@@ -145,7 +147,7 @@ export function Users() {
                     disabled={u.id === me?.id || !isOwner}
                     onClick={() => toggle(u)}
                   >
-                    {u.enabled ? "Disable" : "Enable"}
+                    {u.enabled ? t("common.disable" as TK) : t("common.enable" as TK)}
                   </Button>
                 </TableCell>
               </TableRow>

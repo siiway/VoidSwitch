@@ -29,9 +29,11 @@ import {
 } from "@fluentui/react-icons";
 import JSON5 from "json5";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { ModelEntry, ModelSyncResult } from "../api/types";
+import type { Translations } from "../i18n/locales/en";
 import {
   ErrorText,
   Loading,
@@ -99,12 +101,6 @@ function prettyJson(value: unknown): string {
   }
 }
 
-/**
- * Parse the OpenCode-config textarea. Accepts JSONC / JSON5 (trailing commas,
- * comments, unquoted keys, single quotes) — the same lenient dialect OpenCode's
- * own `opencode.json` uses — so a config copied from there validates as-is.
- * Returns `"INVALID"` when it can't be parsed into a JSON object.
- */
 function parseConfig(text: string): Record<string, unknown> | "INVALID" {
   const trimmed = text.trim();
   if (!trimmed) return {};
@@ -120,6 +116,8 @@ function parseConfig(text: string): Record<string, unknown> | "INVALID" {
 }
 
 export function Models() {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const styles = useStyles();
   const notify = useNotify();
   const confirm = useConfirm();
@@ -132,7 +130,6 @@ export function Models() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
-  // Batch editor state.
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchDescOn, setBatchDescOn] = useState(true);
   const [batchDesc, setBatchDesc] = useState("");
@@ -165,13 +162,19 @@ export function Models() {
     try {
       const r = await api.post<ModelSyncResult>("/api/models/sync");
       notify(
-        "Catalog synced",
-        `${r.added} new model${r.added === 1 ? "" : "s"} registered (${r.total} total).`,
+        t("models.catalogSynced" as TK),
+        t("models.syncResult" as TK)
+          .replace("{added}", String(r.added))
+          .replace("{total}", String(r.total)),
         "success",
       );
       catalog.reload();
     } catch (e) {
-      notify("Sync failed", e instanceof Error ? e.message : String(e), "error");
+      notify(
+        t("providerKeys.syncFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
     } finally {
       setSyncing(false);
     }
@@ -192,14 +195,18 @@ export function Models() {
     const config = parseConfig(edit.config);
     if (config === "INVALID") {
       notify(
-        "Invalid config",
-        "The OpenCode config must be a JSON / JSONC object.",
+        t("models.invalidConfig" as TK),
+        t("models.invalidConfigMsg" as TK),
         "error",
       );
       return;
     }
     if (edit.mapped_id.trim() === edit.model_id) {
-      notify("Invalid mapping", "The public id must differ from the model id.", "error");
+      notify(
+        t("models.invalidMapping" as TK),
+        t("models.invalidMappingMsg" as TK),
+        "error",
+      );
       return;
     }
     setSaving(true);
@@ -211,11 +218,15 @@ export function Models() {
         opencode_config: config,
         enabled: edit.enabled,
       });
-      notify("Model saved", edit.model_id, "success");
+      notify(t("models.saved" as TK), edit.model_id, "success");
       setEdit(null);
       catalog.reload();
     } catch (e) {
-      notify("Save failed", e instanceof Error ? e.message : String(e), "error");
+      notify(
+        t("common.saveFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
     } finally {
       setSaving(false);
     }
@@ -230,12 +241,16 @@ export function Models() {
     setSaving(true);
     try {
       await api.post("/api/models/batch", payload);
-      notify("Models updated", `${ids.length} model(s) updated.`, "success");
+      notify(t("models.updated" as TK), `${ids.length} model(s) updated.`, "success");
       setBatchOpen(false);
       setSelected(new Set());
       catalog.reload();
     } catch (e) {
-      notify("Update failed", e instanceof Error ? e.message : String(e), "error");
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
     } finally {
       setSaving(false);
     }
@@ -244,39 +259,41 @@ export function Models() {
   async function remove(m: ModelEntry) {
     if (m.id == null) return;
     const ok = await confirm({
-      title: "Delete model metadata",
-      message: `Remove the description and OpenCode config for "${m.model_id}"? ${
-        m.served
-          ? "The model stays available (a provider still serves it) but loses its metadata."
-          : "It is no longer served by any provider, so it will disappear from the catalog."
-      }`,
-      confirmLabel: "Delete",
+      title: t("models.deleteTitle" as TK),
+      message: m.served
+        ? t("models.deleteMsgServed" as TK).replace("{id}", m.model_id)
+        : t("models.deleteMsgUnserved" as TK).replace("{id}", m.model_id),
+      confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
     try {
       await api.del(`/api/models/${m.id}`);
-      notify("Metadata removed", m.model_id, "success");
+      notify(t("models.metadataRemoved" as TK), m.model_id, "success");
       catalog.reload();
     } catch (e) {
-      notify("Delete failed", e instanceof Error ? e.message : String(e), "error");
+      notify(
+        t("common.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
     }
   }
 
   return (
     <div>
       <PageHeader
-        title="Models"
-        subtitle="Every model available across the platform"
+        title={t("models.title" as TK)}
+        subtitle={t("models.subtitle" as TK)}
         action={
           <div style={{ display: "flex", gap: 8 }}>
             {isStaff && selected.size > 0 && (
               <Button icon={<EditRegular />} onClick={() => setBatchOpen(true)}>
-                Edit selected ({selected.size})
+                {t("models.editSelected" as TK).replace("{count}", String(selected.size))}
               </Button>
             )}
             <Tooltip
-              content="Discover any newly-served models from the providers"
+              content={t("models.syncTooltip" as TK)}
               relationship="label"
             >
               <Button
@@ -285,7 +302,7 @@ export function Models() {
                 disabled={syncing}
                 onClick={sync}
               >
-                {syncing ? "Syncing…" : "Sync from providers"}
+                {syncing ? t("models.syncing" as TK) : t("models.sync" as TK)}
               </Button>
             </Tooltip>
           </div>
@@ -296,12 +313,14 @@ export function Models() {
         <Input
           className={styles.search}
           contentBefore={<SearchRegular />}
-          placeholder="Search models, descriptions, providers…"
+          placeholder={t("models.search" as TK)}
           value={search}
           onChange={(_, d) => setSearch(d.value)}
         />
         <Text size={200} className={styles.dim}>
-          {filtered.length} of {items.length} models
+          {t("models.count" as TK)
+            .replace("{filtered}", String(filtered.length))
+            .replace("{total}", String(items.length))}
         </Text>
       </div>
 
@@ -311,8 +330,7 @@ export function Models() {
         <ErrorText error={catalog.error} />
       ) : filtered.length === 0 ? (
         <Text className={styles.dim}>
-          No models yet. Add a provider with models, then use “Sync from
-          providers”.
+          {t("models.noModels" as TK)}
         </Text>
       ) : (
         <div className={styles.grid}>
@@ -343,29 +361,29 @@ export function Models() {
 
                 <Text size={200} className={styles.desc}>
                   {m.description || (
-                    <span className={styles.dim}>No description</span>
+                    <span className={styles.dim}>{t("models.noDescription" as TK)}</span>
                   )}
                 </Text>
 
                 <div className={styles.badges}>
                   {!m.enabled && (
                     <Badge appearance="filled" color="subtle">
-                      hidden
+                      {t("common.hidden" as TK)}
                     </Badge>
                   )}
                   {m.mapped_id && (
                     <Badge appearance="tint" color="success">
-                      mapped
+                      {t("common.mapped" as TK)}
                     </Badge>
                   )}
                   {!m.served && (
                     <Badge appearance="tint" color="warning">
-                      no provider
+                      {t("common.noProvider" as TK)}
                     </Badge>
                   )}
                   {hasConfig && (
                     <Badge appearance="tint" color="brand">
-                      custom config
+                      {t("common.customConfig" as TK)}
                     </Badge>
                   )}
                   {m.providers.map((p) => (
@@ -383,7 +401,7 @@ export function Models() {
                       icon={<EditRegular />}
                       onClick={() => openEdit(m)}
                     >
-                      Edit
+                      {t("common.edit" as TK)}
                     </Button>
                     {m.registered && (
                       <Button
@@ -401,30 +419,29 @@ export function Models() {
         </div>
       )}
 
-      {/* Single-model editor */}
       <Dialog open={edit !== null} onOpenChange={(_, d) => !d.open && setEdit(null)}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Edit model</DialogTitle>
+            <DialogTitle>{t("models.editModel" as TK)}</DialogTitle>
             <DialogContent
               style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 8 }}
             >
-              <Field label="Model id">
+              <Field label={t("models.modelId" as TK)}>
                 <Input value={edit?.model_id ?? ""} disabled />
               </Field>
               <Field
-                label="Public id (mapping)"
-                hint="Rename this model: when set, clients see and call only this id; the original id above is hidden and rejected. Leave blank for no mapping."
+                label={t("models.publicId" as TK)}
+                hint={t("models.publicIdHint" as TK)}
               >
                 <Input
                   value={edit?.mapped_id ?? ""}
-                  placeholder="e.g. fast-coder (blank = no mapping)"
+                  placeholder={t("models.publicIdPlaceholder" as TK)}
                   onChange={(_, d) =>
                     setEdit((f) => (f ? { ...f, mapped_id: d.value } : f))
                   }
                 />
               </Field>
-              <Field label="Description">
+              <Field label={t("models.description" as TK)}>
                 <Textarea
                   value={edit?.description ?? ""}
                   rows={3}
@@ -434,13 +451,13 @@ export function Models() {
                 />
               </Field>
               <Field
-                label="Custom OpenCode config (JSON / JSONC)"
-                hint="Deep-merged into the model block the OpenCode plugin builds. Accepts JSONC/JSON5 (trailing commas & comments OK) — e.g. {&quot;name&quot;: &quot;…&quot;, &quot;limit&quot;: {&quot;context&quot;: 200000}}."
+                label={t("models.configLabel" as TK)}
+                hint={t("models.configHint" as TK)}
               >
                 <Textarea
                   value={edit?.config ?? ""}
                   rows={6}
-                  placeholder={'{\n  "name": "My Model",\n  "limit": { "context": 200000 }\n}'}
+                  placeholder={t("models.configPlaceholder" as TK)}
                   style={{ fontFamily: tokens.fontFamilyMonospace }}
                   onChange={(_, d) =>
                     setEdit((f) => (f ? { ...f, config: d.value } : f))
@@ -448,7 +465,7 @@ export function Models() {
                 />
               </Field>
               <Switch
-                label="Available (uncheck to hide from the model list)"
+                label={t("models.availableLabel" as TK)}
                 checked={edit?.enabled ?? true}
                 onChange={(_, d) =>
                   setEdit((f) => (f ? { ...f, enabled: d.checked } : f))
@@ -457,64 +474,63 @@ export function Models() {
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setEdit(null)}>
-                Cancel
+                {t("common.cancel" as TK)}
               </Button>
               <Button appearance="primary" disabled={saving} onClick={saveEdit}>
-                Save
+                {t("common.save" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
         </DialogSurface>
       </Dialog>
 
-      {/* Batch editor */}
       <Dialog open={batchOpen} onOpenChange={(_, d) => !d.open && setBatchOpen(false)}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Edit {selected.size} models</DialogTitle>
+            <DialogTitle>{t("models.batchTitle" as TK).replace("{count}", String(selected.size))}</DialogTitle>
             <DialogContent
               style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 8 }}
             >
               <Checkbox
                 checked={batchDescOn}
                 onChange={(_, d) => setBatchDescOn(!!d.checked)}
-                label="Set description for all selected"
+                label={t("models.batchDescLabel" as TK)}
               />
               <Field>
                 <Textarea
                   value={batchDesc}
                   rows={3}
                   disabled={!batchDescOn}
-                  placeholder="Description applied to every selected model"
+                  placeholder={t("models.batchDescPlaceholder" as TK)}
                   onChange={(_, d) => setBatchDesc(d.value)}
                 />
               </Field>
-              <Field label="Availability">
+              <Field label={t("models.batchAvailability" as TK)}>
                 <Dropdown
                   value={
                     batchEnabled === "unchanged"
-                      ? "Leave unchanged"
+                      ? t("models.batchUnchanged" as TK)
                       : batchEnabled === "enabled"
-                        ? "Available"
-                        : "Hidden"
+                        ? t("models.batchAvailable" as TK)
+                        : t("models.batchHidden" as TK)
                   }
                   selectedOptions={[batchEnabled]}
                   onOptionSelect={(_, d) =>
                     setBatchEnabled((d.optionValue as BatchEnabled) ?? "unchanged")
                   }
                 >
-                  <Option value="unchanged">Leave unchanged</Option>
-                  <Option value="enabled">Available</Option>
-                  <Option value="disabled">Hidden</Option>
+                  <Option value="unchanged">{t("models.batchUnchanged" as TK)}</Option>
+                  <Option value="enabled">{t("models.batchAvailable" as TK)}</Option>
+                  <Option value="disabled">{t("models.batchHidden" as TK)}</Option>
                 </Dropdown>
               </Field>
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setBatchOpen(false)}>
-                Cancel
+                {t("common.cancel" as TK)}
               </Button>
               <Button appearance="primary" disabled={saving} onClick={saveBatch}>
-                Apply
+                {t("common.apply" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

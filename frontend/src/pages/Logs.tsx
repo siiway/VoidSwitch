@@ -21,9 +21,11 @@ import {
 } from "@fluentui/react-components";
 import { EyeRegular } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { AuditLog, Page, RequestLog } from "../api/types";
+import type { Translations } from "../i18n/locales/en";
 import {
   DataTable,
   ErrorText,
@@ -38,10 +40,11 @@ import {
 const PAGE = 50;
 
 export function Logs() {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const { isStaff } = useAuth();
   const [tab, setTab] = useState<"requests" | "audit">("requests");
 
-  // Members never see the administrative audit trail; keep them on Requests.
   useEffect(() => {
     if (!isStaff && tab === "audit") setTab("requests");
   }, [isStaff, tab]);
@@ -49,19 +52,19 @@ export function Logs() {
   return (
     <div>
       <PageHeader
-        title="Logs"
+        title={t("logs.title" as TK)}
         subtitle={
           isStaff
-            ? "Request traffic and administrative audit trail"
-            : "Your request traffic"
+            ? t("logs.subtitleStaff" as TK)
+            : t("logs.subtitleMember" as TK)
         }
       />
       <TabList
         selectedValue={tab}
         onTabSelect={(_, d) => setTab(d.value as typeof tab)}
       >
-        <Tab value="requests">Requests</Tab>
-        {isStaff ? <Tab value="audit">Audit</Tab> : null}
+        <Tab value="requests">{t("logs.requests" as TK)}</Tab>
+        {isStaff ? <Tab value="audit">{t("logs.audit" as TK)}</Tab> : null}
       </TabList>
       <div style={{ marginTop: 16 }}>
         {tab === "requests" ? <RequestLogs /> : <AuditLogs />}
@@ -71,6 +74,8 @@ export function Logs() {
 }
 
 function RequestLogs() {
+  const { t: tr } = useTranslation();
+  type TK = keyof Translations;
   const [offset, setOffset] = useState(0);
   const logs = useAsync<Page<RequestLog>>(
     () => api.get("/api/admin/logs/requests", { limit: PAGE, offset }),
@@ -84,19 +89,19 @@ function RequestLogs() {
 
   return (
     <>
-      <DataTable ariaLabel="Requests" minWidth={1040}>
+      <DataTable ariaLabel={tr("logs.requests" as TK)} minWidth={1040}>
         <TableHeader>
           <TableRow>
-            <TableHeaderCell>Time</TableHeaderCell>
-            <TableHeaderCell>User</TableHeaderCell>
-            <TableHeaderCell>Token</TableHeaderCell>
-            <TableHeaderCell>Model</TableHeaderCell>
-            <TableHeaderCell>Provider</TableHeaderCell>
-            <TableHeaderCell>Route</TableHeaderCell>
-            <TableHeaderCell>Status</TableHeaderCell>
-            <TableHeaderCell>Tokens</TableHeaderCell>
-            <TableHeaderCell>Tries</TableHeaderCell>
-            <TableHeaderCell>Error</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.time" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.user" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.token" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.model" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.provider" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.route" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.status" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.tokens" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.tries" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.error" as TK)}</TableHeaderCell>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -142,12 +147,12 @@ function RequestLogs() {
 }
 
 function AuditLogs() {
+  const { t: ta } = useTranslation();
+  type TK = keyof Translations;
   const { isOwner } = useAuth();
   const confirm = useConfirm();
   const notify = useNotify();
   const [offset, setOffset] = useState(0);
-  // When checked, restrict the trail to administrative actions and hide ordinary
-  // self-service ones (sign-in/out, a user's own Void-Tokens).
   const [adminOnly, setAdminOnly] = useState(false);
   const [revealed, setRevealed] = useState<{
     action: string;
@@ -166,11 +171,9 @@ function AuditLogs() {
 
   async function reveal(a: AuditLog) {
     const ok = await confirm({
-      title: "Reveal sensitive data",
-      message:
-        "This shows protected secrets (e.g. plaintext API keys). The reveal is " +
-        "recorded in the audit trail. Continue?",
-      confirmLabel: "Reveal",
+      title: ta("logs.revealTitle" as TK),
+      message: ta("logs.revealMsg" as TK),
+      confirmLabel: ta("logs.revealLabel" as TK),
       tone: "danger",
     });
     if (!ok) return;
@@ -182,7 +185,7 @@ function AuditLogs() {
       setRevealed({ action: r.action, sensitive: r.sensitive });
     } catch (e) {
       notify(
-        "Reveal failed",
+        ta("logs.revealFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -197,7 +200,7 @@ function AuditLogs() {
     <>
       <div style={{ marginBottom: 12 }}>
         <Checkbox
-          label="Administrative actions only"
+          label={ta("logs.adminOnly" as TK)}
           checked={adminOnly}
           onChange={(_, d) => {
             setOffset(0);
@@ -212,17 +215,17 @@ function AuditLogs() {
         <ErrorText error={logs.error} />
       ) : !data ? null : (
         <>
-          <DataTable ariaLabel="Audit" minWidth={960}>
+          <DataTable ariaLabel={ta("logs.audit" as TK)} minWidth={960}>
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Time</TableHeaderCell>
-                <TableHeaderCell>Actor</TableHeaderCell>
-                <TableHeaderCell>Scope</TableHeaderCell>
-                <TableHeaderCell>Action</TableHeaderCell>
-                <TableHeaderCell>Target</TableHeaderCell>
-                <TableHeaderCell>Detail</TableHeaderCell>
-                <TableHeaderCell>IP</TableHeaderCell>
-                {isOwner ? <TableHeaderCell>Sensitive</TableHeaderCell> : null}
+                <TableHeaderCell>{ta("logs.time" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{ta("logs.actor" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{ta("logs.scope" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{ta("logs.action" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{ta("logs.target" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{ta("logs.detail" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{ta("logs.ip" as TK)}</TableHeaderCell>
+                {isOwner ? <TableHeaderCell>{ta("logs.sensitive" as TK)}</TableHeaderCell> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -237,7 +240,7 @@ function AuditLogs() {
                       appearance="tint"
                       color={a.scope === "admin" ? "brand" : "informative"}
                     >
-                      {a.scope === "admin" ? "admin" : "self"}
+                      {a.scope === "admin" ? ta("common.admin" as TK) : ta("common.self" as TK)}
                     </Badge>
                   </TableCell>
                   <TableCell>{a.action}</TableCell>
@@ -265,7 +268,7 @@ function AuditLogs() {
                           disabled={busy}
                           onClick={() => reveal(a)}
                         >
-                          Reveal
+                          {ta("common.reveal" as TK)}
                         </Button>
                       ) : (
                         "—"
@@ -286,14 +289,14 @@ function AuditLogs() {
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Sensitive data · {revealed?.action}</DialogTitle>
+            <DialogTitle>{`${ta("logs.sensitiveTitle" as TK)} · ${revealed?.action}`}</DialogTitle>
             <DialogContent>
               <Text
                 size={200}
                 block
                 style={{ color: tokens.colorNeutralForeground3, marginBottom: 8 }}
               >
-                Handle with care — these are plaintext secrets.
+                {ta("logs.sensitiveHint" as TK)}
               </Text>
               <Textarea
                 readOnly
@@ -306,7 +309,7 @@ function AuditLogs() {
             </DialogContent>
             <DialogActions>
               <Button appearance="primary" onClick={() => setRevealed(null)}>
-                Close
+                {ta("common.close" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

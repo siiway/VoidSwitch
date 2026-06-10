@@ -12,6 +12,8 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
@@ -28,13 +30,6 @@ import {
 } from "../components/ui";
 
 type Granularity = "daily" | "weekly" | "monthly" | "yearly";
-
-const GRANULARITIES: { value: Granularity; label: string }[] = [
-  { value: "daily", label: "Daily" },
-  { value: "weekly", label: "Weekly" },
-  { value: "monthly", label: "Monthly" },
-  { value: "yearly", label: "Yearly" },
-];
 
 const PIE_COLORS = [
   tokens.colorBrandBackground,
@@ -99,26 +94,32 @@ function Bar({ value, max }: { value: number; max: number }) {
   );
 }
 
-function TimeSeries({ buckets }: { buckets: UsageBucket[] }) {
+function TimeSeries({
+  buckets,
+  t,
+}: {
+  buckets: UsageBucket[];
+  t: (key: string) => string;
+}) {
   if (buckets.length === 0) {
     return (
       <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-        No activity in this range yet.
+        {t("stats.noActivity" as any)}
       </Text>
     );
   }
   const max = Math.max(...buckets.map((b) => b.requests), 1);
   const rows = [...buckets].reverse();
   return (
-    <DataTable ariaLabel="Usage over time" minWidth={720}>
+    <DataTable ariaLabel={t("stats.overTime" as any)} minWidth={720}>
       <TableHeader>
         <TableRow>
-          <TableHeaderCell>Period</TableHeaderCell>
-          <TableHeaderCell>Volume</TableHeaderCell>
-          <TableHeaderCell>Requests</TableHeaderCell>
-          <TableHeaderCell>Success</TableHeaderCell>
-          <TableHeaderCell>Failed</TableHeaderCell>
-          <TableHeaderCell>Tokens</TableHeaderCell>
+          <TableHeaderCell>{t("stats.period" as any)}</TableHeaderCell>
+          <TableHeaderCell>{t("stats.volume" as any)}</TableHeaderCell>
+          <TableHeaderCell>{t("stats.requests" as any)}</TableHeaderCell>
+          <TableHeaderCell>{t("stats.success" as any)}</TableHeaderCell>
+          <TableHeaderCell>{t("stats.failedCol" as any)}</TableHeaderCell>
+          <TableHeaderCell>{t("stats.tokensCol" as any)}</TableHeaderCell>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -253,10 +254,12 @@ function Breakdown({
   title,
   keyHeader,
   rows,
+  t,
 }: {
   title: string;
   keyHeader: string;
   rows: UsageGroupRow[];
+  t: (key: string) => string;
 }) {
   const [chart, setChart] = useState(false);
 
@@ -274,7 +277,7 @@ function Breakdown({
           {title}
         </Text>
         <Switch
-          label={chart ? "Chart" : "Table"}
+          label={chart ? t("stats.chart" as any) : t("stats.table" as any)}
           labelPosition="before"
           checked={chart}
           onChange={(_, d) => setChart(d.checked)}
@@ -282,19 +285,19 @@ function Breakdown({
       </div>
       {rows.length === 0 ? (
         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-          No data yet.
+          {t("common.noData" as any)}
         </Text>
       ) : chart ? (
         <PieChart rows={rows} valueKey="requests" />
       ) : (
-        <DataTable ariaLabel={title} minWidth={640}>
+        <DataTable ariaLabel={t("stats.title" as any) + " - " + title} minWidth={640}>
           <TableHeader>
             <TableRow>
               <TableHeaderCell>{keyHeader}</TableHeaderCell>
-              <TableHeaderCell>Requests</TableHeaderCell>
-              <TableHeaderCell>Success</TableHeaderCell>
-              <TableHeaderCell>Failed</TableHeaderCell>
-              <TableHeaderCell>Tokens</TableHeaderCell>
+              <TableHeaderCell>{t("stats.requests" as any)}</TableHeaderCell>
+              <TableHeaderCell>{t("stats.success" as any)}</TableHeaderCell>
+              <TableHeaderCell>{t("stats.failedCol" as any)}</TableHeaderCell>
+              <TableHeaderCell>{t("stats.tokensCol" as any)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -336,19 +339,24 @@ function Breakdown({
 }
 
 export function Statistics() {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const { isStaff } = useAuth();
   const [gran, setGran] = useState<Granularity>("daily");
   const stats = useAsync<UsageAnalytics>(() => api.get("/api/usage"));
 
+  const granularities: { value: Granularity; label: string }[] = [
+    { value: "daily", label: t("stats.daily" as TK) },
+    { value: "weekly", label: t("stats.weekly" as TK) },
+    { value: "monthly", label: t("stats.monthly" as TK) },
+    { value: "yearly", label: t("stats.yearly" as TK) },
+  ];
+
   return (
     <div>
       <PageHeader
-        title="Statistics"
-        subtitle={
-          isStaff
-            ? "Platform-wide call volume, by period, user, token, and model"
-            : "Your call volume, by period, token, and model"
-        }
+        title={t("stats.title" as TK)}
+        subtitle={t("stats.subtitle" as TK)}
       />
 
       {stats.loading ? (
@@ -365,57 +373,60 @@ export function Statistics() {
               marginBottom: 24,
             }}
           >
-            <Stat label="Total requests" value={nf(stats.data.totals.requests)} />
+            <Stat label={t("stats.totalRequests" as TK)} value={nf(stats.data.totals.requests)} />
             <Stat
-              label="Succeeded"
+              label={t("stats.succeeded" as TK)}
               value={nf(stats.data.totals.success)}
               accent={tokens.colorPaletteGreenForeground1}
             />
             <Stat
-              label="Failed"
+              label={t("stats.failed" as TK)}
               value={nf(stats.data.totals.failures)}
               accent={tokens.colorPaletteRedForeground1}
             />
             <Stat
-              label="Tokens used"
+              label={t("stats.tokensUsed" as TK)}
               value={nf(stats.data.totals.total_tokens)}
             />
           </div>
 
           <Text size={500} weight="semibold" block style={{ marginBottom: 12 }}>
-            Over time
+            {t("stats.overTime" as TK)}
           </Text>
           <TabList
             selectedValue={gran}
             onTabSelect={(_, d) => setGran(d.value as Granularity)}
             style={{ marginBottom: 12 }}
           >
-            {GRANULARITIES.map((g) => (
+            {granularities.map((g) => (
               <Tab key={g.value} value={g.value}>
                 {g.label}
               </Tab>
             ))}
           </TabList>
           <div style={{ marginBottom: 28 }}>
-            <TimeSeries buckets={stats.data[gran]} />
+            <TimeSeries buckets={stats.data[gran]} t={t as any} />
           </div>
 
           {isStaff ? (
             <Breakdown
-              title="By user"
-              keyHeader="User"
+              title={t("stats.byUser" as TK)}
+              keyHeader={t("stats.userCol" as TK)}
               rows={stats.data.by_user}
+              t={t as any}
             />
           ) : null}
           <Breakdown
-            title="By token"
-            keyHeader="Token"
+            title={t("stats.byToken" as TK)}
+            keyHeader={t("stats.tokenCol" as TK)}
             rows={stats.data.by_token}
+            t={t as any}
           />
           <Breakdown
-            title="By model"
-            keyHeader="Model"
+            title={t("stats.byModel" as TK)}
+            keyHeader={t("stats.modelCol" as TK)}
             rows={stats.data.by_model}
+            t={t as any}
           />
         </>
       ) : null}

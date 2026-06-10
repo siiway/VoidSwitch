@@ -18,6 +18,8 @@ import {
 } from "@fluentui/react-components";
 import { DeleteRegular, PulseRegular } from "@fluentui/react-icons";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
 import type { Provider, Proxy } from "../api/types";
 import {
@@ -33,6 +35,8 @@ import {
 } from "../components/ui";
 
 export function Proxies() {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const notify = useNotify();
   const confirm = useConfirm();
   const proxies = useAsync<Proxy[]>(() => api.get("/api/admin/proxies"));
@@ -77,18 +81,27 @@ export function Proxies() {
   }
 
   async function toggle(p: Proxy) {
-    await api.patch(`/api/admin/proxies/${p.id}`, { enabled: !p.enabled });
-    proxies.reload();
+    try {
+      await api.patch(`/api/admin/proxies/${p.id}`, { enabled: !p.enabled });
+      notify(t("proxies.toggled" as TK), undefined, "success");
+      proxies.reload();
+    } catch (e) {
+      notify(
+        t("proxies.toggleFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function probe(p: Proxy) {
     try {
       await api.post(`/api/admin/proxies/${p.id}/probe`);
-      notify("Probe complete", p.url, "success");
+      notify(t("proxies.probed" as TK), p.url, "success");
       proxies.reload();
     } catch (e) {
       notify(
-        "Probe failed",
+        t("proxies.probeFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -103,9 +116,9 @@ export function Proxies() {
       return;
     }
     const ok = await confirm({
-      title: "Delete proxy",
-      message: `Delete proxy ${p.url || "(direct)"}?`,
-      confirmLabel: "Delete",
+      title: t("proxies.deleteTitle" as TK),
+      message: t("proxies.deleteMsg" as TK).replace("{url}", p.url || "(direct)"),
+      confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
@@ -120,7 +133,7 @@ export function Proxies() {
       // The backend scrubs this proxy's id from every provider's proxy_ids.
       await api.del(`/api/admin/proxies/${inUse.proxy.id}`);
       notify(
-        "Proxy deleted",
+        t("proxies.deleted" as TK),
         `Removed from ${inUse.users.length} provider(s)`,
         "success",
       );
@@ -129,7 +142,7 @@ export function Proxies() {
       providers.reload();
     } catch (e) {
       notify(
-        "Delete failed",
+        t("common.deleteFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -153,7 +166,7 @@ export function Proxies() {
         ),
       );
       notify(
-        "Proxy unassigned",
+        t("proxies.unassigned" as TK),
         `Removed from ${inUse.users.length} provider(s); proxy kept`,
         "success",
       );
@@ -161,7 +174,7 @@ export function Proxies() {
       providers.reload();
     } catch (e) {
       notify(
-        "Unassign failed",
+        t("proxies.unassignFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -173,11 +186,11 @@ export function Proxies() {
   return (
     <div>
       <PageHeader
-        title="Proxies"
-        subtitle="Outbound HTTP/SOCKS proxies (http://, socks5://). Optional source-IP binding."
+        title={t("proxies.title" as TK)}
+        subtitle={t("proxies.subtitle" as TK)}
       />
 
-      <Field label="Proxy URLs (one per line)" style={{ marginBottom: 8 }}>
+      <Field label={t("proxies.proxyUrlsHint" as TK)} style={{ marginBottom: 8 }}>
         <Textarea
           value={bulk}
           rows={3}
@@ -186,7 +199,7 @@ export function Proxies() {
         />
       </Field>
       <Field
-        label="Local source IP (optional, applies to this batch)"
+        label={t("proxies.localSourceIp" as TK)}
         style={{ marginBottom: 8 }}
       >
         <Input
@@ -201,7 +214,7 @@ export function Proxies() {
         onClick={add}
         style={{ marginBottom: 24 }}
       >
-        Add proxies
+        {t("proxies.add" as TK)}
       </Button>
 
       {proxies.loading ? (
@@ -209,16 +222,16 @@ export function Proxies() {
       ) : proxies.error ? (
         <ErrorText error={proxies.error} />
       ) : (
-        <DataTable ariaLabel="Proxies">
+        <DataTable ariaLabel={t("proxies.title" as TK)}>
           <TableHeader>
             <TableRow>
-              <TableHeaderCell>URL</TableHeaderCell>
-              <TableHeaderCell>Source IP</TableHeaderCell>
-              <TableHeaderCell>Status</TableHeaderCell>
-              <TableHeaderCell>Fails</TableHeaderCell>
-              <TableHeaderCell>Latency</TableHeaderCell>
-              <TableHeaderCell>Checked</TableHeaderCell>
-              <TableHeaderCell>Actions</TableHeaderCell>
+              <TableHeaderCell>{t("proxies.url" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("proxies.sourceIp" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("proxies.status" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("proxies.fails" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("proxies.latency" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("proxies.checked" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("proxies.actions" as TK)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -247,14 +260,16 @@ export function Proxies() {
                     icon={<PulseRegular />}
                     onClick={() => probe(p)}
                   >
-                    Probe
+                    {t("proxies.probe" as TK)}
                   </Button>
                   <Button
                     size="small"
                     appearance="subtle"
                     onClick={() => toggle(p)}
                   >
-                    {p.enabled ? "Disable" : "Enable"}
+                    {p.enabled
+                      ? t("common.disable" as TK)
+                      : t("common.enable" as TK)}
                   </Button>
                   <Button
                     size="small"
@@ -278,7 +293,7 @@ export function Proxies() {
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Proxy in use</DialogTitle>
+            <DialogTitle>{t("proxies.inUseTitle" as TK)}</DialogTitle>
             <DialogContent>
               <div style={{ marginBottom: 8 }}>
                 <code>{inUse?.proxy.url || "(direct)"}</code> is referenced by{" "}
@@ -307,14 +322,14 @@ export function Proxies() {
                 disabled={busy}
                 onClick={unassignFromProviders}
               >
-                Remove it from every provider
+                {t("proxies.unassign" as TK)}
               </Button>
               <Button
                 appearance="secondary"
                 disabled={busy}
                 onClick={() => setInUse(null)}
               >
-                Cancel
+                {t("common.cancel" as TK)}
               </Button>
               <Button
                 appearance="primary"

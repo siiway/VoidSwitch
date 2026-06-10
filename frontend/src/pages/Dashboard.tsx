@@ -1,6 +1,8 @@
 import { Badge, Card, Text, tokens } from "@fluentui/react-components";
+import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import type { Stats, SystemInfo } from "../api/types";
+import type { Translations } from "../i18n/locales/en";
 import {
   ErrorText,
   Loading,
@@ -8,6 +10,8 @@ import {
   formatDate,
   useAsync,
 } from "../components/ui";
+
+type TK = keyof Translations;
 
 function Stat({
   label,
@@ -31,14 +35,15 @@ function Stat({
 }
 
 export function Dashboard() {
+  const { t } = useTranslation();
   const stats = useAsync<Stats>(() => api.get("/api/admin/stats"));
   const system = useAsync<SystemInfo>(() => api.get("/api/admin/system"));
 
   return (
     <div>
       <PageHeader
-        title="Dashboard"
-        subtitle="Live gateway health and 24-hour activity"
+        title={t("dashboard.title" as TK)}
+        subtitle={t("dashboard.subtitle" as TK)}
       />
       {stats.loading ? (
         <Loading />
@@ -55,17 +60,17 @@ export function Dashboard() {
                 marginBottom: 24,
               }}
             >
-              <Stat label="Providers" value={stats.data.providers} />
+              <Stat label={t("dashboard.providers" as TK)} value={stats.data.providers} />
               <Stat
-                label="Active keys"
+                label={t("dashboard.activeKeys" as TK)}
                 value={`${stats.data.active_keys}/${stats.data.total_keys}`}
                 accent={tokens.colorPaletteGreenForeground1}
               />
               <Stat
-                label="Active proxies"
+                label={t("dashboard.activeProxies" as TK)}
                 value={`${stats.data.active_proxies}/${stats.data.total_proxies}`}
               />
-              <Stat label="Void-Tokens" value={stats.data.tokens} />
+              <Stat label={t("dashboard.voidTokens" as TK)} value={stats.data.tokens} />
             </div>
             <div
               style={{
@@ -75,28 +80,28 @@ export function Dashboard() {
                 marginBottom: 24,
               }}
             >
-              <Stat label="Requests (24h)" value={stats.data.requests_24h} />
+              <Stat label={t("dashboard.requests24h" as TK)} value={stats.data.requests_24h} />
               <Stat
-                label="Succeeded (24h)"
+                label={t("dashboard.success24h" as TK)}
                 value={stats.data.success_24h}
                 accent={tokens.colorPaletteGreenForeground1}
               />
               <Stat
-                label="Failed (24h)"
+                label={t("dashboard.failed24h" as TK)}
                 value={stats.data.failures_24h}
                 accent={tokens.colorPaletteRedForeground1}
               />
-              <Stat label="Tokens used (24h)" value={stats.data.tokens_24h} />
+              <Stat label={t("dashboard.tokens24h" as TK)} value={stats.data.tokens_24h} />
             </div>
           </>
         )
       )}
 
       <Text size={500} weight="semibold" block style={{ margin: "8px 0 12px" }}>
-        Background tasks
+        {t("dashboard.backgroundTasks" as TK)}
       </Text>
-      {system.data?.tasks.map((t) => (
-        <Card key={t.name} style={{ padding: 14, marginBottom: 8 }}>
+      {system.data?.tasks.map((task) => (
+        <Card key={task.name} style={{ padding: 14, marginBottom: 8 }}>
           <div
             style={{
               display: "flex",
@@ -105,19 +110,19 @@ export function Dashboard() {
             }}
           >
             <div>
-              <Text weight="semibold">{t.name}</Text>
+              <Text weight="semibold">{task.name}</Text>
               <Text
                 size={200}
                 block
                 style={{ color: tokens.colorNeutralForeground3 }}
               >
-                every {t.interval_seconds}s · {t.runs} runs · last{" "}
-                {formatDate(t.last_run)}
-                {t.last_error ? ` · error: ${t.last_error}` : ""}
+                every {task.interval_seconds}s · {task.runs} runs · last{" "}
+                {formatDate(task.last_run)}
+                {task.last_error ? ` · error: ${task.last_error}` : ""}
               </Text>
             </div>
-            <Badge color={t.enabled ? "success" : "subtle"} appearance="filled">
-              {t.enabled ? "enabled" : "disabled"}
+            <Badge color={task.enabled ? "success" : "subtle"} appearance="filled">
+              {task.enabled ? t("common.enabled" as TK) : t("common.disabled" as TK)}
             </Badge>
           </div>
         </Card>

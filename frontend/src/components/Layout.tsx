@@ -25,10 +25,13 @@ import {
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from "@fluentui/react-icons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
+import { LANGUAGES } from "../i18n";
+import type { Translations } from "../i18n/locales/en";
 import { ConfirmProvider, ToastProvider } from "./ui";
 import type { ReactElement } from "react";
 
@@ -36,25 +39,31 @@ import type { ReactElement } from "react";
 // owner/co-owner only.
 type NavScope = "member" | "staff" | "owner";
 
+type TranslationKey = keyof Translations;
+
 interface NavItem {
   to: string;
   label: string;
+  labelKey: string;
   icon: ReactElement;
   scope: NavScope;
 }
 
 interface NavSection {
   heading: string;
+  headingKey: string;
   items: NavItem[];
 }
 
 const SECTIONS: NavSection[] = [
   {
     heading: "Overview",
+    headingKey: "nav.overview",
     items: [
       {
         to: "/dashboard",
         label: "Dashboard",
+        labelKey: "nav.dashboard",
         icon: <BoardRegular />,
         scope: "staff",
       },
@@ -62,37 +71,43 @@ const SECTIONS: NavSection[] = [
   },
   {
     heading: "Routing",
+    headingKey: "nav.routing",
     items: [
       {
         to: "/providers",
         label: "Providers",
+        labelKey: "nav.providers",
         icon: <PlugConnectedRegular />,
         scope: "member",
       },
-      { to: "/models", label: "Models", icon: <CubeRegular />, scope: "member" },
-      { to: "/proxies", label: "Proxies", icon: <CloudRegular />, scope: "staff" },
-      { to: "/tokens", label: "Tokens", icon: <KeyRegular />, scope: "owner" },
+      { to: "/models", label: "Models", labelKey: "nav.models", icon: <CubeRegular />, scope: "member" },
+      { to: "/proxies", label: "Proxies", labelKey: "nav.proxies", icon: <CloudRegular />, scope: "staff" },
+      { to: "/tokens", label: "Tokens", labelKey: "nav.tokens", icon: <KeyRegular />, scope: "owner" },
     ],
   },
   {
     heading: "Operations",
+    headingKey: "nav.operations",
     items: [
-      { to: "/users", label: "Users", icon: <PeopleRegular />, scope: "staff" },
+      { to: "/users", label: "Users", labelKey: "nav.users", icon: <PeopleRegular />, scope: "staff" },
       {
         to: "/stats",
         label: "Statistics",
+        labelKey: "nav.statistics",
         icon: <ChartMultipleRegular />,
         scope: "member",
       },
       {
         to: "/logs",
         label: "Logs",
+        labelKey: "nav.logs",
         icon: <DocumentBulletListRegular />,
         scope: "member",
       },
       {
         to: "/settings",
         label: "Settings",
+        labelKey: "nav.settings",
         icon: <SettingsRegular />,
         scope: "staff",
       },
@@ -100,9 +115,10 @@ const SECTIONS: NavSection[] = [
   },
   {
     heading: "Account",
+    headingKey: "nav.account",
     items: [
-      { to: "/chat", label: "Chat", icon: <ChatRegular />, scope: "member" },
-      { to: "/token", label: "My API Key", icon: <KeyRegular />, scope: "member" },
+      { to: "/chat", label: "Chat", labelKey: "nav.chat", icon: <ChatRegular />, scope: "member" },
+      { to: "/token", label: "My API Key", labelKey: "nav.myApiKey", icon: <KeyRegular />, scope: "member" },
     ],
   },
 ];
@@ -282,6 +298,7 @@ export function Layout() {
   const styles = useStyles();
   const { user, isStaff, isOwner, logout } = useAuth();
   const { mode, toggle } = useTheme();
+  const { t, i18n } = useTranslation();
   const location = useLocation();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -306,12 +323,25 @@ export function Layout() {
     if (isNarrow) closeSidebar();
   }, [isNarrow, closeSidebar]);
 
+  const cycleLang = useCallback(() => {
+    const current = LANGUAGES.findIndex((l) => l.code === i18n.language);
+    const next = LANGUAGES[(current + 1) % LANGUAGES.length];
+    i18n.changeLanguage(next.code);
+  }, [i18n]);
+
   const canSee = (scope: NavScope) =>
     scope === "member" || (scope === "staff" && isStaff) || (scope === "owner" && isOwner);
-  const sections = SECTIONS.map((s) => ({
-    ...s,
-    items: s.items.filter((i) => canSee(i.scope)),
-  })).filter((s) => s.items.length > 0);
+  const sections = useMemo(
+    () =>
+      SECTIONS.map((s) => ({
+        ...s,
+        heading: t(s.headingKey as TranslationKey),
+        items: s.items
+          .filter((i) => canSee(i.scope))
+          .map((i) => ({ ...i, label: t(i.labelKey as TranslationKey) })),
+      })).filter((s) => s.items.length > 0),
+    [t, isStaff, isOwner],
+  );
 
   const roleColor =
     user?.role === "owner"
@@ -339,7 +369,11 @@ export function Layout() {
             icon={<NavigationRegular />}
             onClick={toggleSidebar}
             className={styles.hamburger}
-            aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+            aria-label={
+                sidebarOpen
+                  ? t("nav.closeSidebar" as TranslationKey)
+                  : t("nav.openSidebar" as TranslationKey)
+              }
           />
 
           <aside
@@ -352,13 +386,13 @@ export function Layout() {
               <span className={styles.brandMark}>⚡</span>
               <div>
                 <Text size={400} weight="bold" block>
-                  VoidSwitch
+                  {t("nav.brand" as TranslationKey)}
                 </Text>
                 <Text
                   size={100}
                   style={{ color: tokens.colorNeutralForeground3 }}
                 >
-                  LLM API gateway
+                  {t("nav.tagline" as TranslationKey)}
                 </Text>
               </div>
             </div>
@@ -418,7 +452,11 @@ export function Layout() {
               </div>
               <div className={styles.footerActions}>
                 <Tooltip
-                  content={mode === "dark" ? "Light mode" : "Dark mode"}
+                  content={
+                    mode === "dark"
+                      ? t("nav.lightMode" as TranslationKey)
+                      : t("nav.darkMode" as TranslationKey)
+                  }
                   relationship="label"
                 >
                   <Button
@@ -434,13 +472,26 @@ export function Layout() {
                     style={{ flex: 1 }}
                   />
                 </Tooltip>
+                <Tooltip
+                  content={LANGUAGES.find((l) => l.code !== i18n.language)?.label ?? ""}
+                  relationship="label"
+                >
+                  <Button
+                    appearance="subtle"
+                    size="small"
+                    onClick={cycleLang}
+                    style={{ fontWeight: 600, width: 36, minWidth: "unset", padding: 0 }}
+                  >
+                    {i18n.language === "zh" ? "EN" : "中"}
+                  </Button>
+                </Tooltip>
                 <Button
                   appearance="subtle"
                   icon={<SignOutRegular />}
                   onClick={logout}
                   style={{ flex: 1 }}
                 >
-                  Sign out
+                  {t("nav.signOut" as TranslationKey)}
                 </Button>
               </div>
             </div>

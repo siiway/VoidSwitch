@@ -8,8 +8,10 @@ import {
   Text,
   tokens,
 } from "@fluentui/react-components";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
+import type { Translations } from "../i18n/locales/en";
 import {
   ErrorText,
   Loading,
@@ -18,29 +20,14 @@ import {
   useNotify,
 } from "../components/ui";
 
+type TK = keyof Translations;
+
 interface SettingsResponse {
   values: Record<string, unknown>;
 }
 
-const LABELS: Record<string, string> = {
-  max_proxy_failures: "Max proxy failures before disable",
-  max_key_failures: "Max key failures (soft)",
-  proxy_probe_interval_seconds: "Proxy resurrector interval (s)",
-  balance_probe_interval_seconds: "Balance probe interval (s)",
-  balance_rescan_interval_seconds: "Balance rescan interval (s)",
-  balance_scan_rate_per_second: "Manual balance rescan rate (req/s)",
-  request_timeout_seconds: "Request timeout (s)",
-  connect_timeout_seconds: "Connect timeout (s)",
-  max_retries: "Max retries per request",
-  stream_idle_timeout_seconds: "Stream idle timeout (s)",
-  auto_disable_zero_balance: "Auto-disable keys with zero balance",
-  balance_probe_enabled: "Balance probe enabled",
-  balance_rescan_enabled: "Balance rescan enabled (re-enable recovered keys)",
-  proxy_resurrector_enabled: "Proxy resurrector enabled",
-  proxy_probe_url: "Proxy probe URL",
-};
-
 export function Settings() {
+  const { t } = useTranslation();
   const notify = useNotify();
   const loaded = useAsync<SettingsResponse>(() =>
     api.get("/api/admin/settings"),
@@ -60,10 +47,10 @@ export function Settings() {
     setSaving(true);
     try {
       await api.put("/api/admin/settings", { values });
-      notify("Settings saved", undefined, "success");
+      notify(t("common.settingsSaved" as TK), undefined, "success");
     } catch (e) {
       notify(
-        "Save failed",
+        t("common.saveFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -72,17 +59,40 @@ export function Settings() {
     }
   }
 
+  const labels = useMemo<Record<string, string>>(
+    () => ({
+      max_proxy_failures: t("settings.maxProxyFailures" as TK),
+      max_key_failures: t("settings.maxKeyFailures" as TK),
+      proxy_probe_interval_seconds: t("settings.proxyProbeInterval" as TK),
+      balance_probe_interval_seconds: t("settings.balanceProbeInterval" as TK),
+      balance_rescan_interval_seconds: t(
+        "settings.balanceRescanInterval" as TK,
+      ),
+      balance_scan_rate_per_second: t("settings.balanceScanRate" as TK),
+      request_timeout_seconds: t("settings.requestTimeout" as TK),
+      connect_timeout_seconds: t("settings.connectTimeout" as TK),
+      max_retries: t("settings.maxRetries" as TK),
+      stream_idle_timeout_seconds: t("settings.streamIdleTimeout" as TK),
+      auto_disable_zero_balance: t("settings.autoDisableZeroBalance" as TK),
+      balance_probe_enabled: t("settings.balanceProbeEnabled" as TK),
+      balance_rescan_enabled: t("settings.balanceRescanEnabled" as TK),
+      proxy_resurrector_enabled: t("settings.proxyResurrectorEnabled" as TK),
+      proxy_probe_url: t("settings.proxyProbeUrl" as TK),
+    }),
+    [t],
+  );
+
   if (loaded.loading) return <Loading />;
   if (loaded.error) return <ErrorText error={loaded.error} />;
 
   return (
     <div>
       <PageHeader
-        title="Settings"
-        subtitle="Operational thresholds and intervals — applied at runtime"
+        title={t("settings.title" as TK)}
+        subtitle={t("settings.subtitle" as TK)}
         action={
           <Button appearance="primary" disabled={saving} onClick={save}>
-            Save changes
+            {t("common.saveChanges" as TK)}
           </Button>
         }
       />
@@ -96,7 +106,7 @@ export function Settings() {
         }}
       >
         {Object.entries(values).map(([key, value]) => {
-          const label = LABELS[key] ?? key;
+          const label = labels[key] ?? key;
           if (typeof value === "boolean") {
             return (
               <Switch
@@ -128,7 +138,7 @@ export function Settings() {
           );
         })}
         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-          Changes take effect on the next task tick / request.
+          {t("common.settingsAppliedNote" as TK)}
         </Text>
       </Card>
     </div>

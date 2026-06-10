@@ -22,6 +22,8 @@ import {
   DeleteRegular,
 } from "@fluentui/react-icons";
 import { useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
+import type { Translations } from "../i18n/locales/en";
 import { api, API_BASE } from "../api/client";
 import type { VoidToken, VoidTokenWithSecret } from "../api/types";
 import {
@@ -65,6 +67,8 @@ const OPENCODE_SNIPPET = `// ~/.config/opencode/opencode.json
 
 /** A monospace code block with a one-click copy button. */
 function CodeBlock({ code }: { code: string }) {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const notify = useNotify();
   const [copied, setCopied] = useState(false);
 
@@ -75,8 +79,8 @@ function CodeBlock({ code }: { code: string }) {
       setTimeout(() => setCopied(false), 1500);
     } catch {
       notify(
-        "Copy failed",
-        "Clipboard is unavailable in this browser",
+        t("myToken.copyFailed" as TK),
+        t("myToken.clipboardUnavailable" as TK),
         "error",
       );
     }
@@ -89,7 +93,7 @@ function CodeBlock({ code }: { code: string }) {
         appearance="subtle"
         icon={copied ? <CheckmarkRegular /> : <CopyRegular />}
         onClick={copy}
-        aria-label="Copy to clipboard"
+        aria-label={t("myToken.copyToClipboard" as TK)}
         style={{ position: "absolute", top: 6, right: 6, zIndex: 1 }}
       />
       <pre
@@ -116,6 +120,8 @@ function CodeBlock({ code }: { code: string }) {
 export function MyToken() {
   const notify = useNotify();
   const confirm = useConfirm();
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const tokensList = useAsync<VoidToken[]>(() => api.get("/api/me/tokens"));
   const usage = useAsync<Usage>(() => api.get("/api/me/usage"));
   const [name, setName] = useState("default");
@@ -133,37 +139,37 @@ export function MyToken() {
       usage.reload();
     } catch (e) {
       notify(
-        "Create failed",
+        t("myToken.createFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
     }
   }
 
-  async function rotate(t: VoidToken) {
+  async function rotate(token: VoidToken) {
     const ok = await confirm({
-      title: "Rotate token",
-      message: `Rotate "${t.name}"? The old key stops working immediately.`,
-      confirmLabel: "Rotate",
+      title: t("myToken.rotateTitle" as TK),
+      message: `Rotate "${token.name}"? The old key stops working immediately.`,
+      confirmLabel: t("myToken.rotate" as TK),
       tone: "danger",
     });
     if (!ok) return;
     const rotated = await api.post<VoidTokenWithSecret>(
-      `/api/me/tokens/${t.id}/rotate`,
+      `/api/me/tokens/${token.id}/rotate`,
     );
     setSecret(rotated);
     tokensList.reload();
   }
 
-  async function remove(t: VoidToken) {
+  async function remove(token: VoidToken) {
     const ok = await confirm({
-      title: "Delete token",
-      message: `Delete "${t.name}"?`,
-      confirmLabel: "Delete",
+      title: t("myToken.deleteTitle" as TK),
+      message: t("myToken.deleteMsg" as TK).replace("{name}", token.name),
+      confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
-    await api.del(`/api/me/tokens/${t.id}`);
+    await api.del(`/api/me/tokens/${token.id}`);
     tokensList.reload();
     usage.reload();
   }
@@ -171,21 +177,23 @@ export function MyToken() {
   return (
     <div>
       <PageHeader
-        title="My API Key"
-        subtitle="Use these tokens to call the gateway"
+        title={t("myToken.title" as TK)}
+        subtitle={t("myToken.subtitle" as TK)}
       />
 
       <Card style={{ padding: 18, marginBottom: 20 }}>
         <Text weight="semibold" block style={{ marginBottom: 2 }}>
-          Connect a client
+          {t("myToken.connect" as TK)}
         </Text>
         <Text
           size={200}
           block
           style={{ color: tokens.colorNeutralForeground3, marginBottom: 8 }}
         >
-          Point any client at the gateway using a <code>vs-…</code> token from
-          below.
+          <Trans
+            i18nKey="myToken.connectDesc"
+            components={{ code: <code /> }}
+          />
         </Text>
 
         <TabList
@@ -193,9 +201,9 @@ export function MyToken() {
           onTabSelect={(_, d) => setClient(d.value as string)}
           style={{ marginBottom: 12 }}
         >
-          <Tab value="openai">OpenAI SDK</Tab>
-          <Tab value="claude">Claude Code</Tab>
-          <Tab value="opencode">OpenCode</Tab>
+          <Tab value="openai">{t("myToken.openaiSdk" as TK)}</Tab>
+          <Tab value="claude">{t("myToken.claudeCode" as TK)}</Tab>
+          <Tab value="opencode">{t("myToken.opencode" as TK)}</Tab>
         </TabList>
 
         {client === "openai" ? <CodeBlock code={OPENAI_SNIPPET} /> : null}
@@ -207,8 +215,10 @@ export function MyToken() {
               block
               style={{ color: tokens.colorNeutralForeground3 }}
             >
-              One line adds the VoidSwitch provider to your{" "}
-              <code>opencode.json</code> automatically.
+              <Trans
+                i18nKey="myToken.opencodeDesc"
+                components={{ code: <code /> }}
+              />
             </Text>
             <div>
               <Text
@@ -217,7 +227,7 @@ export function MyToken() {
                 block
                 style={{ marginBottom: 4 }}
               >
-                macOS / Linux
+                {t("myToken.macosLinux" as TK)}
               </Text>
               <CodeBlock code={`curl -fsSL ${API_BASE}/install | bash`} />
             </div>
@@ -228,7 +238,7 @@ export function MyToken() {
                 block
                 style={{ marginBottom: 4 }}
               >
-                Windows (PowerShell)
+                {t("myToken.windowsPs" as TK)}
               </Text>
               <CodeBlock code={`irm ${API_BASE}/install | iex`} />
             </div>
@@ -237,10 +247,13 @@ export function MyToken() {
               block
               style={{ color: tokens.colorNeutralForeground3 }}
             >
-              Then run <code>opencode</code> → <code>/connect</code> →{" "}
-              <strong>VoidSwitch</strong> and paste a <code>vs-…</code> token.
-              To embed the token instead, append <code>?token=vs-…</code> to the
-              URL.
+              <Trans
+                i18nKey="myToken.opencodeAfter"
+                components={{
+                  code: <code />,
+                  strong: <strong />,
+                }}
+              />
             </Text>
 
             <Divider />
@@ -253,7 +266,7 @@ export function MyToken() {
                   color: tokens.colorNeutralForeground2,
                 }}
               >
-                Manual setup (no script)
+                {t("myToken.manual" as TK)}
               </summary>
               <div
                 style={{
@@ -336,11 +349,11 @@ export function MyToken() {
           marginBottom: 20,
         }}
       >
-        <Field label="New token name" style={{ flex: "0 0 240px" }}>
+        <Field label={t("myToken.newTokenName" as TK)} style={{ flex: "0 0 240px" }}>
           <Input value={name} onChange={(_, d) => setName(d.value)} />
         </Field>
         <Button appearance="primary" icon={<AddRegular />} onClick={create}>
-          Create token
+          {t("myToken.createToken" as TK)}
         </Button>
       </div>
 
@@ -349,43 +362,43 @@ export function MyToken() {
       ) : tokensList.error ? (
         <ErrorText error={tokensList.error} />
       ) : (
-        <DataTable ariaLabel="My tokens">
+        <DataTable ariaLabel={t("myToken.title" as TK)}>
           <TableHeader>
             <TableRow>
-              <TableHeaderCell>Name</TableHeaderCell>
-              <TableHeaderCell>Fingerprint</TableHeaderCell>
-              <TableHeaderCell>Requests</TableHeaderCell>
-              <TableHeaderCell>Tokens</TableHeaderCell>
-              <TableHeaderCell>Last used</TableHeaderCell>
-              <TableHeaderCell>Actions</TableHeaderCell>
+              <TableHeaderCell>{t("myToken.name" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("myToken.fingerprint" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("myToken.requests" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("myToken.tokens" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("myToken.lastUsed" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("myToken.actions" as TK)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(tokensList.data ?? []).map((t) => (
-              <TableRow key={t.id}>
-                <TableCell>{t.name}</TableCell>
+            {(tokensList.data ?? []).map((token) => (
+              <TableRow key={token.id}>
+                <TableCell>{token.name}</TableCell>
                 <TableCell style={{ fontFamily: "monospace" }}>
-                  {t.token_prefix}
+                  {token.token_prefix}
                 </TableCell>
-                <TableCell>{t.total_requests}</TableCell>
-                <TableCell>{t.total_tokens}</TableCell>
+                <TableCell>{token.total_requests}</TableCell>
+                <TableCell>{token.total_tokens}</TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
-                  {formatDate(t.last_used_at)}
+                  {formatDate(token.last_used_at)}
                 </TableCell>
                 <TableCell>
                   <Button
                     size="small"
                     appearance="subtle"
                     icon={<ArrowSyncRegular />}
-                    onClick={() => rotate(t)}
+                    onClick={() => rotate(token)}
                   >
-                    Rotate
+                    {t("myToken.rotate" as TK)}
                   </Button>
                   <Button
                     size="small"
                     appearance="subtle"
                     icon={<DeleteRegular />}
-                    onClick={() => remove(t)}
+                    onClick={() => remove(token)}
                   />
                 </TableCell>
               </TableRow>

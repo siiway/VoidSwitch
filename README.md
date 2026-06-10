@@ -18,11 +18,11 @@ VoidSwitch handle provider selection, key rotation, proxy failover, and quotas.
 
 ## Repository layout
 
-| Path               | Stack                                   | What it is                          |
-|--------------------|-----------------------------------------|-------------------------------------|
-| `backend/`         | Python 3.13 · uv · FastAPI · SQLAlchemy  | The gateway + admin API             |
-| `frontend/`        | Bun · React 19 · Fluent UI v9            | Decoupled admin dashboard           |
-| `opencode-plugin/` | Bun · TypeScript · `@opencode-ai/plugin` | OpenCode provider plugin            |
+| Path               | Stack                                    | What it is                |
+| ------------------ | ---------------------------------------- | ------------------------- |
+| `backend/`         | Python 3.13 · uv · FastAPI · SQLAlchemy  | The gateway + admin API   |
+| `frontend/`        | Bun · React 19 · Fluent UI v9            | Decoupled admin dashboard |
+| `opencode-plugin/` | Bun · TypeScript · `@opencode-ai/plugin` | OpenCode provider plugin  |
 
 Each has its own README with full details.
 

@@ -30,6 +30,8 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useTranslation, Trans } from "react-i18next";
+import type { Translations } from "../i18n/locales/en";
 import { api, API_BASE } from "../api/client";
 import type { VoidTokenWithSecret } from "../api/types";
 import { useNotify } from "../components/ui";
@@ -65,6 +67,8 @@ interface ModelOption {
 export function Chat() {
   const styles = useStyles();
   const notify = useNotify();
+  const { t } = useTranslation();
+  type TK = keyof Translations;
 
   const [chatToken, setChatToken] = useState<string>(
     () => localStorage.getItem(CHAT_TOKEN_KEY) ?? "",
@@ -109,7 +113,7 @@ export function Chat() {
       if (!res.ok) {
         throw new Error(
           res.status === 401
-            ? "Token rejected — paste a valid vs-… token or mint a new one."
+            ? t("chat.tokenRejected" as TK)
             : `Could not load models (HTTP ${res.status}).`,
         );
       }
@@ -138,13 +142,13 @@ export function Chat() {
       setChatToken(created.token);
       setTokenDraft("");
       notify(
-        "Token minted",
+        t("chat.tokenMinted" as TK),
         "A fresh vs-… token now powers the chat.",
         "success",
       );
     } catch (e) {
       notify(
-        "Mint failed",
+        t("chat.mintFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -154,9 +158,9 @@ export function Chat() {
   }
 
   function applyToken() {
-    const t = tokenDraft.trim();
-    if (!t) return;
-    setChatToken(t);
+    const trimmed = tokenDraft.trim();
+    if (!trimmed) return;
+    setChatToken(trimmed);
     setTokenDraft("");
   }
 
@@ -181,11 +185,11 @@ export function Chat() {
     const text = (prompt ?? input).trim();
     if (!text || busy) return;
     if (!chatToken) {
-      notify("No token", "Add or mint a vs-… token first.", "warning");
+      notify(t("chat.noToken" as TK), "Add or mint a vs-… token first.", "warning");
       return;
     }
     if (!model) {
-      notify("No model", "No model is available for this token.", "warning");
+      notify(t("chat.noModel" as TK), "No model is available for this token.", "warning");
       return;
     }
 
@@ -241,7 +245,7 @@ export function Chat() {
     } catch (e) {
       if (!controller.signal.aborted) {
         notify(
-          "Request failed",
+          t("chat.requestFailed" as TK),
           e instanceof Error ? e.message : String(e),
           "error",
         );
@@ -281,15 +285,17 @@ export function Chat() {
             block
             style={{ textAlign: "center" }}
           >
-            Connect a token to start chatting
+            {t("chat.onboardingTitle" as TK)}
           </Text>
           <Text
             size={200}
             align="center"
             style={{ color: tokens.colorNeutralForeground3 }}
           >
-            The chat calls the gateway with a <code>vs-…</code> Void-Token. Mint
-            one in a click, or paste an existing token.
+            <Trans
+              i18nKey="chat.onboardingDesc"
+              components={{ code: <code /> }}
+            />
           </Text>
           <Button
             appearance="primary"
@@ -299,16 +305,16 @@ export function Chat() {
             disabled={minting}
             style={{ width: "100%" }}
           >
-            Mint a token
+            {t("chat.mintToken" as TK)}
           </Button>
           <div className={styles.gateDivider}>
-            <span>or paste one</span>
+            <span>{t("chat.orPaste" as TK)}</span>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Textarea
               value={tokenDraft}
               onChange={(_, d) => setTokenDraft(d.value)}
-              placeholder="vs-…"
+              placeholder={t("chat.tokenPlaceholder" as TK)}
               resize="none"
               style={{ flex: 1 }}
               textarea={{ style: { minHeight: 32 } }}
@@ -318,7 +324,7 @@ export function Chat() {
               onClick={applyToken}
               disabled={!tokenDraft.trim()}
             >
-              Use
+              {t("chat.use" as TK)}
             </Button>
           </div>
         </Card>
@@ -334,7 +340,7 @@ export function Chat() {
           className={styles.modelPick}
           value={model}
           selectedOptions={model ? [model] : []}
-          placeholder="Select a model"
+          placeholder={t("chat.selectModel" as TK)}
           disabled={models.length === 0}
           button={{ className: styles.modelButton }}
           onOptionSelect={(_, d) => d.optionValue && setModel(d.optionValue)}
@@ -348,7 +354,7 @@ export function Chat() {
         </Dropdown>
 
         <div className={styles.headerActions}>
-          <Tooltip content="Reload models" relationship="label">
+          <Tooltip content={t("chat.reloadModels" as TK)} relationship="label">
             <Button
               appearance="subtle"
               icon={<ArrowSyncRegular />}
@@ -358,7 +364,7 @@ export function Chat() {
 
           <Popover positioning="below-end" trapFocus>
             <PopoverTrigger disableButtonEnhancement>
-              <Tooltip content="System prompt & token" relationship="label">
+              <Tooltip content={t("chat.settingsTooltip" as TK)} relationship="label">
                 <Button
                   appearance={system.trim() ? "primary" : "subtle"}
                   icon={<SettingsRegular />}
@@ -367,12 +373,12 @@ export function Chat() {
             </PopoverTrigger>
             <PopoverSurface className={styles.settings}>
               <Text weight="semibold" block>
-                System prompt
+                {t("chat.systemPromptLabel" as TK)}
               </Text>
               <Textarea
                 value={system}
                 onChange={(_, d) => setSystem(d.value)}
-                placeholder="You are a helpful assistant…"
+                placeholder={t("chat.systemPromptHint" as TK)}
                 resize="vertical"
                 textarea={{ style: { minHeight: 88 } }}
               />
@@ -397,7 +403,7 @@ export function Chat() {
             </PopoverSurface>
           </Popover>
 
-          <Tooltip content="New chat" relationship="label">
+          <Tooltip content={t("chat.newChat" as TK)} relationship="label">
             <Button
               appearance="subtle"
               icon={<AddRegular />}
@@ -437,7 +443,7 @@ export function Chat() {
               block
               style={{ textAlign: "center" }}
             >
-              What can I help with?
+              {t("chat.greeting" as TK)}
             </Text>
             <div className={styles.examples}>
               {EXAMPLES.map((ex) => (
@@ -461,7 +467,7 @@ export function Chat() {
                   key={i}
                   message={m}
                   streaming={streaming}
-                  onCopy={() => copyText(m.content, notify)}
+                  onCopy={() => copyText(m.content, notify, t)}
                 />
               );
             })}
@@ -478,7 +484,7 @@ export function Chat() {
             value={input}
             onChange={(_, d) => setInput(d.value)}
             onKeyDown={onComposerKey}
-            placeholder="Message…"
+            placeholder={t("chat.messagePlaceholder" as TK)}
             resize="none"
             textarea={{ ref: composerRef, style: { maxHeight: 200 } }}
           />
@@ -489,7 +495,7 @@ export function Chat() {
               appearance="secondary"
               icon={<DismissRegular />}
               onClick={stop}
-              aria-label="Stop"
+              aria-label={t("chat.stop" as TK)}
             />
           ) : (
             <Button
@@ -499,13 +505,13 @@ export function Chat() {
               icon={<SendRegular />}
               onClick={() => void send()}
               disabled={!input.trim()}
-              aria-label="Send"
+              aria-label={t("chat.send" as TK)}
             />
           )}
         </div>
         <div className={styles.composerHint}>
           <Text size={100}>
-            {model || "no model"} · Enter to send, Shift+Enter for newline
+            {model || "no model"} · {t("chat.enterToSend" as TK)}
           </Text>
           {usage ? (
             <Text size={100}>
@@ -531,6 +537,8 @@ function MessageRow({
   onCopy: () => void;
 }) {
   const styles = useStyles();
+  const { t } = useTranslation();
+  type TK = keyof Translations;
   const isUser = message.role === "user";
   return (
     <div className={styles.row}>
@@ -542,17 +550,17 @@ function MessageRow({
       <div className={styles.rowMain}>
         <div className={styles.rowHead}>
           <Text size={200} weight="semibold">
-            {isUser ? "You" : "Assistant"}
+            {isUser ? t("chat.you" as TK) : t("chat.assistant" as TK)}
           </Text>
           {message.content ? (
-            <Tooltip content="Copy" relationship="label">
+            <Tooltip content={t("chat.copy" as TK)} relationship="label">
               <Button
                 className={`${styles.copyBtn} vs-copy`}
                 size="small"
                 appearance="subtle"
                 icon={<CopyRegular />}
                 onClick={onCopy}
-                aria-label="Copy message"
+                aria-label={t("chat.copyMessage" as TK)}
               />
             </Tooltip>
           ) : null}
@@ -585,6 +593,7 @@ const MD_COMPONENTS = {
 function CodeBlock({ children }: { children?: React.ReactNode }) {
   const styles = useStyles();
   const notify = useNotify();
+  const { t } = useTranslation();
   const ref = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
 
@@ -595,7 +604,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
     } catch {
-      notify("Copy failed", "Clipboard unavailable", "error");
+      notify(t("chat.copyFailed"), "Clipboard unavailable", "error");
     }
   }
 
@@ -607,7 +616,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
         appearance="subtle"
         icon={copied ? <CheckmarkRegular /> : <CopyRegular />}
         onClick={copy}
-        aria-label="Copy code"
+        aria-label={t("chat.copyCode")}
       />
       <pre ref={ref}>{children}</pre>
     </div>
@@ -616,12 +625,16 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
 
 // --- helpers ---------------------------------------------------------------- //
 
-async function copyText(text: string, notify: ReturnType<typeof useNotify>) {
+async function copyText(
+  text: string,
+  notify: ReturnType<typeof useNotify>,
+  tFn: (key: string) => string,
+) {
   try {
     await navigator.clipboard.writeText(text);
-    notify("Copied", undefined, "success");
+    notify(tFn("chat.copied"), undefined, "success");
   } catch {
-    notify("Copy failed", "Clipboard unavailable", "error");
+    notify(tFn("chat.copyFailed"), "Clipboard unavailable", "error");
   }
 }
 

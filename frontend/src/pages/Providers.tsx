@@ -28,6 +28,7 @@ import {
   KeyRegular,
 } from "@fluentui/react-icons";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -38,6 +39,7 @@ import type {
   Proxy,
   ProxyMode,
 } from "../api/types";
+import type { Translations } from "../i18n/locales/en";
 import {
   DataTable,
   ErrorText,
@@ -47,6 +49,8 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
+
+type TK = keyof Translations;
 
 interface FormState {
   id?: number;
@@ -115,13 +119,8 @@ function formatRoutes(routes: ModelRoute[]): string {
     .join("\n");
 }
 
-const PROXY_MODE_LABEL: Record<ProxyMode, string> = {
-  all: "All active proxies (default)",
-  direct: "Direct — never use a proxy",
-  selected: "Only selected proxies",
-};
-
 export function Providers() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const notify = useNotify();
   const confirm = useConfirm();
@@ -134,6 +133,12 @@ export function Providers() {
   const proxies = useAsync<Proxy[]>(() => api.get("/api/admin/proxies"));
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const PROXY_MODE_LABEL: Record<ProxyMode, string> = {
+    all: t("providers.proxyModeAll" as TK),
+    direct: t("providers.proxyModeDirect" as TK),
+    selected: t("providers.proxyModeSelected" as TK),
+  };
 
   function openCreate() {
     setForm({ ...EMPTY });
@@ -193,16 +198,16 @@ export function Providers() {
     try {
       if (form.id) {
         await api.patch(`/api/admin/providers/${form.id}`, payload);
-        notify("Provider updated", form.name, "success");
+        notify(t("providers.updated" as TK), form.name, "success");
       } else {
         await api.post("/api/admin/providers", payload);
-        notify("Provider created", form.name, "success");
+        notify(t("providers.created" as TK), form.name, "success");
       }
       setForm(null);
       providers.reload();
     } catch (e) {
       notify(
-        "Save failed",
+        t("common.saveFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -213,19 +218,19 @@ export function Providers() {
 
   async function remove(p: Provider) {
     const ok = await confirm({
-      title: "Delete provider",
-      message: `Delete "${p.name}" and all its keys? This cannot be undone.`,
-      confirmLabel: "Delete",
+      title: t("providers.deleteTitle" as TK),
+      message: t("providers.deleteMsg" as TK).replace("{name}", p.name),
+      confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
     try {
       await api.del(`/api/admin/providers/${p.id}`);
-      notify("Provider deleted", p.name, "success");
+      notify(t("providers.deleted" as TK), p.name, "success");
       providers.reload();
     } catch (e) {
       notify(
-        "Delete failed",
+        t("common.deleteFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -235,15 +240,15 @@ export function Providers() {
   return (
     <div>
       <PageHeader
-        title="Providers"
-        subtitle="Upstream LLM platforms and the models they serve"
+        title={t("providers.title" as TK)}
+        subtitle={t("providers.subtitle" as TK)}
         action={
           <Button
             appearance="primary"
             icon={<AddRegular />}
             onClick={openCreate}
           >
-            Add provider
+            {t("providers.add" as TK)}
           </Button>
         }
       />
@@ -253,17 +258,17 @@ export function Providers() {
       ) : providers.error ? (
         <ErrorText error={providers.error} />
       ) : (
-        <DataTable ariaLabel="Providers">
+        <DataTable ariaLabel={t("providers.title" as TK)}>
           <TableHeader>
             <TableRow>
-              <TableHeaderCell>Name</TableHeaderCell>
-              <TableHeaderCell>Type</TableHeaderCell>
-              <TableHeaderCell>Base URL</TableHeaderCell>
-              <TableHeaderCell>Keys</TableHeaderCell>
-              <TableHeaderCell>Added by</TableHeaderCell>
-              <TableHeaderCell>Priority</TableHeaderCell>
-              <TableHeaderCell>Status</TableHeaderCell>
-              <TableHeaderCell>Actions</TableHeaderCell>
+              <TableHeaderCell>{t("providers.name" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("providers.type" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("providers.baseUrl" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("providers.keys" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("providers.addedBy" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("providers.priority" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("providers.status" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("providers.actions" as TK)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -286,7 +291,9 @@ export function Providers() {
                     color={p.enabled ? "success" : "subtle"}
                     appearance="filled"
                   >
-                    {p.enabled ? "enabled" : "disabled"}
+                    {p.enabled
+                      ? t("providers.enabled" as TK)
+                      : t("providers.disabled" as TK)}
                   </Badge>
                 </TableCell>
                 <TableCell>
@@ -328,7 +335,9 @@ export function Providers() {
         <DialogSurface>
           <DialogBody>
             <DialogTitle>
-              {form?.id ? "Edit provider" : "Add provider"}
+              {form?.id
+                ? t("providers.edit" as TK)
+                : t("providers.add" as TK)}
             </DialogTitle>
             <DialogContent
               style={{
@@ -338,7 +347,7 @@ export function Providers() {
                 paddingTop: 8,
               }}
             >
-              <Field label="Name" required>
+              <Field label={t("providers.name" as TK)} required>
                 <Input
                   value={form?.name ?? ""}
                   disabled={!!form?.id}
@@ -347,7 +356,7 @@ export function Providers() {
                   }
                 />
               </Field>
-              <Field label="Adapter type">
+              <Field label={t("providers.adapterType" as TK)}>
                 <Dropdown
                   value={form?.type ?? ""}
                   selectedOptions={form ? [form.type] : []}
@@ -362,7 +371,7 @@ export function Providers() {
                   ))}
                 </Dropdown>
               </Field>
-              <Field label="Base URL">
+              <Field label={t("providers.baseUrl" as TK)}>
                 <Input
                   value={form?.base_url ?? ""}
                   onChange={(_, d) =>
@@ -370,7 +379,7 @@ export function Providers() {
                   }
                 />
               </Field>
-              <Field label="Models (one per line; use * for any)">
+              <Field label={t("providers.modelsHint" as TK)}>
                 <Textarea
                   value={form?.models ?? ""}
                   rows={4}
@@ -380,8 +389,8 @@ export function Providers() {
                 />
               </Field>
               <Field
-                label="Model routes (alias → upstream, key pool)"
-                hint="One per line: alias => upstream @ pool. '=> upstream' and '@ pool' are optional. e.g. deepseek-v4-flash-lkd => deepseek-v4-flash @ leaked — routes that alias to the upstream model using only keys tagged 'leaked'."
+                label={t("providers.modelRoutes" as TK)}
+                hint={t("providers.modelRoutesHint" as TK)}
               >
                 <Textarea
                   value={form?.model_routes ?? ""}
@@ -395,7 +404,7 @@ export function Providers() {
                 />
               </Field>
               <div style={{ display: "flex", gap: 12 }}>
-                <Field label="Priority (lower = preferred)">
+                <Field label={t("providers.priorityHint" as TK)}>
                   <SpinButton
                     value={form?.priority ?? 100}
                     onChange={(_, d) =>
@@ -405,7 +414,7 @@ export function Providers() {
                     }
                   />
                 </Field>
-                <Field label="Weight">
+                <Field label={t("providers.weight" as TK)}>
                   <SpinButton
                     value={form?.weight ?? 1}
                     min={1}
@@ -418,13 +427,13 @@ export function Providers() {
                 </Field>
               </div>
               <Switch
-                label="Enabled"
+                label={t("common.enabled" as TK)}
                 checked={form?.enabled ?? true}
                 onChange={(_, d) =>
                   setForm((f) => (f ? { ...f, enabled: d.checked } : f))
                 }
               />
-              <Field label="Outbound proxy">
+              <Field label={t("providers.outboundProxy" as TK)}>
                 <Dropdown
                   value={
                     form
@@ -448,12 +457,12 @@ export function Providers() {
               </Field>
               {form?.proxy_mode === "selected" && (
                 <Field
-                  label="Proxies for this provider"
-                  hint="Requests use only these (best-first, with failover). If all are down, this provider is skipped — it never falls back to a direct connection."
+                  label={t("providers.proxiesHint" as TK)}
+                  hint={t("providers.proxiesHelp" as TK)}
                 >
                   <Dropdown
                     multiselect
-                    placeholder="Select one or more proxies"
+                    placeholder={t("providers.selectProxies" as TK)}
                     value={
                       (form?.proxy_ids ?? [])
                         .map(
@@ -488,7 +497,7 @@ export function Providers() {
               )}
               {form?.type === "claude-code" && (
                 <Switch
-                  label="Drop OpenCode identity block (send only the Claude Code identity, not the caller's system prompt)"
+                  label={t("providers.dropIdentityLabel" as TK)}
                   checked={form?.drop_opencode_identity_block ?? false}
                   onChange={(_, d) =>
                     setForm((f) =>
@@ -500,14 +509,14 @@ export function Providers() {
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setForm(null)}>
-                Cancel
+                {t("common.cancel" as TK)}
               </Button>
               <Button
                 appearance="primary"
                 disabled={saving || !form?.name}
                 onClick={save}
               >
-                {form?.id ? "Save" : "Create"}
+                {form?.id ? t("common.save" as TK) : t("common.create" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
