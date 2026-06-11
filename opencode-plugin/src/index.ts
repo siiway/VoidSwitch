@@ -92,7 +92,8 @@ const FALLBACK_MODELS = [
   "claude-opus-4-7",
   "claude-opus-4-6",
   "claude-sonnet-4-6",
-  "claude-haiku-4-5",
+  "deepseek-v4-pro",
+  "deepseek-v4-flash",
 ]
 
 /**
@@ -104,6 +105,14 @@ const FALLBACK_MODELS = [
 type ModelInfo = { id: string; description?: string; opencode?: Record<string, any> }
 
 const FALLBACK_MODEL_INFOS: ModelInfo[] = FALLBACK_MODELS.map((id) => ({ id }))
+
+/** Strip JSONC comments and trailing commas so standard JSON.parse can handle it. */
+function stripJsonc(text: string): string {
+  return text
+    .replace(/(?<!:)\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/,(\s*[}\]])/g, "$1")
+}
 
 const isPlainObject = (v: unknown): v is Record<string, any> =>
   typeof v === "object" && v !== null && !Array.isArray(v)
@@ -308,7 +317,7 @@ function loadPersistedBaseUrl(): string | undefined {
   try {
     if (!existsSync(opencodeConfigPath())) return undefined
     const raw = readFileSync(opencodeConfigPath(), "utf8")
-    const cfg = JSON.parse(raw)
+    const cfg = JSON.parse(stripJsonc(raw))
     if (!cfg || !Array.isArray(cfg.plugin)) return undefined
     for (const p of cfg.plugin) {
       const isArr = Array.isArray(p)
@@ -320,8 +329,8 @@ function loadPersistedBaseUrl(): string | undefined {
         break
       }
     }
-  } catch {
-    // can't read/parse — skip
+  } catch (e) {
+    console.error("[VoidSwitch] loadPersistedBaseUrl failed:", e)
   }
   return undefined
 }
@@ -331,7 +340,7 @@ function persistBaseUrl(url: string | undefined): void {
     const path = opencodeConfigPath()
     if (!existsSync(path)) return
     const raw = readFileSync(path, "utf8")
-    const cfg = JSON.parse(raw)
+    const cfg = JSON.parse(stripJsonc(raw))
     if (!cfg || !Array.isArray(cfg.plugin)) return
     for (const p of cfg.plugin) {
       const isArr = Array.isArray(p)
@@ -344,7 +353,6 @@ function persistBaseUrl(url: string | undefined): void {
             delete (p[1] as Record<string, unknown>).url
           }
         } else if (url) {
-          // plain string → wrap as [name, { url }]
           const idx = cfg.plugin.indexOf(p)
           cfg.plugin[idx] = [name, { url }]
         }
@@ -352,8 +360,24 @@ function persistBaseUrl(url: string | undefined): void {
       }
     }
     writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
-  } catch {
-    // can't write — skip
+  } catch (e) {
+    console.error("[VoidSwitch] persistBaseUrl failed:", e)
+  }
+}
+
+function persistModels(modelIds: string[]): void {
+  try {
+    const path = opencodeConfigPath()
+    if (!existsSync(path)) return
+    const raw = readFileSync(path, "utf8")
+    const cfg = JSON.parse(stripJsonc(raw))
+    if (!cfg || !cfg.provider || !cfg.provider[PROVIDER_ID]) return
+    const models: Record<string, any> = {}
+    for (const id of modelIds) models[id] = {}
+    cfg.provider[PROVIDER_ID].models = models
+    writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
+  } catch (e) {
+    console.error("[VoidSwitch] persistModels failed:", e)
   }
 }
 
@@ -494,7 +518,20 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       if (input.command === "sync-models") {
         const arg = (input.arguments ?? "").trim()
         const note = await syncModels()
-        await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: note.includes("couldn't") || note.includes("not authenticated") ? "error" : "success" } }).catch(() => {})
+        const ok = !note.includes("couldn't") && !note.includes("not authenticated")
+        if (ok) {
+          try {
+            const infos = await fetchModels(lastToken)
+            const ids = infos.map((m) => m.id)
+            persistModels(ids)
+            await opn.tui.showToast({ body: { message: `VoidSwitch: ${note} — ${ids.length} models written to config.`, variant: "success" } }).catch(() => {})
+          } catch (e) {
+            console.error("[VoidSwitch] sync-models fetch/persist failed:", e)
+            await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
+          }
+        } else {
+          await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "error" } }).catch(() => {})
+        }
         if (arg) { setCommandText(output, arg); return }
         throw new CommandHandledError()
       }

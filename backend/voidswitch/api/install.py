@@ -109,7 +109,7 @@ print_manual_snippet() {
 ║       "models": {                                                            ║
 ║         "claude-opus-4-8": {}, "claude-opus-4-7": {},                       ║
 ║         "claude-opus-4-6": {}, "claude-sonnet-4-6": {},                     ║
-║         "claude-haiku-4-5": {}                                               ║
+║         "deepseek-v4-pro": {}, "deepseek-v4-flash": {}                       ║
 ║       }                                                                      ║
 ║     }                                                                        ║
 ║                                                                              ║
@@ -198,7 +198,8 @@ provider["voidswitch"] = {
             "claude-opus-4-7",
             "claude-opus-4-6",
             "claude-sonnet-4-6",
-            "claude-haiku-4-5",
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
         )
     },
 }
@@ -270,7 +271,7 @@ cfg.provider.voidswitch = {
   name: "VoidSwitch",
   options: { baseURL: gateway + "/v1" },
   models: Object.fromEntries(
-    ["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"].map((m) => [m, {}])
+    ["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "deepseek-v4-pro", "deepseek-v4-flash"].map((m) => [m, {}])
   ),
 };
 fs.writeFileSync(config, JSON.stringify(cfg, null, 2));
@@ -315,7 +316,7 @@ else
       "options": { "baseURL": "$GATEWAY/v1" },
       "models": {
         "claude-opus-4-8": {}, "claude-opus-4-7": {}, "claude-opus-4-6": {},
-        "claude-sonnet-4-6": {}, "claude-haiku-4-5": {}
+        "claude-sonnet-4-6": {}, "deepseek-v4-pro": {}, "deepseek-v4-flash": {}
       }
     }
   }
@@ -407,7 +408,7 @@ function Load-Json($path) {
       Write-Host "       ""options"": { ""baseURL"": ""$Gateway/v1"" },"
       Write-Host '       "models": { "claude-opus-4-8":{}, "claude-opus-4-7":{},'
       Write-Host '                  "claude-opus-4-6":{}, "claude-sonnet-4-6":{},'
-      Write-Host '                  "claude-haiku-4-5":{} } }'
+      Write-Host '                  "deepseek-v4-pro":{}, "deepseek-v4-flash":{} } }'
       throw "Refusing to overwrite unparseable JSON: $path"
     }
   }
@@ -438,7 +439,7 @@ $cfg | Add-Member -NotePropertyName 'plugin' -NotePropertyValue ([string[]]$plug
 # drops a provider with no models, so it would never appear in /connect.
 $provider = if ($cfg.PSObject.Properties['provider'] -and $cfg.provider) { $cfg.provider } else { [pscustomobject]@{} }
 $models = [pscustomobject]@{}
-foreach ($m in @('claude-opus-4-8','claude-opus-4-7','claude-opus-4-6','claude-sonnet-4-6','claude-haiku-4-5')) {
+foreach ($m in @('claude-opus-4-8','claude-opus-4-7','claude-opus-4-6','claude-sonnet-4-6','deepseek-v4-pro','deepseek-v4-flash')) {
   $models | Add-Member -NotePropertyName $m -NotePropertyValue ([pscustomobject]@{}) -Force
 }
 $voidswitch = [pscustomobject]@{
