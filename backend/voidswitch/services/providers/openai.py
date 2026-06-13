@@ -191,6 +191,20 @@ class MiniMaxProvider(OpenAIProvider):
     default_models = ("MiniMax-M2", "*")
 
 
+class CloudflareProvider(OpenAIProvider):
+    """Cloudflare Workers AI — OpenAI-compatible endpoint.
+
+    Requires a Cloudflare API Token (Bearer auth) and an account ID. Replace
+    ``{account_id}`` in the base URL with your own account identifier, or
+    override the full ``base_url`` on the provider record.
+    Ref: https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/
+    """
+
+    type = "cloudflare"
+    default_base_url = "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+    default_models = ("*",)
+
+
 class GenericOpenAIProvider(OpenAIProvider):
     """Catch-all for any self-hosted / unlisted OpenAI-compatible endpoint."""
 

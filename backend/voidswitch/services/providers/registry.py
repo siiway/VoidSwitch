@@ -9,6 +9,7 @@ from .base import BaseProvider
 from .deepseek import DeepSeekProvider
 from .openai import (
     CerebrasProvider,
+    CloudflareProvider,
     DeepInfraProvider,
     FireworksProvider,
     GeminiProvider,
@@ -54,6 +55,7 @@ _ADAPTERS: dict[str, type[BaseProvider]] = {
         FireworksProvider,
         PerplexityProvider,
         CerebrasProvider,
+        CloudflareProvider,
         DeepInfraProvider,
         GeminiProvider,
         NovitaProvider,
