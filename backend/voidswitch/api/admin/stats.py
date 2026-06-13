@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import datetime as dt
-
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus, ProxyStatus
@@ -21,12 +19,24 @@ async def _count(session: AsyncSession, stmt) -> int:
     return int((await session.execute(stmt)).scalar_one() or 0)
 
 
+def _since_24h(session: AsyncSession):
+    """Database-native expression for "24 hours ago".
+
+    Uses the DB clock so the comparison stays entirely server-side, avoiding
+    Python↔DB timezone / type-mapping surprises that previously caused the
+    24h window to be wider than intended (especially on SQLite)."""
+    dialect = session.bind.dialect.name if session.bind is not None else "sqlite"
+    if dialect == "postgresql":
+        return func.now() - text("INTERVAL '24 hours'")
+    return func.datetime("now", "-24 hours")
+
+
 @router.get("", response_model=StatsOut)
 async def stats(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
 ) -> StatsOut:
-    since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)
+    since = _since_24h(session)
 
     providers = await _count(session, select(func.count(Provider.id)))
     total_keys = await _count(session, select(func.count(ApiKey.id)))
