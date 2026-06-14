@@ -512,103 +512,116 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       input: { command: string; sessionID: string; arguments: string },
       output: { parts: any[] },
     ) => {
-      // /sync-models — refresh the platform catalog from the providers,
-      // show a toast, and throw to skip the LLM turn. If the user appended
-      // a prompt it flows through to the model.
-      if (input.command === "sync-models") {
-        const arg = (input.arguments ?? "").trim()
-        const note = await syncModels()
-        const ok = !note.includes("couldn't") && !note.includes("not authenticated")
-        if (ok) {
-          try {
-            const infos = await fetchModels(lastToken)
-            const ids = infos.map((m) => m.id)
-            persistModels(ids)
-            await opn.tui.showToast({ body: { message: `VoidSwitch: ${note} — ${ids.length} models written to config.`, variant: "success" } }).catch(() => {})
-          } catch (e) {
-            console.error("[VoidSwitch] sync-models fetch/persist failed:", e)
-            await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
+      try {
+        // /sync-models — refresh the platform catalog from the providers,
+        // show a toast, and throw to skip the LLM turn. If the user appended
+        // a prompt it flows through to the model.
+        if (input.command === "sync-models") {
+          const arg = (input.arguments ?? "").trim()
+          const note = await syncModels()
+          const ok = !note.includes("couldn't") && !note.includes("not authenticated")
+          if (ok) {
+            try {
+              const infos = await fetchModels(lastToken)
+              const ids = infos.map((m) => m.id)
+              persistModels(ids)
+              await opn.tui.showToast({ body: { message: `VoidSwitch: ${note} — ${ids.length} models written to config. Reopen the model picker to see changes.`, variant: "success" } }).catch(() => {})
+            } catch (e) {
+              console.error("[VoidSwitch] sync-models fetch/persist failed:", e)
+              await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
+            }
+          } else {
+            await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "error" } }).catch(() => {})
           }
-        } else {
-          await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "error" } }).catch(() => {})
+          if (arg) { setCommandText(output, arg); return }
+          throw new CommandHandledError()
         }
-        if (arg) { setCommandText(output, arg); return }
-        throw new CommandHandledError()
-      }
-      // /switch-base-url — override the gateway base URL (e.g. to use a local IP on
-      // the same network). Blank resets to default. Persisted to opencode.json.
-      if (input.command === "switch-base-url") {
+        // /switch-base-url — override the gateway base URL (e.g. to use a local IP on
+        // the same network). Blank resets to default. Persisted to opencode.json.
+        if (input.command === "switch-base-url") {
+          const arg = (input.arguments ?? "").trim()
+          const st = sessionState.get(input.sessionID) ?? {}
+          let note: string
+          if (!arg) {
+            persistBaseUrl(undefined)
+            delete st.baseUrl
+            opt.url = undefined
+            gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
+            gatewayV1 = `${gateway}/v1`
+            sessionState.set(input.sessionID, st)
+            note = "base URL reset to default"
+          } else {
+            const normalised = arg.replace(/\/+$/, "")
+            persistBaseUrl(normalised)
+            st.baseUrl = normalised
+            opt.url = normalised
+            gateway = normalised
+            gatewayV1 = `${gateway}/v1`
+            sessionState.set(input.sessionID, st)
+            note = `base URL set to ${gateway}`
+          }
+          await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
+          throw new CommandHandledError()
+        }
+        if (input.command !== "effort" && input.command !== "fast" && input.command !== "ultracode") return
         const arg = (input.arguments ?? "").trim()
+        const [first, ...restWords] = arg.split(/\s+/).filter(Boolean)
+        const head = (first ?? "").toLowerCase()
+        const rest = restWords.join(" ").trim()
         const st = sessionState.get(input.sessionID) ?? {}
         let note: string
-        if (!arg) {
-          persistBaseUrl(undefined)
-          delete st.baseUrl
-          opt.url = undefined
-          gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
-          gatewayV1 = `${gateway}/v1`
-          sessionState.set(input.sessionID, st)
-          note = "base URL reset to default"
-        } else {
-          const normalised = arg.replace(/\/+$/, "")
-          persistBaseUrl(normalised)
-          st.baseUrl = normalised
-          opt.url = normalised
-          gateway = normalised
-          gatewayV1 = `${gateway}/v1`
-          sessionState.set(input.sessionID, st)
-          note = `base URL set to ${gateway}`
-        }
-        await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
-        throw new CommandHandledError()
-      }
-      if (input.command !== "effort" && input.command !== "fast" && input.command !== "ultracode") return
-      const arg = (input.arguments ?? "").trim()
-      const [first, ...restWords] = arg.split(/\s+/).filter(Boolean)
-      const head = (first ?? "").toLowerCase()
-      const rest = restWords.join(" ").trim()
-      const st = sessionState.get(input.sessionID) ?? {}
-      let note: string
 
-      if (input.command === "ultracode") {
-        st.effort = "xhigh"
-        note = "ultracode (xhigh effort)"
+        if (input.command === "ultracode") {
+          st.effort = "xhigh"
+          note = "ultracode (xhigh effort)"
+          sessionState.set(input.sessionID, st)
+          await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
+          if (arg) { setCommandText(output, arg); return }
+          throw new CommandHandledError()
+        }
+        if (input.command === "fast") {
+          const isFlag = ["on", "off", "true", "false"].includes(head)
+          st.fast = !(head === "off" || head === "false")
+          note = `fast mode ${st.fast ? "ON" : "OFF"}`
+          sessionState.set(input.sessionID, st)
+          await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
+          const prompt = isFlag ? rest : arg
+          if (prompt) { setCommandText(output, prompt); return }
+          throw new CommandHandledError()
+        }
+        // /effort
+        let prompt = arg
+        if (head === "ultracode") {
+          st.effort = "xhigh"
+          note = "ultracode (xhigh effort)"
+          prompt = rest
+        } else if (head === "auto" || head === "default") {
+          st.effort = "auto"
+          note = "auto (model decides)"
+          prompt = rest
+        } else if (isEffort(head)) {
+          st.effort = head
+          note = `effort ${head}`
+          prompt = rest
+        } else {
+          note = `effort ${st.effort ?? "auto"}` // unrecognized level → treat whole arg as prompt
+        }
         sessionState.set(input.sessionID, st)
         await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
-        if (arg) { setCommandText(output, arg); return }
-        throw new CommandHandledError()
-      }
-      if (input.command === "fast") {
-        const isFlag = ["on", "off", "true", "false"].includes(head)
-        st.fast = !(head === "off" || head === "false")
-        note = `fast mode ${st.fast ? "ON" : "OFF"}`
-        sessionState.set(input.sessionID, st)
-        await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
-        const prompt = isFlag ? rest : arg
         if (prompt) { setCommandText(output, prompt); return }
         throw new CommandHandledError()
+      } catch (err) {
+        // Catch CommandHandledError (and compatible error types from other plugins)
+        // to signal "command executed, skip LLM" without creating new session.
+        // Error.name check matches our CommandHandledError, message check is fallback.
+        if (err instanceof Error &&
+            (err.name === "CommandHandledError" || err.message?.includes("-command-handled"))) {
+          // Silently handle - don't re-throw, just return (command already executed)
+          return
+        }
+        // Re-throw other errors
+        throw err
       }
-      // /effort
-      let prompt = arg
-      if (head === "ultracode") {
-        st.effort = "xhigh"
-        note = "ultracode (xhigh effort)"
-        prompt = rest
-      } else if (head === "auto" || head === "default") {
-        st.effort = "auto"
-        note = "auto (model decides)"
-        prompt = rest
-      } else if (isEffort(head)) {
-        st.effort = head
-        note = `effort ${head}`
-        prompt = rest
-      } else {
-        note = `effort ${st.effort ?? "auto"}` // unrecognized level → treat whole arg as prompt
-      }
-      sessionState.set(input.sessionID, st)
-      await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
-      if (prompt) { setCommandText(output, prompt); return }
-      throw new CommandHandledError()
     },
 
     // Auth: paste a vs-… token. The loader hands the AI SDK the apiKey (sent as
