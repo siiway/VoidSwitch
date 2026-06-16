@@ -17,7 +17,7 @@ dependencies = [
     "pyyaml>=6.0",
     "pyjwt[crypto]>=2.10",
     "structlog>=24.4",
-    "python-multipart>=0.0.12",
+    "python-multipart>=0.0.31",
 ]
 
 [project.scripts]
