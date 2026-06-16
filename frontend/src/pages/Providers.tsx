@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -12,6 +13,7 @@ import {
   Input,
   Option,
   SpinButton,
+  Spinner,
   Switch,
   TableBody,
   TableCell,
@@ -23,6 +25,9 @@ import {
 } from "@fluentui/react-components";
 import {
   AddRegular,
+  ArrowLeftRegular,
+  ArrowRightRegular,
+  ArrowSwapRegular,
   DeleteRegular,
   EditRegular,
   KeyRegular,
@@ -133,6 +138,12 @@ export function Providers() {
   const proxies = useAsync<Proxy[]>(() => api.get("/api/admin/proxies"));
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [fetchOpen, setFetchOpen] = useState(false);
+  const [fetchToken, setFetchToken] = useState("");
+  const [fetching, setFetching] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [fetchError, setFetchError] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const PROXY_MODE_LABEL: Record<ProxyMode, string> = {
     all: t("providers.proxyModeAll" as TK),
@@ -173,6 +184,66 @@ export function Providers() {
           }
         : f,
     );
+  }
+
+  async function fetchModelsFromApi() {
+    if (!form?.base_url || !fetchToken) return;
+    setFetching(true);
+    setFetchError("");
+    setFetchedModels([]);
+    try {
+      const base = form.base_url.replace(/\/+$/, "");
+      const url = `${base}/models`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${fetchToken}` },
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `${res.status} ${res.statusText}`);
+      }
+      const json = await res.json();
+      let items: any[];
+      if (Array.isArray(json)) {
+        items = json;
+      } else if (Array.isArray(json.data)) {
+        items = json.data;
+      } else if (Array.isArray(json.models)) {
+        items = json.models;
+      } else {
+        throw new Error("Unexpected response format");
+      }
+      const ids: string[] = items
+        .map((m: any) => (typeof m === "string" ? m : m?.id ?? m?.name ?? ""))
+        .filter((id: string) => id.length > 0);
+      if (!ids.length) throw new Error("No models found in response");
+      ids.sort();
+      setFetchedModels(ids);
+      setSelectedIds(new Set(ids));
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  function applyFetchedModels(mode: "prepend" | "append" | "replace") {
+    if (!form || !selectedIds.size) return;
+    const existing = form.models
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const picked = [...selectedIds];
+    let merged: string[];
+    if (mode === "replace") {
+      merged = picked;
+    } else if (mode === "prepend") {
+      merged = [...picked, ...existing.filter((id) => !selectedIds.has(id))];
+    } else {
+      const existSet = new Set(existing);
+      merged = [...existing, ...picked.filter((id) => !existSet.has(id))];
+    }
+    setForm({ ...form, models: merged.join("\n") });
+    setFetchOpen(false);
   }
 
   async function save() {
@@ -388,6 +459,15 @@ export function Providers() {
                   }
                 />
               </Field>
+              <div>
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  onClick={() => setFetchOpen(true)}
+                >
+                  {t("providers.fetchModels" as TK)}
+                </Button>
+              </div>
               <Field
                 label={t("providers.modelRoutes" as TK)}
                 hint={t("providers.modelRoutesHint" as TK)}
@@ -517,6 +597,138 @@ export function Providers() {
                 onClick={save}
               >
                 {form?.id ? t("common.save" as TK) : t("common.create" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={fetchOpen} onOpenChange={(_, d) => !d.open && setFetchOpen(false)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>
+              {t("providers.fetchModelsTitle" as TK)}
+            </DialogTitle>
+            <DialogContent
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+                paddingTop: 8,
+                minWidth: 360,
+              }}
+            >
+              <Field label={t("providers.fetchTokenLabel" as TK)} hint={t("providers.fetchTokenHint" as TK)}>
+                <Input
+                  type="password"
+                  value={fetchToken}
+                  placeholder="sk-…"
+                  onChange={(_, d) => setFetchToken(d.value)}
+                />
+              </Field>
+              <Button
+                appearance="primary"
+                disabled={fetching || !fetchToken || !form?.base_url}
+                onClick={fetchModelsFromApi}
+              >
+                {fetching
+                  ? t("providers.fetching" as TK)
+                  : t("providers.fetchBtn" as TK)}
+              </Button>
+              {fetching && (
+                <div style={{ display: "flex", justifyContent: "center", padding: 8 }}>
+                  <Spinner size="small" />
+                </div>
+              )}
+              {fetchError && (
+                <div style={{ color: tokens.colorStatusDangerForeground1, fontSize: 13 }}>
+                  {fetchError}
+                </div>
+              )}
+              {fetchedModels.length > 0 && (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, color: tokens.colorNeutralForeground3 }}>
+                      {fetchedModels.length} {t("providers.modelsFound" as TK)}
+                    </span>
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      onClick={() =>
+                        setSelectedIds(
+                          selectedIds.size === fetchedModels.length
+                            ? new Set()
+                            : new Set(fetchedModels),
+                        )
+                      }
+                    >
+                      {selectedIds.size === fetchedModels.length
+                        ? t("providers.deselectAll" as TK)
+                        : t("providers.selectAll" as TK)}
+                    </Button>
+                  </div>
+                  <div
+                    style={{
+                      maxHeight: 240,
+                      overflowY: "auto",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      padding: 4,
+                      border: `1px solid ${tokens.colorNeutralStroke2}`,
+                      borderRadius: 4,
+                    }}
+                  >
+                    {fetchedModels.map((id) => (
+                      <Checkbox
+                        key={id}
+                        label={id}
+                        checked={selectedIds.has(id)}
+                        onChange={(_, d) =>
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            d.checked ? next.add(id) : next.delete(id);
+                            return next;
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Button
+                      appearance="primary"
+                      icon={<ArrowLeftRegular />}
+                      disabled={!selectedIds.size}
+                      onClick={() => applyFetchedModels("prepend")}
+                    >
+                      {t("providers.prepend" as TK)}
+                    </Button>
+                    <Button
+                      appearance="primary"
+                      icon={<ArrowRightRegular />}
+                      disabled={!selectedIds.size}
+                      onClick={() => applyFetchedModels("append")}
+                    >
+                      {t("providers.append" as TK)}
+                    </Button>
+                    <Button
+                      appearance="primary"
+                      icon={<ArrowSwapRegular />}
+                      disabled={!selectedIds.size}
+                      onClick={() => applyFetchedModels("replace")}
+                    >
+                      {t("providers.replace" as TK)}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="secondary"
+                onClick={() => setFetchOpen(false)}
+              >
+                {t("common.close" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
