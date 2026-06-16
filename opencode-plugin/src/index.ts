@@ -313,22 +313,37 @@ function opencodeConfigPath(): string {
   )
 }
 
+function authJsonPath(): string {
+  return join(
+    process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"),
+    "opencode",
+    "auth.json",
+  )
+}
+
+function loadAuthToken(): string | undefined {
+  try {
+    const path = authJsonPath()
+    if (!existsSync(path)) return undefined
+    const raw = readFileSync(path, "utf8")
+    const auth = JSON.parse(raw)
+    const entry = auth?.[PROVIDER_ID]
+    if (entry?.type === "api" && typeof entry.key === "string" && entry.key.startsWith("vs-")) {
+      return entry.key
+    }
+  } catch {
+    // auth.json not present or malformed — auth loader will handle this.
+  }
+  return undefined
+}
+
 function loadPersistedBaseUrl(): string | undefined {
   try {
     if (!existsSync(opencodeConfigPath())) return undefined
     const raw = readFileSync(opencodeConfigPath(), "utf8")
     const cfg = JSON.parse(stripJsonc(raw))
-    if (!cfg || !Array.isArray(cfg.plugin)) return undefined
-    for (const p of cfg.plugin) {
-      const isArr = Array.isArray(p)
-      const name: string | undefined = isArr ? p[0] : typeof p === "string" ? p : undefined
-      if (name && (name.includes("voidswitch") || name === "opencode-voidswitch")) {
-        if (isArr && p[1] && typeof p[1] === "object" && typeof p[1].url === "string") {
-          return p[1].url.replace(/\/+$/, "")
-        }
-        break
-      }
-    }
+    const baseURL = cfg?.provider?.[PROVIDER_ID]?.options?.baseURL
+    if (typeof baseURL === "string") return stripV1(baseURL)
   } catch (e) {
     console.error("[VoidSwitch] loadPersistedBaseUrl failed:", e)
   }
@@ -341,23 +356,14 @@ function persistBaseUrl(url: string | undefined): void {
     if (!existsSync(path)) return
     const raw = readFileSync(path, "utf8")
     const cfg = JSON.parse(stripJsonc(raw))
-    if (!cfg || !Array.isArray(cfg.plugin)) return
-    for (const p of cfg.plugin) {
-      const isArr = Array.isArray(p)
-      const name: string | undefined = isArr ? p[0] : typeof p === "string" ? p : undefined
-      if (name && (name.includes("voidswitch") || name === "opencode-voidswitch")) {
-        if (isArr) {
-          if (url) {
-            p[1] = p[1] && typeof p[1] === "object" ? { ...p[1], url } : { url }
-          } else if (p[1] && typeof p[1] === "object") {
-            delete (p[1] as Record<string, unknown>).url
-          }
-        } else if (url) {
-          const idx = cfg.plugin.indexOf(p)
-          cfg.plugin[idx] = [name, { url }]
-        }
-        break
-      }
+    if (!cfg) return
+    if (!cfg.provider) cfg.provider = {}
+    if (!cfg.provider[PROVIDER_ID]) cfg.provider[PROVIDER_ID] = {}
+    if (!cfg.provider[PROVIDER_ID].options) cfg.provider[PROVIDER_ID].options = {}
+    if (url) {
+      cfg.provider[PROVIDER_ID].options.baseURL = url.replace(/\/+$/, "") + "/v1"
+    } else {
+      delete cfg.provider[PROVIDER_ID].options.baseURL
     }
     writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
   } catch (e) {
@@ -426,10 +432,12 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
 
   /** Ask the gateway to refresh its catalog from the providers; returns a status line. */
   async function syncModels(): Promise<string> {
+    const token = lastToken ?? loadAuthToken()
+    if (token && !lastToken) lastToken = token
     try {
       const res = await fetch(`${gatewayV1}/models/sync`, {
         method: "POST",
-        headers: lastToken ? { "x-api-key": lastToken } : {},
+        headers: token ? { "x-api-key": token } : {},
       })
       if (res.status === 401)
         return "couldn't refresh models — not authenticated. Run /connect and paste a vs-… token first."
@@ -501,8 +509,6 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       addCommand("effort", "VoidSwitch reasoning effort: low|medium|high|xhigh|max|ultracode|auto [+ optional prompt]")
       addCommand("fast", "VoidSwitch fast mode: on|off [+ optional prompt]")
       addCommand("ultracode", "VoidSwitch ultracode — xhigh effort [+ optional prompt]")
-      addCommand("sync-models", "VoidSwitch: refresh the available model list from the gateway")
-      addCommand("switch-base-url", "VoidSwitch: switch gateway base URL (blank to reset to default)")
     },
 
     // /effort, /fast, /ultracode — set the per-session override, show a toast,
@@ -513,56 +519,6 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       output: { parts: any[] },
     ) => {
       try {
-        // /sync-models — refresh the platform catalog from the providers,
-        // show a toast, and throw to skip the LLM turn. If the user appended
-        // a prompt it flows through to the model.
-        if (input.command === "sync-models") {
-          const arg = (input.arguments ?? "").trim()
-          const note = await syncModels()
-          const ok = !note.includes("couldn't") && !note.includes("not authenticated")
-          if (ok) {
-            try {
-              const infos = await fetchModels(lastToken)
-              const ids = infos.map((m) => m.id)
-              persistModels(ids)
-              await opn.tui.showToast({ body: { message: `VoidSwitch: ${note} — ${ids.length} models written to config. Reopen the model picker to see changes.`, variant: "success" } }).catch(() => {})
-            } catch (e) {
-              console.error("[VoidSwitch] sync-models fetch/persist failed:", e)
-              await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
-            }
-          } else {
-            await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "error" } }).catch(() => {})
-          }
-          if (arg) { setCommandText(output, arg); return }
-          throw new CommandHandledError()
-        }
-        // /switch-base-url — override the gateway base URL (e.g. to use a local IP on
-        // the same network). Blank resets to default. Persisted to opencode.json.
-        if (input.command === "switch-base-url") {
-          const arg = (input.arguments ?? "").trim()
-          const st = sessionState.get(input.sessionID) ?? {}
-          let note: string
-          if (!arg) {
-            persistBaseUrl(undefined)
-            delete st.baseUrl
-            opt.url = undefined
-            gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
-            gatewayV1 = `${gateway}/v1`
-            sessionState.set(input.sessionID, st)
-            note = "base URL reset to default"
-          } else {
-            const normalised = arg.replace(/\/+$/, "")
-            persistBaseUrl(normalised)
-            st.baseUrl = normalised
-            opt.url = normalised
-            gateway = normalised
-            gatewayV1 = `${gateway}/v1`
-            sessionState.set(input.sessionID, st)
-            note = `base URL set to ${gateway}`
-          }
-          await opn.tui.showToast({ body: { message: `VoidSwitch: ${note}`, variant: "success" } }).catch(() => {})
-          throw new CommandHandledError()
-        }
         if (input.command !== "effort" && input.command !== "fast" && input.command !== "ultracode") return
         const arg = (input.arguments ?? "").trim()
         const [first, ...restWords] = arg.split(/\s+/).filter(Boolean)
@@ -611,16 +567,11 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         if (prompt) { setCommandText(output, prompt); return }
         throw new CommandHandledError()
       } catch (err) {
-        // Catch CommandHandledError (and compatible error types from other plugins)
-        // to signal "command executed, skip LLM" without creating new session.
-        // Error.name check matches our CommandHandledError, message check is fallback.
         if (err instanceof Error &&
             (err.name === "CommandHandledError" || err.message?.includes("-command-handled"))) {
-          // Silently handle - don't re-throw, just return (command already executed)
           return
         }
-        // Re-throw other errors
-        throw err
+        console.error("[VoidSwitch] command.execute.before error:", err)
       }
     },
 
@@ -738,7 +689,68 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
           },
         }
       },
-      methods: [{ type: "api", label: "Paste a VoidSwitch token (vs-…)" }],
+      methods: [
+        { type: "api", label: "Paste a VoidSwitch token (vs-…)" },
+        {
+          type: "oauth" as const,
+          label: "Configure VoidSwitch (Base URL / Sync Models)",
+          async authorize() {
+            const { createInterface } = await import("node:readline/promises")
+            const { stdin, stdout } = await import("node:process")
+            const rl = createInterface({ input: stdin, output: stdout })
+            try {
+              console.log("\n═══ VoidSwitch Configuration ═══")
+              console.log("1. Switch Gateway Base URL")
+              console.log("2. Sync Models from Gateway")
+              const action = (await rl.question("\nChoose an option (1-2, Enter to cancel): ")).trim()
+              if (action === "1") {
+                const current = loadPersistedBaseUrl() ?? gateway
+                console.log(`Current base URL: ${current}`)
+                const url = (await rl.question("New Base URL (blank to reset to default): ")).trim()
+                if (url) {
+                  const normalised = url.replace(/\/+$/, "")
+                  persistBaseUrl(normalised)
+                  opt.url = normalised
+                  gateway = normalised
+                  gatewayV1 = `${gateway}/v1`
+                  console.log(`\nBase URL set to ${gateway}.`)
+                  console.log("Restart OpenCode for the change to take full effect.")
+                } else {
+                  persistBaseUrl(undefined)
+                  opt.url = undefined
+                  gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
+                  gatewayV1 = `${gateway}/v1`
+                  console.log(`\nBase URL reset to default: ${gateway}`)
+                }
+              } else if (action === "2") {
+                console.log("\nSyncing models from gateway...")
+                const note = await syncModels()
+                console.log(note)
+                if (!note.includes("couldn't") && !note.includes("not authenticated")) {
+                  try {
+                    const infos = await fetchModels(lastToken ?? loadAuthToken())
+                    const ids = infos.map((m) => m.id)
+                    persistModels(ids)
+                    console.log(`${ids.length} models written to config. Reopen the model picker to see changes.`)
+                  } catch (e) {
+                    console.error("[VoidSwitch] model persist failed:", e)
+                  }
+                }
+              }
+            } finally {
+              rl.close()
+            }
+            return {
+              url: "",
+              instructions: "",
+              method: "auto" as const,
+              async callback() {
+                return { type: "failed" as const }
+              },
+            }
+          },
+        },
+      ],
     },
 
     // Live model list from the gateway; claude models get effort/fast variants.
