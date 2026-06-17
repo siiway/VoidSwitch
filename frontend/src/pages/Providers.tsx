@@ -144,6 +144,16 @@ export function Providers() {
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [fetchError, setFetchError] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [placeholderVals, setPlaceholderVals] = useState<Record<string, string>>({});
+
+  const phKeys = [
+    ...new Set(
+      ((form?.base_url ?? "").match(/\{(\w+)\}/g) ?? []).map((m) =>
+        m.slice(1, -1),
+      ),
+    ),
+  ];
+  const allPhFilled = phKeys.every((k) => (placeholderVals[k] ?? "").trim());
 
   const PROXY_MODE_LABEL: Record<ProxyMode, string> = {
     all: t("providers.proxyModeAll" as TK),
@@ -192,33 +202,17 @@ export function Providers() {
     setFetchError("");
     setFetchedModels([]);
     try {
-      const base = form.base_url.replace(/\/+$/, "");
-      const url = `${base}/models`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${fetchToken}` },
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `${res.status} ${res.statusText}`);
-      }
-      const json = await res.json();
-      let items: any[];
-      if (Array.isArray(json)) {
-        items = json;
-      } else if (Array.isArray(json.data)) {
-        items = json.data;
-      } else if (Array.isArray(json.models)) {
-        items = json.models;
-      } else {
-        throw new Error("Unexpected response format");
-      }
-      const ids: string[] = items
-        .map((m: any) => (typeof m === "string" ? m : m?.id ?? m?.name ?? ""))
-        .filter((id: string) => id.length > 0);
-      if (!ids.length) throw new Error("No models found in response");
-      ids.sort();
-      setFetchedModels(ids);
-      setSelectedIds(new Set(ids));
+      const url = form.base_url.replace(/\{(\w+)\}/g, (_, k: string) =>
+        placeholderVals[k]?.trim() || `{${k}}`,
+      );
+      const { models } = await api.post<{ models: string[] }>(
+        "/api/admin/providers/fetch-models",
+        { base_url: url, token: fetchToken },
+      );
+      if (!models?.length) throw new Error("No models found in response");
+      const sorted = [...models].sort();
+      setFetchedModels(sorted);
+      setSelectedIds(new Set(sorted));
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -492,6 +486,24 @@ export function Providers() {
                       {t("common.close" as TK)}
                     </Button>
                   </div>
+                  {phKeys.length > 0 && (
+                    <>
+                      {phKeys.map((k) => (
+                        <Field key={k} label={k} required>
+                          <Input
+                            value={placeholderVals[k] ?? ""}
+                            placeholder={`Enter value for {${k}}`}
+                            onChange={(_, d) =>
+                              setPlaceholderVals((prev) => ({
+                                ...prev,
+                                [k]: d.value,
+                              }))
+                            }
+                          />
+                        </Field>
+                      ))}
+                    </>
+                  )}
                   <Field label={t("providers.fetchTokenLabel" as TK)} hint={t("providers.fetchTokenHint" as TK)}>
                     <Input
                       type="password"
@@ -502,7 +514,7 @@ export function Providers() {
                   </Field>
                   <Button
                     appearance="primary"
-                    disabled={fetching || !fetchToken || !form?.base_url}
+                    disabled={fetching || !fetchToken || !form?.base_url || (phKeys.length > 0 && !allPhFilled)}
                     onClick={fetchModelsFromApi}
                   >
                     {fetching

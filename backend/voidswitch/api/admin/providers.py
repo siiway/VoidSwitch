@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -198,3 +200,60 @@ async def delete_provider(
 @router.get("/catalog/types")
 async def provider_catalog(_: User = Depends(get_current_user)) -> list[dict[str, object]]:
     return adapter_catalog()
+
+
+class FetchModelsRequest(BaseModel):
+    base_url: str
+    token: str
+
+
+@router.post("/fetch-models")
+async def fetch_provider_models(
+    body: FetchModelsRequest,
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Proxy a GET /models call to the provider, returning parsed model ids.
+
+    Avoids CORS when the admin dashboard tries to call the provider API directly.
+    """
+    base = body.base_url.rstrip("/")
+    url = f"{base}/models"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            r = await client.get(url, headers={"Authorization": f"Bearer {body.token}"})
+    except httpx.TimeoutException:
+        raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "Provider did not respond in time.")
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Could not reach provider: {exc}")
+
+    if r.status_code >= 400:
+        detail = r.text[:512]
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Provider returned {r.status_code}: {detail}",
+        )
+
+    try:
+        data = r.json()
+    except Exception:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Provider returned non-JSON response.")
+
+    items: list = []
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("data", data.get("models", []))
+
+    if not isinstance(items, list):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Unexpected response format from provider.")
+
+    model_ids: list[str] = []
+    for m in items:
+        if isinstance(m, str):
+            model_ids.append(m)
+        elif isinstance(m, dict):
+            mid = m.get("id") or m.get("name") or ""
+            if mid:
+                model_ids.append(str(mid))
+
+    return {"models": model_ids}
