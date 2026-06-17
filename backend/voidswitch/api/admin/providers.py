@@ -224,6 +224,15 @@ async def fetch_provider_models(
     path = body.path.strip()
     if path.startswith("http://") or path.startswith("https://"):
         url = path
+    elif "/.." in path or path.startswith(".."):
+        parts = base.split("/")
+        for seg in path.split("/"):
+            if seg == "..":
+                if len(parts) > 3:
+                    parts.pop()
+            else:
+                parts.append(seg)
+        url = "/".join(parts)
     else:
         url = f"{base}/{path.lstrip('/')}"
     method = body.method.upper()
