@@ -267,6 +267,7 @@ async def cleanup_keys(
     provider_id: int,
     body: ApiKeyCleanup,
     request: Request,
+    pool: str | None = None,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
@@ -276,6 +277,8 @@ async def cleanup_keys(
     For ``insufficient_balance`` an optional ``min_days`` requires the key to have
     been disabled for at least that many days (based on ``disabled_since``) before
     it is removed. Members only clean up keys they added; staff clean up any.
+
+    An optional ``pool`` query parameter restricts cleanup to a single pool tag.
     """
     await _get_provider(session, provider_id)
     if body.target not in _CLEANUP_TARGETS:
@@ -287,6 +290,8 @@ async def cleanup_keys(
         ApiKey.provider_id == provider_id,
         ApiKey.status == body.target,
     )
+    if pool is not None:
+        stmt = stmt.where(ApiKey.pool == pool)
     if not is_staff(user):
         stmt = stmt.where(ApiKey.added_by == user.id)
     keys = (await session.execute(stmt)).scalars().all()

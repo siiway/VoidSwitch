@@ -100,6 +100,8 @@ export function ProviderKeys() {
   // Which pool a "rescan all" targets: "__all__" = whole provider,
   // "__untagged__" = the empty pool, otherwise a specific pool tag.
   const [scanPool, setScanPool] = useState("__all__");
+  // Pool scope for cleanup — same semantics as scanPool.
+  const [cleanPool, setCleanPool] = useState("__all__");
 
   // Edit-key dialog state.
   const [editing, setEditing] = useState<ApiKey | null>(null);
@@ -183,11 +185,20 @@ export function ProviderKeys() {
   async function cleanup(target: "invalid" | "insufficient_balance") {
     const isBalance = target === "insufficient_balance";
     const label = isBalance ? "no-balance" : "invalid";
+    let query = "";
+    let scope = "all keys";
+    if (cleanPool === "__untagged__") {
+      query = "?pool=";
+      scope = "untagged pool";
+    } else if (cleanPool !== "__all__") {
+      query = `?pool=${encodeURIComponent(cleanPool)}`;
+      scope = `pool "${cleanPool}"`;
+    }
     const ok = await confirm({
       title: `Clear ${label} keys`,
       message: isBalance
-        ? `Delete keys with no balance for at least ${cleanDays} day(s)? This cannot be undone.`
-        : t("providerKeys.cleanupConfirmMsg" as TK),
+        ? `Delete ${scope} with no balance for at least ${cleanDays} day(s)? This cannot be undone.`
+        : `Delete ${scope} rejected as invalid? This cannot be undone.`,
       confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
@@ -195,7 +206,7 @@ export function ProviderKeys() {
     setCleaning(true);
     try {
       const r = await api.post<{ deleted: number }>(
-        `/api/admin/providers/${providerId}/keys/cleanup`,
+        `/api/admin/providers/${providerId}/keys/cleanup${query}`,
         isBalance
           ? { target, min_days: cleanDays }
           : { target, min_days: 0 },
@@ -535,6 +546,35 @@ export function ProviderKeys() {
             flexWrap: "wrap",
           }}
         >
+          <Field label={t("providerKeys.rescanScope" as TK)}>
+            <Dropdown
+              style={{ minWidth: 150 }}
+              selectedOptions={[cleanPool]}
+              value={
+                cleanPool === "__all__"
+                  ? t("providerKeys.allPools" as TK)
+                  : cleanPool === "__untagged__"
+                    ? "(untagged)"
+                    : cleanPool
+              }
+              onOptionSelect={(_, d) =>
+                setCleanPool(d.optionValue ?? "__all__")
+              }
+            >
+              <Option value="__all__" text={t("providerKeys.allPools" as TK)}>
+                {t("providerKeys.allPools" as TK)}
+              </Option>
+              {pools.map((p) => (
+                <Option
+                  key={p === "" ? "__untagged__" : p}
+                  value={p === "" ? "__untagged__" : p}
+                  text={p === "" ? "(untagged)" : p}
+                >
+                  {p === "" ? "(untagged)" : p}
+                </Option>
+              ))}
+            </Dropdown>
+          </Field>
           <Field label={t("providerKeys.noBalanceDays" as TK)}>
             <SpinButton
               value={cleanDays}
