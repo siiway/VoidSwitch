@@ -123,7 +123,9 @@ export function Settings() {
                 <SpinButton
                   value={value}
                   min={0}
-                  onChange={(_, d) => set(key, d.value ?? value)}
+                  onChange={(_, d) => {
+                    if (d.value !== undefined) set(key, d.value);
+                  }}
                 />
               </Field>
             );

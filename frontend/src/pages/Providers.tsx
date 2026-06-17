@@ -468,6 +468,137 @@ export function Providers() {
                   {t("providers.fetchModels" as TK)}
                 </Button>
               </div>
+              {fetchOpen && (
+                <div
+                  style={{
+                    border: `1px solid ${tokens.colorNeutralStroke2}`,
+                    borderRadius: 8,
+                    padding: 16,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                    background: tokens.colorNeutralBackground2,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontWeight: 600 }}>
+                      {t("providers.fetchModelsTitle" as TK)}
+                    </span>
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      onClick={() => setFetchOpen(false)}
+                    >
+                      {t("common.close" as TK)}
+                    </Button>
+                  </div>
+                  <Field label={t("providers.fetchTokenLabel" as TK)} hint={t("providers.fetchTokenHint" as TK)}>
+                    <Input
+                      type="password"
+                      value={fetchToken}
+                      placeholder="sk-…"
+                      onChange={(_, d) => setFetchToken(d.value)}
+                    />
+                  </Field>
+                  <Button
+                    appearance="primary"
+                    disabled={fetching || !fetchToken || !form?.base_url}
+                    onClick={fetchModelsFromApi}
+                  >
+                    {fetching
+                      ? t("providers.fetching" as TK)
+                      : t("providers.fetchBtn" as TK)}
+                  </Button>
+                  {fetching && (
+                    <div style={{ display: "flex", justifyContent: "center", padding: 8 }}>
+                      <Spinner size="small" />
+                    </div>
+                  )}
+                  {fetchError && (
+                    <div style={{ color: tokens.colorStatusDangerForeground1, fontSize: 13 }}>
+                      {fetchError}
+                    </div>
+                  )}
+                  {fetchedModels.length > 0 && (
+                    <>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 13, color: tokens.colorNeutralForeground3 }}>
+                          {fetchedModels.length} {t("providers.modelsFound" as TK)}
+                        </span>
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          onClick={() =>
+                            setSelectedIds(
+                              selectedIds.size === fetchedModels.length
+                                ? new Set()
+                                : new Set(fetchedModels),
+                            )
+                          }
+                        >
+                          {selectedIds.size === fetchedModels.length
+                            ? t("providers.deselectAll" as TK)
+                            : t("providers.selectAll" as TK)}
+                        </Button>
+                      </div>
+                      <div
+                        style={{
+                          maxHeight: 240,
+                          overflowY: "auto",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 4,
+                          padding: 4,
+                          border: `1px solid ${tokens.colorNeutralStroke2}`,
+                          borderRadius: 4,
+                          background: tokens.colorNeutralBackground1,
+                        }}
+                      >
+                        {fetchedModels.map((id) => (
+                          <Checkbox
+                            key={id}
+                            label={id}
+                            checked={selectedIds.has(id)}
+                            onChange={(_, d) =>
+                              setSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                d.checked ? next.add(id) : next.delete(id);
+                                return next;
+                              })
+                            }
+                          />
+                        ))}
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Button
+                          appearance="primary"
+                          icon={<ArrowLeftRegular />}
+                          disabled={!selectedIds.size}
+                          onClick={() => applyFetchedModels("prepend")}
+                        >
+                          {t("providers.prepend" as TK)}
+                        </Button>
+                        <Button
+                          appearance="primary"
+                          icon={<ArrowRightRegular />}
+                          disabled={!selectedIds.size}
+                          onClick={() => applyFetchedModels("append")}
+                        >
+                          {t("providers.append" as TK)}
+                        </Button>
+                        <Button
+                          appearance="primary"
+                          icon={<ArrowSwapRegular />}
+                          disabled={!selectedIds.size}
+                          onClick={() => applyFetchedModels("replace")}
+                        >
+                          {t("providers.replace" as TK)}
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               <Field
                 label={t("providers.modelRoutes" as TK)}
                 hint={t("providers.modelRoutesHint" as TK)}
@@ -597,138 +728,6 @@ export function Providers() {
                 onClick={save}
               >
                 {form?.id ? t("common.save" as TK) : t("common.create" as TK)}
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
-
-      <Dialog open={fetchOpen} onOpenChange={(_, d) => !d.open && setFetchOpen(false)}>
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>
-              {t("providers.fetchModelsTitle" as TK)}
-            </DialogTitle>
-            <DialogContent
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 12,
-                paddingTop: 8,
-                minWidth: 360,
-              }}
-            >
-              <Field label={t("providers.fetchTokenLabel" as TK)} hint={t("providers.fetchTokenHint" as TK)}>
-                <Input
-                  type="password"
-                  value={fetchToken}
-                  placeholder="sk-…"
-                  onChange={(_, d) => setFetchToken(d.value)}
-                />
-              </Field>
-              <Button
-                appearance="primary"
-                disabled={fetching || !fetchToken || !form?.base_url}
-                onClick={fetchModelsFromApi}
-              >
-                {fetching
-                  ? t("providers.fetching" as TK)
-                  : t("providers.fetchBtn" as TK)}
-              </Button>
-              {fetching && (
-                <div style={{ display: "flex", justifyContent: "center", padding: 8 }}>
-                  <Spinner size="small" />
-                </div>
-              )}
-              {fetchError && (
-                <div style={{ color: tokens.colorStatusDangerForeground1, fontSize: 13 }}>
-                  {fetchError}
-                </div>
-              )}
-              {fetchedModels.length > 0 && (
-                <>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, color: tokens.colorNeutralForeground3 }}>
-                      {fetchedModels.length} {t("providers.modelsFound" as TK)}
-                    </span>
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      onClick={() =>
-                        setSelectedIds(
-                          selectedIds.size === fetchedModels.length
-                            ? new Set()
-                            : new Set(fetchedModels),
-                        )
-                      }
-                    >
-                      {selectedIds.size === fetchedModels.length
-                        ? t("providers.deselectAll" as TK)
-                        : t("providers.selectAll" as TK)}
-                    </Button>
-                  </div>
-                  <div
-                    style={{
-                      maxHeight: 240,
-                      overflowY: "auto",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      padding: 4,
-                      border: `1px solid ${tokens.colorNeutralStroke2}`,
-                      borderRadius: 4,
-                    }}
-                  >
-                    {fetchedModels.map((id) => (
-                      <Checkbox
-                        key={id}
-                        label={id}
-                        checked={selectedIds.has(id)}
-                        onChange={(_, d) =>
-                          setSelectedIds((prev) => {
-                            const next = new Set(prev);
-                            d.checked ? next.add(id) : next.delete(id);
-                            return next;
-                          })
-                        }
-                      />
-                    ))}
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <Button
-                      appearance="primary"
-                      icon={<ArrowLeftRegular />}
-                      disabled={!selectedIds.size}
-                      onClick={() => applyFetchedModels("prepend")}
-                    >
-                      {t("providers.prepend" as TK)}
-                    </Button>
-                    <Button
-                      appearance="primary"
-                      icon={<ArrowRightRegular />}
-                      disabled={!selectedIds.size}
-                      onClick={() => applyFetchedModels("append")}
-                    >
-                      {t("providers.append" as TK)}
-                    </Button>
-                    <Button
-                      appearance="primary"
-                      icon={<ArrowSwapRegular />}
-                      disabled={!selectedIds.size}
-                      onClick={() => applyFetchedModels("replace")}
-                    >
-                      {t("providers.replace" as TK)}
-                    </Button>
-                  </div>
-                </>
-              )}
-            </DialogContent>
-            <DialogActions>
-              <Button
-                appearance="secondary"
-                onClick={() => setFetchOpen(false)}
-              >
-                {t("common.close" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
