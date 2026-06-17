@@ -83,6 +83,7 @@ const useStyles = makeStyles({
 interface EditState {
   model_id: string;
   mapped_id: string;
+  display_name: string;
   description: string;
   enabled: boolean;
   config: string;
@@ -184,6 +185,7 @@ export function Models() {
     setEdit({
       model_id: m.model_id,
       mapped_id: m.mapped_id ?? "",
+      display_name: m.display_name ?? "",
       description: m.description ?? "",
       enabled: m.enabled,
       config: prettyJson(m.opencode_config),
@@ -214,6 +216,7 @@ export function Models() {
       await api.put("/api/models", {
         model_id: edit.model_id,
         mapped_id: edit.mapped_id.trim(),
+        display_name: edit.display_name.trim(),
         description: edit.description,
         opencode_config: config,
         enabled: edit.enabled,
@@ -341,7 +344,12 @@ export function Models() {
               <Card key={m.model_id} className={styles.card}>
                 <div className={styles.head}>
                   <div style={{ minWidth: 0 }}>
-                    <Text weight="semibold" className={styles.modelId}>
+                    {m.display_name && (
+                      <Text weight="semibold" block>
+                        {m.display_name}
+                      </Text>
+                    )}
+                    <Text weight={m.display_name ? "regular" : "semibold"} className={styles.modelId}>
                       {m.public_id}
                     </Text>
                     {m.mapped_id ? (
@@ -428,6 +436,18 @@ export function Models() {
             >
               <Field label={t("models.modelId" as TK)}>
                 <Input value={edit?.model_id ?? ""} disabled />
+              </Field>
+              <Field
+                label={t("models.displayName" as TK)}
+                hint={t("models.displayNameHint" as TK)}
+              >
+                <Input
+                  value={edit?.display_name ?? ""}
+                  placeholder={t("models.displayNamePlaceholder" as TK)}
+                  onChange={(_, d) =>
+                    setEdit((f) => (f ? { ...f, display_name: d.value } : f))
+                  }
+                />
               </Field>
               <Field
                 label={t("models.publicId" as TK)}

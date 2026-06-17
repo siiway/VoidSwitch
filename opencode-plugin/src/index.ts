@@ -102,7 +102,7 @@ const FALLBACK_MODELS = [
  * admins can tune name/limit/cost/capabilities/variants per model from the
  * dashboard's Models page). Both come from `<gateway>/v1/models`.
  */
-type ModelInfo = { id: string; description?: string; opencode?: Record<string, any> }
+type ModelInfo = { id: string; display_name?: string; description?: string; opencode?: Record<string, any> }
 
 const FALLBACK_MODEL_INFOS: ModelInfo[] = FALLBACK_MODELS.map((id) => ({ id }))
 
@@ -230,7 +230,7 @@ function buildModel(info: ModelInfo, gatewayV1: string): Record<string, any> {
   const model: Record<string, any> = {
     id,
     providerID: PROVIDER_ID,
-    name: prettyName(id),
+    name: info.display_name || prettyName(id),
     api: { id, url: gatewayV1, npm },
     status: "active",
     release_date: "2025-01-01",
@@ -378,7 +378,7 @@ function persistBaseUrl(url: string | undefined): void {
   }
 }
 
-function persistModels(infos: ModelInfo[], gatewayUrl: string): void {
+function persistModels(infos: ModelInfo[]): void {
   try {
     const path = opencodeConfigPath()
     if (!existsSync(path)) return
@@ -389,12 +389,7 @@ function persistModels(infos: ModelInfo[], gatewayUrl: string): void {
     const models: Record<string, any> = {}
     for (const info of infos) {
       const prev = existing[info.id] ?? {}
-      if (info.opencode || info.description) {
-        const computed = buildModel(info, gatewayUrl)
-        models[info.id] = deepMerge(computed, prev)
-      } else {
-        models[info.id] = prev
-      }
+      models[info.id] = info.opencode ? deepMerge(prev, info.opencode) : prev
     }
     cfg.provider[PROVIDER_ID].models = models
     writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
@@ -436,6 +431,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       const infos: ModelInfo[] = (json?.data ?? [])
         .map((m: any): ModelInfo => ({
           id: m?.id,
+          display_name: typeof m?.display_name === "string" ? m.display_name : undefined,
           description: typeof m?.description === "string" ? m.description : undefined,
           opencode: isPlainObject(m?.opencode) ? m.opencode : undefined,
         }))
@@ -485,32 +481,22 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       // auth store — only then does our loader (and its body-rewriting fetch) run.
       const opts = { ...(existing.options ?? {}), baseURL: gatewayV1 }
       delete (opts as any).apiKey
-      // Fetch the latest models from the gateway so custom OpenCode configs set on
-      // the dashboard's Models page are always applied, even when the models() hook
-      // is not re-invoked. Falls back to the previously-persisted models or the
-      // built-in offline defaults.
-      const token = lastToken ?? loadAuthToken()
-      if (token && !lastToken) lastToken = token
-      const infos = await fetchModels(token)
-      const models: Record<string, any> = {}
-      for (const info of infos) {
-        models[info.id] = buildModel(info, gatewayV1)
-      }
-      const finalModels =
-        Object.keys(models).length
-          ? models
-          : (existing.models && Object.keys(existing.models).length
-              ? existing.models
-              : Object.fromEntries(FALLBACK_MODELS.map((id) => [id, {}])))
+      // A provider with zero models is dropped by OpenCode (so it never shows in
+      // /connect or the picker). Seed the default models when the config has none;
+      // provider.models() replaces them with the live list + effort variants.
+      const models =
+        existing.models && Object.keys(existing.models).length
+          ? existing.models
+          : Object.fromEntries(FALLBACK_MODELS.map((id) => [id, {}]))
       // Auto-wire OpenAI-dialect reasoners (DeepSeek): a user only has to list the id
       // (e.g. "deepseek-v4-flash-lkd": {}). We force the per-model openai-compatible
       // SDK override + the `reasoning_content` interleaved field so chain-of-thought
       // round-trips correctly — while everything else stays on the Anthropic dialect
       // and the single shared VoidSwitch token. (User-supplied fields win, except the
       // provider override, which must point at this gateway's OpenAI endpoint.)
-      for (const [mid, mcfg] of Object.entries(finalModels)) {
+      for (const [mid, mcfg] of Object.entries(models)) {
         if (!isOpenAICompatModel(mid)) continue
-        finalModels[mid] = {
+        models[mid] = {
           reasoning: true,
           tool_call: true,
           interleaved: { field: "reasoning_content" },
@@ -523,7 +509,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         ...existing,
         npm: "@ai-sdk/anthropic",
         options: opts,
-        models: finalModels,
+        models,
       }
 
       // Register the Claude Code-style slash commands (templates are overridden in
@@ -755,7 +741,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
                 if (!note.includes("couldn't") && !note.includes("not authenticated")) {
                   try {
                     const infos = await fetchModels(lastToken ?? loadAuthToken())
-                    persistModels(infos, gatewayV1)
+                    persistModels(infos)
                     console.log(`${infos.length} models written to config. Reopen the model picker to see changes.`)
                   } catch (e) {
                     console.error("[VoidSwitch] model persist failed:", e)

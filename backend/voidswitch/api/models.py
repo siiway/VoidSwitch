@@ -36,6 +36,7 @@ def _to_out(item: models_catalog.CatalogItem) -> ModelOut:
         model_id=item.model_id,
         mapped_id=item.mapped_id,
         public_id=item.public_id,
+        display_name=entry.display_name if entry is not None else None,
         description=entry.description if entry is not None else None,
         opencode_config=entry.opencode_config if entry is not None else {},
         enabled=item.enabled,
@@ -93,6 +94,8 @@ async def upsert_model(
                 "(use it to rename, not to alias to itself).",
             )
         entry.mapped_id = mapped or None
+    if body.display_name is not None:
+        entry.display_name = body.display_name.strip() or None
     if body.description is not None:
         entry.description = body.description
     if body.opencode_config is not None:

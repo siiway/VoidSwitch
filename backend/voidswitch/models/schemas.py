@@ -131,6 +131,7 @@ class ModelOut(BaseModel):
     mapped_id: str | None = None
     # The id clients actually see (``mapped_id`` if set, else ``model_id``).
     public_id: str
+    display_name: str | None = None
     description: str | None = None
     opencode_config: dict = Field(default_factory=dict)
     enabled: bool = True
@@ -151,6 +152,8 @@ class ModelUpsert(BaseModel):
     model_id: str
     # Send "" to clear an existing mapping; omit (null) to leave it unchanged.
     mapped_id: str | None = None
+    # Send "" to clear; omit (null) to leave it unchanged.
+    display_name: str | None = None
     description: str | None = None
     opencode_config: dict | None = None
     enabled: bool | None = None

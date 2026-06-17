@@ -235,3 +235,33 @@ async def test_delete_metadata(client, seeded):
     listed = (await client.get("/api/models", headers=_session_headers())).json()
     chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
     assert chat["registered"] is False
+
+
+async def test_display_name(client, seeded):
+    resp = await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "display_name": "DeepSeek Chat Pro"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["display_name"] == "DeepSeek Chat Pro"
+
+    listed = (await client.get("/api/models", headers=_session_headers())).json()
+    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
+    assert chat["display_name"] == "DeepSeek Chat Pro"
+
+    # /v1/models also advertises display_name.
+    data = (await client.get("/v1/models", headers={"x-api-key": seeded["token"]})).json()["data"]
+    chat = next(m for m in data if m["id"] == "deepseek-chat")
+    assert chat["display_name"] == "DeepSeek Chat Pro"
+
+    # Clear display_name.
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "display_name": ""},
+    )
+    listed = (await client.get("/api/models", headers=_session_headers())).json()
+    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
+    assert chat["display_name"] is None

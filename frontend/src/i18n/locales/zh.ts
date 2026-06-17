@@ -214,6 +214,10 @@ const zh: Translations = {
     editModel: "编辑模型",
     editSelected: "编辑已选（{count}）",
     modelId: "模型 ID",
+    displayName: "显示名称",
+    displayNameHint:
+      "在 OpenCode 模型选择器中显示。优先于下方自定义 OpenCode 配置中的 name。留空使用默认名称。",
+    displayNamePlaceholder: "例如 Claude Opus 4.8",
     publicId: "公开 ID（映射）",
     publicIdHint: "重命名此模型：设置后，客户端只能看到和调用此 ID；原始 ID 将被隐藏和拒绝。留空表示不映射。",
     publicIdPlaceholder: "例如 fast-coder（留空 = 不映射）",

@@ -112,6 +112,7 @@ export interface ModelEntry {
   model_id: string;
   mapped_id?: string | null;
   public_id: string;
+  display_name?: string | null;
   description?: string | null;
   opencode_config: Record<string, unknown>;
   enabled: boolean;

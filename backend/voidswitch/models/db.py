@@ -116,6 +116,7 @@ class ModelEntry(Base, TimestampMixin):
     # hidden from /v1/models and rejected at the gateway, so the upstream id
     # never leaks and two providers' colliding ids can be disambiguated.
     mapped_id: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     # Custom OpenCode model config, deep-merged into the plugin's built model.
     opencode_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

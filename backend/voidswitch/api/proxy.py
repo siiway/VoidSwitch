@@ -244,6 +244,8 @@ async def list_models(
                 "owned_by": provider.name,
             }
             if entry is not None:
+                if entry.display_name:
+                    item["display_name"] = entry.display_name
                 if entry.description:
                     item["description"] = entry.description
                 if entry.opencode_config:
@@ -280,6 +282,8 @@ async def list_models(
                 "owned_by": provider.name,
             }
             if entry is not None:
+                if entry.display_name:
+                    item["display_name"] = entry.display_name
                 if entry.description:
                     item["description"] = entry.description
                 if entry.opencode_config:

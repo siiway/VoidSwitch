@@ -218,6 +218,10 @@ const en = {
     editModel: "Edit model",
     editSelected: "Edit selected ({count})",
     modelId: "Model id",
+    displayName: "Display name",
+    displayNameHint:
+      "Shown in the OpenCode model picker. Takes priority over any name set in the custom OpenCode config below. Leave blank to use the default.",
+    displayNamePlaceholder: "e.g. Claude Opus 4.8",
     publicId: "Public id (mapping)",
     publicIdHint:
       "Rename this model: when set, clients see and call only this id; the original id above is hidden and rejected. Leave blank for no mapping.",
