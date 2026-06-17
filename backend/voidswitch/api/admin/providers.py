@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -17,6 +16,7 @@ from voidswitch.core.auth import (
     require_owner,
 )
 from voidswitch.core.database import get_session
+from voidswitch.core.logging import get_logger
 from voidswitch.models.db import Provider, Proxy, User
 from voidswitch.models.schemas import ProviderCreate, ProviderOut, ProviderUpdate
 from voidswitch.services.providers.registry import (
@@ -24,6 +24,8 @@ from voidswitch.services.providers.registry import (
     adapter_class,
     get_adapter,
 )
+
+log = get_logger("admin.providers")
 
 router = APIRouter(prefix="/api/admin/providers", tags=["admin:providers"])
 
@@ -218,16 +220,37 @@ async def fetch_provider_models(
     """
     base = body.base_url.rstrip("/")
     url = f"{base}/models"
+    log.info("fetch_models_start", url=url)
+
+    import httpx
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-            r = await client.get(url, headers={"Authorization": f"Bearer {body.token}"})
-    except httpx.TimeoutException:
-        raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "Provider did not respond in time.")
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=5.0),
+            follow_redirects=True,
+        ) as client:
+            r = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {body.token}"},
+            )
+    except httpx.TimeoutException as exc:
+        log.error("fetch_models_timeout", url=url, error=str(exc))
+        raise HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            f"Provider timed out ({exc}). Check network connectivity to {url}.",
+        )
     except Exception as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Could not reach provider: {exc}")
+        log.exception("fetch_models_connection_error", url=url)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Could not reach provider: {exc}",
+        )
+
+    log.info("fetch_models_response", url=url, status=r.status_code, content_type=r.headers.get("content-type", ""))
 
     if r.status_code >= 400:
-        detail = r.text[:512]
+        detail = r.text[:1024]
+        log.warning("fetch_models_upstream_error", url=url, status=r.status_code, body=detail)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"Provider returned {r.status_code}: {detail}",
@@ -235,17 +258,25 @@ async def fetch_provider_models(
 
     try:
         data = r.json()
-    except Exception:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Provider returned non-JSON response.")
+    except Exception as exc:
+        log.warning("fetch_models_non_json", url=url, body=r.text[:512])
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Provider returned non-JSON response ({exc}). Body preview: {r.text[:256]}",
+        )
 
     items: list = []
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
-        items = data.get("data", data.get("models", []))
+        items = data.get("data", data.get("models", data.get("result", [])))
 
     if not isinstance(items, list):
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Unexpected response format from provider.")
+        log.warning("fetch_models_bad_format", url=url, data=str(data)[:512])
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Unexpected response format. Keys: {list(data.keys()) if isinstance(data, dict) else 'not an object'}. Body: {str(data)[:256]}",
+        )
 
     model_ids: list[str] = []
     for m in items:
@@ -256,4 +287,5 @@ async def fetch_provider_models(
             if mid:
                 model_ids.append(str(mid))
 
+    log.info("fetch_models_ok", url=url, count=len(model_ids))
     return {"models": model_ids}
