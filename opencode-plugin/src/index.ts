@@ -337,6 +337,13 @@ function loadAuthToken(): string | undefined {
   return undefined
 }
 
+/** Strip ANSI escape sequences and non-printable control characters from readline input. */
+function sanitizeInput(s: string): string {
+  return s
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+}
+
 function loadPersistedBaseUrl(): string | undefined {
   try {
     if (!existsSync(opencodeConfigPath())) return undefined
@@ -371,15 +378,19 @@ function persistBaseUrl(url: string | undefined): void {
   }
 }
 
-function persistModels(modelIds: string[]): void {
+function persistModels(infos: ModelInfo[]): void {
   try {
     const path = opencodeConfigPath()
     if (!existsSync(path)) return
     const raw = readFileSync(path, "utf8")
     const cfg = JSON.parse(stripJsonc(raw))
     if (!cfg || !cfg.provider || !cfg.provider[PROVIDER_ID]) return
+    const existing: Record<string, any> = cfg.provider[PROVIDER_ID].models ?? {}
     const models: Record<string, any> = {}
-    for (const id of modelIds) models[id] = {}
+    for (const info of infos) {
+      const prev = existing[info.id] ?? {}
+      models[info.id] = info.opencode ? deepMerge(prev, info.opencode) : prev
+    }
     cfg.provider[PROVIDER_ID].models = models
     writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
   } catch (e) {
@@ -702,11 +713,11 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
               console.log("\n═══ VoidSwitch Configuration ═══")
               console.log("1. Switch Gateway Base URL")
               console.log("2. Sync Models from Gateway")
-              const action = (await rl.question("\nChoose an option (1-2, Enter to cancel): ")).trim()
+              const action = sanitizeInput(await rl.question("\nChoose an option (1-2, Enter to cancel): ")).trim()
               if (action === "1") {
                 const current = loadPersistedBaseUrl() ?? gateway
                 console.log(`Current base URL: ${current}`)
-                const url = (await rl.question("New Base URL (blank to reset to default): ")).trim()
+                const url = sanitizeInput(await rl.question("New Base URL (blank to reset to default): ")).trim()
                 if (url) {
                   const normalised = url.replace(/\/+$/, "")
                   persistBaseUrl(normalised)
@@ -729,9 +740,8 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
                 if (!note.includes("couldn't") && !note.includes("not authenticated")) {
                   try {
                     const infos = await fetchModels(lastToken ?? loadAuthToken())
-                    const ids = infos.map((m) => m.id)
-                    persistModels(ids)
-                    console.log(`${ids.length} models written to config. Reopen the model picker to see changes.`)
+                    persistModels(infos)
+                    console.log(`${infos.length} models written to config. Reopen the model picker to see changes.`)
                   } catch (e) {
                     console.error("[VoidSwitch] model persist failed:", e)
                   }
@@ -745,7 +755,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
               instructions: "",
               method: "auto" as const,
               async callback() {
-                return { type: "failed" as const }
+                return { type: "success" as const }
               },
             }
           },

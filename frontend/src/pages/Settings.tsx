@@ -124,7 +124,10 @@ export function Settings() {
                   value={value}
                   min={0}
                   onChange={(_, d) => {
-                    if (d.value !== undefined) set(key, d.value);
+                    const next =
+                      d.value ??
+                      (d.displayValue ? Number(d.displayValue) : value);
+                    if (!Number.isNaN(next)) set(key, next);
                   }}
                 />
               </Field>
