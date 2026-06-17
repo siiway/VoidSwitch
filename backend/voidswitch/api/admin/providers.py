@@ -221,8 +221,11 @@ async def fetch_provider_models(
     Avoids CORS when the admin dashboard tries to call the provider API directly.
     """
     base = body.base_url.rstrip("/")
-    path = body.path if body.path.startswith("/") else f"/{body.path}"
-    url = f"{base}{path}"
+    path = body.path.strip()
+    if path.startswith("http://") or path.startswith("https://"):
+        url = path
+    else:
+        url = f"{base}/{path.lstrip('/')}"
     method = body.method.upper()
     if method not in ("GET", "POST"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "method must be GET or POST")

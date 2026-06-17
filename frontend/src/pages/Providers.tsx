@@ -523,7 +523,7 @@ export function Providers() {
                     <Field label="Path" style={{ flex: 1 }}>
                       <Input
                         value={fetchPath}
-                        placeholder="/models"
+                        placeholder="/models (or https://… for full URL override)"
                         onChange={(_, d) => setFetchPath(d.value)}
                       />
                     </Field>
