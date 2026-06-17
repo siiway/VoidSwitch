@@ -207,6 +207,8 @@ async def provider_catalog(_: User = Depends(get_current_user)) -> list[dict[str
 class FetchModelsRequest(BaseModel):
     base_url: str
     token: str
+    method: str = "GET"
+    path: str = "/models"
 
 
 @router.post("/fetch-models")
@@ -214,13 +216,17 @@ async def fetch_provider_models(
     body: FetchModelsRequest,
     _: User = Depends(get_current_user),
 ) -> dict:
-    """Proxy a GET /models call to the provider, returning parsed model ids.
+    """Proxy a GET/POST call to a provider's model-listing endpoint.
 
     Avoids CORS when the admin dashboard tries to call the provider API directly.
     """
     base = body.base_url.rstrip("/")
-    url = f"{base}/models"
-    log.info("fetch_models_start", url=url)
+    path = body.path if body.path.startswith("/") else f"/{body.path}"
+    url = f"{base}{path}"
+    method = body.method.upper()
+    if method not in ("GET", "POST"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "method must be GET or POST")
+    log.info("fetch_models_start", url=url, method=method)
 
     import httpx
 
@@ -229,24 +235,26 @@ async def fetch_provider_models(
             timeout=httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=5.0),
             follow_redirects=True,
         ) as client:
-            r = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {body.token}"},
-            )
+            kw = {"headers": {"Authorization": f"Bearer {body.token}"}}
+            if method == "GET":
+                r = await client.get(url, **kw)
+            else:
+                r = await client.post(url, **kw)
     except httpx.TimeoutException as exc:
         log.error("fetch_models_timeout", url=url, error=str(exc))
         raise HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
             f"Provider timed out ({exc}). Check network connectivity to {url}.",
-        )
+        ) from exc
     except Exception as exc:
         log.exception("fetch_models_connection_error", url=url)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"Could not reach provider: {exc}",
-        )
+        ) from exc
 
-    log.info("fetch_models_response", url=url, status=r.status_code, content_type=r.headers.get("content-type", ""))
+    ct = r.headers.get("content-type", "")
+    log.info("fetch_models_response", url=url, status=r.status_code, content_type=ct)
 
     if r.status_code >= 400:
         detail = r.text[:1024]
@@ -263,7 +271,7 @@ async def fetch_provider_models(
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"Provider returned non-JSON response ({exc}). Body preview: {r.text[:256]}",
-        )
+        ) from exc
 
     items: list = []
     if isinstance(data, list):
@@ -273,9 +281,10 @@ async def fetch_provider_models(
 
     if not isinstance(items, list):
         log.warning("fetch_models_bad_format", url=url, data=str(data)[:512])
+        keys = list(data.keys()) if isinstance(data, dict) else "not an object"
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            f"Unexpected response format. Keys: {list(data.keys()) if isinstance(data, dict) else 'not an object'}. Body: {str(data)[:256]}",
+            f"Unexpected response format. Keys: {keys}. Body: {str(data)[:256]}",
         )
 
     model_ids: list[str] = []

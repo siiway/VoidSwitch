@@ -145,6 +145,8 @@ export function Providers() {
   const [fetchError, setFetchError] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [placeholderVals, setPlaceholderVals] = useState<Record<string, string>>({});
+  const [fetchMethod, setFetchMethod] = useState("GET");
+  const [fetchPath, setFetchPath] = useState("/models");
 
   const phKeys = [
     ...new Set(
@@ -207,7 +209,7 @@ export function Providers() {
       );
       const { models } = await api.post<{ models: string[] }>(
         "/api/admin/providers/fetch-models",
-        { base_url: url, token: fetchToken },
+        { base_url: url, token: fetchToken, method: fetchMethod, path: fetchPath },
       );
       if (!models?.length) throw new Error("No models found in response");
       const sorted = [...models].sort();
@@ -504,6 +506,28 @@ export function Providers() {
                       ))}
                     </>
                   )}
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                    <Field label="Method" style={{ flex: "0 0 auto" }}>
+                      <Dropdown
+                        style={{ minWidth: 80 }}
+                        selectedOptions={[fetchMethod]}
+                        value={fetchMethod}
+                        onOptionSelect={(_, d) =>
+                          d.optionValue && setFetchMethod(d.optionValue)
+                        }
+                      >
+                        <Option value="GET" text="GET">GET</Option>
+                        <Option value="POST" text="POST">POST</Option>
+                      </Dropdown>
+                    </Field>
+                    <Field label="Path" style={{ flex: 1 }}>
+                      <Input
+                        value={fetchPath}
+                        placeholder="/models"
+                        onChange={(_, d) => setFetchPath(d.value)}
+                      />
+                    </Field>
+                  </div>
                   <Field label={t("providers.fetchTokenLabel" as TK)} hint={t("providers.fetchTokenHint" as TK)}>
                     <Input
                       type="password"
