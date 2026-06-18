@@ -14,6 +14,7 @@ from voidswitch.api import auth as auth_api
 from voidswitch.api import install as install_api
 from voidswitch.api import me as me_api
 from voidswitch.api import models as models_api
+from voidswitch.api import provider_api
 from voidswitch.api import proxy as proxy_api
 from voidswitch.api import usage as usage_api
 from voidswitch.api.admin import (
@@ -158,6 +159,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(usage_api.router)
     app.include_router(system_api.router)
 
+    # Mounted per-provider key-management API (its own Swagger UI + OpenAPI
+    # schema at /provider-api/docs). Authenticated by a provider's vsk-… token.
+    app.mount("/provider-api", provider_api.subapp)
+
     @app.get("/healthz", tags=["system"])
     async def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": __version__})
@@ -172,6 +177,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "anthropic": "/v1/messages",
                 "models": "/v1/models",
                 "docs": "/docs",
+                "provider_key_api_docs": "/provider-api/docs",
             },
         }
 

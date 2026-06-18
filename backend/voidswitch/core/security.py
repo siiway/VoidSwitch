@@ -12,11 +12,19 @@ import jwt
 from cryptography.fernet import Fernet, InvalidToken
 
 VOID_TOKEN_PREFIX = "vs-"
+# Per-provider key-management API credential. A distinct prefix keeps it visually
+# separable from client-facing Void-Tokens (``vs-…``).
+PROVIDER_KEY_API_PREFIX = "vsk-"
 
 
 def generate_void_token() -> str:
     """A high-entropy client-facing token. Prefixed for easy identification."""
     return f"{VOID_TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
+
+
+def generate_provider_api_token() -> str:
+    """A high-entropy per-provider key-management token (``vsk-…``)."""
+    return f"{PROVIDER_KEY_API_PREFIX}{secrets.token_urlsafe(32)}"
 
 
 def hash_token(token: str) -> str:

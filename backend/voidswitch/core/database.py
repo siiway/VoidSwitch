@@ -55,6 +55,7 @@ class Database:
                 await conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
             await conn.run_sync(Base.metadata.create_all)
             await conn.run_sync(_add_missing_columns)
+            await conn.run_sync(_backfill_provider_uuids)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -83,6 +84,11 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("providers", "model_routes", "JSON NOT NULL DEFAULT '[]'"),
     ("providers", "added_by", "INTEGER"),
     ("providers", "added_by_name", "VARCHAR(255)"),
+    ("providers", "uuid", "VARCHAR(36)"),
+    ("providers", "key_api_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("providers", "key_api_token_hash", "VARCHAR(64)"),
+    ("providers", "key_api_token_ciphertext", "TEXT"),
+    ("providers", "key_api_token_preview", "VARCHAR(48)"),
     ("api_keys", "pool", "VARCHAR(64) NOT NULL DEFAULT ''"),
     ("api_keys", "added_by", "INTEGER"),
     ("api_keys", "added_by_name", "VARCHAR(255)"),
@@ -105,6 +111,31 @@ def _add_missing_columns(conn: Any) -> None:
         existing = {c["name"] for c in inspector.get_columns(table)}
         if column not in existing:
             conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def _backfill_provider_uuids(conn: Any) -> None:
+    """Assign a uuid to any provider row missing one.
+
+    ``providers.uuid`` was added after the first release; rows created earlier (or
+    via the raw ALTER above) have a NULL/blank value. Generate one per row so the
+    column can be relied on as a stable public id. Idempotent.
+    """
+    import uuid as uuid_lib
+
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
+
+    inspector = sa_inspect(conn)
+    if "providers" not in set(inspector.get_table_names()):
+        return
+    rows = conn.execute(
+        text("SELECT id FROM providers WHERE uuid IS NULL OR uuid = ''")
+    ).fetchall()
+    for (pid,) in rows:
+        conn.execute(
+            text("UPDATE providers SET uuid = :u WHERE id = :i"),
+            {"u": str(uuid_lib.uuid4()), "i": pid},
+        )
 
 
 # Process-wide singleton, set during application startup (main.lifespan).

@@ -104,9 +104,25 @@ voidswitch/
 │   ├── transform.py    OpenAI ⇄ Anthropic translation (incl. streaming)
 │   ├── selector.py     weighted-least-used provider/key/route selection
 │   ├── dispatcher.py   the failover engine
+│   ├── keymgmt.py      shared upstream-key lifecycle (add/edit/balance/cleanup)
 │   └── providers/      BaseProvider + per-vendor adapters
 ├── api/         gateway (/v1/*), auth, self-service (/api/me), admin CRUD
+│   └── provider_api.py mounted per-provider key-management API (/provider-api)
 └── tasks/       background balance probe + proxy resurrector
 ```
+
+## Per-provider key-management API
+
+Each provider can expose an **optional** programmatic key-management credential
+(`vsk-…`). Only owners / co-owners may enable, rotate, reveal, or disable it from
+the dashboard (or `POST /api/admin/providers/{id}/key-api/{enable,rotate,reveal,disable}`).
+
+A holder of an enabled token manages *only that provider's* upstream keys through
+the mounted sub-application at **`/provider-api`** — a standalone FastAPI app with
+its own Swagger UI and OpenAPI schema at **`/provider-api/docs`**. Authenticate
+with `Authorization: Bearer vsk-…` or `X-API-Key: vsk-…`. It supports listing,
+adding, editing (incl. enable/disable), deleting, on-demand balance refresh, and
+bulk cleanup (with `min_days` / `pool`) — the same operations as the dashboard,
+sharing `services/keymgmt.py`. Providers also carry a stable public `uuid`.
 
 See the repository root for the decoupled **frontend** (Bun + React + Fluent UI).

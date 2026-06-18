@@ -18,6 +18,7 @@ export interface User {
 
 export interface Provider {
   id: number;
+  uuid?: string | null;
   name: string;
   type: string;
   base_url: string;
@@ -40,6 +41,18 @@ export interface Provider {
   supports_balance: boolean;
   added_by?: number | null;
   added_by_name?: string | null;
+  key_api_enabled: boolean;
+  key_api_token_preview?: string | null;
+}
+
+// Per-provider key-management API credential (owner-only).
+export interface ProviderKeyApi {
+  provider_id: number;
+  provider_uuid?: string | null;
+  enabled: boolean;
+  token_preview?: string | null;
+  // Present only on enable / rotate / reveal.
+  token?: string;
 }
 
 export type ProxyMode = "all" | "direct" | "selected";

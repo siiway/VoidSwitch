@@ -102,6 +102,8 @@ class ProviderOut(ProviderBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    # Stable opaque public id (used by the key-management API).
+    uuid: str | None = None
     created_at: dt.datetime
     updated_at: dt.datetime
     key_count: int = 0
@@ -111,6 +113,30 @@ class ProviderOut(ProviderBase):
     supports_balance: bool = False
     added_by: int | None = None
     added_by_name: str | None = None
+    # Per-provider key-management API state. The secret itself is never inlined
+    # here — only whether it's enabled and a short non-secret preview.
+    key_api_enabled: bool = False
+    key_api_token_preview: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Provider key-management API credential (owner-only)
+# --------------------------------------------------------------------------- #
+
+
+class ProviderKeyApiOut(BaseModel):
+    """Status of a provider's key-management API credential."""
+
+    provider_id: int
+    provider_uuid: str | None = None
+    enabled: bool = False
+    token_preview: str | None = None
+
+
+class ProviderKeyApiSecret(ProviderKeyApiOut):
+    """Returned on enable / rotate / reveal — carries the plaintext token."""
+
+    token: str
 
 
 # --------------------------------------------------------------------------- #

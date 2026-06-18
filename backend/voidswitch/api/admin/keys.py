@@ -1,18 +1,18 @@
 """Admin: upstream API key pool management (batch add, status, delete).
 
-Also hosts the Claude Code subscription OAuth login (``/oauth/start`` +
-``/oauth/complete``) for ``claude-code`` providers, which mints a credential
-bundle and stores it as a provider key.
+The core key-lifecycle logic lives in :mod:`voidswitch.services.keymgmt` so it is
+shared verbatim with the mounted per-provider key-management API. This module is
+the dashboard-facing surface: it adapts the signed-in user into a
+``keymgmt.Actor`` and keeps the Claude Code subscription OAuth login
+(``/oauth/start`` + ``/oauth/complete``), which mints a credential bundle and
+stores it as a provider key.
 """
 
 from __future__ import annotations
 
-import asyncio
-import datetime as dt
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus
@@ -36,40 +36,19 @@ from voidswitch.models.schemas import (
     ClaudeOAuthComplete,
     ClaudeOAuthStart,
 )
-from voidswitch.services import oauth_tokens, settings_store
-from voidswitch.services.balance import refresh_key_balance
-from voidswitch.services.network import Route, get_pool
-from voidswitch.services.providers.registry import get_adapter
-
-
-def _utcnow() -> dt.datetime:
-    return dt.datetime.now(dt.UTC)
+from voidswitch.services import keymgmt, oauth_tokens
 
 router = APIRouter(prefix="/api/admin/providers/{provider_id}/keys", tags=["admin:keys"])
 
 
-def _preview(raw: str) -> str:
-    raw = raw.strip()
-    if len(raw) <= 10:
-        return raw[:2] + "***"
-    return f"{raw[:4]}…{raw[-4:]}"
-
-
-def _parse_key_line(line: str) -> tuple[str, str | None]:
-    """Split an inbound key line into its secret and an optional ``# comment``.
-
-    A ``#`` introduces an inline description, e.g. ``sk-abc123 # alice's key``.
-    The secret is everything before the first ``#``; the trimmed remainder is the
-    comment (``None`` when absent or blank).
-    """
-    secret, sep, comment = line.partition("#")
-    comment = comment.strip()
-    return secret.strip(), (comment if sep and comment else None)
-
-
-def _oauth_preview(bundle: dict[str, object]) -> str:
-    """A short, non-secret label for an OAuth key (column is 32 chars)."""
-    return f"oauth·{_preview(str(bundle.get('access_token', '')))}"[:32]
+def _actor(user: User, request: Request) -> keymgmt.Actor:
+    return keymgmt.Actor(
+        sub=user.sub,
+        name=actor_display_name(user),
+        user_id=user.id,
+        is_staff=is_staff(user),
+        ip=request.client.host if request.client else None,
+    )
 
 
 async def _get_provider(session: AsyncSession, provider_id: int) -> Provider:
@@ -79,26 +58,22 @@ async def _get_provider(session: AsyncSession, provider_id: int) -> Provider:
     return provider
 
 
-def _ensure_can_manage_key(user: User, key: ApiKey) -> None:
-    """Staff manage any key; members only the ones they added."""
-    if is_staff(user) or key.added_by == user.id:
-        return
-    raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only modify keys you added.")
+async def _get_key(session: AsyncSession, provider_id: int, key_id: int) -> ApiKey:
+    key = await session.get(ApiKey, key_id)
+    if key is None or key.provider_id != provider_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+    return key
 
 
 @router.get("", response_model=list[ApiKeyOut])
 async def list_keys(
     provider_id: int,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> list[ApiKey]:
-    await _get_provider(session, provider_id)
-    stmt = select(ApiKey).where(ApiKey.provider_id == provider_id)
-    if not is_staff(user):
-        # Members only see the keys they added, never other users' credentials.
-        stmt = stmt.where(ApiKey.added_by == user.id)
-    rows = (await session.execute(stmt.order_by(ApiKey.id))).scalars().all()
-    return list(rows)
+    provider = await _get_provider(session, provider_id)
+    return await keymgmt.list_keys(session, provider, _actor(user, request))
 
 
 @router.post("", response_model=list[ApiKeyOut], status_code=status.HTTP_201_CREATED)
@@ -111,167 +86,42 @@ async def add_keys(
     settings: Settings = Depends(get_settings),
 ) -> list[ApiKey]:
     provider = await _get_provider(session, provider_id)
-    is_claude_code = provider.type == "claude-code"
-
-    # De-dupe within the batch and against existing rows for this provider.
-    existing_hashes = {
-        h
-        for (h,) in (
-            await session.execute(select(ApiKey.key_hash).where(ApiKey.provider_id == provider_id))
-        ).all()
-    }
-    created: list[ApiKey] = []
-    seen: set[str] = set()
-    sensitive_keys: list[dict[str, str | None]] = []
-    for line in body.keys:
-        raw, comment = _parse_key_line(line)
-        if not raw:
-            continue
-        # For Claude Code providers, accept colon-separated OAuth bundles:
-        # access_token:refresh_token:expires_at → JSON bundle.
-        if is_claude_code and raw.count(":") == 2 and oauth_tokens.parse_bundle(raw) is None:
-            parts = raw.split(":", 2)
-            raw = json.dumps({
-                "access_token": parts[0],
-                "refresh_token": parts[1],
-                "expires_at": float(parts[2]),
-            })
-        digest = hash_token(raw)
-        if digest in existing_hashes or digest in seen:
-            continue
-        seen.add(digest)
-        parsed = oauth_tokens.parse_bundle(raw)
-        preview = _oauth_preview(parsed) if is_claude_code and parsed is not None else _preview(raw)
-        sensitive_keys.append(
-            {
-                "key": raw,
-                "preview": preview,
-                "note": comment or body.note,
-                "pool": body.pool or "",
-            }
-        )
-        key = ApiKey(
-            provider_id=provider_id,
-            key_ciphertext=encrypt_secret(raw, secret=settings.server.secret_key),
-            key_hash=digest,
-            key_preview=preview,
-            status=KeyStatus.ACTIVE.value,
-            weight=body.weight,
-            note=comment or body.note,
-            pool=body.pool or "",
-            added_by=user.id,
-            added_by_name=actor_display_name(user),
-        )
-        session.add(key)
-        created.append(key)
-
-    if not created:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No new keys to add.")
-
-    await session.flush()
-    await record_audit(
-        session,
-        action="key.add",
-        actor_sub=user.sub,
-        actor_name=user.name,
-        target_type="provider",
-        target_id=provider_id,
-        detail={"added": len(created)},
-        sensitive={"keys": sensitive_keys},
-        secret_key=settings.server.secret_key,
-        ip=request.client.host if request.client else None,
+    return await keymgmt.add_keys(
+        session, provider, body, actor=_actor(user, request), settings=settings
     )
-    return created
-
-
-# --------------------------------------------------------------------------- #
-# Balance refresh (providers with a balance endpoint)
-# --------------------------------------------------------------------------- #
-
-
-async def _refresh_one(
-    key: ApiKey,
-    provider: Provider,
-    settings: Settings,
-) -> bool | None:
-    """Probe a single key's balance, applying auto enable/disable. Never raises."""
-    auto_disable = settings_store.get_bool("auto_disable_zero_balance", True)
-    pool = get_pool()
-    client = await pool.get(Route(), connect_timeout=15.0, read_timeout=30.0)
-    try:
-        return await refresh_key_balance(
-            key, provider, client, settings, auto_disable=auto_disable
-        )
-    except Exception:
-        return None
 
 
 @router.post("/refresh-balance", response_model=list[ApiKeyOut])
 async def refresh_balances(
     provider_id: int,
+    request: Request,
     pool: str | None = None,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> list[ApiKey]:
-    """Rescan balances for this provider's keys (optionally one ``pool`` only).
-
-    Throttled to ``balance_scan_rate_per_second`` requests/second so a large pool
-    cannot hammer the upstream balance endpoint.
-    """
+    """Rescan balances for this provider's keys (optionally one ``pool`` only)."""
     provider = await _get_provider(session, provider_id)
-    if get_adapter(provider).balance_url is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "This provider does not support balance queries.",
-        )
-    stmt = select(ApiKey).where(ApiKey.provider_id == provider_id)
-    if pool is not None:
-        stmt = stmt.where(ApiKey.pool == pool)
-    if not is_staff(user):
-        stmt = stmt.where(ApiKey.added_by == user.id)
-    keys = (await session.execute(stmt.order_by(ApiKey.id))).scalars().all()
-
-    rate = settings_store.get_int("balance_scan_rate_per_second", 5)
-    delay = 1.0 / rate if rate > 0 else 0.0
-    for index, key in enumerate(keys):
-        if delay and index:
-            await asyncio.sleep(delay)
-        await _refresh_one(key, provider, settings)
-    await session.flush()
-    return list(keys)
+    return await keymgmt.refresh_balances(
+        session, provider, pool=pool, actor=_actor(user, request), settings=settings
+    )
 
 
 @router.post("/{key_id}/refresh-balance", response_model=ApiKeyOut)
 async def refresh_balance_one(
     provider_id: int,
     key_id: int,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> ApiKey:
     """Refresh a single key's balance on demand."""
-    key = await session.get(ApiKey, key_id)
-    if key is None or key.provider_id != provider_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
-    _ensure_can_manage_key(user, key)
     provider = await _get_provider(session, provider_id)
-    if get_adapter(provider).balance_url is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "This provider does not support balance queries.",
-        )
-    await _refresh_one(key, provider, settings)
-    await session.flush()
-    return key
-
-
-# --------------------------------------------------------------------------- #
-# Bulk cleanup of dead keys (invalid / out-of-balance)
-# --------------------------------------------------------------------------- #
-
-
-_CLEANUP_TARGETS = {KeyStatus.INVALID.value, KeyStatus.INSUFFICIENT_BALANCE.value}
+    key = await _get_key(session, provider_id, key_id)
+    return await keymgmt.refresh_balance_one(
+        session, provider, key, actor=_actor(user, request), settings=settings
+    )
 
 
 @router.post("/cleanup", response_model=ApiKeyCleanupResult)
@@ -284,63 +134,45 @@ async def cleanup_keys(
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> ApiKeyCleanupResult:
-    """Delete keys stuck in a dead state: ``invalid`` or ``insufficient_balance``.
-
-    For ``insufficient_balance`` an optional ``min_days`` requires the key to have
-    been disabled for at least that many days (based on ``disabled_since``) before
-    it is removed. Members only clean up keys they added; staff clean up any.
-
-    An optional ``pool`` query parameter restricts cleanup to a single pool tag.
-    """
-    await _get_provider(session, provider_id)
-    if body.target not in _CLEANUP_TARGETS:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"target must be one of {sorted(_CLEANUP_TARGETS)}.",
-        )
-    stmt = select(ApiKey).where(
-        ApiKey.provider_id == provider_id,
-        ApiKey.status == body.target,
+    """Delete keys stuck in a dead state: ``invalid`` or ``insufficient_balance``."""
+    provider = await _get_provider(session, provider_id)
+    deleted = await keymgmt.cleanup_keys(
+        session, provider, body, pool=pool, actor=_actor(user, request), settings=settings
     )
-    if pool is not None:
-        stmt = stmt.where(ApiKey.pool == pool)
-    if not is_staff(user):
-        stmt = stmt.where(ApiKey.added_by == user.id)
-    keys = (await session.execute(stmt)).scalars().all()
+    return ApiKeyCleanupResult(deleted=deleted)
 
-    cutoff: dt.datetime | None = None
-    if body.target == KeyStatus.INSUFFICIENT_BALANCE.value and body.min_days > 0:
-        cutoff = _utcnow() - dt.timedelta(days=body.min_days)
 
-    doomed: list[ApiKey] = []
-    for key in keys:
-        if cutoff is not None:
-            since = key.disabled_since
-            # Without a recorded disable time we cannot prove the age — skip it.
-            if since is None:
-                continue
-            if since.tzinfo is None:
-                since = since.replace(tzinfo=dt.UTC)
-            if since > cutoff:
-                continue
-        doomed.append(key)
-
-    if not doomed:
-        return ApiKeyCleanupResult(deleted=0)
-
-    ids = [k.id for k in doomed]
-    await session.execute(delete(ApiKey).where(ApiKey.id.in_(ids)))
-    await record_audit(
-        session,
-        action="key.cleanup",
-        actor_sub=user.sub,
-        actor_name=actor_display_name(user),
-        target_type="provider",
-        target_id=provider_id,
-        detail={"target": body.target, "min_days": body.min_days, "deleted": len(ids)},
-        ip=request.client.host if request.client else None,
+@router.patch("/{key_id}", response_model=ApiKeyOut)
+async def update_key(
+    provider_id: int,
+    key_id: int,
+    body: ApiKeyUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> ApiKey:
+    provider = await _get_provider(session, provider_id)
+    key = await _get_key(session, provider_id, key_id)
+    return await keymgmt.update_key(
+        session, provider, key, body, actor=_actor(user, request), settings=settings
     )
-    return ApiKeyCleanupResult(deleted=len(ids))
+
+
+@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_key(
+    provider_id: int,
+    key_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    provider = await _get_provider(session, provider_id)
+    key = await _get_key(session, provider_id, key_id)
+    await keymgmt.delete_key(
+        session, provider, key, actor=_actor(user, request), settings=settings
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -409,7 +241,7 @@ async def oauth_complete(
         provider_id=provider_id,
         key_ciphertext=encrypt_secret(plaintext, secret=settings.server.secret_key),
         key_hash=hash_token(plaintext),
-        key_preview=_oauth_preview(bundle),
+        key_preview=keymgmt.oauth_preview(bundle),
         status=KeyStatus.ACTIVE.value,
         note=body.note or "Claude subscription (OAuth)",
         added_by=user.id,
@@ -425,182 +257,11 @@ async def oauth_complete(
         target_type="provider",
         target_id=provider_id,
         detail={"key_id": key.id, "scopes": bundle.get("scopes", [])},
-        sensitive={"keys": [{"key": plaintext, "preview": _oauth_preview(bundle)}]},
+        sensitive={"keys": [{"key": plaintext, "preview": keymgmt.oauth_preview(bundle)}]},
         secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
     )
     return key
-
-
-@router.patch("/{key_id}", response_model=ApiKeyOut)
-async def update_key(
-    provider_id: int,
-    key_id: int,
-    body: ApiKeyUpdate,
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
-) -> ApiKey:
-    key = await session.get(ApiKey, key_id)
-    if key is None or key.provider_id != provider_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
-    _ensure_can_manage_key(user, key)
-
-    # Handle OAuth bundle field updates (Claude Code providers).
-    has_bundle_update = (
-        body.access_token is not None
-        or body.refresh_token is not None
-        or body.expires_at is not None
-    )
-    if has_bundle_update:
-        if body.key is not None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "Cannot supply both a raw key and OAuth bundle fields simultaneously.",
-            )
-        provider = await _get_provider(session, provider_id)
-        if provider.type != "claude-code":
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "OAuth bundle fields are only available for claude-code providers.",
-            )
-        plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
-        bundle: dict = oauth_tokens.parse_bundle(plaintext)
-        if bundle is None:
-            # Key is a static token; build a new bundle from the supplied fields.
-            bundle = {}
-        if body.access_token is not None:
-            bundle["access_token"] = body.access_token
-        if body.refresh_token is not None:
-            bundle["refresh_token"] = body.refresh_token
-        if body.expires_at is not None:
-            bundle["expires_at"] = body.expires_at
-        if not bundle.get("access_token"):
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "access_token is required for an OAuth bundle."
-            )
-        raw = json.dumps(bundle)
-        digest = hash_token(raw)
-        clash = (
-            await session.execute(
-                select(ApiKey.id).where(
-                    ApiKey.provider_id == provider_id,
-                    ApiKey.key_hash == digest,
-                    ApiKey.id != key_id,
-                )
-            )
-        ).first()
-        if clash is not None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Another key with this value already exists."
-            )
-        key.key_ciphertext = encrypt_secret(raw, secret=settings.server.secret_key)
-        key.key_hash = digest
-        key.key_preview = _oauth_preview(bundle)
-        key.failed_count = 0
-        key.disabled_reason = None
-    elif body.key is not None:
-        raw = body.key.strip()
-        if not raw:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Key cannot be empty.")
-        digest = hash_token(raw)
-        clash = (
-            await session.execute(
-                select(ApiKey.id).where(
-                    ApiKey.provider_id == provider_id,
-                    ApiKey.key_hash == digest,
-                    ApiKey.id != key_id,
-                )
-            )
-        ).first()
-        if clash is not None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Another key with this value already exists."
-            )
-        # A fresh secret invalidates prior failures tied to the old credential.
-        key.key_ciphertext = encrypt_secret(raw, secret=settings.server.secret_key)
-        key.key_hash = digest
-        key.key_preview = _preview(raw)
-        key.failed_count = 0
-        key.disabled_reason = None
-    if body.enabled is not None:
-        key.status = KeyStatus.ACTIVE.value if body.enabled else KeyStatus.DISABLED.value
-        if body.enabled:
-            key.failed_count = 0
-            key.disabled_reason = None
-            key.disabled_since = None
-        elif key.disabled_since is None:
-            key.disabled_since = _utcnow()
-    if body.status is not None:
-        key.status = body.status
-        if body.status == KeyStatus.ACTIVE.value:
-            key.failed_count = 0
-            key.disabled_reason = None
-            key.disabled_since = None
-        elif key.disabled_since is None:
-            key.disabled_since = _utcnow()
-    if body.weight is not None:
-        key.weight = body.weight
-    if body.note is not None:
-        key.note = body.note
-    if body.pool is not None:
-        key.pool = body.pool
-    await session.flush()
-    # Record which fields changed (names only). A replaced secret shows up as
-    # the "key" field name; its value is never logged — it stays in the
-    # encrypted ciphertext column.
-    await record_audit(
-        session,
-        action="key.update",
-        actor_sub=user.sub,
-        actor_name=actor_display_name(user),
-        target_type="provider",
-        target_id=provider_id,
-        detail={"key_id": key.id, "changes": list(body.model_dump(exclude_unset=True))},
-        ip=request.client.host if request.client else None,
-    )
-    return key
-
-
-@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_key(
-    provider_id: int,
-    key_id: int,
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
-) -> None:
-    key = await session.get(ApiKey, key_id)
-    if key is None or key.provider_id != provider_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
-    _ensure_can_manage_key(user, key)
-    # Capture the full (decrypted) key so an owner can recover/inspect it later.
-    plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
-    await record_audit(
-        session,
-        action="key.delete",
-        actor_sub=user.sub,
-        actor_name=actor_display_name(user),
-        target_type="provider",
-        target_id=provider_id,
-        detail={"key_id": key.id, "preview": key.key_preview, "pool": key.pool},
-        sensitive={
-            "keys": [
-                {
-                    "key": plaintext,
-                    "preview": key.key_preview,
-                    "note": key.note,
-                    "pool": key.pool,
-                    "added_by_name": key.added_by_name,
-                }
-            ]
-        },
-        secret_key=settings.server.secret_key,
-        ip=request.client.host if request.client else None,
-    )
-    await session.delete(key)
 
 
 @router.post("/{key_id}/reveal")
@@ -616,9 +277,7 @@ async def reveal_key(
 
     Guarded behind a secondary confirmation in the UI; every reveal is audited.
     """
-    key = await session.get(ApiKey, key_id)
-    if key is None or key.provider_id != provider_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+    key = await _get_key(session, provider_id, key_id)
     plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
     await record_audit(
         session,

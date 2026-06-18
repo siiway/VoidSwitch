@@ -138,6 +138,32 @@ const en = {
     cfDetected: "Cloudflare Workers AI detected",
     cfMessage:
       "Cloudflare Workers AI model names cannot be fetched automatically. Please refer to",
+    nameEditHint: "The unique display name. Can be changed at any time.",
+    keyApi: "Key-management API",
+    keyApiTitle: "Key-management API · {name}",
+    keyApiDesc:
+      "An optional credential that lets an external integration manage this provider's keys programmatically (list, add, edit, delete, scan balances, cleanup). Owner-only. Use the mounted API at /provider-api (Swagger at /provider-api/docs).",
+    keyApiStatus: "Status",
+    keyApiEnabled: "Enabled",
+    keyApiDisabled: "Disabled",
+    keyApiToken: "Token",
+    keyApiEnable: "Enable & generate token",
+    keyApiRotate: "Rotate token",
+    keyApiDisable: "Disable",
+    keyApiReveal: "Reveal token",
+    keyApiCopy: "Copy",
+    keyApiCopied: "Token copied",
+    keyApiTokenOnce:
+      "Copy this token now — it is shown only once. Send it as 'Authorization: Bearer <token>' or 'X-API-Key: <token>'.",
+    keyApiEnabledMsg: "Key-management API enabled",
+    keyApiRotatedMsg: "Token rotated",
+    keyApiDisabledMsg: "Key-management API disabled",
+    keyApiRotateConfirm:
+      "Rotate the token? The current token stops working immediately.",
+    keyApiDisableConfirm:
+      "Disable the key-management API and revoke its token? This cannot be undone.",
+    keyApiActionFailed: "Action failed",
+    keyApiDocs: "Open API docs",
   },
   providerKeys: {
     title: "Keys",

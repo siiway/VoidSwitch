@@ -31,16 +31,18 @@ import {
   DeleteRegular,
   EditRegular,
   KeyRegular,
+  ShieldKeyholeRegular,
 } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { api } from "../api/client";
+import { api, API_BASE } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
   AdapterMeta,
   ModelRoute,
   Provider,
+  ProviderKeyApi,
   Proxy,
   ProxyMode,
 } from "../api/types";
@@ -150,6 +152,11 @@ export function Providers() {
   const [placeholderVals, setPlaceholderVals] = useState<Record<string, string>>({});
   const [fetchMethod, setFetchMethod] = useState("GET");
   const [fetchPath, setFetchPath] = useState("/models");
+  // Per-provider key-management API credential (owner-only).
+  const [keyApiFor, setKeyApiFor] = useState<Provider | null>(null);
+  const [keyApi, setKeyApi] = useState<ProviderKeyApi | null>(null);
+  const [keyApiToken, setKeyApiToken] = useState("");
+  const [keyApiBusy, setKeyApiBusy] = useState(false);
 
   const phKeys = [
     ...new Set(
@@ -286,6 +293,51 @@ export function Providers() {
     }
   }
 
+  async function openKeyApi(p: Provider) {
+    setKeyApiFor(p);
+    setKeyApi(null);
+    setKeyApiToken("");
+    try {
+      const data = await api.get<ProviderKeyApi>(
+        `/api/admin/providers/${p.id}/key-api`,
+      );
+      setKeyApi(data);
+    } catch (e) {
+      notify(
+        t("providers.keyApiActionFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
+  }
+
+  async function keyApiAction(
+    action: "enable" | "rotate" | "reveal" | "disable",
+    okMsg: TK,
+  ) {
+    if (!keyApiFor) return;
+    setKeyApiBusy(true);
+    try {
+      const data = await api.post<ProviderKeyApi>(
+        `/api/admin/providers/${keyApiFor.id}/key-api/${action}`,
+      );
+      setKeyApi(data);
+      if (data.token) setKeyApiToken(data.token);
+      if (action !== "reveal") {
+        notify(t(okMsg), keyApiFor.name, "success");
+        providers.reload();
+      }
+    } catch (e) {
+      notify(
+        t("providers.keyApiActionFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setKeyApiBusy(false);
+    }
+  }
+
   async function remove(p: Provider) {
     const ok = await confirm({
       title: t("providers.deleteTitle" as TK),
@@ -386,6 +438,15 @@ export function Providers() {
                   {isOwner && (
                     <Button
                       size="small"
+                      icon={<ShieldKeyholeRegular />}
+                      appearance="subtle"
+                      title={t("providers.keyApi" as TK)}
+                      onClick={() => openKeyApi(p)}
+                    />
+                  )}
+                  {isOwner && (
+                    <Button
+                      size="small"
                       icon={<DeleteRegular />}
                       appearance="subtle"
                       onClick={() => remove(p)}
@@ -417,10 +478,13 @@ export function Providers() {
                 paddingTop: 8,
               }}
             >
-              <Field label={t("providers.name" as TK)} required>
+              <Field
+                label={t("providers.name" as TK)}
+                hint={t("providers.nameEditHint" as TK)}
+                required
+              >
                 <Input
                   value={form?.name ?? ""}
-                  disabled={!!form?.id}
                   onChange={(_, d) =>
                     setForm((f) => (f ? { ...f, name: d.value } : f))
                   }
@@ -794,6 +858,168 @@ export function Providers() {
                 onClick={save}
               >
                 {form?.id ? t("common.save" as TK) : t("common.create" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={keyApiFor !== null}
+        onOpenChange={(_, d) => {
+          if (!d.open) {
+            setKeyApiFor(null);
+            setKeyApi(null);
+            setKeyApiToken("");
+          }
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>
+              {t("providers.keyApiTitle" as TK).replace(
+                "{name}",
+                keyApiFor?.name ?? "",
+              )}
+            </DialogTitle>
+            <DialogContent
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+                paddingTop: 8,
+              }}
+            >
+              <p style={{ color: tokens.colorNeutralForeground3, fontSize: 13 }}>
+                {t("providers.keyApiDesc" as TK)}
+              </p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontWeight: 600 }}>
+                  {t("providers.keyApiStatus" as TK)}:
+                </span>
+                <Badge
+                  color={keyApi?.enabled ? "success" : "subtle"}
+                  appearance="filled"
+                >
+                  {keyApi?.enabled
+                    ? t("providers.keyApiEnabled" as TK)
+                    : t("providers.keyApiDisabled" as TK)}
+                </Badge>
+                {keyApi?.token_preview && !keyApiToken && (
+                  <code style={{ color: tokens.colorNeutralForeground3 }}>
+                    {keyApi.token_preview}
+                  </code>
+                )}
+              </div>
+
+              {keyApiToken && (
+                <Field label={t("providers.keyApiToken" as TK)}>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Input
+                      readOnly
+                      value={keyApiToken}
+                      style={{ flex: 1, fontFamily: "monospace" }}
+                    />
+                    <Button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(keyApiToken);
+                        notify(t("providers.keyApiCopied" as TK), "", "success");
+                      }}
+                    >
+                      {t("providers.keyApiCopy" as TK)}
+                    </Button>
+                  </div>
+                  <p
+                    style={{
+                      color: tokens.colorStatusWarningForeground1,
+                      fontSize: 12,
+                      marginTop: 4,
+                    }}
+                  >
+                    {t("providers.keyApiTokenOnce" as TK)}
+                  </p>
+                </Field>
+              )}
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {!keyApi?.enabled ? (
+                  <Button
+                    appearance="primary"
+                    disabled={keyApiBusy}
+                    onClick={() =>
+                      keyApiAction("enable", "providers.keyApiEnabledMsg" as TK)
+                    }
+                  >
+                    {t("providers.keyApiEnable" as TK)}
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      disabled={keyApiBusy}
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: t("providers.keyApiRotate" as TK),
+                          message: t("providers.keyApiRotateConfirm" as TK),
+                          confirmLabel: t("providers.keyApiRotate" as TK),
+                          tone: "danger",
+                        });
+                        if (ok)
+                          keyApiAction(
+                            "rotate",
+                            "providers.keyApiRotatedMsg" as TK,
+                          );
+                      }}
+                    >
+                      {t("providers.keyApiRotate" as TK)}
+                    </Button>
+                    <Button
+                      disabled={keyApiBusy}
+                      onClick={() =>
+                        keyApiAction("reveal", "providers.keyApiToken" as TK)
+                      }
+                    >
+                      {t("providers.keyApiReveal" as TK)}
+                    </Button>
+                    <Button
+                      disabled={keyApiBusy}
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: t("providers.keyApiDisable" as TK),
+                          message: t("providers.keyApiDisableConfirm" as TK),
+                          confirmLabel: t("providers.keyApiDisable" as TK),
+                          tone: "danger",
+                        });
+                        if (ok)
+                          keyApiAction(
+                            "disable",
+                            "providers.keyApiDisabledMsg" as TK,
+                          );
+                      }}
+                    >
+                      {t("providers.keyApiDisable" as TK)}
+                    </Button>
+                  </>
+                )}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="secondary"
+                onClick={() =>
+                  window.open(`${API_BASE}/provider-api/docs`, "_blank")
+                }
+              >
+                {t("providers.keyApiDocs" as TK)}
+              </Button>
+              <Button
+                appearance="primary"
+                onClick={() => {
+                  setKeyApiFor(null);
+                  setKeyApi(null);
+                  setKeyApiToken("");
+                }}
+              >
+                {t("common.close" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

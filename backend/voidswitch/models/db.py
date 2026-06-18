@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import uuid as uuid_lib
 from typing import Any
 
 from sqlalchemy import (
@@ -29,6 +30,10 @@ from voidswitch.constants import KeyStatus, ProxyMode, ProxyStatus, Role
 
 def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
+
+
+def _new_uuid() -> str:
+    return str(uuid_lib.uuid4())
 
 
 class Base(DeclarativeBase):
@@ -132,6 +137,12 @@ class Provider(Base, TimestampMixin):
     __tablename__ = "providers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Stable public identifier, independent of the autoincrement primary key.
+    # Used by the mounted provider key-management API so external integrations
+    # reference a provider by an opaque, non-guessable id.
+    uuid: Mapped[str] = mapped_column(
+        String(36), unique=True, index=True, default=_new_uuid
+    )
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     # Adapter key, e.g. "openai", "anthropic", "deepseek".
     type: Mapped[str] = mapped_column(String(64), default="openai")
@@ -163,6 +174,18 @@ class Provider(Base, TimestampMixin):
     # manage only the providers they added; null for legacy/seeded rows.
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Optional per-provider "key-management API key": a programmatic credential
+    # that grants access to manage *this provider's* upstream keys through the
+    # mounted key-management sub-app. Disabled by default; only (co-)owners may
+    # enable, rotate, or reveal it. ``key_api_token_hash`` is the lookup hash,
+    # ``key_api_token_ciphertext`` the at-rest encrypted plaintext (so owners can
+    # reveal it later), and ``key_api_token_preview`` a short non-secret label.
+    key_api_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    key_api_token_hash: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, default=None
+    )
+    key_api_token_ciphertext: Mapped[str | None] = mapped_column(Text, default=None)
+    key_api_token_preview: Mapped[str | None] = mapped_column(String(48), default=None)
 
     keys: Mapped[list[ApiKey]] = relationship(
         back_populates="provider", cascade="all, delete-orphan", lazy="selectin"

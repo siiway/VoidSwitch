@@ -12,13 +12,27 @@ from voidswitch.core.audit import record_audit
 from voidswitch.core.auth import (
     actor_display_name,
     get_current_user,
+    is_owner,
     is_staff,
     require_owner,
 )
+from voidswitch.core.config import get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger
+from voidswitch.core.security import (
+    decrypt_secret,
+    encrypt_secret,
+    generate_provider_api_token,
+    hash_token,
+)
 from voidswitch.models.db import Provider, Proxy, User
-from voidswitch.models.schemas import ProviderCreate, ProviderOut, ProviderUpdate
+from voidswitch.models.schemas import (
+    ProviderCreate,
+    ProviderKeyApiOut,
+    ProviderKeyApiSecret,
+    ProviderOut,
+    ProviderUpdate,
+)
 from voidswitch.services.providers.registry import (
     adapter_catalog,
     adapter_class,
@@ -32,7 +46,9 @@ router = APIRouter(prefix="/api/admin/providers", tags=["admin:providers"])
 _PROXY_MODES = {m.value for m in ProxyMode}
 
 
-def _to_out(provider: Provider, *, redact: bool = False) -> ProviderOut:
+def _to_out(
+    provider: Provider, *, redact: bool = False, show_key_api: bool = False
+) -> ProviderOut:
     out = ProviderOut.model_validate(provider)
     out.key_count = len(provider.keys)
     out.active_key_count = sum(1 for k in provider.keys if k.status == KeyStatus.ACTIVE.value)
@@ -41,7 +57,16 @@ def _to_out(provider: Provider, *, redact: bool = False) -> ProviderOut:
         # Members may view providers (to add keys) but must not see potentially
         # secret config such as custom auth headers.
         out.extra_headers = dict.fromkeys(out.extra_headers, "***")
+    if not show_key_api:
+        # The key-management API credential is an owner / co-owner concern only.
+        out.key_api_enabled = False
+        out.key_api_token_preview = None
     return out
+
+
+def _token_preview(raw: str) -> str:
+    """Short, non-secret label for a key-management token (column is 48 chars)."""
+    return f"{raw[:8]}…{raw[-4:]}" if len(raw) > 14 else raw[:4] + "***"
 
 
 def _ensure_can_edit(user: User, provider: Provider) -> None:
@@ -84,7 +109,8 @@ async def list_providers(
         .all()
     )
     redact = not is_staff(user)
-    return [_to_out(p, redact=redact) for p in rows]
+    show_key_api = is_owner(user)
+    return [_to_out(p, redact=redact, show_key_api=show_key_api) for p in rows]
 
 
 @router.post("", response_model=ProviderOut, status_code=status.HTTP_201_CREATED)
@@ -137,7 +163,7 @@ async def create_provider(
         ip=request.client.host if request.client else None,
     )
     await session.refresh(provider)
-    return _to_out(provider)
+    return _to_out(provider, show_key_api=is_owner(user))
 
 
 @router.patch("/{provider_id}", response_model=ProviderOut)
@@ -153,6 +179,17 @@ async def update_provider(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found.")
     _ensure_can_edit(user, provider)
     changes = body.model_dump(exclude_unset=True)
+    # Allow renaming a provider after creation, but keep names unique.
+    if "name" in changes and changes["name"] != provider.name:
+        clash = (
+            await session.execute(
+                select(Provider.id).where(
+                    Provider.name == changes["name"], Provider.id != provider_id
+                )
+            )
+        ).first()
+        if clash is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Provider name already exists.")
     if "proxy_mode" in changes or "proxy_ids" in changes:
         await _validate_proxy_config(
             session,
@@ -173,7 +210,7 @@ async def update_provider(
         ip=request.client.host if request.client else None,
     )
     await session.refresh(provider)
-    return _to_out(provider)
+    return _to_out(provider, show_key_api=is_owner(user))
 
 
 @router.delete("/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -196,6 +233,164 @@ async def delete_provider(
         target_id=provider_id,
         detail={"name": provider.name},
         ip=request.client.host if request.client else None,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Per-provider key-management API credential (owner / co-owner only)
+# --------------------------------------------------------------------------- #
+
+
+async def _get_provider_or_404(session: AsyncSession, provider_id: int) -> Provider:
+    provider = await session.get(Provider, provider_id)
+    if provider is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found.")
+    return provider
+
+
+def _key_api_status(provider: Provider) -> ProviderKeyApiOut:
+    return ProviderKeyApiOut(
+        provider_id=provider.id,
+        provider_uuid=provider.uuid,
+        enabled=provider.key_api_enabled,
+        token_preview=provider.key_api_token_preview,
+    )
+
+
+@router.get("/{provider_id}/key-api", response_model=ProviderKeyApiOut)
+async def get_key_api(
+    provider_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_owner),
+) -> ProviderKeyApiOut:
+    """Owner-only: current key-management API state for a provider."""
+    provider = await _get_provider_or_404(session, provider_id)
+    return _key_api_status(provider)
+
+
+async def _mint_key_api(
+    provider: Provider, session: AsyncSession, *, actor: User, request: Request, action: str
+) -> ProviderKeyApiSecret:
+    settings = get_settings()
+    raw = generate_provider_api_token()
+    provider.key_api_enabled = True
+    provider.key_api_token_hash = hash_token(raw)
+    provider.key_api_token_ciphertext = encrypt_secret(raw, secret=settings.server.secret_key)
+    provider.key_api_token_preview = _token_preview(raw)
+    await session.flush()
+    await record_audit(
+        session,
+        action=action,
+        actor_sub=actor.sub,
+        actor_name=actor_display_name(actor),
+        target_type="provider",
+        target_id=provider.id,
+        detail={"name": provider.name},
+        sensitive={"key_api_token": raw},
+        secret_key=settings.server.secret_key,
+        ip=request.client.host if request.client else None,
+    )
+    return ProviderKeyApiSecret(
+        provider_id=provider.id,
+        provider_uuid=provider.uuid,
+        enabled=True,
+        token_preview=provider.key_api_token_preview,
+        token=raw,
+    )
+
+
+@router.post("/{provider_id}/key-api/enable", response_model=ProviderKeyApiSecret)
+async def enable_key_api(
+    provider_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    actor: User = Depends(require_owner),
+) -> ProviderKeyApiSecret:
+    """Owner-only: enable the key-management API and mint its token (shown once).
+
+    Idempotent on the "enabled" flag, but a fresh token is generated each call —
+    use it to (re)issue a credential. Existing enabled providers should prefer
+    ``/rotate`` for clarity.
+    """
+    provider = await _get_provider_or_404(session, provider_id)
+    return await _mint_key_api(
+        provider, session, actor=actor, request=request, action="provider.key_api_enable"
+    )
+
+
+@router.post("/{provider_id}/key-api/rotate", response_model=ProviderKeyApiSecret)
+async def rotate_key_api(
+    provider_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    actor: User = Depends(require_owner),
+) -> ProviderKeyApiSecret:
+    """Owner-only: generate a new token, invalidating the previous one."""
+    provider = await _get_provider_or_404(session, provider_id)
+    return await _mint_key_api(
+        provider, session, actor=actor, request=request, action="provider.key_api_rotate"
+    )
+
+
+@router.post("/{provider_id}/key-api/disable", response_model=ProviderKeyApiOut)
+async def disable_key_api(
+    provider_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    actor: User = Depends(require_owner),
+) -> ProviderKeyApiOut:
+    """Owner-only: disable the key-management API and revoke its token."""
+    provider = await _get_provider_or_404(session, provider_id)
+    provider.key_api_enabled = False
+    provider.key_api_token_hash = None
+    provider.key_api_token_ciphertext = None
+    provider.key_api_token_preview = None
+    await session.flush()
+    await record_audit(
+        session,
+        action="provider.key_api_disable",
+        actor_sub=actor.sub,
+        actor_name=actor_display_name(actor),
+        target_type="provider",
+        target_id=provider.id,
+        detail={"name": provider.name},
+        ip=request.client.host if request.client else None,
+    )
+    return _key_api_status(provider)
+
+
+@router.post("/{provider_id}/key-api/reveal", response_model=ProviderKeyApiSecret)
+async def reveal_key_api(
+    provider_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    actor: User = Depends(require_owner),
+) -> ProviderKeyApiSecret:
+    """Owner-only: reveal the current key-management token's plaintext. Audited."""
+    provider = await _get_provider_or_404(session, provider_id)
+    if not provider.key_api_enabled or not provider.key_api_token_ciphertext:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Key-management API is not enabled for this provider.",
+        )
+    settings = get_settings()
+    raw = decrypt_secret(provider.key_api_token_ciphertext, secret=settings.server.secret_key)
+    await record_audit(
+        session,
+        action="provider.key_api_reveal",
+        actor_sub=actor.sub,
+        actor_name=actor_display_name(actor),
+        target_type="provider",
+        target_id=provider.id,
+        detail={"name": provider.name},
+        ip=request.client.host if request.client else None,
+    )
+    return ProviderKeyApiSecret(
+        provider_id=provider.id,
+        provider_uuid=provider.uuid,
+        enabled=True,
+        token_preview=provider.key_api_token_preview,
+        token=raw,
     )
 
 
