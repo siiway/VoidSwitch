@@ -1,0 +1,66 @@
+# VoidSwitch backend configuration.
+# Per project rules this file holds ONLY server info & Prism OAuth credentials.
+# All operational thresholds (failure counts, probe intervals, etc.) live in the
+# database and are editable from the dashboard at runtime.
+#
+# Every value below can also be overridden by an environment variable using the
+# prefix VOIDSWITCH_ and "__" as the nesting separator, e.g.
+#   VOIDSWITCH_SERVER__PORT=9000
+#   VOIDSWITCH_PRISM__CLIENT_SECRET=...
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  # Public base URL of THIS backend. Used to build the OAuth redirect_uri and
+  # returned to the frontend. Override when deployed behind a domain/proxy.
+  base_url: "http://localhost:8080"
+  # Frontend origins allowed by CORS. Add your deployed dashboard origin here.
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://localhost:4173"
+  # Secret used to sign dashboard session JWTs. Leave empty to auto-generate and
+  # persist one to .secret_key on first boot (fine for single-node deployments).
+  secret_key: ""
+  # Session lifetime (minutes) for dashboard JWTs.
+  session_ttl_minutes: 720
+  log_level: "INFO"
+  # Pretty, colorised console logs (true) vs JSON lines (false).
+  log_console: true
+  # Dev mode enables a no-OAuth "Developer sign-in" (owner session) for local
+  # work without a Prism app. NEVER enable in production.
+  # Override at runtime with VOIDSWITCH_SERVER__DEV_MODE=true.
+  dev_mode: false
+
+database:
+  url: "sqlite+aiosqlite:///./voidswitch.db"
+  echo: false
+
+prism:
+  # Your Prism instance. Endpoints are derived from this issuer.
+  issuer: "https://prism.siiway.org"
+  client_id: "your-prism-client-id"
+  client_secret: "your-prism-client-secret"
+  # Must exactly match a redirect URI registered on the Prism app.
+  # Defaults to "{server.base_url}/api/auth/callback" when left empty.
+  redirect_uri: ""
+  scopes:
+    - "openid"
+    - "profile"
+    - "email"
+
+admin:
+  # Prism subject IDs (`sub`) that always receive owner rights.
+  owner_subs: []
+  # Email addresses that always receive owner rights.
+  owner_emails: []
+  # Prism roles "owner" and "co-owner" are recognised automatically and map to
+  # the VoidSwitch owner tier (owner → owner, co-owner → co-owner) — both can
+  # perform owner-only actions. Multiple owners/co-owners are supported.
+  #
+  # Treat a Prism instance admin (id_token role == "admin") as a VoidSwitch
+  # *admin* (staff, not owner). Owners can also grant this admin role locally to
+  # any member from the dashboard ("local admin override").
+  trust_prism_admin: true
+  # When the user table is empty, the first user to log in becomes an owner
+  # (bootstrap convenience for fresh deployments).
+  bootstrap_first_user: true

@@ -9,7 +9,7 @@
 #
 # Configuration is supplied via environment. Copy .env.example to .env and fill
 # in the Prism OAuth credentials (and your public base URL when deployed behind a
-# domain). The gateway reads VOIDSWITCH_* vars natively; see backend/config.example.yaml
+# domain). The gateway reads VOIDSWITCH_* vars natively; see backend-go/config.example.yaml
 # for the full set.
 services:
   voidswitch:
@@ -20,11 +20,6 @@ services:
       # serve the private docs site at /docs/ — no separate build step needed.
       context: .
       dockerfile: Dockerfile
-      # Proxy for build-time downloads (uv/pip). Set these in .env or the shell;
-      # blank = direct. They are Docker's predefined proxy args, so RUN steps pick
-      # them up automatically and they are never baked into the image.
-      # NOTE: pulling the FROM base images is done by the daemon, not the build —
-      # configure that separately (systemd drop-in / daemon proxy).
       args:
         HTTP_PROXY: "${HTTP_PROXY:-}"
         HTTPS_PROXY: "${HTTPS_PROXY:-}"
@@ -34,53 +29,30 @@ services:
         no_proxy: "${no_proxy:-}"
     image: voidswitch:latest
     restart: unless-stopped
-    # Internal only — the dashboard service is the front door and proxies to this
-    # over the compose network. Add a `ports:` mapping here only for debugging.
     expose:
       - "8080"
     environment:
-      # Public URL of this gateway — used to build the OAuth redirect_uri. Set to
-      # your real https origin (e.g. https://voidswitch.siiway.org).
       VOIDSWITCH_SERVER__BASE_URL: "${VOIDSWITCH_BASE_URL:-http://localhost:8080}"
-      # Where to send the browser after OAuth login (it serves the SPA's
-      # /login/callback). On a single origin this is the same as BASE_URL, so it
-      # defaults to that — otherwise the backend would fall back to the dev URL
-      # (localhost:5173). Override only if the dashboard lives elsewhere.
       VOIDSWITCH_SERVER__FRONTEND_URL: "${VOIDSWITCH_FRONTEND_URL:-${VOIDSWITCH_BASE_URL:-http://localhost:8080}}"
-      # Trust the dashboard/nginx X-Forwarded-* headers so request URLs resolve to
-      # the public https origin (correct OAuth redirect + /install gateway URL).
-      # Safe here because only the nginx container can reach this port.
       FORWARDED_ALLOW_IPS: "*"
-      # Stable secret so dashboard sessions survive container recreation. Generate
-      # one with: openssl rand -base64 48
       VOIDSWITCH_SERVER__SECRET_KEY: "${VOIDSWITCH_SECRET_KEY:-}"
-      # Prism OAuth app credentials (required for dashboard login).
       VOIDSWITCH_PRISM__ISSUER: "${VOIDSWITCH_PRISM_ISSUER:-https://prism.siiway.org}"
       VOIDSWITCH_PRISM__CLIENT_ID: "${VOIDSWITCH_PRISM_CLIENT_ID:-}"
       VOIDSWITCH_PRISM__CLIENT_SECRET: "${VOIDSWITCH_PRISM_CLIENT_SECRET:-}"
-      # The SQLite DB lives on the named volume (set by the image; repeated here
-      # so it's visible/overridable). Point at Postgres etc. to externalise it.
-      VOIDSWITCH_DATABASE__URL: "${VOIDSWITCH_DATABASE_URL:-sqlite+aiosqlite:////data/voidswitch.db}"
+      VOIDSWITCH_DATABASE__URL: "${VOIDSWITCH_DATABASE_URL:-/data/voidswitch.db}"
     volumes:
-      # Persists the SQLite DB across container recreation.
       - voidswitch-data:/data
     healthcheck:
-      # Runtime image is python-slim (no curl); use stdlib instead.
-      test:
-        - "CMD"
-        - "python"
-        - "-c"
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 5s
 
   dashboard:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      # bun install needs the proxy too (see the voidswitch service for notes).
       args:
         HTTP_PROXY: "${HTTP_PROXY:-}"
         HTTPS_PROXY: "${HTTPS_PROXY:-}"
