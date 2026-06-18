@@ -389,7 +389,12 @@ function persistModels(infos: ModelInfo[]): void {
     const models: Record<string, any> = {}
     for (const info of infos) {
       const prev = existing[info.id] ?? {}
-      models[info.id] = info.opencode ? deepMerge(prev, info.opencode) : prev
+      // Build an override from display_name, so the dashboard's Display name
+      // field overrides the model name in the OpenCode picker.
+      const override: Record<string, any> = { ...(info.opencode ?? {}) }
+      if (info.display_name && !override.name) override.name = info.display_name
+      models[info.id] =
+        Object.keys(override).length > 0 ? deepMerge(prev, override) : prev
     }
     cfg.provider[PROVIDER_ID].models = models
     writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
