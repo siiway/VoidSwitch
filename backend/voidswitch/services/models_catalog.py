@@ -138,6 +138,25 @@ async def mapping_tables(session: AsyncSession) -> tuple[dict[str, str], set[str
     return alias_to_source, hidden_sources
 
 
+async def clean_unserved(session: AsyncSession) -> tuple[int, list[str]]:
+    """Delete metadata rows for model ids no provider serves.
+
+    Returns ``(deleted_count, deleted_model_ids)``. Only touches rows whose
+    ``model_id`` is absent from ``served_model_ids()``.
+    """
+    providers = await _enabled_providers(session)
+    served = served_model_ids(providers)
+    entries = (await session.execute(select(ModelEntry))).scalars().all()
+    unserved = [e for e in entries if e.model_id not in served]
+    ids: list[str] = []
+    for entry in unserved:
+        ids.append(entry.model_id)
+        await session.delete(entry)
+    if ids:
+        await session.flush()
+    return len(ids), sorted(ids)
+
+
 async def sync_from_providers(
     session: AsyncSession, *, added_by: int | None = None, added_by_name: str | None = None
 ) -> tuple[int, int]:

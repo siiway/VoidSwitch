@@ -32,7 +32,7 @@ import {
   EditRegular,
   KeyRegular,
 } from "@fluentui/react-icons";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -147,6 +147,21 @@ export function Providers() {
   const [placeholderVals, setPlaceholderVals] = useState<Record<string, string>>({});
   const [fetchMethod, setFetchMethod] = useState("GET");
   const [fetchPath, setFetchPath] = useState("/models");
+
+  useEffect(() => {
+    if (!form?.base_url) return;
+    if (
+      form.base_url.includes("api.cloudflare.com") &&
+      fetchPath === "/models"
+    ) {
+      setFetchPath("ai/models/search");
+    } else if (
+      !form.base_url.includes("api.cloudflare.com") &&
+      fetchPath === "ai/models/search"
+    ) {
+      setFetchPath("/models");
+    }
+  }, [form?.base_url]);
 
   const phKeys = [
     ...new Set(

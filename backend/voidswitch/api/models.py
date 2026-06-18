@@ -20,6 +20,7 @@ from voidswitch.models.db import ModelEntry, User
 from voidswitch.models.schemas import (
     ModelBatchResult,
     ModelBatchUpdate,
+    ModelCleanResult,
     ModelOut,
     ModelSyncResult,
     ModelUpsert,
@@ -183,6 +184,32 @@ async def sync_models(
             scope="self" if user.role == "member" else "admin",
         )
     return ModelSyncResult(added=added, total=total)
+
+
+@router.post("/clean", response_model=ModelCleanResult)
+async def clean_unserved(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> ModelCleanResult:
+    """Delete metadata for every model id no enabled provider currently serves.
+
+    Staff-only (it is destructive). Returns the deleted count and the sorted
+    list of model ids that were removed.
+    """
+    deleted, ids = await models_catalog.clean_unserved(session)
+    if deleted:
+        await record_audit(
+            session,
+            action="model.clean_unserved",
+            actor_sub=user.sub,
+            actor_name=actor_display_name(user),
+            target_type="model",
+            detail={"deleted": deleted, "model_ids": ids},
+            ip=request.client.host if request.client else None,
+            scope="admin",
+        )
+    return ModelCleanResult(deleted=deleted, model_ids=ids)
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)

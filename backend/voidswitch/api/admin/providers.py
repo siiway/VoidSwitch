@@ -242,22 +242,83 @@ async def fetch_provider_models(
 
     import httpx
 
+    is_cloudflare = "api.cloudflare.com" in url
+    all_pages: list = []
+    page = 1
+    max_pages = 10
     try:
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=5.0),
+            timeout=httpx.Timeout(connect=15.0, read=30.0, write=10.0, pool=5.0),
             follow_redirects=True,
         ) as client:
-            kw = {"headers": {"Authorization": f"Bearer {body.token}"}}
-            if method == "GET":
-                r = await client.get(url, **kw)
-            else:
-                r = await client.post(url, **kw)
+            while page <= max_pages:
+                kw: dict[str, object] = {"headers": {"Authorization": f"Bearer {body.token}"}}
+                params: dict[str, str] = {}
+                if is_cloudflare:
+                    params["per_page"] = "100"
+                    params["page"] = str(page)
+                    if method == "GET":
+                        r = await client.get(url, params=params, **kw)
+                    else:
+                        r = await client.post(url, params=params, **kw)
+                else:
+                    if method == "GET":
+                        r = await client.get(url, **kw)
+                    else:
+                        r = await client.post(url, **kw)
+                if r.status_code >= 400:
+                    detail = r.text[:1024]
+                    log.warning(
+                        "fetch_models_upstream_error",
+                        url=url, status=r.status_code, body=detail,
+                    )
+                    raise HTTPException(
+                        status.HTTP_502_BAD_GATEWAY,
+                        f"Provider returned {r.status_code}: {detail}",
+                    )
+                try:
+                    data = r.json()
+                except Exception as exc:
+                    log.warning("fetch_models_non_json", url=url, body=r.text[:512])
+                    raise HTTPException(
+                        status.HTTP_502_BAD_GATEWAY,
+                        f"Provider returned non-JSON ({exc}). Preview: {r.text[:256]}",
+                    ) from exc
+                if isinstance(data, dict):
+                    items = data.get("data", data.get("models", data.get("result", [])))
+                elif isinstance(data, list):
+                    items = data
+                else:
+                    items = []
+                if not isinstance(items, list):
+                    log.warning("fetch_models_bad_format", url=url, data=str(data)[:512])
+                    keys = list(data.keys()) if isinstance(data, dict) else "not an object"
+                    raise HTTPException(
+                        status.HTTP_502_BAD_GATEWAY,
+                        f"Unexpected response format. Keys: {keys}. Body: {str(data)[:256]}",
+                    )
+                all_pages.extend(items)
+                if not is_cloudflare:
+                    break
+                # Cloudflare pagination
+                ri = data.get("result_info") if isinstance(data, dict) else None
+                if not isinstance(ri, dict):
+                    break
+                total_count = ri.get("total_count", 0)
+                per_page = ri.get("per_page", 100)
+                if not isinstance(total_count, int) or not isinstance(per_page, int):
+                    break
+                if page * per_page >= total_count:
+                    break
+                page += 1
     except httpx.TimeoutException as exc:
         log.error("fetch_models_timeout", url=url, error=str(exc))
         raise HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
             f"Provider timed out ({exc}). Check network connectivity to {url}.",
         ) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         log.exception("fetch_models_connection_error", url=url)
         raise HTTPException(
@@ -265,42 +326,8 @@ async def fetch_provider_models(
             f"Could not reach provider: {exc}",
         ) from exc
 
-    ct = r.headers.get("content-type", "")
-    log.info("fetch_models_response", url=url, status=r.status_code, content_type=ct)
-
-    if r.status_code >= 400:
-        detail = r.text[:1024]
-        log.warning("fetch_models_upstream_error", url=url, status=r.status_code, body=detail)
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Provider returned {r.status_code}: {detail}",
-        )
-
-    try:
-        data = r.json()
-    except Exception as exc:
-        log.warning("fetch_models_non_json", url=url, body=r.text[:512])
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Provider returned non-JSON response ({exc}). Body preview: {r.text[:256]}",
-        ) from exc
-
-    items: list = []
-    if isinstance(data, list):
-        items = data
-    elif isinstance(data, dict):
-        items = data.get("data", data.get("models", data.get("result", [])))
-
-    if not isinstance(items, list):
-        log.warning("fetch_models_bad_format", url=url, data=str(data)[:512])
-        keys = list(data.keys()) if isinstance(data, dict) else "not an object"
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Unexpected response format. Keys: {keys}. Body: {str(data)[:256]}",
-        )
-
     model_ids: list[str] = []
-    for m in items:
+    for m in all_pages:
         if isinstance(m, str):
             model_ids.append(m)
         elif isinstance(m, dict):
@@ -308,5 +335,5 @@ async def fetch_provider_models(
             if mid:
                 model_ids.append(str(mid))
 
-    log.info("fetch_models_ok", url=url, count=len(model_ids))
+    log.info("fetch_models_ok", url=url, count=len(model_ids), pages=page)
     return {"models": model_ids}

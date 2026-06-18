@@ -19,6 +19,11 @@ from voidswitch.services.network import Route
 _EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 
 
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
+
 def _lru_key(last_used: dt.datetime | None) -> dt.datetime:
     if last_used is None:
         return _EPOCH
@@ -96,23 +101,45 @@ async def select_providers(session: AsyncSession, model: str) -> list[Provider]:
     return matched
 
 
-def select_keys(provider: Provider, pool: str = "") -> list[ApiKey]:
+def select_keys(
+    provider: Provider, pool: str = "", rate_limit_recovery_seconds: int = 0
+) -> list[ApiKey]:
     """Active keys for a provider, weighted-least-used first.
 
     When ``pool`` is non-empty, only keys carrying that pool tag are used (so an
     alias route can target e.g. just the "leaked" or "members" keys). An empty
     pool uses every active key regardless of tag.
+
+    Rate-limited keys that have been parked for longer than
+    ``rate_limit_recovery_seconds`` are also returned (so the dispatcher can
+    re-attempt them). When ``rate_limit_recovery_seconds`` is 0, rate-limited
+    keys are never re-attempted via this path.
     """
-    active = [k for k in provider.keys if k.status == KeyStatus.ACTIVE.value]
+    now = _utcnow()
+    candidates: list[ApiKey] = []
+    for k in provider.keys:
+        if k.status == KeyStatus.ACTIVE.value:
+            candidates.append(k)
+        elif (
+            k.status == KeyStatus.RATE_LIMITED.value
+            and rate_limit_recovery_seconds > 0
+            and k.disabled_since is not None
+        ):
+            disabled_since = k.disabled_since
+            if disabled_since.tzinfo is None:
+                disabled_since = disabled_since.replace(tzinfo=dt.UTC)
+            elapsed = (now - disabled_since).total_seconds()
+            if elapsed >= rate_limit_recovery_seconds:
+                candidates.append(k)
     if pool:
-        active = [k for k in active if (k.pool or "") == pool]
+        candidates = [k for k in candidates if (k.pool or "") == pool]
 
     def sort_key(k: ApiKey) -> tuple[int, float, dt.datetime]:
         weight = max(k.weight, 1)
         return (k.failed_count, k.total_requests / weight, _lru_key(k.last_used_at))
 
-    active.sort(key=sort_key)
-    return active
+    candidates.sort(key=sort_key)
+    return candidates
 
 
 async def active_proxies(session: AsyncSession) -> list[Proxy]:

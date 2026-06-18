@@ -324,14 +324,22 @@ async def test_install_user_agent_sniff(client):
     assert "$ErrorActionPreference" in ps.text
 
 
-def _run_install_python(tmp_path, *, token):
+def _run_install_python(tmp_path, *, token, model="claude-opus-4-8", small_model=""):
     """Execute the install script's embedded python merge block against temp files."""
     import json
     import sys
 
     from voidswitch.api.install import _BASH
 
-    py = _BASH.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    # Extract Python block: after <<'PY' and before \nPY\n
+    start_marker = "<<'PY'"
+    start_idx = _BASH.index(start_marker)
+    # Skip to the newline after the marker
+    after_marker = _BASH.index("\n", start_idx) + 1
+    end_marker = "\nPY\n"
+    end_idx = _BASH.index(end_marker, after_marker)
+    py = _BASH[after_marker:end_idx]
+    py = py.replace("__MODEL__", model).replace("__SMALL_MODEL__", small_model)
     config = tmp_path / "opencode.json"
     auth = tmp_path / "auth.json"
     plugin = tmp_path / "voidswitch.plugin.ts"
@@ -361,6 +369,24 @@ def test_install_python_merge_wires_plugin_and_auth(tmp_path):
     assert "claude-opus-4-8" in vs["models"]  # models REQUIRED or provider is dropped
     # Token lands in the auth store (where the plugin loader can read it).
     assert auth_data == {"voidswitch": {"type": "api", "key": "vs-abc123token"}}
+    # No small_model when not specified.
+    assert "small_model" not in cfg
+
+
+def test_install_python_merge_sets_small_model(tmp_path):
+    cfg, _, _ = _run_install_python(tmp_path, token="", small_model="claude-haiku-4-5-20251001")
+    assert cfg["model"] == "voidswitch/claude-opus-4-8"
+    assert cfg["small_model"] == "voidswitch/claude-haiku-4-5-20251001"
+    vs = cfg["provider"]["voidswitch"]
+    assert "claude-opus-4-8" in vs["models"]
+    assert "claude-haiku-4-5-20251001" in vs["models"]
+
+
+def test_install_python_merge_custom_model(tmp_path):
+    cfg, _, _ = _run_install_python(tmp_path, token="", model="claude-sonnet-4-6")
+    assert cfg["model"] == "voidswitch/claude-sonnet-4-6"
+    vs = cfg["provider"]["voidswitch"]
+    assert "claude-sonnet-4-6" in vs["models"]
 
 
 def test_install_python_merge_is_idempotent_and_dedupes(tmp_path):

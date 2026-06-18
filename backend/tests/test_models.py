@@ -237,6 +237,79 @@ async def test_delete_metadata(client, seeded):
     assert chat["registered"] is False
 
 
+async def test_clean_unserved_removes_orphaned_entries(client, db, seeded):
+    # Disable the provider so no models are served — makes the orphan truly unserved.
+    from sqlalchemy import update
+    from voidswitch.models.db import Provider
+
+    async with db.session() as session:
+        await session.execute(
+            update(Provider).where(Provider.id == seeded["provider_id"]).values(enabled=False)
+        )
+        await session.commit()
+
+    # Create a metadata entry for a model that no provider serves.
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "orphan-model", "opencode_config": {"name": "Orphan"}, "description": "will be orphaned"},
+    )
+    # Verify it exists in catalog.
+    listed = (await client.get("/api/models", headers=_session_headers())).json()
+    orphan = next((m for m in listed if m["model_id"] == "orphan-model"), None)
+    assert orphan is not None
+    assert orphan["served"] is False  # no provider serves this
+    assert orphan["registered"] is True  # has metadata row
+
+    # Clean: should remove the orphan.
+    resp = await client.post("/api/models/clean", headers=_session_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["deleted"] == 1
+    assert "orphan-model" in body["model_ids"]
+
+    # Verify it's gone from catalog.
+    listed2 = (await client.get("/api/models", headers=_session_headers())).json()
+    orphans = [m for m in listed2 if m["model_id"] == "orphan-model"]
+    assert not orphans
+
+    # Running clean again should be idempotent (nothing to delete).
+    resp2 = await client.post("/api/models/clean", headers=_session_headers())
+    assert resp2.status_code == 200
+    assert resp2.json()["deleted"] == 0
+
+
+async def test_clean_unserved_preserves_served_models(client, seeded):
+    # deepseek-chat IS served (provider has wildcard). Clean should NOT remove its metadata.
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "opencode_config": {"name": "DeepSeek"}, "description": "kept"},
+    )
+    resp = await client.post("/api/models/clean", headers=_session_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["deleted"] == 0
+    assert "deepseek-chat" not in body["model_ids"]
+
+    # deepseek-chat metadata is still there.
+    listed = (await client.get("/api/models", headers=_session_headers())).json()
+    chat = next((m for m in listed if m["model_id"] == "deepseek-chat"), None)
+    assert chat is not None
+    assert chat["opencode_config"] == {"name": "DeepSeek"}
+
+
+async def test_clean_unserved_requires_staff(client, db, seeded):
+    await _add_member(db)
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "orphan2", "description": "x"},
+    )
+    resp = await client.post("/api/models/clean", headers=_session_headers("member-1"))
+    assert resp.status_code == 403
+
+
 async def test_display_name(client, seeded):
     resp = await client.put(
         "/api/models",

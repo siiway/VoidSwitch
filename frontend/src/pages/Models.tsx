@@ -130,6 +130,7 @@ export function Models() {
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
 
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchDescOn, setBatchDescOn] = useState(true);
@@ -178,6 +179,51 @@ export function Models() {
       );
     } finally {
       setSyncing(false);
+    }
+  }
+
+  const unserved = useMemo(
+    () => items.filter((m) => !m.served && m.registered),
+    [items],
+  );
+
+  async function doClean() {
+    if (!unserved.length) return;
+    const ok = await confirm({
+      title: t("models.cleanTitle" as TK),
+      message:
+        t("models.cleanMsg" as TK).replace(
+          "{count}",
+          String(unserved.length),
+        ) +
+        "\n\n" +
+        unserved.map((m) => `• ${m.model_id}`).join("\n"),
+      confirmLabel: t("models.cleanConfirm" as TK),
+      tone: "danger",
+    });
+    if (!ok) return;
+    setCleaning(true);
+    try {
+      const r = await api.post<{ deleted: number; model_ids: string[] }>(
+        "/api/models/clean",
+      );
+      notify(
+        t("models.cleaned" as TK),
+        t("models.cleanedDetail" as TK).replace(
+          "{count}",
+          String(r.deleted),
+        ),
+        "success",
+      );
+      catalog.reload();
+    } catch (e) {
+      notify(
+        t("common.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setCleaning(false);
     }
   }
 
@@ -294,6 +340,22 @@ export function Models() {
               <Button icon={<EditRegular />} onClick={() => setBatchOpen(true)}>
                 {t("models.editSelected" as TK).replace("{count}", String(selected.size))}
               </Button>
+            )}
+            {isStaff && unserved.length > 0 && (
+              <Tooltip
+                content={t("models.cleanTooltip" as TK)}
+                relationship="label"
+              >
+                <Button
+                  icon={<DeleteRegular />}
+                  disabled={cleaning}
+                  onClick={doClean}
+                >
+                  {cleaning
+                    ? t("models.cleaning" as TK)
+                    : t("models.clean" as TK)}
+                </Button>
+              </Tooltip>
             )}
             <Tooltip
               content={t("models.syncTooltip" as TK)}

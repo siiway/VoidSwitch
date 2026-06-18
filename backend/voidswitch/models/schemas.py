@@ -177,6 +177,11 @@ class ModelSyncResult(BaseModel):
     total: int
 
 
+class ModelCleanResult(BaseModel):
+    deleted: int
+    model_ids: list[str] = Field(default_factory=list)
+
+
 # --------------------------------------------------------------------------- #
 # API keys (upstream provider credentials)
 # --------------------------------------------------------------------------- #

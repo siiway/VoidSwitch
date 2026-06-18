@@ -48,6 +48,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # Slow background rescan that re-checks keys disabled for insufficient balance
     # and re-enables any that have been topped up. Defaults to once per day.
     "balance_rescan_interval_seconds": 86400,
+    # How long (seconds) a rate-limited key stays parked before it can be retried.
+    # After this interval elapses, the key is re-attempted on the next dispatch.
+    "rate_limit_recovery_seconds": 180,
     # Throttle for on-demand "rescan all balances": at most this many balance
     # requests per second. 0 = unthrottled (fire as fast as possible).
     "balance_scan_rate_per_second": 5,
@@ -60,4 +63,6 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "balance_rescan_enabled": True,
     "proxy_resurrector_enabled": True,
     "proxy_probe_url": "https://api.openai.com/v1/models",
+    "opencode_default_model": "claude-opus-4-8",
+    "opencode_small_model": "claude-haiku-4-5-20251001",
 }

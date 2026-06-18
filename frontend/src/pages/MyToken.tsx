@@ -51,16 +51,18 @@ export OPENAI_API_KEY=vs-...`;
 const CLAUDE_SNIPPET = `export ANTHROPIC_BASE_URL=${API_BASE}
 export ANTHROPIC_AUTH_TOKEN=vs-...`;
 
-const OPENCODE_SNIPPET = `// ~/.config/opencode/opencode.json
+const OPENCODE_SNIPPET = (model: string, smallModel: string) => `// ~/.config/opencode/opencode.json
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "voidswitch/claude-opus-4-8",
+  "model": "voidswitch/${model}",${
+    smallModel ? `\n  "small_model": "voidswitch/${smallModel}",` : ""
+  }
   "provider": {
     "voidswitch": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "VoidSwitch",
       "options": { "baseURL": "${API_BASE}/v1" },
-      "models": { "claude-opus-4-8": {} }
+      "models": { "${model}": {}${smallModel && smallModel !== model ? `, "${smallModel}": {}` : ""} }
     }
   }
 }`;
@@ -124,9 +126,18 @@ export function MyToken() {
   type TK = keyof Translations;
   const tokensList = useAsync<VoidToken[]>(() => api.get("/api/me/tokens"));
   const usage = useAsync<Usage>(() => api.get("/api/me/usage"));
+  const settingsData = useAsync<{ values: Record<string, unknown> }>(() =>
+    api.get("/api/admin/settings"),
+  );
   const [name, setName] = useState("default");
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [client, setClient] = useState("openai");
+
+  const ocModel =
+    (settingsData.data?.values.opencode_default_model as string) ||
+    "claude-opus-4-8";
+  const ocSmallModel =
+    (settingsData.data?.values.opencode_small_model as string) || "";
 
   async function create() {
     try {
@@ -276,7 +287,7 @@ export function MyToken() {
                   marginTop: 10,
                 }}
               >
-                <CodeBlock code={OPENCODE_SNIPPET} />
+                <CodeBlock code={OPENCODE_SNIPPET(ocModel, ocSmallModel)} />
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 4 }}
                 >

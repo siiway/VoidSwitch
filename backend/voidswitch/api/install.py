@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 
 from voidswitch.core.config import Settings, get_settings
+from voidswitch.services import settings_store
 
 router = APIRouter(tags=["install"])
 
@@ -106,11 +107,7 @@ print_manual_snippet() {
 ║       "npm": "@ai-sdk/anthropic",                                            ║
 ║       "name": "VoidSwitch",                                                  ║
 ║       "options": { "baseURL": "$GATEWAY/v1" },                               ║
-║       "models": {                                                            ║
-║         "claude-opus-4-8": {}, "claude-opus-4-7": {},                       ║
-║         "claude-opus-4-6": {}, "claude-sonnet-4-6": {},                     ║
-║         "deepseek-v4-pro": {}, "deepseek-v4-flash": {}                       ║
-║       }                                                                      ║
+║       "models": { "__MODEL__": {} }                                          ║
 ║     }                                                                        ║
 ║                                                                              ║
 ║  3. (optional) In "\$HOME/.local/share/opencode/auth.json":                  ║
@@ -174,8 +171,12 @@ def load(path):
 
 cfg, _warn = load(config)
 cfg["$schema"] = "https://opencode.ai/config.json"
-cfg.setdefault("model", "voidswitch/claude-opus-4-8")
-cfg.pop("small_model", None)
+cfg.setdefault("model", "voidswitch/__MODEL__")
+_sm = "__SMALL_MODEL__"
+if _sm:
+    cfg.setdefault("small_model", "voidswitch/" + _sm)
+else:
+    cfg.pop("small_model", None)
 
 def ref(p):
     return p[0] if isinstance(p, list) and p else p
@@ -187,21 +188,14 @@ cfg["plugin"] = plugins
 provider = cfg.get("provider")
 if not isinstance(provider, dict):
     provider = cfg["provider"] = {}
+_models = {"__MODEL__": {}}
+if "__SMALL_MODEL__":
+    _models["__SMALL_MODEL__"] = {}
 provider["voidswitch"] = {
     "npm": "@ai-sdk/anthropic",
     "name": "VoidSwitch",
     "options": {"baseURL": gateway + "/v1"},
-    "models": {
-        m: {}
-        for m in (
-            "claude-opus-4-8",
-            "claude-opus-4-7",
-            "claude-opus-4-6",
-            "claude-sonnet-4-6",
-            "deepseek-v4-pro",
-            "deepseek-v4-flash",
-        )
-    },
+    "models": _models,
 }
 
 with open(config, "w") as f:
@@ -258,21 +252,23 @@ function load(path) {
 
 const cfg = load(config);
 cfg["$schema"] = "https://opencode.ai/config.json";
-if (!cfg.model) cfg.model = "voidswitch/claude-opus-4-8";
-delete cfg.small_model;
+if (!cfg.model) cfg.model = "voidswitch/__MODEL__";
+const _sm = "__SMALL_MODEL__";
+if (_sm) { if (!cfg.small_model) cfg.small_model = "voidswitch/" + _sm; }
+else { delete cfg.small_model; }
 const ref = (p) => (Array.isArray(p) && p.length ? p[0] : p);
 let plugins = Array.isArray(cfg.plugin) ? cfg.plugin : [];
 plugins = plugins.filter((p) => !(typeof ref(p) === "string" && ref(p).endsWith("voidswitch.plugin.ts")));
 plugins.push(plugin);
 cfg.plugin = plugins;
 if (typeof cfg.provider !== "object" || cfg.provider === null) cfg.provider = {};
+const _models = { "__MODEL__": {} };
+if ("__SMALL_MODEL__") _models["__SMALL_MODEL__"] = {};
 cfg.provider.voidswitch = {
   npm: "@ai-sdk/anthropic",
   name: "VoidSwitch",
   options: { baseURL: gateway + "/v1" },
-  models: Object.fromEntries(
-    ["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "deepseek-v4-pro", "deepseek-v4-flash"].map((m) => [m, {}])
-  ),
+  models: _models,
 };
 fs.writeFileSync(config, JSON.stringify(cfg, null, 2));
 if (token) {
@@ -307,7 +303,7 @@ else
   cat > "$CONFIG" <<JSON
 {
   "\$schema": "https://opencode.ai/config.json",
-  "model": "voidswitch/claude-opus-4-8",
+  "model": "voidswitch/__MODEL__",
   "plugin": ["$PLUGIN"],
   "provider": {
     "voidswitch": {
@@ -315,8 +311,7 @@ else
       "name": "VoidSwitch",
       "options": { "baseURL": "$GATEWAY/v1" },
       "models": {
-        "claude-opus-4-8": {}, "claude-opus-4-7": {}, "claude-opus-4-6": {},
-        "claude-sonnet-4-6": {}, "deepseek-v4-pro": {}, "deepseek-v4-flash": {}
+        "__MODEL__": {}
       }
     }
   }
@@ -418,9 +413,14 @@ $cfg = Load-Json $Config
 
 $cfg | Add-Member -NotePropertyName '$schema' -NotePropertyValue 'https://opencode.ai/config.json' -Force
 if (-not $cfg.PSObject.Properties['model']) {
-  $cfg | Add-Member -NotePropertyName 'model' -NotePropertyValue 'voidswitch/claude-opus-4-8' -Force
+  $cfg | Add-Member -NotePropertyName 'model' -NotePropertyValue 'voidswitch/__MODEL__' -Force
 }
-if ($cfg.PSObject.Properties['small_model']) {
+$_sm = '__SMALL_MODEL__'
+if ($_sm) {
+  if (-not $cfg.PSObject.Properties['small_model']) {
+    $cfg | Add-Member -NotePropertyName 'small_model' -NotePropertyValue ('voidswitch/' + $_sm) -Force
+  }
+} elseif ($cfg.PSObject.Properties['small_model']) {
   $cfg.PSObject.Properties.Remove('small_model')
 }
 
@@ -439,8 +439,9 @@ $cfg | Add-Member -NotePropertyName 'plugin' -NotePropertyValue ([string[]]$plug
 # drops a provider with no models, so it would never appear in /connect.
 $provider = if ($cfg.PSObject.Properties['provider'] -and $cfg.provider) { $cfg.provider } else { [pscustomobject]@{} }
 $models = [pscustomobject]@{}
-foreach ($m in @('claude-opus-4-8','claude-opus-4-7','claude-opus-4-6','claude-sonnet-4-6','deepseek-v4-pro','deepseek-v4-flash')) {
-  $models | Add-Member -NotePropertyName $m -NotePropertyValue ([pscustomobject]@{}) -Force
+$models | Add-Member -NotePropertyName '__MODEL__' -NotePropertyValue ([pscustomobject]@{}) -Force
+if ($_sm) {
+  $models | Add-Member -NotePropertyName $_sm -NotePropertyValue ([pscustomobject]@{}) -Force
 }
 $voidswitch = [pscustomobject]@{
   npm     = '@ai-sdk/anthropic'
@@ -471,17 +472,42 @@ if (-not $Token) {
 """
 
 
-def _render(template: str, gateway: str, token: str) -> str:
-    return template.replace("__GATEWAY__", gateway).replace("__TOKEN__", token)
+def _render(
+    template: str,
+    gateway: str,
+    token: str,
+    model: str,
+    small_model: str,
+) -> str:
+    rendered = template.replace("__GATEWAY__", gateway).replace("__TOKEN__", token)
+    rendered = rendered.replace("__MODEL__", model)
+    rendered = rendered.replace("__SMALL_MODEL__", small_model)
+    return rendered
 
 
-def _bash(request: Request, settings: Settings, token: str | None) -> PlainTextResponse:
-    body = _render(_BASH, _safe_gateway(request, settings), _safe_token(token))
+def _bash(
+    request: Request,
+    settings: Settings,
+    token: str | None,
+    model: str,
+    small_model: str,
+) -> PlainTextResponse:
+    body = _render(
+        _BASH, _safe_gateway(request, settings), _safe_token(token), model, small_model
+    )
     return PlainTextResponse(body, media_type="text/x-shellscript; charset=utf-8")
 
 
-def _powershell(request: Request, settings: Settings, token: str | None) -> PlainTextResponse:
-    body = _render(_PS, _safe_gateway(request, settings), _safe_token(token))
+def _powershell(
+    request: Request,
+    settings: Settings,
+    token: str | None,
+    model: str,
+    small_model: str,
+) -> PlainTextResponse:
+    body = _render(
+        _PS, _safe_gateway(request, settings), _safe_token(token), model, small_model
+    )
     return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
 
 
@@ -492,10 +518,12 @@ async def install(
     settings: Settings = Depends(get_settings),
 ) -> PlainTextResponse:
     """Serve the right installer for the calling shell (UA-sniffed)."""
+    model = settings_store.get_str("opencode_default_model", "claude-opus-4-8")
+    small_model = settings_store.get_str("opencode_small_model", "claude-haiku-4-5-20251001")
     ua = request.headers.get("user-agent", "").lower()
     if "powershell" in ua or "pwsh" in ua:
-        return _powershell(request, settings, token)
-    return _bash(request, settings, token)
+        return _powershell(request, settings, token, model, small_model)
+    return _bash(request, settings, token, model, small_model)
 
 
 @router.get("/install.sh", response_class=PlainTextResponse)
@@ -504,7 +532,9 @@ async def install_sh(
     token: str | None = None,
     settings: Settings = Depends(get_settings),
 ) -> PlainTextResponse:
-    return _bash(request, settings, token)
+    model = settings_store.get_str("opencode_default_model", "claude-opus-4-8")
+    small_model = settings_store.get_str("opencode_small_model", "claude-haiku-4-5-20251001")
+    return _bash(request, settings, token, model, small_model)
 
 
 @router.get("/install.ps1", response_class=PlainTextResponse)
@@ -513,7 +543,9 @@ async def install_ps1(
     token: str | None = None,
     settings: Settings = Depends(get_settings),
 ) -> PlainTextResponse:
-    return _powershell(request, settings, token)
+    model = settings_store.get_str("opencode_default_model", "claude-opus-4-8")
+    small_model = settings_store.get_str("opencode_small_model", "claude-haiku-4-5-20251001")
+    return _powershell(request, settings, token, model, small_model)
 
 
 @router.get("/opencode/voidswitch.ts", response_class=PlainTextResponse)

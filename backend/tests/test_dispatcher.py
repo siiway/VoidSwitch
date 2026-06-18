@@ -337,3 +337,73 @@ async def test_dispatch_streaming_passthrough(db, seeded):
             collected += piece
     assert b"Hi" in collected
     assert b"[DONE]" in collected
+
+
+async def test_dispatch_rate_limit_recovery(db, seeded):
+    """A rate-limited key is retried after recovery interval and reset to ACTIVE on success."""
+    import datetime as dt
+
+    from voidswitch.models.db import ApiKey
+    from voidswitch.services import settings_store
+
+    # Set recovery interval to 180 seconds (3 minutes)
+    async with db.session() as session:
+        await settings_store.update(session, {"rate_limit_recovery_seconds": 180})
+
+    # Mark the key as rate-limited, disabled 4 minutes ago (past recovery)
+    async with db.session() as session:
+        key = await session.get(ApiKey, seeded["key_id"])
+        key.status = KeyStatus.RATE_LIMITED.value
+        key.disabled_since = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=4)
+        await session.flush()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.OPENAI,
+                model="deepseek-chat",
+                payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+
+    assert result.status_code == 200
+    # Key should be reset to ACTIVE after successful request
+    async with db.session() as session:
+        key = await session.get(ApiKey, seeded["key_id"])
+    assert key.status == KeyStatus.ACTIVE.value
+    assert key.disabled_since is None
+
+
+async def test_dispatch_rate_limit_no_recovery_within_interval(db, seeded):
+    """A rate-limited key is NOT retried if recovery interval hasn't elapsed."""
+    import datetime as dt
+
+    from voidswitch.models.db import ApiKey
+    from voidswitch.services import settings_store
+
+    # Set recovery interval to 180 seconds (3 minutes)
+    async with db.session() as session:
+        await settings_store.update(session, {"rate_limit_recovery_seconds": 180})
+
+    # Mark the key as rate-limited, disabled 1 minute ago (within recovery window)
+    async with db.session() as session:
+        key = await session.get(ApiKey, seeded["key_id"])
+        key.status = KeyStatus.RATE_LIMITED.value
+        key.disabled_since = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+        await session.flush()
+
+    result = await dispatch(
+        DispatchRequest(
+            inbound_style=ApiStyle.OPENAI,
+            model="deepseek-chat",
+            payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+            stream=False,
+            token_id=seeded["token_id"],
+        )
+    )
+
+    # No keys available → 502
+    assert result.status_code == 502

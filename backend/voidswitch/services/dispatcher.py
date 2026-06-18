@@ -162,6 +162,16 @@ def _reward_proxy(proxy: Proxy | None) -> None:
     proxy.last_used_at = _utcnow()
 
 
+def _reward_key(key: ApiKey) -> None:
+    """Reset a rate-limited key to active when a request succeeds."""
+    if key.status == KeyStatus.RATE_LIMITED.value:
+        key.status = KeyStatus.ACTIVE.value
+        key.failed_count = 0
+        key.disabled_reason = None
+        key.disabled_since = None
+        key.last_used_at = _utcnow()
+
+
 # --------------------------------------------------------------------------- #
 # Core dispatch
 # --------------------------------------------------------------------------- #
@@ -175,6 +185,7 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
     connect_timeout = float(settings_store.get_int("connect_timeout_seconds", 15))
     request_timeout = float(settings_store.get_int("request_timeout_seconds", 300))
     stream_idle = float(settings_store.get_int("stream_idle_timeout_seconds", 120))
+    rate_limit_recovery = settings_store.get_int("rate_limit_recovery_seconds", 180)
 
     pool = get_pool()
     attempts = 0
@@ -208,7 +219,7 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
             adapter = get_adapter(provider)
             # Alias routing: pick the upstream model + key pool for this inbound model.
             upstream_model, key_pool = resolve_model(provider, req.model)
-            keys = select_keys(provider, key_pool)
+            keys = select_keys(provider, key_pool, rate_limit_recovery_seconds=rate_limit_recovery)
             upstream_style = adapter.style
             timeout_override = provider.timeout_seconds or 0
             read_timeout = float(timeout_override) if timeout_override else request_timeout
@@ -266,6 +277,7 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                         key.last_used_at = _utcnow()
                         if key.failed_count:
                             key.failed_count = 0
+                        _reward_key(key)
                         return await _finalise_success(
                             session=session,
                             req=req,
@@ -559,6 +571,7 @@ async def _finalise_success(
         content = outcome.body_bytes or b"{}"
 
     key.total_requests += 1
+    _reward_key(key)
     await _log_request(
         session,
         req,
