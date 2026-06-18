@@ -1,7 +1,7 @@
 import {
   Button,
   Card,
-  Dropdown,
+  Combobox,
   Option,
   Popover,
   PopoverSurface,
@@ -336,22 +336,30 @@ export function Chat() {
     <div className={styles.page}>
       {/* header */}
       <div className={styles.header}>
-        <Dropdown
+        <Combobox
           className={styles.modelPick}
           value={model}
           selectedOptions={model ? [model] : []}
           placeholder={t("chat.selectModel" as TK)}
           disabled={models.length === 0}
-          button={{ className: styles.modelButton }}
+          freeform
+          autoComplete="list"
           onOptionSelect={(_, d) => d.optionValue && setModel(d.optionValue)}
+          onChange={(e) => setModel((e.target as HTMLInputElement).value)}
         >
-          {models.map((m) => (
-            <Option key={m.id} value={m.id} text={m.id}>
-              {m.id}
-              {m.owned_by ? `  ·  ${m.owned_by}` : ""}
-            </Option>
-          ))}
-        </Dropdown>
+          {models
+            .filter((m) =>
+              model.toLowerCase()
+                ? m.id.toLowerCase().includes(model.toLowerCase())
+                : true,
+            )
+            .map((m) => (
+              <Option key={m.id} value={m.id} text={m.id}>
+                {m.id}
+                {m.owned_by ? `  ·  ${m.owned_by}` : ""}
+              </Option>
+            ))}
+        </Combobox>
 
         <div className={styles.headerActions}>
           <Tooltip content={t("chat.reloadModels" as TK)} relationship="label">
@@ -717,6 +725,9 @@ const useStyles = makeStyles({
   },
   modelPick: {
     minWidth: "200px",
+    maxWidth: "none",
+    width: "auto",
+    flex: "1 1 auto",
   },
   modelButton: {
     fontWeight: tokens.fontWeightSemibold,

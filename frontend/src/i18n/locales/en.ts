@@ -244,7 +244,7 @@ const en = {
     modelId: "Model id",
     displayName: "Display name",
     displayNameHint:
-      "Shown in the OpenCode model picker. Takes priority over any name set in the custom OpenCode config below. Leave blank to use the default.",
+      "Shown in the OpenCode model picker. The `name` field in the custom OpenCode config below takes priority over this. Leave blank to use the default.",
     displayNamePlaceholder: "e.g. Claude Opus 4.8",
     publicId: "Public id (mapping)",
     publicIdHint:
@@ -437,7 +437,7 @@ const en = {
     orPaste: "or paste one",
     use: "Use",
     tokenPlaceholder: "vs-…",
-    selectModel: "Select a model",
+    selectModel: "Select or type a model",
     systemPromptLabel: "System prompt",
     systemPromptHint: "You are a helpful assistant…",
     messagePlaceholder: "Message…",

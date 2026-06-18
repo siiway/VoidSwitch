@@ -240,7 +240,7 @@ const zh: Translations = {
     modelId: "模型 ID",
     displayName: "显示名称",
     displayNameHint:
-      "在 OpenCode 模型选择器中显示。优先于下方自定义 OpenCode 配置中的 name。留空使用默认名称。",
+      "在 OpenCode 模型选择器中显示。下方自定义 OpenCode 配置中的 name 字段优先级高于此设置。留空使用默认名称。",
     displayNamePlaceholder: "例如 Claude Opus 4.8",
     publicId: "公开 ID（映射）",
     publicIdHint: "重命名此模型：设置后，客户端只能看到和调用此 ID；原始 ID 将被隐藏和拒绝。留空表示不映射。",
@@ -428,7 +428,7 @@ const zh: Translations = {
     orPaste: "或粘贴一个",
     use: "使用",
     tokenPlaceholder: "vs-…",
-    selectModel: "选择模型",
+    selectModel: "选择或输入模型名称",
     systemPromptLabel: "系统提示词",
     systemPromptHint: "你是一个有帮助的助手…",
     messagePlaceholder: "输入消息…",
