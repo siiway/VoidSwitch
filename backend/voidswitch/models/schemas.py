@@ -204,6 +204,10 @@ class ApiKeyUpdate(BaseModel):
     note: str | None = None
     pool: str | None = None
     enabled: bool | None = None  # convenience: maps to active/disabled
+    # OAuth bundle fields (Claude Code). When any are set, the bundle is rebuilt.
+    access_token: str | None = None
+    refresh_token: str | None = None
+    expires_at: float | None = None
 
 
 class ApiKeyOut(BaseModel):

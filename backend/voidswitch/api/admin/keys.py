@@ -110,7 +110,8 @@ async def add_keys(
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> list[ApiKey]:
-    await _get_provider(session, provider_id)
+    provider = await _get_provider(session, provider_id)
+    is_claude_code = provider.type == "claude-code"
 
     # De-dupe within the batch and against existing rows for this provider.
     existing_hashes = {
@@ -126,14 +127,25 @@ async def add_keys(
         raw, comment = _parse_key_line(line)
         if not raw:
             continue
+        # For Claude Code providers, accept colon-separated OAuth bundles:
+        # access_token:refresh_token:expires_at → JSON bundle.
+        if is_claude_code and raw.count(":") == 2 and oauth_tokens.parse_bundle(raw) is None:
+            parts = raw.split(":", 2)
+            raw = json.dumps({
+                "access_token": parts[0],
+                "refresh_token": parts[1],
+                "expires_at": float(parts[2]),
+            })
         digest = hash_token(raw)
         if digest in existing_hashes or digest in seen:
             continue
         seen.add(digest)
+        parsed = oauth_tokens.parse_bundle(raw)
+        preview = _oauth_preview(parsed) if is_claude_code and parsed is not None else _preview(raw)
         sensitive_keys.append(
             {
                 "key": raw,
-                "preview": _preview(raw),
+                "preview": preview,
                 "note": comment or body.note,
                 "pool": body.pool or "",
             }
@@ -142,7 +154,7 @@ async def add_keys(
             provider_id=provider_id,
             key_ciphertext=encrypt_secret(raw, secret=settings.server.secret_key),
             key_hash=digest,
-            key_preview=_preview(raw),
+            key_preview=preview,
             status=KeyStatus.ACTIVE.value,
             weight=body.weight,
             note=comment or body.note,
@@ -434,7 +446,61 @@ async def update_key(
     if key is None or key.provider_id != provider_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
     _ensure_can_manage_key(user, key)
-    if body.key is not None:
+
+    # Handle OAuth bundle field updates (Claude Code providers).
+    has_bundle_update = (
+        body.access_token is not None
+        or body.refresh_token is not None
+        or body.expires_at is not None
+    )
+    if has_bundle_update:
+        if body.key is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Cannot supply both a raw key and OAuth bundle fields simultaneously.",
+            )
+        provider = await _get_provider(session, provider_id)
+        if provider.type != "claude-code":
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "OAuth bundle fields are only available for claude-code providers.",
+            )
+        plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
+        bundle: dict = oauth_tokens.parse_bundle(plaintext)
+        if bundle is None:
+            # Key is a static token; build a new bundle from the supplied fields.
+            bundle = {}
+        if body.access_token is not None:
+            bundle["access_token"] = body.access_token
+        if body.refresh_token is not None:
+            bundle["refresh_token"] = body.refresh_token
+        if body.expires_at is not None:
+            bundle["expires_at"] = body.expires_at
+        if not bundle.get("access_token"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "access_token is required for an OAuth bundle."
+            )
+        raw = json.dumps(bundle)
+        digest = hash_token(raw)
+        clash = (
+            await session.execute(
+                select(ApiKey.id).where(
+                    ApiKey.provider_id == provider_id,
+                    ApiKey.key_hash == digest,
+                    ApiKey.id != key_id,
+                )
+            )
+        ).first()
+        if clash is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Another key with this value already exists."
+            )
+        key.key_ciphertext = encrypt_secret(raw, secret=settings.server.secret_key)
+        key.key_hash = digest
+        key.key_preview = _oauth_preview(bundle)
+        key.failed_count = 0
+        key.disabled_reason = None
+    elif body.key is not None:
         raw = body.key.strip()
         if not raw:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Key cannot be empty.")
@@ -564,4 +630,16 @@ async def reveal_key(
         detail={"key_id": key.id, "preview": key.key_preview},
         ip=request.client.host if request.client else None,
     )
-    return {"id": key.id, "preview": key.key_preview, "key": plaintext}
+    result: dict[str, object] = {
+        "id": key.id,
+        "preview": key.key_preview,
+        "key": plaintext,
+        "is_bundle": False,
+    }
+    bundle = oauth_tokens.parse_bundle(plaintext)
+    if bundle is not None:
+        result["is_bundle"] = True
+        result["access_token"] = bundle.get("access_token", "")
+        result["refresh_token"] = bundle.get("refresh_token", "")
+        result["expires_at"] = bundle.get("expires_at")
+    return result

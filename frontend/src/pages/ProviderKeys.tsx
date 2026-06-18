@@ -109,6 +109,20 @@ export function ProviderKeys() {
   const [editNote, setEditNote] = useState("");
   const [editPool, setEditPool] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+  // OAuth bundle editing (Claude Code providers).
+  const [editIsBundle, setEditIsBundle] = useState(false);
+  const [editAccessToken, setEditAccessToken] = useState("");
+  const [editRefreshToken, setEditRefreshToken] = useState("");
+  const [editExpiresAt, setEditExpiresAt] = useState("");
+
+  // Add-key helpers.
+  const [cfAccountId, setCfAccountId] = useState("");
+  const [cfToken, setCfToken] = useState("");
+  const [cfComment, setCfComment] = useState("");
+  const [claudeAccessToken, setClaudeAccessToken] = useState("");
+  const [claudeRefreshToken, setClaudeRefreshToken] = useState("");
+  const [claudeExpiresAt, setClaudeExpiresAt] = useState("");
+  const [claudeComment, setClaudeComment] = useState("");
 
   // Reveal-key dialog state (owner-only).
   const [revealed, setRevealed] = useState<{
@@ -271,6 +285,28 @@ export function ProviderKeys() {
     }
   }
 
+  async function addHelperKey(line: string) {
+    const list = line.trim().split("\n").filter(Boolean);
+    if (!list.length) return;
+    setAdding(true);
+    try {
+      const created = await api.post<ApiKey[]>(
+        `/api/admin/providers/${providerId}/keys`,
+        { keys: list, pool: pool.trim() },
+      );
+      notify(
+        t("providerKeys.created" as TK),
+        `${created.length} new key(s)${pool.trim() ? ` in pool "${pool.trim()}"` : ""}`,
+        "success",
+      );
+      keys.reload();
+    } catch (e) {
+      notify(t("providerKeys.addFailed" as TK), e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setAdding(false);
+    }
+  }
+
   async function addKeys() {
     const list = bulk
       .split("\n")
@@ -297,23 +333,57 @@ export function ProviderKeys() {
     }
   }
 
-  function openEdit(k: ApiKey) {
+  async function openEdit(k: ApiKey) {
     setEditing(k);
     setEditSecret("");
     setEditNote(k.note ?? "");
     setEditPool(k.pool ?? "");
+    setEditIsBundle(false);
+    setEditAccessToken("");
+    setEditRefreshToken("");
+    setEditExpiresAt("");
+    // For Claude Code providers, reveal the bundle so we can edit individual fields.
+    if (isClaudeCode && isOwner) {
+      try {
+        const r = await api.post<{
+          is_bundle: boolean;
+          access_token?: string;
+          refresh_token?: string;
+          expires_at?: number;
+        }>(
+          `/api/admin/providers/${providerId}/keys/${k.id}/reveal`,
+        );
+        if (r.is_bundle) {
+          setEditIsBundle(true);
+          setEditAccessToken(r.access_token ?? "");
+          setEditRefreshToken(r.refresh_token ?? "");
+          setEditExpiresAt(r.expires_at != null ? String(r.expires_at) : "");
+        }
+      } catch {
+        // Reveal failed (shouldn't happen for owners); user can still edit as raw.
+      }
+    }
   }
 
   async function saveEdit() {
     if (!editing) return;
     setEditBusy(true);
     try {
-      const patch: {
-        key?: string;
-        note: string;
-        pool: string;
-      } = { note: editNote.trim(), pool: editPool.trim() };
-      if (editSecret.trim()) patch.key = editSecret.trim();
+      const patch: Record<string, unknown> = {
+        note: editNote.trim(),
+        pool: editPool.trim(),
+      };
+      if (editIsBundle) {
+        // Send individual OAuth bundle fields.
+        if (editAccessToken.trim())
+          patch.access_token = editAccessToken.trim();
+        if (editRefreshToken.trim())
+          patch.refresh_token = editRefreshToken.trim();
+        if (editExpiresAt.trim())
+          patch.expires_at = Number(editExpiresAt.trim());
+      } else if (editSecret.trim()) {
+        patch.key = editSecret.trim();
+      }
       await api.patch(
         `/api/admin/providers/${providerId}/keys/${editing.id}`,
         patch,
@@ -504,6 +574,109 @@ export function ProviderKeys() {
           )}
         </Card>
       ) : null}
+
+      {/* Key Helper for Claude Code providers */}
+      {isClaudeCode && (
+        <details style={{ marginBottom: 8 }}>
+          <summary style={{ cursor: "pointer", fontSize: tokens.fontSizeBase200, color: tokens.colorNeutralForeground2 }}>
+            {t("providerKeys.addKeyHelper" as TK)}
+          </summary>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8, paddingBottom: 8, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
+            <Field label={t("providerKeys.accessToken" as TK)}>
+              <Input value={claudeAccessToken} onChange={(_, d) => setClaudeAccessToken(d.value)} />
+            </Field>
+            <Field label={t("providerKeys.refreshToken" as TK)}>
+              <Input value={claudeRefreshToken} onChange={(_, d) => setClaudeRefreshToken(d.value)} />
+            </Field>
+            <Field label={t("providerKeys.expiresAt" as TK)} hint={t("providerKeys.expiresAtHint" as TK)}>
+              <Input value={claudeExpiresAt} onChange={(_, d) => setClaudeExpiresAt(d.value)} placeholder="1735689600" />
+            </Field>
+            <Field label={t("providerKeys.commentOpt" as TK)}>
+              <Input value={claudeComment} onChange={(_, d) => setClaudeComment(d.value)} />
+            </Field>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <code style={{ flex: 1, fontSize: tokens.fontSizeBase100, color: tokens.colorNeutralForeground3, overflowX: "auto", whiteSpace: "nowrap" }}>
+                {claudeAccessToken && claudeRefreshToken && claudeExpiresAt
+                  ? `${claudeAccessToken}:${claudeRefreshToken}:${claudeExpiresAt}`
+                  : claudeAccessToken
+                    ? `{"access_token":"${claudeAccessToken.substring(0, 12)}..."...}`
+                    : ""}
+              </code>
+              <Button
+                appearance="subtle"
+                size="small"
+                disabled={adding || !claudeAccessToken}
+                onClick={() => {
+                  const at = claudeAccessToken.trim();
+                  const rt = claudeRefreshToken.trim();
+                  const ea = claudeExpiresAt.trim();
+                  const comment = claudeComment.trim();
+                  // Prefer colon-separated if all 3 fields provided (backend converts to bundle).
+                  const entry = (at && rt && ea)
+                    ? `${at}:${rt}:${ea}`
+                    : (() => {
+                        const b: Record<string, unknown> = { access_token: at };
+                        if (rt) b.refresh_token = rt;
+                        if (ea) b.expires_at = Number(ea);
+                        return JSON.stringify(b);
+                      })();
+                  const line = comment ? `${entry} # ${comment}` : entry;
+                  addHelperKey(line).then(() => {
+                    setClaudeAccessToken("");
+                    setClaudeRefreshToken("");
+                    setClaudeExpiresAt("");
+                    setClaudeComment("");
+                  });
+                }}
+              >
+                {t("providerKeys.addToPool" as TK)}
+              </Button>
+            </div>
+          </div>
+        </details>
+      )}
+
+      {/* Key Helper for Cloudflare providers */}
+      {current?.type === "cloudflare" && (
+        <details style={{ marginBottom: 8 }}>
+          <summary style={{ cursor: "pointer", fontSize: tokens.fontSizeBase200, color: tokens.colorNeutralForeground2 }}>
+            {t("providerKeys.addKeyHelper" as TK)}
+          </summary>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8, paddingBottom: 8, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
+            <Field label={t("providerKeys.accountId" as TK)}>
+              <Input value={cfAccountId} onChange={(_, d) => setCfAccountId(d.value)} />
+            </Field>
+            <Field label={t("providerKeys.apiToken" as TK)}>
+              <Input value={cfToken} onChange={(_, d) => setCfToken(d.value)} type="password" />
+            </Field>
+            <Field label={t("providerKeys.commentOpt" as TK)}>
+              <Input value={cfComment} onChange={(_, d) => setCfComment(d.value)} />
+            </Field>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <code style={{ flex: 1, fontSize: tokens.fontSizeBase100, color: tokens.colorNeutralForeground3, overflowX: "auto", whiteSpace: "nowrap" }}>
+                {cfAccountId && cfToken ? `${cfAccountId}@${cfToken}` : ""}
+              </code>
+              <Button
+                appearance="subtle"
+                size="small"
+                disabled={adding || !cfAccountId || !cfToken}
+                onClick={() => {
+                  const entry = `${cfAccountId.trim()}@${cfToken.trim()}`;
+                  const comment = cfComment.trim();
+                  const line = comment ? `${entry} # ${comment}` : entry;
+                  addHelperKey(line).then(() => {
+                    setCfAccountId("");
+                    setCfToken("");
+                    setCfComment("");
+                  });
+                }}
+              >
+                {t("providerKeys.addToPool" as TK)}
+              </Button>
+            </div>
+          </div>
+        </details>
+      )}
 
       <Field style={{ marginBottom: 8 }}>
         <Textarea
@@ -787,17 +960,52 @@ export function ProviderKeys() {
             <DialogContent
               style={{ display: "flex", flexDirection: "column", gap: 12 }}
             >
-              <Field
-                label={t("providerKeys.editKeyField" as TK)}
-                hint={t("providerKeys.editKeyHint" as TK)}
-              >
-                <Input
-                  value={editSecret}
-                  type="password"
-                  placeholder={`Current: ${editing?.key_preview ?? ""}`}
-                  onChange={(_, d) => setEditSecret(d.value)}
-                />
-              </Field>
+              {editIsBundle ? (
+                <>
+                  <Field
+                    label={t("providerKeys.accessToken" as TK)}
+                    hint={t("providerKeys.accessTokenHint" as TK)}
+                  >
+                    <Input
+                      value={editAccessToken}
+                      type="password"
+                      onChange={(_, d) => setEditAccessToken(d.value)}
+                    />
+                  </Field>
+                  <Field
+                    label={t("providerKeys.refreshToken" as TK)}
+                    hint={t("providerKeys.refreshTokenHint" as TK)}
+                  >
+                    <Input
+                      value={editRefreshToken}
+                      type="password"
+                      onChange={(_, d) => setEditRefreshToken(d.value)}
+                    />
+                  </Field>
+                  <Field
+                    label={t("providerKeys.expiresAt" as TK)}
+                    hint={t("providerKeys.expiresAtEditHint" as TK)}
+                  >
+                    <Input
+                      value={editExpiresAt}
+                      placeholder="Unix timestamp"
+                      onChange={(_, d) => setEditExpiresAt(d.value)}
+                    />
+                  </Field>
+                </>
+              ) : (
+                <Field
+                  label={t("providerKeys.editKeyField" as TK)}
+                  hint={t("providerKeys.editKeyHint" as TK)}
+                >
+                  <Input
+                    value={editSecret}
+                    type="password"
+                    placeholder={`Current: ${editing?.key_preview ?? ""}`}
+                    onChange={(_, d) => setEditSecret(d.value)}
+                  />
+                </Field>
+              )}
               <Field label={t("providerKeys.comment" as TK)}>
                 <Input
                   value={editNote}
