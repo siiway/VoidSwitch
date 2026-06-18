@@ -32,7 +32,7 @@ import {
   EditRegular,
   KeyRegular,
 } from "@fluentui/react-icons";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -96,17 +96,20 @@ function parseRoutes(text: string): ModelRoute[] {
     .map((line) => {
       let rest = line;
       let pool = "";
-      const at = rest.lastIndexOf("@");
+      // Find " @ " (surrounded by spaces) as pool separator
+      // Use lastIndexOf to match rightmost occurrence
+      const at = rest.lastIndexOf(" @ ");
       if (at >= 0) {
-        pool = rest.slice(at + 1).trim();
+        pool = rest.slice(at + 3).trim();
         rest = rest.slice(0, at).trim();
       }
       let alias = rest;
       let upstream = "";
-      const arrow = rest.indexOf("=>");
+      // Find " => " (surrounded by spaces) as upstream separator
+      const arrow = rest.indexOf(" => ");
       if (arrow >= 0) {
         alias = rest.slice(0, arrow).trim();
-        upstream = rest.slice(arrow + 2).trim();
+        upstream = rest.slice(arrow + 4).trim();
       }
       return { alias, upstream, pool };
     })
@@ -147,21 +150,6 @@ export function Providers() {
   const [placeholderVals, setPlaceholderVals] = useState<Record<string, string>>({});
   const [fetchMethod, setFetchMethod] = useState("GET");
   const [fetchPath, setFetchPath] = useState("/models");
-
-  useEffect(() => {
-    if (!form?.base_url) return;
-    if (
-      form.base_url.includes("api.cloudflare.com") &&
-      fetchPath === "/models"
-    ) {
-      setFetchPath("ai/models/search");
-    } else if (
-      !form.base_url.includes("api.cloudflare.com") &&
-      fetchPath === "ai/models/search"
-    ) {
-      setFetchPath("/models");
-    }
-  }, [form?.base_url]);
 
   const phKeys = [
     ...new Set(
@@ -503,6 +491,31 @@ export function Providers() {
                       {t("common.close" as TK)}
                     </Button>
                   </div>
+                  {form?.base_url?.includes("api.cloudflare.com") ? (
+                    <div style={{ 
+                      padding: 12, 
+                      backgroundColor: tokens.colorStatusWarningBackground1,
+                      border: `1px solid ${tokens.colorStatusWarningForeground1}`,
+                      borderRadius: 4,
+                      fontSize: 13,
+                    }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        {t("providers.cfDetected" as TK)}
+                      </div>
+                      <div>
+                        {t("providers.cfMessage" as TK)}{" "}
+                        <a 
+                          href="https://developers.cloudflare.com/workers-ai/models/" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          style={{ color: tokens.colorBrandForeground1 }}
+                        >
+                          Cloudflare Workers AI Models
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   {phKeys.length > 0 && (
                     <>
                       {phKeys.map((k) => (
@@ -646,6 +659,8 @@ export function Providers() {
                           {t("providers.replace" as TK)}
                         </Button>
                       </div>
+                    </>
+                  )}
                     </>
                   )}
                 </div>

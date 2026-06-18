@@ -136,6 +136,9 @@ const zh: Translations = {
     prepend: "前插",
     append: "追加",
     replace: "替换",
+    cfDetected: "检测到 Cloudflare Workers AI",
+    cfMessage:
+      "Cloudflare Workers AI 模型名称无法自动获取。请参考",
   },
   providerKeys: {
     title: "密钥",

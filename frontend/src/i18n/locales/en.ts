@@ -135,6 +135,9 @@ const en = {
     prepend: "Prepend",
     append: "Append",
     replace: "Replace",
+    cfDetected: "Cloudflare Workers AI detected",
+    cfMessage:
+      "Cloudflare Workers AI model names cannot be fetched automatically. Please refer to",
   },
   providerKeys: {
     title: "Keys",
