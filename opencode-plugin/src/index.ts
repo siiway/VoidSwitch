@@ -114,6 +114,16 @@ function stripJsonc(text: string): string {
     .replace(/,(\s*[}\]])/g, "$1")
 }
 
+/**
+ * Infer the indentation unit of an existing JSON/JSONC document from its first
+ * indented line, so rewrites preserve the user's tabs-or-spaces style. Falls back
+ * to two spaces when nothing can be detected (empty, single-line, or minified).
+ */
+function detectIndent(text: string): string {
+  const m = text.match(/^([ \t]+)\S/m)
+  return m && m[1] ? m[1] : "  "
+}
+
 const isPlainObject = (v: unknown): v is Record<string, any> =>
   typeof v === "object" && v !== null && !Array.isArray(v)
 
@@ -372,7 +382,7 @@ function persistBaseUrl(url: string | undefined): void {
     } else {
       delete cfg.provider[PROVIDER_ID].options.baseURL
     }
-    writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
+    writeFileSync(path, JSON.stringify(cfg, null, detectIndent(raw)) + "\n")
   } catch (e) {
     console.error("[VoidSwitch] persistBaseUrl failed:", e)
   }
@@ -397,7 +407,7 @@ function persistModels(infos: ModelInfo[]): void {
         Object.keys(override).length > 0 ? deepMerge(prev, override) : prev
     }
     cfg.provider[PROVIDER_ID].models = models
-    writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n")
+    writeFileSync(path, JSON.stringify(cfg, null, detectIndent(raw)) + "\n")
   } catch (e) {
     console.error("[VoidSwitch] persistModels failed:", e)
   }

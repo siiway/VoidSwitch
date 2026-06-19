@@ -144,6 +144,17 @@ def strip_jsonc(text):
     text = re.sub(r',(\s*[}\]])', r'\1', text)
     return text
 
+def detect_indent(path):
+    # Preserve the file's existing tabs-or-spaces style; fall back to 2 spaces.
+    try:
+        with open(path) as f:
+            m = re.search(r'^([ \t]+)\S', f.read(), flags=re.MULTILINE)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "  "
+
 def load(path):
     if not os.path.exists(path):
         return {}, None
@@ -188,24 +199,37 @@ cfg["plugin"] = plugins
 provider = cfg.get("provider")
 if not isinstance(provider, dict):
     provider = cfg["provider"] = {}
+existing_vs = provider.get("voidswitch")
+existing_vs = existing_vs if isinstance(existing_vs, dict) else {}
 _models = {"__MODEL__": {}}
 if "__SMALL_MODEL__":
     _models["__SMALL_MODEL__"] = {}
+# On re-install (update), keep the user's existing baseURL + model map intact so
+# their customisations survive; only seed them when the provider is brand new.
+options = existing_vs.get("options")
+options = dict(options) if isinstance(options, dict) else {}
+options.setdefault("baseURL", gateway + "/v1")
+models = existing_vs.get("models")
+if not (isinstance(models, dict) and models):
+    models = _models
 provider["voidswitch"] = {
     "npm": "@ai-sdk/anthropic",
     "name": "VoidSwitch",
-    "options": {"baseURL": gateway + "/v1"},
-    "models": _models,
+    "options": options,
+    "models": models,
 }
 
+# Detect indentation before truncating the files for write.
+config_indent = detect_indent(config)
 with open(config, "w") as f:
-    json.dump(cfg, f, indent=2)
+    json.dump(cfg, f, indent=config_indent)
 
 if token:
+    auth_indent = detect_indent(auth)
     a, _ = load(auth)
     a["voidswitch"] = {"type": "api", "key": token}
     with open(auth, "w") as f:
-        json.dump(a, f, indent=2)
+        json.dump(a, f, indent=auth_indent)
     print("✓ token stored in " + auth)
 print("✓ VoidSwitch plugin merged into " + config)
 PY
@@ -227,6 +251,15 @@ function stripJsonc(text) {
     .replace(/(?<!:)\/\/.*$/gm, '')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/,(\s*[}\]])/g, '$1');
+}
+
+function detectIndent(path) {
+  // Preserve the file's existing tabs-or-spaces style; fall back to 2 spaces.
+  try {
+    const m = fs.readFileSync(path, "utf8").match(/^([ \t]+)\S/m);
+    if (m) return m[1];
+  } catch {}
+  return "  ";
 }
 
 function load(path) {
@@ -262,19 +295,28 @@ plugins = plugins.filter((p) => !(typeof ref(p) === "string" && ref(p).endsWith(
 plugins.push(plugin);
 cfg.plugin = plugins;
 if (typeof cfg.provider !== "object" || cfg.provider === null) cfg.provider = {};
+const _isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
+const _existingVs = _isObj(cfg.provider.voidswitch) ? cfg.provider.voidswitch : {};
 const _models = { "__MODEL__": {} };
 if ("__SMALL_MODEL__") _models["__SMALL_MODEL__"] = {};
+// On re-install (update), keep the user's existing baseURL + model map intact so
+// their customisations survive; only seed them when the provider is brand new.
+const _opts = _isObj(_existingVs.options) ? { ..._existingVs.options } : {};
+if (typeof _opts.baseURL !== "string") _opts.baseURL = gateway + "/v1";
+const _modelsFinal =
+  _isObj(_existingVs.models) && Object.keys(_existingVs.models).length ? _existingVs.models : _models;
 cfg.provider.voidswitch = {
   npm: "@ai-sdk/anthropic",
   name: "VoidSwitch",
-  options: { baseURL: gateway + "/v1" },
-  models: _models,
+  options: _opts,
+  models: _modelsFinal,
 };
-fs.writeFileSync(config, JSON.stringify(cfg, null, 2));
+fs.writeFileSync(config, JSON.stringify(cfg, null, detectIndent(config)));
 if (token) {
+  const authIndent = detectIndent(auth);
   const a = load(auth);
   a.voidswitch = { type: "api", key: token };
-  fs.writeFileSync(auth, JSON.stringify(a, null, 2));
+  fs.writeFileSync(auth, JSON.stringify(a, null, authIndent));
   console.log("✓ token stored in " + auth);
 }
 console.log("✓ VoidSwitch plugin merged into " + config);
@@ -375,6 +417,62 @@ function Strip-Jsonc {
   return $text
 }
 
+# Detect a file's existing indentation unit (tabs or spaces); fall back to 2 spaces.
+function Get-FileIndent($path) {
+  if (Test-Path $path) {
+    try {
+      foreach ($l in ((Get-Content -Raw -LiteralPath $path) -split "`n")) {
+        if ($l -match '^([ \t]+)\S') { return $matches[1] }
+      }
+    } catch {}
+  }
+  return "  "
+}
+
+# Pretty-print COMPACT JSON (from ConvertTo-Json -Compress) with a chosen indent
+# unit. Depth is tracked structurally by scanning tokens — never by measuring
+# existing whitespace — so it is immune to ConvertTo-Json's version-specific
+# indentation quirks (Windows PowerShell 5.1 aligns nested values under their key,
+# which broke the old "multiples of a unit" reformatter and produced huge indents).
+function Format-Json {
+  param([string]$json, [string]$indent)
+  $sb = New-Object System.Text.StringBuilder
+  $depth = 0
+  $inStr = $false
+  $esc = $false
+  $n = $json.Length
+  for ($i = 0; $i -lt $n; $i++) {
+    $c = $json.Substring($i, 1)
+    if ($inStr) {
+      [void]$sb.Append($c)
+      if ($esc) { $esc = $false }
+      elseif ($c -eq '\') { $esc = $true }
+      elseif ($c -eq '"') { $inStr = $false }
+      continue
+    }
+    if ($c -eq '"') { $inStr = $true; [void]$sb.Append($c); continue }
+    if ($c -eq '{' -or $c -eq '[') {
+      $next = if ($i + 1 -lt $n) { $json.Substring($i + 1, 1) } else { '' }
+      if (($c -eq '{' -and $next -eq '}') -or ($c -eq '[' -and $next -eq ']')) {
+        [void]$sb.Append($c); [void]$sb.Append($next); $i++   # keep {} / [] inline
+      } else {
+        $depth++
+        [void]$sb.Append($c); [void]$sb.Append("`n"); [void]$sb.Append($indent * $depth)
+      }
+      continue
+    }
+    if ($c -eq '}' -or $c -eq ']') {
+      $depth--
+      [void]$sb.Append("`n"); [void]$sb.Append($indent * $depth); [void]$sb.Append($c)
+      continue
+    }
+    if ($c -eq ',') { [void]$sb.Append(','); [void]$sb.Append("`n"); [void]$sb.Append($indent * $depth); continue }
+    if ($c -eq ':') { [void]$sb.Append(': '); continue }
+    [void]$sb.Append($c)
+  }
+  return $sb.ToString()
+}
+
 # Load existing JSON, but REFUSE to overwrite a file that exists yet can't be
 # parsed (a backup was just made) — so we never silently wipe a real config.
 function Load-Json($path) {
@@ -438,28 +536,45 @@ $cfg | Add-Member -NotePropertyName 'plugin' -NotePropertyValue ([string[]]$plug
 # Full provider block (Anthropic dialect). The models map is REQUIRED — OpenCode
 # drops a provider with no models, so it would never appear in /connect.
 $provider = if ($cfg.PSObject.Properties['provider'] -and $cfg.provider) { $cfg.provider } else { [pscustomobject]@{} }
-$models = [pscustomobject]@{}
-$models | Add-Member -NotePropertyName '__MODEL__' -NotePropertyValue ([pscustomobject]@{}) -Force
-if ($_sm) {
-  $models | Add-Member -NotePropertyName $_sm -NotePropertyValue ([pscustomobject]@{}) -Force
+$existingVs = if ($provider.PSObject.Properties['voidswitch'] -and $provider.voidswitch) { $provider.voidswitch } else { $null }
+
+# On re-install (update), keep the user's existing baseURL + model map intact so
+# their customisations survive; only seed them when the provider is brand new.
+$options = if ($existingVs -and $existingVs.PSObject.Properties['options'] -and $existingVs.options) { $existingVs.options } else { [pscustomobject]@{} }
+if (-not ($options.PSObject.Properties['baseURL'] -and ($options.baseURL -is [string]))) {
+  $options | Add-Member -NotePropertyName 'baseURL' -NotePropertyValue "$Gateway/v1" -Force
+}
+if ($existingVs -and $existingVs.PSObject.Properties['models'] -and $existingVs.models -and @($existingVs.models.PSObject.Properties).Count -gt 0) {
+  $models = $existingVs.models
+} else {
+  $models = [pscustomobject]@{}
+  $models | Add-Member -NotePropertyName '__MODEL__' -NotePropertyValue ([pscustomobject]@{}) -Force
+  if ($_sm) {
+    $models | Add-Member -NotePropertyName $_sm -NotePropertyValue ([pscustomobject]@{}) -Force
+  }
 }
 $voidswitch = [pscustomobject]@{
   npm     = '@ai-sdk/anthropic'
   name    = 'VoidSwitch'
-  options = [pscustomobject]@{ baseURL = "$Gateway/v1" }
+  options = $options
   models  = $models
 }
 $provider | Add-Member -NotePropertyName 'voidswitch' -NotePropertyValue $voidswitch -Force
 $cfg | Add-Member -NotePropertyName 'provider' -NotePropertyValue $provider -Force
 
-[System.IO.File]::WriteAllText($Config, ($cfg | ConvertTo-Json -Depth 12))
+# Detect indentation before overwriting the file, then pretty-print to match.
+$cfgIndent = Get-FileIndent $Config
+[System.IO.File]::WriteAllText($Config, (Format-Json ($cfg | ConvertTo-Json -Depth 12 -Compress) $cfgIndent))
 
 # Token -> auth store, so the plugin's loader (and effort/thinking rewriting) runs.
+# NB: PowerShell variables are case-insensitive, so the loaded object must NOT be
+# named $auth — that aliases the $Auth path and would clobber it before the write.
 if ($Token) {
-  $auth = Load-Json $Auth
+  $authIndent = Get-FileIndent $Auth
+  $authData = Load-Json $Auth
   $entry = [pscustomobject]@{ type = 'api'; key = $Token }
-  $auth | Add-Member -NotePropertyName 'voidswitch' -NotePropertyValue $entry -Force
-  [System.IO.File]::WriteAllText($Auth, ($auth | ConvertTo-Json -Depth 12))
+  $authData | Add-Member -NotePropertyName 'voidswitch' -NotePropertyValue $entry -Force
+  [System.IO.File]::WriteAllText($Auth, (Format-Json ($authData | ConvertTo-Json -Depth 12 -Compress) $authIndent))
 }
 
 Write-Host ""
