@@ -30,6 +30,19 @@ class ApiStyle(StrEnum):
     ANTHROPIC = "anthropic"
 
 
+# Inbound header an in-the-know client (the OpenCode plugin) sets so the gateway
+# can tailor its error signalling. Plain clients never send it and are unaffected.
+CLIENT_HINT_HEADER = "x-voidswitch-client"
+OPENCODE_CLIENT_HINT = "opencode-plugin"
+
+# Non-standard status code returned *only* to the OpenCode plugin when no upstream
+# is available (no usable key / route / all keys exhausted). A bare 502 carries the
+# "Bad Gateway" reason phrase, which reads like the relay itself broke; this code is
+# in uvicorn's 100-599 range so it ships with an empty reason phrase, and the plugin
+# maps it to a clear "Upstream Failed" status. Other clients still receive 502.
+UPSTREAM_UNAVAILABLE_STATUS = 543
+
+
 class ProxyMode(StrEnum):
     """How a provider chooses its outbound route."""
 

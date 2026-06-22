@@ -306,6 +306,83 @@ function takeHeader(h: Headers, name: string): string | undefined {
 }
 
 // --------------------------------------------------------------------------- //
+// Upstream-unavailable detection
+// --------------------------------------------------------------------------- //
+
+/** Status text shown to OpenCode when the gateway has no upstream to serve a request. */
+const UPSTREAM_FAILED_STATUS = "Upstream Failed"
+
+/**
+ * Header that advertises this plugin to the gateway so it can return a dedicated
+ * "no upstream available" status code (see UPSTREAM_UNAVAILABLE_CODE) instead of a
+ * generic 502. It is read and consumed by the gateway and never reaches the real
+ * upstream provider.
+ */
+const H_CLIENT_HINT = "x-voidswitch-client"
+const CLIENT_HINT_VALUE = "opencode-plugin"
+
+/**
+ * Non-standard code the gateway returns *only to this plugin* when it has no
+ * upstream to forward to. It ships with an empty HTTP reason phrase, so without
+ * this rewrite OpenCode would show a bare code; we relabel it "Upstream Failed".
+ */
+const UPSTREAM_UNAVAILABLE_CODE = 543
+
+/**
+ * When the gateway can reach *us* but has no upstream to forward to (no usable
+ * key, no route, every key exhausted) it answers 502/503 with a body carrying the
+ * `upstream_unavailable` error type. The HTTP reason phrase for those codes is the
+ * generic "Bad Gateway" / "Service Unavailable", which reads like the relay itself
+ * broke. Rewrite such responses so OpenCode surfaces a clear "Upstream Failed"
+ * status + message instead, leaving genuine gateway/transport faults untouched.
+ *
+ * Only small JSON error bodies (never a live SSE stream) are inspected: success
+ * responses are returned verbatim, so streaming is unaffected.
+ */
+async function rewriteUpstreamError(res: Response): Promise<Response> {
+  if (res.ok) return res
+  const isDedicatedCode = res.status === UPSTREAM_UNAVAILABLE_CODE
+  if (!isDedicatedCode && res.status !== 502 && res.status !== 503) return res
+  let text: string
+  try {
+    text = await res.clone().text()
+  } catch {
+    return res
+  }
+  // The dedicated code is set by the gateway exclusively for this case, so trust it
+  // outright; for 502/503 fall back to sniffing the body so we don't relabel a
+  // genuine relay/transport fault.
+  let isUpstream = isDedicatedCode
+  let message = ""
+  try {
+    const j: any = JSON.parse(text)
+    const errType: unknown = j?.error?.type ?? j?.type
+    message = typeof j?.error?.message === "string" ? j.error.message : ""
+    if (errType === "upstream_unavailable" || /upstream failed|all upstreams failed/i.test(message)) {
+      isUpstream = true
+    }
+  } catch {
+    // Non-JSON (e.g. an HTML 502 from an intermediary proxy) — that *is* a relay
+    // fault, so leave it as a plain Bad Gateway.
+  }
+  if (!isUpstream) return res
+  const body = JSON.stringify({
+    type: "error",
+    error: {
+      type: "upstream_unavailable",
+      message:
+        message ||
+        "Upstream Failed — no upstream is currently available (e.g. no usable provider key). This is an upstream issue, not the relay.",
+    },
+  })
+  return new Response(body, {
+    status: res.status,
+    statusText: UPSTREAM_FAILED_STATUS,
+    headers: { "content-type": "application/json" },
+  })
+}
+
+// --------------------------------------------------------------------------- //
 // Slash-command helpers
 // --------------------------------------------------------------------------- //
 
@@ -616,6 +693,11 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
             const headers = new Headers(reqInput instanceof Request ? reqInput.headers : undefined)
             applyInitHeaders(headers, init)
 
+            // Advertise ourselves so the gateway returns the dedicated
+            // "upstream unavailable" code instead of a generic 502. Consumed by
+            // the gateway; never forwarded to the real upstream provider.
+            headers.set(H_CLIENT_HINT, CLIENT_HINT_VALUE)
+
             const effort = takeHeader(headers, H_EFFORT)
             const speed = takeHeader(headers, H_SPEED)
             const thinking = takeHeader(headers, H_THINKING)
@@ -712,7 +794,10 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
               }
             }
             const method = init?.method ?? (reqInput instanceof Request ? reqInput.method : "POST")
-            return fetch(url, { ...init, method, headers, body: bodyText ?? init?.body })
+            const res = await fetch(url, { ...init, method, headers, body: bodyText ?? init?.body })
+            // Relabel "no upstream available" gateway errors so OpenCode shows
+            // "Upstream Failed" rather than a generic "Bad Gateway".
+            return rewriteUpstreamError(res)
           },
         }
       },

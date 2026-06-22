@@ -361,12 +361,22 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
             error=last_error,
         )
 
+    # Distinguish "the gateway itself broke" from "no upstream could serve this
+    # request". When nothing was ever attempted (no key / no route / all keys
+    # exhausted) the upstream is simply unavailable — flag it as such with a
+    # dedicated, machine-readable error type and a message that won't be mistaken
+    # for a relay/proxy failure (a bare "Bad Gateway" reason phrase often is).
     return DispatchResult(
         status_code=last_status if last_status >= 400 else 502,
         is_stream=False,
-        content=_error_body(req.inbound_style, f"All upstreams failed: {last_error}"),
+        content=_error_body(
+            req.inbound_style,
+            f"Upstream Failed — {last_error}",
+            "upstream_unavailable",
+        ),
         model=req.model,
         attempts=attempts,
+        error="upstream_unavailable",
     )
 
 

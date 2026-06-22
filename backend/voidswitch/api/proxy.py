@@ -16,7 +16,12 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import ApiStyle
+from voidswitch.constants import (
+    CLIENT_HINT_HEADER,
+    OPENCODE_CLIENT_HINT,
+    UPSTREAM_UNAVAILABLE_STATUS,
+    ApiStyle,
+)
 from voidswitch.core import auth
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
@@ -156,9 +161,21 @@ async def _handle(
             media_type=result.media_type,
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    status_code = result.status_code
+    # When no upstream could serve the request, swap the generic 502 ("Bad Gateway")
+    # for a dedicated code — but only for the OpenCode plugin, which advertises itself
+    # and knows how to render it as "Upstream Failed". Every other client keeps the
+    # standard 502 so SDKs and intermediaries aren't surprised by a non-standard code.
+    if (
+        result.error == "upstream_unavailable"
+        and request.headers.get(CLIENT_HINT_HEADER) == OPENCODE_CLIENT_HINT
+    ):
+        status_code = UPSTREAM_UNAVAILABLE_STATUS
+
     return Response(
         content=result.content or b"{}",
-        status_code=result.status_code,
+        status_code=status_code,
         media_type=result.media_type,
     )
 
