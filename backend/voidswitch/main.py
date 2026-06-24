@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -56,6 +56,7 @@ from voidswitch.tasks.manager import PeriodicTask, TaskManager
 from voidswitch.tasks.proxy_resurrector import run_proxy_resurrector
 
 log = get_logger("main")
+error_log = get_logger("error")
 
 
 @asynccontextmanager
@@ -148,6 +149,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Catch-all: any exception not already handled by FastAPI's HTTPException /
+    # RequestValidationError handlers lands here so it is always logged through
+    # structlog (with traceback) before the 500 goes out — no silent server errors.
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        error_log.error(
+            "unhandled_exception",
+            method=request.method,
+            path=request.url.path,
+            error_type=type(exc).__name__,
+            error=str(exc),
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error"},
+        )
 
     # Public gateway.
     app.include_router(proxy_api.router)

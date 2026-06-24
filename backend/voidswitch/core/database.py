@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from typing import Any
 
@@ -64,6 +65,12 @@ class Database:
             try:
                 yield session
                 await session.commit()
+            except asyncio.CancelledError:
+                # Cancellation is a BaseException — the except-Exception branch
+                # below misses it. Roll back before letting it propagate so the
+                # transaction is not left dirty.
+                await _safe_rollback(session)
+                raise
             except Exception:
                 await session.rollback()
                 raise
@@ -202,10 +209,37 @@ class RequestSessionMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
+        except asyncio.CancelledError:
+            # Client disconnected mid-request. CancelledError is a BaseException
+            # (not Exception), so the except-Exception branch below misses it.
+            # Roll back the uncommitted transaction and swallow the cancellation
+            # — there is nobody to send an error response to. The finally block
+            # returns the connection to the pool so the GC never has to.
+            await _safe_rollback(session)
         except Exception:
-            if session.in_transaction():
-                await session.rollback()
+            await _safe_rollback(session)
             raise
         finally:
-            await session.close()
+            # Shield close() so the connection is always returned to the pool,
+            # even if a second cancellation arrives during shutdown.
+            await _safe_close(session)
             _request_session.reset(token)
+
+
+async def _safe_rollback(session: AsyncSession) -> None:
+    """Roll back a session, swallowing errors during cancellation/shutdown."""
+    if not session.in_transaction():
+        return
+    with suppress(asyncio.CancelledError, Exception):
+        await asyncio.shield(session.rollback())
+
+
+async def _safe_close(session: AsyncSession) -> None:
+    """Close a session so its connection returns to the pool.
+
+    Shielded so that a pending task cancellation does not interrupt the
+    close — without this, SQLAlchemy leaks connections that the garbage
+    collector later terminates with noisy tracebacks.
+    """
+    with suppress(asyncio.CancelledError, Exception):
+        await asyncio.shield(session.close())

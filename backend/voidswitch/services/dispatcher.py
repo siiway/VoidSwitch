@@ -17,6 +17,7 @@ streaming proxies).
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 from collections.abc import AsyncIterator
@@ -608,6 +609,14 @@ async def _finalise_success(
     )
 
 
+async def _stream_cleanup(
+    response: httpx.Response, log_id: int, token_id: int | None, usage: dict[str, int]
+) -> None:
+    """Close the upstream response and persist captured usage — shielded caller."""
+    await response.aclose()
+    await _persist_stream_usage(log_id, token_id, usage)
+
+
 async def _build_stream(
     *,
     response: httpx.Response,
@@ -629,8 +638,14 @@ async def _build_stream(
         async for piece in translated:
             yield piece
     finally:
-        await response.aclose()
-        await _persist_stream_usage(log_id, token_id, usage)
+        # Shield the upstream-response close + usage persistence so they complete
+        # even when the client disconnects mid-stream (CancelledError). Without
+        # the shield, the cancellation propagates into these awaits and the
+        # upstream connection leaks / usage is lost.
+        try:
+            await asyncio.shield(_stream_cleanup(response, log_id, token_id, usage))
+        except asyncio.CancelledError:
+            log.debug("stream_cancelled", log_id=log_id)
 
 
 async def _capture_usage(raw: AsyncIterator[bytes], usage: dict[str, int]) -> AsyncIterator[bytes]:
