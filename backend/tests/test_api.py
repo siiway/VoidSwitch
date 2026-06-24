@@ -273,6 +273,54 @@ async def test_audit_scope_filter_excludes_self_actions(client, seeded):
     assert not any(item["action"].startswith("me.") for item in admin_only)
 
 
+async def test_audit_filter_by_target_type_and_action(client, seeded):
+    tid = seeded["token_id"]
+    await client.patch(
+        f"/api/admin/tokens/{tid}", headers=_session_headers(), json={"enabled": False}
+    )
+    by_type = await _audit_items(client, target_type="token")
+    assert by_type, "expected token-targeted entries"
+    assert all(item["target_type"] == "token" for item in by_type)
+
+    by_action = await _audit_items(client, action="token.update")
+    assert by_action
+    assert all(item["action"] == "token.update" for item in by_action)
+
+
+async def test_audit_filter_options_endpoint(client, seeded):
+    tid = seeded["token_id"]
+    await client.patch(
+        f"/api/admin/tokens/{tid}", headers=_session_headers(), json={"enabled": False}
+    )
+    resp = await client.get("/api/admin/logs/audit/filters", headers=_session_headers())
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "token.update" in body["actions"]
+    assert "admin" in body["scopes"]
+    assert "token" in body["target_types"]
+    assert any(a["sub"] == "user-1" for a in body["actors"])
+
+
+async def test_token_create_stores_revealable_secret(client, seeded):
+    """The minted Void-Token plaintext is kept as owner-revealable sensitive data."""
+    resp = await client.post(
+        "/api/me/tokens", headers=_session_headers(), json={"name": "revealable"}
+    )
+    assert resp.status_code == 201, resp.text
+    secret = resp.json()["token"]
+
+    items = await _audit_items(client, action="me.token.create")
+    assert items, "expected a me.token.create audit entry"
+    entry = items[0]
+    assert entry["has_sensitive"] is True
+
+    reveal = await client.post(
+        f"/api/admin/logs/audit/{entry['id']}/reveal", headers=_session_headers()
+    )
+    assert reveal.status_code == 200, reveal.text
+    assert reveal.json()["sensitive"]["token"] == secret
+
+
 # --------------------------------------------------------------------------- #
 # One-line OpenCode installer (curl | bash / irm | iex)
 # --------------------------------------------------------------------------- #
@@ -466,3 +514,50 @@ async def test_usage_analytics_member_sees_only_self(client, db, seeded):
     assert {r["key"] for r in body["by_user"]} == {"user-2"}
     assert {r["key"] for r in body["by_token"]} == {"2"}
     assert {r["key"] for r in body["by_model"]} == {"gpt-4o"}
+
+
+# --------------------------------------------------------------------------- #
+# Log retention cleanup task
+# --------------------------------------------------------------------------- #
+
+
+async def test_log_cleanup_deletes_only_old_rows(db, seeded):
+    """The retention task drops rows older than the window and audits the sweep."""
+    import datetime as dt
+
+    from sqlalchemy import func, select
+    from voidswitch.models.db import AuditLog, RequestLog
+    from voidswitch.services import settings_store
+    from voidswitch.tasks.log_cleanup import run_log_cleanup
+
+    old = dt.datetime.now(dt.UTC) - dt.timedelta(days=40)
+    fresh = dt.datetime.now(dt.UTC)
+    async with db.session() as session:
+        session.add(RequestLog(user_sub="user-1", model="m", success=True, ts=old))
+        session.add(RequestLog(user_sub="user-1", model="m", success=True, ts=fresh))
+        session.add(AuditLog(action="x.old", scope="admin", ts=old))
+        session.add(AuditLog(action="x.fresh", scope="admin", ts=fresh))
+        # Enable a 30-day retention for both log kinds.
+        await settings_store.update(
+            session,
+            {"request_log_retention_days": 30, "audit_log_retention_days": 30},
+        )
+
+    await run_log_cleanup()
+
+    async with db.session() as session:
+        req = (await session.execute(select(func.count(RequestLog.id)))).scalar_one()
+        # One fresh request log survives.
+        assert req == 1
+        # The old audit row is gone, the fresh one and the new logs.cleanup remain.
+        actions = (await session.execute(select(AuditLog.action))).scalars().all()
+        assert "x.old" not in actions
+        assert "x.fresh" in actions
+        assert "logs.cleanup" in actions
+
+    # Reset cache so other tests see defaults again.
+    async with db.session() as session:
+        await settings_store.update(
+            session,
+            {"request_log_retention_days": 0, "audit_log_retention_days": 0},
+        )

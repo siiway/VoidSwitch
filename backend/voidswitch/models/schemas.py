@@ -412,6 +412,22 @@ class AuditLogOut(BaseModel):
     has_sensitive: bool = False
 
 
+class AuditActor(BaseModel):
+    """A distinct actor present in the audit trail (for the filter dropdown)."""
+
+    sub: str
+    name: str
+
+
+class AuditFilterOptions(BaseModel):
+    """Distinct values present in the audit trail, used to drive the UI filters."""
+
+    actions: list[str] = Field(default_factory=list)
+    scopes: list[str] = Field(default_factory=list)
+    target_types: list[str] = Field(default_factory=list)
+    actors: list[AuditActor] = Field(default_factory=list)
+
+
 class RequestLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

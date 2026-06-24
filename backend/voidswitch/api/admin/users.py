@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, record_audit
 from voidswitch.core.auth import (
     LOCAL_ASSIGNABLE_ROLES,
     OWNER_ROLES,
@@ -82,12 +82,12 @@ async def update_user(
     if changes:
         await record_audit(
             session,
-            action="user.update",
+            action=AuditAction.USER_UPDATE,
             actor_sub=actor.sub,
             actor_name=actor_display_name(actor),
             target_type="user",
             target_id=target.id,
-            detail=changes,
+            detail={"target_name": actor_display_name(target), "changes": changes},
             ip=request.client.host if request.client else None,
         )
 

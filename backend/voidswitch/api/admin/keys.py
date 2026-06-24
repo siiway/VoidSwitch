@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, record_audit
 from voidswitch.core.auth import (
     actor_display_name,
     get_current_user,
@@ -201,11 +201,12 @@ async def oauth_start(
     authorize_url, state = oauth_tokens.begin_login(provider_id)
     await record_audit(
         session,
-        action="key.oauth_start",
+        action=AuditAction.KEY_OAUTH_START,
         actor_sub=user.sub,
-        actor_name=user.name,
+        actor_name=actor_display_name(user),
         target_type="provider",
         target_id=provider_id,
+        detail={"provider_name": provider.name},
         ip=request.client.host if request.client else None,
     )
     return ClaudeOAuthStart(authorize_url=authorize_url, state=state)
@@ -251,12 +252,17 @@ async def oauth_complete(
     await session.flush()
     await record_audit(
         session,
-        action="key.oauth_add",
+        action=AuditAction.KEY_OAUTH_ADD,
         actor_sub=user.sub,
-        actor_name=user.name,
+        actor_name=actor_display_name(user),
         target_type="provider",
         target_id=provider_id,
-        detail={"key_id": key.id, "scopes": bundle.get("scopes", [])},
+        detail={
+            "provider_name": provider.name,
+            "key_id": key.id,
+            "preview": key.key_preview,
+            "scopes": bundle.get("scopes", []),
+        },
         sensitive={"keys": [{"key": plaintext, "preview": keymgmt.oauth_preview(bundle)}]},
         secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
@@ -281,7 +287,7 @@ async def reveal_key(
     plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
     await record_audit(
         session,
-        action="key.reveal",
+        action=AuditAction.KEY_REVEAL,
         actor_sub=actor.sub,
         actor_name=actor_display_name(actor),
         target_type="provider",

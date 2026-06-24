@@ -1,13 +1,15 @@
 import {
   Badge,
   Button,
-  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Dropdown,
+  Input,
+  Option,
   Tab,
   TabList,
   TableBody,
@@ -19,12 +21,17 @@ import {
   Textarea,
   tokens,
 } from "@fluentui/react-components";
-import { EyeRegular } from "@fluentui/react-icons";
+import { DismissRegular, EyeRegular } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { AuditLog, Page, RequestLog } from "../api/types";
+import type {
+  AuditFilterOptions,
+  AuditLog,
+  Page,
+  RequestLog,
+} from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
   DataTable,
@@ -146,6 +153,22 @@ function RequestLogs() {
   );
 }
 
+interface AuditFilters {
+  scope: string;
+  action: string;
+  target_type: string;
+  actor_sub: string;
+  q: string;
+}
+
+const EMPTY_FILTERS: AuditFilters = {
+  scope: "",
+  action: "",
+  target_type: "",
+  actor_sub: "",
+  q: "",
+};
+
 function AuditLogs() {
   const { t: ta } = useTranslation();
   type TK = keyof Translations;
@@ -153,21 +176,59 @@ function AuditLogs() {
   const confirm = useConfirm();
   const notify = useNotify();
   const [offset, setOffset] = useState(0);
-  const [adminOnly, setAdminOnly] = useState(false);
+  const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [revealed, setRevealed] = useState<{
     action: string;
     sensitive: unknown;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const options = useAsync<AuditFilterOptions>(
+    () => api.get("/api/admin/logs/audit/filters"),
+    [],
+  );
+
   const logs = useAsync<Page<AuditLog>>(
     () =>
       api.get("/api/admin/logs/audit", {
         limit: PAGE,
         offset,
-        ...(adminOnly ? { scope: "admin" } : {}),
+        scope: filters.scope || undefined,
+        action: filters.action || undefined,
+        target_type: filters.target_type || undefined,
+        actor_sub: filters.actor_sub || undefined,
+        q: filters.q || undefined,
       }),
-    [offset, adminOnly],
+    [
+      offset,
+      filters.scope,
+      filters.action,
+      filters.target_type,
+      filters.actor_sub,
+      filters.q,
+    ],
   );
+
+  function setFilter<K extends keyof AuditFilters>(
+    key: K,
+    value: AuditFilters[K],
+  ) {
+    setOffset(0);
+    setFilters((f) => ({ ...f, [key]: value }));
+  }
+
+  const hasFilters = Object.values(filters).some((v) => v !== "");
+  const opts = options.data;
+  const actorLabel = (sub: string) =>
+    opts?.actors.find((a) => a.sub === sub)?.name ?? sub;
+  const scopeLabel = (s: string) =>
+    s === "admin"
+      ? ta("common.admin" as TK)
+      : s === "self"
+        ? ta("common.self" as TK)
+        : s === "system"
+          ? ta("common.system" as TK)
+          : s;
 
   async function reveal(a: AuditLog) {
     const ok = await confirm({
@@ -198,15 +259,92 @@ function AuditLogs() {
 
   return (
     <>
-      <div style={{ marginBottom: 12 }}>
-        <Checkbox
-          label={ta("logs.adminOnly" as TK)}
-          checked={adminOnly}
-          onChange={(_, d) => {
-            setOffset(0);
-            setAdminOnly(Boolean(d.checked));
-          }}
+      <div
+        style={{
+          marginBottom: 12,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "flex-end",
+        }}
+      >
+        <Dropdown
+          aria-label={ta("logs.scope" as TK)}
+          placeholder={ta("logs.filterScope" as TK)}
+          style={{ minWidth: 120 }}
+          selectedOptions={filters.scope ? [filters.scope] : []}
+          value={filters.scope ? scopeLabel(filters.scope) : ""}
+          onOptionSelect={(_, d) => setFilter("scope", d.optionValue ?? "")}
+        >
+          {(opts?.scopes ?? []).map((s) => (
+            <Option key={s} value={s} text={scopeLabel(s)}>
+              {scopeLabel(s)}
+            </Option>
+          ))}
+        </Dropdown>
+        <Dropdown
+          aria-label={ta("logs.action" as TK)}
+          placeholder={ta("logs.filterAction" as TK)}
+          style={{ minWidth: 170 }}
+          selectedOptions={filters.action ? [filters.action] : []}
+          value={filters.action}
+          onOptionSelect={(_, d) => setFilter("action", d.optionValue ?? "")}
+        >
+          {(opts?.actions ?? []).map((a) => (
+            <Option key={a} value={a} text={a}>
+              {a}
+            </Option>
+          ))}
+        </Dropdown>
+        <Dropdown
+          aria-label={ta("logs.target" as TK)}
+          placeholder={ta("logs.filterTarget" as TK)}
+          style={{ minWidth: 130 }}
+          selectedOptions={filters.target_type ? [filters.target_type] : []}
+          value={filters.target_type}
+          onOptionSelect={(_, d) =>
+            setFilter("target_type", d.optionValue ?? "")
+          }
+        >
+          {(opts?.target_types ?? []).map((tt) => (
+            <Option key={tt} value={tt} text={tt}>
+              {tt}
+            </Option>
+          ))}
+        </Dropdown>
+        <Dropdown
+          aria-label={ta("logs.user" as TK)}
+          placeholder={ta("logs.filterUser" as TK)}
+          style={{ minWidth: 170 }}
+          selectedOptions={filters.actor_sub ? [filters.actor_sub] : []}
+          value={filters.actor_sub ? actorLabel(filters.actor_sub) : ""}
+          onOptionSelect={(_, d) => setFilter("actor_sub", d.optionValue ?? "")}
+        >
+          {(opts?.actors ?? []).map((a) => (
+            <Option key={a.sub} value={a.sub} text={a.name}>
+              {a.name}
+            </Option>
+          ))}
+        </Dropdown>
+        <Input
+          aria-label={ta("logs.filterSearch" as TK)}
+          placeholder={ta("logs.filterSearch" as TK)}
+          value={filters.q}
+          style={{ minWidth: 160 }}
+          onChange={(_, d) => setFilter("q", d.value)}
         />
+        {hasFilters ? (
+          <Button
+            appearance="subtle"
+            icon={<DismissRegular />}
+            onClick={() => {
+              setOffset(0);
+              setFilters(EMPTY_FILTERS);
+            }}
+          >
+            {ta("logs.clearFilters" as TK)}
+          </Button>
+        ) : null}
       </div>
 
       {logs.loading ? (
@@ -238,9 +376,15 @@ function AuditLogs() {
                   <TableCell>
                     <Badge
                       appearance="tint"
-                      color={a.scope === "admin" ? "brand" : "informative"}
+                      color={
+                        a.scope === "admin"
+                          ? "brand"
+                          : a.scope === "system"
+                            ? "warning"
+                            : "informative"
+                      }
                     >
-                      {a.scope === "admin" ? ta("common.admin" as TK) : ta("common.self" as TK)}
+                      {scopeLabel(a.scope)}
                     </Badge>
                   </TableCell>
                   <TableCell>{a.action}</TableCell>

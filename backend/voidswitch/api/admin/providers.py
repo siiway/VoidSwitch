@@ -8,15 +8,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus, ProxyMode
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, record_audit, split_sensitive
 from voidswitch.core.auth import (
     actor_display_name,
+    audit_scope_for,
     get_current_user,
     is_owner,
     is_staff,
     require_owner,
 )
-from voidswitch.core.config import get_settings
+from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger
 from voidswitch.core.security import (
@@ -119,6 +120,7 @@ async def create_provider(
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> ProviderOut:
     existing = (
         await session.execute(select(Provider).where(Provider.name == body.name))
@@ -152,15 +154,24 @@ async def create_provider(
     )
     session.add(provider)
     await session.flush()
+    # Custom auth headers can hold upstream secrets — keep them owner-only.
+    sensitive = {"extra_headers": provider.extra_headers} if provider.extra_headers else None
     await record_audit(
         session,
-        action="provider.create",
+        action=AuditAction.PROVIDER_CREATE,
         actor_sub=user.sub,
-        actor_name=user.name,
+        actor_name=actor_display_name(user),
         target_type="provider",
         target_id=provider.id,
-        detail={"name": provider.name, "type": provider.type},
+        detail={
+            "name": provider.name,
+            "type": provider.type,
+            "base_url": provider.base_url,
+        },
+        sensitive=sensitive,
+        secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
+        scope=audit_scope_for(user),
     )
     await session.refresh(provider)
     return _to_out(provider, show_key_api=is_owner(user))
@@ -173,6 +184,7 @@ async def update_provider(
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> ProviderOut:
     provider = await session.get(Provider, provider_id)
     if provider is None:
@@ -199,15 +211,21 @@ async def update_provider(
     for field, value in changes.items():
         setattr(provider, field, value)
     await session.flush()
+    # Record the actual changed values; divert any secret auth headers to the
+    # owner-only sensitive blob so they never show in the plain detail.
+    public_changes, sensitive = split_sensitive(changes, {"extra_headers"})
     await record_audit(
         session,
-        action="provider.update",
+        action=AuditAction.PROVIDER_UPDATE,
         actor_sub=user.sub,
-        actor_name=user.name,
+        actor_name=actor_display_name(user),
         target_type="provider",
         target_id=provider.id,
-        detail={"changes": list(changes)},
+        detail={"name": provider.name, "changes": public_changes},
+        sensitive=sensitive,
+        secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
+        scope=audit_scope_for(user),
     )
     await session.refresh(provider)
     return _to_out(provider, show_key_api=is_owner(user))
@@ -226,12 +244,12 @@ async def delete_provider(
     await session.delete(provider)
     await record_audit(
         session,
-        action="provider.delete",
+        action=AuditAction.PROVIDER_DELETE,
         actor_sub=user.sub,
-        actor_name=user.name,
+        actor_name=actor_display_name(user),
         target_type="provider",
         target_id=provider_id,
-        detail={"name": provider.name},
+        detail={"name": provider.name, "type": provider.type},
         ip=request.client.host if request.client else None,
     )
 
@@ -314,7 +332,8 @@ async def enable_key_api(
     """
     provider = await _get_provider_or_404(session, provider_id)
     return await _mint_key_api(
-        provider, session, actor=actor, request=request, action="provider.key_api_enable"
+        provider, session, actor=actor, request=request,
+        action=AuditAction.PROVIDER_KEY_API_ENABLE.value,
     )
 
 
@@ -328,7 +347,8 @@ async def rotate_key_api(
     """Owner-only: generate a new token, invalidating the previous one."""
     provider = await _get_provider_or_404(session, provider_id)
     return await _mint_key_api(
-        provider, session, actor=actor, request=request, action="provider.key_api_rotate"
+        provider, session, actor=actor, request=request,
+        action=AuditAction.PROVIDER_KEY_API_ROTATE.value,
     )
 
 
@@ -348,7 +368,7 @@ async def disable_key_api(
     await session.flush()
     await record_audit(
         session,
-        action="provider.key_api_disable",
+        action=AuditAction.PROVIDER_KEY_API_DISABLE,
         actor_sub=actor.sub,
         actor_name=actor_display_name(actor),
         target_type="provider",
@@ -377,12 +397,12 @@ async def reveal_key_api(
     raw = decrypt_secret(provider.key_api_token_ciphertext, secret=settings.server.secret_key)
     await record_audit(
         session,
-        action="provider.key_api_reveal",
+        action=AuditAction.PROVIDER_KEY_API_REVEAL,
         actor_sub=actor.sub,
         actor_name=actor_display_name(actor),
         target_type="provider",
         target_id=provider.id,
-        detail={"name": provider.name},
+        detail={"name": provider.name, "token_preview": provider.key_api_token_preview},
         ip=request.client.host if request.client else None,
     )
     return ProviderKeyApiSecret(

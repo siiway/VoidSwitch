@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.audit import record_audit
-from voidswitch.core.auth import require_staff
+from voidswitch.core.audit import AuditAction, record_audit
+from voidswitch.core.auth import actor_display_name, require_staff
 from voidswitch.core.database import get_session
 from voidswitch.models.db import User
 from voidswitch.models.schemas import SettingsOut, SettingsUpdate
@@ -34,11 +34,11 @@ async def update_settings_values(
     values = await settings_store.update(session, body.values)
     await record_audit(
         session,
-        action="settings.update",
+        action=AuditAction.SETTINGS_UPDATE,
         actor_sub=user.sub,
-        actor_name=user.name,
+        actor_name=actor_display_name(user),
         target_type="settings",
-        detail={"keys": list(body.values)},
+        detail={"changes": body.values},
         ip=request.client.host if request.client else None,
     )
     return SettingsOut(values=values)

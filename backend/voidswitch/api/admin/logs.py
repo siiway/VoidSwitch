@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, record_audit
 from voidswitch.core.auth import (
     actor_display_name,
     get_current_user,
@@ -20,7 +20,13 @@ from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.security import decrypt_secret
 from voidswitch.models.db import AuditLog, RequestLog, User, VoidToken
-from voidswitch.models.schemas import AuditLogOut, Page, RequestLogOut
+from voidswitch.models.schemas import (
+    AuditActor,
+    AuditFilterOptions,
+    AuditLogOut,
+    Page,
+    RequestLogOut,
+)
 
 router = APIRouter(prefix="/api/admin/logs", tags=["admin:logs"])
 
@@ -29,19 +35,32 @@ router = APIRouter(prefix="/api/admin/logs", tags=["admin:logs"])
 async def audit_logs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    action: str | None = None,
+    action: str | None = Query(default=None, description="Filter by exact action."),
     scope: str | None = Query(default=None, description="Filter by scope, e.g. 'admin'."),
+    actor_sub: str | None = Query(default=None, description="Filter by the actor's subject."),
+    target_type: str | None = Query(default=None, description="Filter by target resource type."),
+    q: str | None = Query(default=None, description="Free-text match on the actor's name."),
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
 ) -> Page[AuditLogOut]:
     stmt = select(AuditLog).order_by(AuditLog.id.desc())
     count_stmt = select(func.count(AuditLog.id))
+
+    filters = []
     if action:
-        stmt = stmt.where(AuditLog.action == action)
-        count_stmt = count_stmt.where(AuditLog.action == action)
+        filters.append(AuditLog.action == action)
     if scope:
-        stmt = stmt.where(AuditLog.scope == scope)
-        count_stmt = count_stmt.where(AuditLog.scope == scope)
+        filters.append(AuditLog.scope == scope)
+    if actor_sub:
+        filters.append(AuditLog.actor_sub == actor_sub)
+    if target_type:
+        filters.append(AuditLog.target_type == target_type)
+    if q:
+        filters.append(AuditLog.actor_name.ilike(f"%{q}%"))
+    for clause in filters:
+        stmt = stmt.where(clause)
+        count_stmt = count_stmt.where(clause)
+
     total = (await session.execute(count_stmt)).scalar_one()
     rows = (await session.execute(stmt.limit(limit).offset(offset))).scalars().all()
     items: list[AuditLogOut] = []
@@ -54,6 +73,54 @@ async def audit_logs(
         total=int(total),
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get("/audit/filters", response_model=AuditFilterOptions)
+async def audit_filter_options(
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_staff),
+) -> AuditFilterOptions:
+    """Distinct values present in the trail, to populate the dashboard filters."""
+    actions = (
+        (await session.execute(select(AuditLog.action).distinct().order_by(AuditLog.action)))
+        .scalars()
+        .all()
+    )
+    scopes = (
+        (await session.execute(select(AuditLog.scope).distinct().order_by(AuditLog.scope)))
+        .scalars()
+        .all()
+    )
+    target_types = (
+        (
+            await session.execute(
+                select(AuditLog.target_type)
+                .where(AuditLog.target_type.is_not(None))
+                .distinct()
+                .order_by(AuditLog.target_type)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    actor_rows = (
+        await session.execute(
+            select(AuditLog.actor_sub, AuditLog.actor_name)
+            .where(AuditLog.actor_sub.is_not(None))
+            .distinct()
+        )
+    ).all()
+    # Collapse to the most-recent display name per subject.
+    actors: dict[str, str] = {}
+    for sub, name in actor_rows:
+        if sub and sub not in actors:
+            actors[sub] = name or sub
+    return AuditFilterOptions(
+        actions=[a for a in actions if a],
+        scopes=[s for s in scopes if s],
+        target_types=[t for t in target_types if t],
+        actors=[AuditActor(sub=sub, name=name) for sub, name in sorted(actors.items())],
     )
 
 
@@ -85,12 +152,12 @@ async def reveal_audit_sensitive(
         ) from exc
     await record_audit(
         session,
-        action="audit.reveal",
+        action=AuditAction.AUDIT_REVEAL,
         actor_sub=actor.sub,
         actor_name=actor_display_name(actor),
         target_type="audit",
         target_id=audit_id,
-        detail={"revealed_action": entry.action},
+        detail={"revealed_action": entry.action, "revealed_actor": entry.actor_name},
         ip=request.client.host if request.client else None,
     )
     return {"id": audit_id, "action": entry.action, "sensitive": payload}

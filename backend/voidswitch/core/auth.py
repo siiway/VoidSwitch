@@ -76,6 +76,18 @@ def actor_display_name(user: User) -> str | None:
     return f"{label}#{user.id}"
 
 
+def audit_scope_for(user: User) -> str:
+    """Classify an action by who performs it.
+
+    Staff (owner/co-owner/admin) act on the *management* surface → ``admin``.
+    An ordinary member only ever touches resources they personally own, so their
+    mutations are recorded as ``self`` and stay out of the administrative view.
+    """
+    from voidswitch.core.audit import AuditScope
+
+    return AuditScope.ADMIN.value if is_staff(user) else AuditScope.SELF.value
+
+
 # --------------------------------------------------------------------------- #
 # PKCE + transient OAuth state (single-node in-memory, TTL'd)
 # --------------------------------------------------------------------------- #

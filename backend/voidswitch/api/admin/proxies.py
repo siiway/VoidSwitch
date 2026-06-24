@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import ProxyStatus
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, record_audit
 from voidswitch.core.auth import actor_display_name, require_staff
 from voidswitch.core.database import get_session
 from voidswitch.models.db import Provider, Proxy, User
@@ -57,11 +57,11 @@ async def add_proxies(
     await session.flush()
     await record_audit(
         session,
-        action="proxy.add",
+        action=AuditAction.PROXY_ADD,
         actor_sub=user.sub,
-        actor_name=user.name,
+        actor_name=actor_display_name(user),
         target_type="proxy",
-        detail={"added": len(created)},
+        detail={"added": len(created), "ids": [p.id for p in created]},
         ip=request.client.host if request.client else None,
     )
     return created
@@ -92,12 +92,12 @@ async def update_proxy(
     await session.flush()
     await record_audit(
         session,
-        action="proxy.update",
+        action=AuditAction.PROXY_UPDATE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="proxy",
         target_id=proxy_id,
-        detail={"changes": list(changes)},
+        detail={"changes": changes},
         ip=request.client.host if request.client else None,
     )
     return proxy
@@ -121,7 +121,7 @@ async def delete_proxy(
             p.proxy_ids = [pid for pid in p.proxy_ids if pid != proxy_id]
     await record_audit(
         session,
-        action="proxy.delete",
+        action=AuditAction.PROXY_DELETE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="proxy",
@@ -155,12 +155,12 @@ async def probe_proxy(
     await session.flush()
     await record_audit(
         session,
-        action="proxy.probe",
+        action=AuditAction.PROXY_PROBE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="proxy",
         target_id=proxy_id,
-        detail={"ok": ok, "latency_ms": latency},
+        detail={"ok": ok, "latency_ms": latency, "url": proxy.url},
         ip=request.client.host if request.client else None,
     )
     return proxy

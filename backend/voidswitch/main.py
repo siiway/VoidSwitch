@@ -51,6 +51,7 @@ from voidswitch.services import settings_store
 from voidswitch.services.network import get_pool
 from voidswitch.tasks.balance_probe import run_balance_probe
 from voidswitch.tasks.balance_rescan import run_balance_rescan
+from voidswitch.tasks.log_cleanup import run_log_cleanup
 from voidswitch.tasks.manager import PeriodicTask, TaskManager
 from voidswitch.tasks.proxy_resurrector import run_proxy_resurrector
 
@@ -93,6 +94,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             interval_key="proxy_probe_interval_seconds",
             enabled_key="proxy_resurrector_enabled",
             min_interval=15,
+        )
+    )
+    manager.register(
+        PeriodicTask(
+            name="log_cleanup",
+            tick=run_log_cleanup,
+            interval_key="log_cleanup_interval_seconds",
+            enabled_key="log_cleanup_enabled",
+            min_interval=300,
         )
     )
     manager.start()

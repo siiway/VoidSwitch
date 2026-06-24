@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, AuditScope, record_audit
 from voidswitch.core.auth import actor_display_name, get_current_user
+from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.security import (
     generate_void_token,
@@ -54,6 +55,7 @@ async def create_my_token(
     request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> VoidTokenWithSecret:
     secret = generate_void_token()
     token = VoidToken(
@@ -70,14 +72,18 @@ async def create_my_token(
     await session.flush()
     await record_audit(
         session,
-        action="me.token.create",
+        action=AuditAction.ME_TOKEN_CREATE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="token",
         target_id=token.id,
-        detail={"name": token.name},
+        detail={"name": token.name, "prefix": token.token_prefix},
+        # The plaintext secret is shown to the user exactly once; keep an
+        # owner-revealable copy so a lost token can be recovered/audited.
+        sensitive={"token": secret, "name": token.name},
+        secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
-        scope="self",
+        scope=AuditScope.SELF.value,
     )
     # The plaintext secret lives only here; the ORM row stores its hash. Build
     # the public view from the row, then attach the one-time secret.
@@ -100,14 +106,14 @@ async def update_my_token(
     await session.flush()
     await record_audit(
         session,
-        action="me.token.update",
+        action=AuditAction.ME_TOKEN_UPDATE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="token",
         target_id=token.id,
-        detail={"changes": body.model_dump(mode="json", exclude_unset=True)},
+        detail={"name": token.name, "changes": body.model_dump(mode="json", exclude_unset=True)},
         ip=request.client.host if request.client else None,
-        scope="self",
+        scope=AuditScope.SELF.value,
     )
     return token
 
@@ -118,6 +124,7 @@ async def rotate_my_token(
     request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> VoidTokenWithSecret:
     token = await session.get(VoidToken, token_id)
     if token is None or token.user_id != user.id:
@@ -128,13 +135,16 @@ async def rotate_my_token(
     await session.flush()
     await record_audit(
         session,
-        action="me.token.rotate",
+        action=AuditAction.ME_TOKEN_ROTATE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="token",
         target_id=token.id,
+        detail={"name": token.name, "prefix": token.token_prefix},
+        sensitive={"token": secret, "name": token.name},
+        secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
-        scope="self",
+        scope=AuditScope.SELF.value,
     )
     return VoidTokenWithSecret(**VoidTokenOut.model_validate(token).model_dump(), token=secret)
 
@@ -151,14 +161,14 @@ async def delete_my_token(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found.")
     await record_audit(
         session,
-        action="me.token.delete",
+        action=AuditAction.ME_TOKEN_DELETE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="token",
         target_id=token.id,
-        detail={"name": token.name},
+        detail={"name": token.name, "prefix": token.token_prefix},
         ip=request.client.host if request.client else None,
-        scope="self",
+        scope=AuditScope.SELF.value,
     )
     await session.delete(token)
 

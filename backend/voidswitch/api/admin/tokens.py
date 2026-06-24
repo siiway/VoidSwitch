@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, record_audit
 from voidswitch.core.auth import actor_display_name, require_owner
+from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.security import generate_void_token, hash_token, token_fingerprint
 from voidswitch.models.db import User, VoidToken
@@ -40,6 +41,7 @@ async def create_token(
     request: Request,
     session: AsyncSession = Depends(get_session),
     actor: User = Depends(require_owner),
+    settings: Settings = Depends(get_settings),
 ) -> VoidTokenWithSecret:
     target_user_id = body.user_id or actor.id
     owner = await session.get(User, target_user_id)
@@ -60,12 +62,14 @@ async def create_token(
     await session.flush()
     await record_audit(
         session,
-        action="token.create",
+        action=AuditAction.TOKEN_CREATE,
         actor_sub=actor.sub,
         actor_name=actor_display_name(actor),
         target_type="token",
         target_id=token.id,
-        detail={"name": token.name, "user_id": owner.id},
+        detail={"name": token.name, "user_id": owner.id, "prefix": token.token_prefix},
+        sensitive={"token": secret, "name": token.name, "user_id": owner.id},
+        secret_key=settings.server.secret_key,
         ip=request.client.host if request.client else None,
     )
     # Plaintext secret returned exactly once; ORM stores only its hash.
@@ -89,7 +93,7 @@ async def update_token(
     await session.flush()
     await record_audit(
         session,
-        action="token.update",
+        action=AuditAction.TOKEN_UPDATE,
         actor_sub=actor.sub,
         actor_name=actor_display_name(actor),
         target_type="token",
@@ -117,12 +121,12 @@ async def delete_token(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found.")
     await record_audit(
         session,
-        action="token.delete",
+        action=AuditAction.TOKEN_DELETE,
         actor_sub=actor.sub,
         actor_name=actor_display_name(actor),
         target_type="token",
         target_id=token.id,
-        detail={"name": token.name, "user_id": token.user_id},
+        detail={"name": token.name, "user_id": token.user_id, "prefix": token.token_prefix},
         ip=request.client.host if request.client else None,
     )
     await session.delete(token)

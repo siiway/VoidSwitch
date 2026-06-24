@@ -76,6 +76,14 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "balance_rescan_enabled": True,
     "proxy_resurrector_enabled": True,
     "proxy_probe_url": "https://api.openai.com/v1/models",
+    # Log retention. A background task deletes audit/request log rows older than
+    # the configured number of days, to keep the database from growing without
+    # bound. 0 = keep forever (no automatic deletion). The cleanup task itself
+    # runs on the interval below and can be disabled outright.
+    "audit_log_retention_days": 0,
+    "request_log_retention_days": 0,
+    "log_cleanup_enabled": True,
+    "log_cleanup_interval_seconds": 86400,
     "opencode_default_model": "claude-opus-4-8",
     "opencode_small_model": "claude-haiku-4-5-20251001",
 }

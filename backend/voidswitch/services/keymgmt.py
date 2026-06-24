@@ -24,7 +24,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, AuditScope, record_audit
 from voidswitch.core.config import Settings
 from voidswitch.core.security import decrypt_secret, encrypt_secret, hash_token
 from voidswitch.models.db import ApiKey, Provider
@@ -57,6 +57,11 @@ class Actor:
     user_id: int | None = None
     is_staff: bool = True
     ip: str | None = None
+
+    @property
+    def audit_scope(self) -> str:
+        """Members only touch keys they own → ``self``; staff act on ``admin``."""
+        return AuditScope.ADMIN.value if self.is_staff else AuditScope.SELF.value
 
 
 def preview(raw: str) -> str:
@@ -162,15 +167,21 @@ async def add_keys(
     await session.flush()
     await record_audit(
         session,
-        action="key.add",
+        action=AuditAction.KEY_ADD,
         actor_sub=actor.sub,
         actor_name=actor.name,
         target_type="provider",
         target_id=provider.id,
-        detail={"added": len(created)},
+        detail={
+            "provider_name": provider.name,
+            "added": len(created),
+            "pool": body.pool or "",
+            "previews": [k["preview"] for k in sensitive_keys],
+        },
         sensitive={"keys": sensitive_keys},
         secret_key=settings.server.secret_key,
         ip=actor.ip,
+        scope=actor.audit_scope,
     )
     return created
 
@@ -255,15 +266,35 @@ async def update_key(
     if body.pool is not None:
         key.pool = body.pool
     await session.flush()
+    # Non-secret changes go in the detail; a replaced secret (raw key or OAuth
+    # bundle field) is captured in the owner-only sensitive blob instead.
+    secret_fields = {"key", "access_token", "refresh_token", "expires_at"}
+    raw_changes = body.model_dump(exclude_unset=True)
+    public_changes = {k: v for k, v in raw_changes.items() if k not in secret_fields}
+    sensitive: dict | None = None
+    if any(f in raw_changes for f in secret_fields):
+        sensitive = {
+            "new_secret": decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key),
+            "preview": key.key_preview,
+        }
     await record_audit(
         session,
-        action="key.update",
+        action=AuditAction.KEY_UPDATE,
         actor_sub=actor.sub,
         actor_name=actor.name,
         target_type="provider",
         target_id=provider.id,
-        detail={"key_id": key.id, "changes": list(body.model_dump(exclude_unset=True))},
+        detail={
+            "provider_name": provider.name,
+            "key_id": key.id,
+            "preview": key.key_preview,
+            "changes": public_changes,
+            "secret_changed": sensitive is not None,
+        },
+        sensitive=sensitive,
+        secret_key=settings.server.secret_key,
         ip=actor.ip,
+        scope=actor.audit_scope,
     )
     return key
 
@@ -300,12 +331,17 @@ async def delete_key(
     plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
     await record_audit(
         session,
-        action="key.delete",
+        action=AuditAction.KEY_DELETE,
         actor_sub=actor.sub,
         actor_name=actor.name,
         target_type="provider",
         target_id=provider.id,
-        detail={"key_id": key.id, "preview": key.key_preview, "pool": key.pool},
+        detail={
+            "provider_name": provider.name,
+            "key_id": key.id,
+            "preview": key.key_preview,
+            "pool": key.pool,
+        },
         sensitive={
             "keys": [
                 {
@@ -319,6 +355,7 @@ async def delete_key(
         },
         secret_key=settings.server.secret_key,
         ip=actor.ip,
+        scope=actor.audit_scope,
     )
     await session.delete(key)
 
@@ -445,12 +482,19 @@ async def cleanup_keys(
     await session.execute(delete(ApiKey).where(ApiKey.id.in_(ids)))
     await record_audit(
         session,
-        action="key.cleanup",
+        action=AuditAction.KEY_CLEANUP,
         actor_sub=actor.sub,
         actor_name=actor.name,
         target_type="provider",
         target_id=provider.id,
-        detail={"target": body.target, "min_days": body.min_days, "deleted": len(ids)},
+        detail={
+            "provider_name": provider.name,
+            "target": body.target,
+            "min_days": body.min_days,
+            "deleted": len(ids),
+            "key_ids": ids,
+        },
         ip=actor.ip,
+        scope=actor.audit_scope,
     )
     return len(ids)

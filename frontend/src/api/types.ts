@@ -170,6 +170,18 @@ export interface AuditLog {
   has_sensitive?: boolean;
 }
 
+export interface AuditActor {
+  sub: string;
+  name: string;
+}
+
+export interface AuditFilterOptions {
+  actions: string[];
+  scopes: string[];
+  target_types: string[];
+  actors: AuditActor[];
+}
+
 export interface RequestLog {
   id: number;
   ts: string;

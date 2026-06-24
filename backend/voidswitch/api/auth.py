@@ -9,7 +9,8 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.core import auth
-from voidswitch.core.audit import record_audit
+from voidswitch.core.audit import AuditAction, AuditScope, record_audit
+from voidswitch.core.auth import actor_display_name
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger
@@ -47,11 +48,11 @@ async def dev_login(
     user = await auth.dev_login_user(session, settings)
     await record_audit(
         session,
-        action="auth.dev_login",
+        action=AuditAction.AUTH_DEV_LOGIN,
         actor_sub=user.sub,
-        actor_name=user.name,
+        actor_name=actor_display_name(user),
         ip=request.client.host if request.client else None,
-        scope="self",
+        scope=AuditScope.SELF.value,
     )
     ttl = settings.server.session_ttl_minutes
     token = create_session_token(
@@ -94,11 +95,11 @@ async def callback(
         user = await auth.upsert_user(session, settings, identity)
         await record_audit(
             session,
-            action="auth.login",
+            action=AuditAction.AUTH_LOGIN,
             actor_sub=user.sub,
-            actor_name=user.name or user.username,
+            actor_name=actor_display_name(user),
             ip=request.client.host if request.client else None,
-            scope="self",
+            scope=AuditScope.SELF.value,
         )
     except Exception as exc:
         detail = getattr(exc, "detail", "") or str(exc) or repr(exc)
@@ -132,10 +133,10 @@ async def logout(
     # and to leave a trail of who signed out and when.
     await record_audit(
         session,
-        action="auth.logout",
+        action=AuditAction.AUTH_LOGOUT,
         actor_sub=user.sub,
-        actor_name=user.name or user.username,
+        actor_name=actor_display_name(user),
         ip=request.client.host if request.client else None,
-        scope="self",
+        scope=AuditScope.SELF.value,
     )
     return {"ok": True}

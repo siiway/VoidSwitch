@@ -13,8 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.audit import record_audit
-from voidswitch.core.auth import actor_display_name, get_current_user, require_staff
+from voidswitch.core.audit import AuditAction, AuditScope, record_audit
+from voidswitch.core.auth import (
+    actor_display_name,
+    audit_scope_for,
+    get_current_user,
+    require_staff,
+)
 from voidswitch.core.database import get_session
 from voidswitch.models.db import ModelEntry, User
 from voidswitch.models.schemas import (
@@ -106,7 +111,7 @@ async def upsert_model(
     await session.flush()
     await record_audit(
         session,
-        action="model.upsert",
+        action=AuditAction.MODEL_UPSERT,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="model",
@@ -145,7 +150,7 @@ async def batch_update_models(
     await session.flush()
     await record_audit(
         session,
-        action="model.batch_update",
+        action=AuditAction.MODEL_BATCH_UPDATE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="model",
@@ -175,13 +180,13 @@ async def sync_models(
     if added:
         await record_audit(
             session,
-            action="model.sync",
+            action=AuditAction.MODEL_SYNC,
             actor_sub=user.sub,
             actor_name=actor_display_name(user),
             target_type="model",
             detail={"added": added, "total": total},
             ip=request.client.host if request.client else None,
-            scope="self" if user.role == "member" else "admin",
+            scope=audit_scope_for(user),
         )
     return ModelSyncResult(added=added, total=total)
 
@@ -201,13 +206,13 @@ async def clean_unserved(
     if deleted:
         await record_audit(
             session,
-            action="model.clean_unserved",
+            action=AuditAction.MODEL_CLEAN_UNSERVED,
             actor_sub=user.sub,
             actor_name=actor_display_name(user),
             target_type="model",
             detail={"deleted": deleted, "model_ids": ids},
             ip=request.client.host if request.client else None,
-            scope="admin",
+            scope=AuditScope.ADMIN.value,
         )
     return ModelCleanResult(deleted=deleted, model_ids=ids)
 
@@ -226,7 +231,7 @@ async def delete_model(
     await session.delete(entry)
     await record_audit(
         session,
-        action="model.delete",
+        action=AuditAction.MODEL_DELETE,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="model",
