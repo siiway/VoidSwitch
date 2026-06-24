@@ -17,6 +17,7 @@ from voidswitch.core.logging import get_logger
 from voidswitch.core.security import create_session_token
 from voidswitch.models.db import User
 from voidswitch.models.schemas import LoginStart, SessionOut, UserOut
+from voidswitch.services import settings_store
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 log = get_logger("api.auth")
@@ -30,6 +31,14 @@ async def auth_config(settings: Settings = Depends(get_settings)) -> dict[str, o
         "dev_mode": settings.server.dev_mode,
         "issuer": settings.prism.issuer,
         "login_url": f"{settings.server.base_url.rstrip('/')}/api/auth/login?redirect=1",
+        # Non-secret OpenCode model defaults, surfaced so the (member-facing)
+        # "My API Key" page can render an accurate install snippet without
+        # hitting the staff-only settings endpoint. These are already public via
+        # the /install script.
+        "opencode_default_model": settings_store.get_str(
+            "opencode_default_model", "claude-opus-4-8"
+        ),
+        "opencode_small_model": settings_store.get_str("opencode_small_model", ""),
     }
 
 

@@ -127,7 +127,7 @@ export function Chat() {
       setModels([]);
       setModelsError(e instanceof Error ? e.message : String(e));
     }
-  }, [chatToken]);
+  }, [chatToken, t]);
 
   useEffect(() => {
     void loadModels();

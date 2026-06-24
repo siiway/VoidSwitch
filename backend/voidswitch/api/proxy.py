@@ -25,7 +25,6 @@ from voidswitch.constants import (
 from voidswitch.core import auth
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
-from voidswitch.core.security import hash_token
 from voidswitch.models.db import ModelEntry, Provider, VoidToken
 from voidswitch.services import models_catalog
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
@@ -107,7 +106,7 @@ async def _handle(
     x_api_key: str | None,
     inbound_style: ApiStyle,
 ) -> Response:
-    authed = await auth.authenticate_void_token(request, session, authorization, x_api_key)
+    authed = await auth.authenticate_void_token(session, authorization, x_api_key)
     payload = await _body(request)
 
     model = payload.get("model")
@@ -200,28 +199,13 @@ async def messages(
     return await _handle(request, session, authorization, x_api_key, ApiStyle.ANTHROPIC)
 
 
-async def _authenticate_token(
-    session: AsyncSession, authorization: str | None, x_api_key: str | None
-) -> VoidToken:
-    # Authenticate, tolerating either credential header.
-    raw = (authorization or "").removeprefix("Bearer ").strip() or x_api_key
-    if not raw:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing API key.")
-    token = (
-        await session.execute(select(VoidToken).where(VoidToken.token_hash == hash_token(raw)))
-    ).scalar_one_or_none()
-    if token is None or not token.enabled:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API key.")
-    return token
-
-
 @router.get("/v1/models")
 async def list_models(
     session: AsyncSession = Depends(get_session),
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
 ) -> JSONResponse:
-    token = await _authenticate_token(session, authorization, x_api_key)
+    token = (await auth.authenticate_void_token(session, authorization, x_api_key)).token
 
     providers = (
         (await session.execute(select(Provider).where(Provider.enabled.is_(True)))).scalars().all()
@@ -321,6 +305,6 @@ async def sync_models(
     what the providers currently serve. Only discovers already-served models, so
     it is safe to expose to any valid client token.
     """
-    await _authenticate_token(session, authorization, x_api_key)
+    await auth.authenticate_void_token(session, authorization, x_api_key)
     added, total = await models_catalog.sync_from_providers(session)
     return JSONResponse({"added": added, "total": total})

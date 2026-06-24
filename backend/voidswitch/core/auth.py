@@ -21,7 +21,7 @@ from urllib.parse import urlencode
 
 import httpx
 import jwt
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -428,7 +428,6 @@ class AuthedToken:
 
 
 async def authenticate_void_token(
-    request: Request,
     session: AsyncSession,
     authorization: str | None,
     x_api_key: str | None = None,

@@ -198,7 +198,6 @@ async def test_provider_rename(client, seeded):
 
 
 async def test_provider_rename_conflict(client, seeded):
-    pid = seeded["provider_id"]
     # Create a second provider, then try to rename it onto the seeded name.
     resp = await client.post(
         "/api/admin/providers",

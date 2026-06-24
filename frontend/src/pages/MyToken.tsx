@@ -126,18 +126,18 @@ export function MyToken() {
   type TK = keyof Translations;
   const tokensList = useAsync<VoidToken[]>(() => api.get("/api/me/tokens"));
   const usage = useAsync<Usage>(() => api.get("/api/me/usage"));
-  const settingsData = useAsync<{ values: Record<string, unknown> }>(() =>
-    api.get("/api/admin/settings"),
-  );
+  // Public config carries the OpenCode model defaults (non-secret); the
+  // staff-only /api/admin/settings would 403 for ordinary members.
+  const config = useAsync<{
+    opencode_default_model?: string;
+    opencode_small_model?: string;
+  }>(() => api.get("/api/auth/config"));
   const [name, setName] = useState("default");
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [client, setClient] = useState("openai");
 
-  const ocModel =
-    (settingsData.data?.values.opencode_default_model as string) ||
-    "claude-opus-4-8";
-  const ocSmallModel =
-    (settingsData.data?.values.opencode_small_model as string) || "";
+  const ocModel = config.data?.opencode_default_model || "claude-opus-4-8";
+  const ocSmallModel = config.data?.opencode_small_model || "";
 
   async function create() {
     try {

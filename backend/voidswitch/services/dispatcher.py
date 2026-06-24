@@ -580,8 +580,8 @@ async def _finalise_success(
     else:
         content = outcome.body_bytes or b"{}"
 
-    key.total_requests += 1
-    _reward_key(key)
+    # ``key.total_requests`` and the rate-limit reward are already applied by the
+    # caller's OK branch before we get here — don't double-count them.
     await _log_request(
         session,
         req,

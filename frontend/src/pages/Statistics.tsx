@@ -184,7 +184,12 @@ function PieChart({
   const cy = size / 2;
   const r = 90;
   let cumulative = 0;
-  const slices: { row: UsageGroupRow; color: string; path: string }[] = [];
+  const slices: {
+    row: UsageGroupRow;
+    color: string;
+    path: string;
+    pct: number;
+  }[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const pct = values[i] / total;
@@ -194,21 +199,30 @@ function PieChart({
     const endAngle = cumulative * 360;
     slices.push({
       row: rows[i],
-      color: PIE_COLORS[i % PIE_COLORS.length],
+      // Colour by the slice's own position so it stays in sync with the legend
+      // even when zero-value rows are skipped.
+      color: PIE_COLORS[slices.length % PIE_COLORS.length],
       path: describeArc(cx, cy, r, startAngle, endAngle),
+      pct,
     });
   }
+
+  // A single slice spans the full 360° — an SVG arc whose start and end points
+  // coincide is omitted by the renderer, so draw a full circle instead.
+  const singleFull = slices.length === 1;
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {slices.map((s, i) => (
-          <path key={i} d={s.path} fill={s.color} />
-        ))}
+        {singleFull ? (
+          <circle cx={cx} cy={cy} r={r} fill={slices[0].color} />
+        ) : (
+          slices.map((s, i) => <path key={i} d={s.path} fill={s.color} />)
+        )}
       </svg>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {slices.map((s, i) => {
-          const pct = ((values[i] / total) * 100).toFixed(1);
+          const pct = (s.pct * 100).toFixed(1);
           return (
             <div
               key={i}
