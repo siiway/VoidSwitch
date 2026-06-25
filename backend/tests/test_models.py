@@ -124,8 +124,13 @@ async def test_v1_models_includes_metadata_and_hides_disabled(client, seeded):
 async def test_v1_models_sync_with_token(client, seeded):
     resp = await client.post("/v1/models/sync", headers={"x-api-key": seeded["token"]})
     assert resp.status_code == 200, resp.text
-    assert "added" in resp.json()
-    assert "total" in resp.json()
+    body = resp.json()
+    assert "added" in body
+    assert "total" in body
+    # The sync response also carries the gateway's recommended OpenCode
+    # top-level selectors so the plugin can sync `model` / `small_model`.
+    assert body["opencode_default_model"] == "claude-opus-4-8"
+    assert isinstance(body["opencode_small_model"], str)
 
 
 DS_URL = "https://api.deepseek.com/chat/completions"

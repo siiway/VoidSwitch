@@ -490,6 +490,87 @@ function persistModels(infos: ModelInfo[]): void {
   }
 }
 
+/** Minimal readline interface for interactive overwrite prompts. */
+type AsyncReadline = { question: (query: string) => Promise<string> }
+
+/**
+ * Sync OpenCode's top-level `model` and `small_model` selectors from the
+ * gateway's recommended defaults. Values are written as `voidswitch/<id>` (the
+ * provider-prefixed form OpenCode resolves against this plugin's provider).
+ *
+ * Per selector:
+ *   • gateway has no recommendation → left untouched (we never *remove* a key);
+ *   • unset locally → set silently (nothing to overwrite);
+ *   • already matches → skipped;
+ *   • set to a *different* value → the user is asked to confirm the overwrite on
+ *     the given readline interface (y/N), and kept unless they answer "y".
+ *
+ * The config file is read and written at most once. Returns a short status line
+ * per selector touched or deliberately kept.
+ */
+async function persistDefaultModels(
+  remote: { defaultModel?: string; smallModel?: string },
+  rl: AsyncReadline,
+): Promise<string[]> {
+  const notes: string[] = []
+  const path = opencodeConfigPath()
+  if (!existsSync(path)) {
+    notes.push("no opencode.json found — skipped default/small model sync")
+    return notes
+  }
+  let raw: string
+  let cfg: any
+  try {
+    raw = readFileSync(path, "utf8")
+    cfg = JSON.parse(stripJsonc(raw))
+  } catch (e) {
+    console.error("[VoidSwitch] persistDefaultModels read failed:", e)
+    return notes
+  }
+  if (!cfg || typeof cfg !== "object") return notes
+
+  const targets: { key: "model" | "small_model"; id?: string; label: string }[] = [
+    { key: "model", id: remote.defaultModel, label: "default model" },
+    { key: "small_model", id: remote.smallModel, label: "small model" },
+  ]
+
+  let changed = false
+  for (const t of targets) {
+    if (!t.id) continue // gateway has no recommendation — leave the local key as-is
+    const want = `${PROVIDER_ID}/${t.id}`
+    const cur = cfg[t.key]
+    if (cur === want) continue // already in sync
+    if (cur === undefined || cur === null || cur === "") {
+      cfg[t.key] = want
+      changed = true
+      notes.push(`${t.label}: set to ${want}`)
+      continue
+    }
+    // Local holds a different value — confirm before overwriting.
+    const ans = sanitizeInput(
+      await rl.question(
+        `\nYour ${t.label} is "${cur}", gateway recommends "${want}". Overwrite? (y/N): `,
+      ),
+    ).trim().toLowerCase()
+    if (ans === "y" || ans === "yes") {
+      cfg[t.key] = want
+      changed = true
+      notes.push(`${t.label}: overwritten to ${want}`)
+    } else {
+      notes.push(`${t.label}: kept "${cur}"`)
+    }
+  }
+
+  if (changed) {
+    try {
+      writeFileSync(path, JSON.stringify(cfg, null, detectIndent(raw)) + "\n")
+    } catch (e) {
+      console.error("[VoidSwitch] persistDefaultModels write failed:", e)
+    }
+  }
+  return notes
+}
+
 // --------------------------------------------------------------------------- //
 // Plugin
 // --------------------------------------------------------------------------- //
@@ -534,22 +615,46 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
     }
   }
 
-  /** Ask the gateway to refresh its catalog from the providers; returns a status line. */
-  async function syncModels(): Promise<string> {
+  /**
+   * The gateway's recommended OpenCode top-level selectors (`model` /
+   * `small_model`), as bare model ids. Surfaced by `POST /v1/models/sync` so the
+   * plugin can sync them alongside the provider model map. Empty when the
+   * gateway has no recommendation (e.g. an older backend that omits the fields).
+   */
+  type RemoteDefaults = { defaultModel?: string; smallModel?: string }
+
+  /**
+   * Ask the gateway to refresh its catalog from the providers; returns a status
+   * line plus the gateway's recommended OpenCode default / small model ids (so
+   * the caller can sync the top-level config selectors in the same flow).
+   */
+  async function syncModels(): Promise<{ note: string; defaults: RemoteDefaults }> {
     const token = lastToken ?? loadAuthToken()
     if (token && !lastToken) lastToken = token
+    const fail = (note: string): { note: string; defaults: RemoteDefaults } => ({
+      note,
+      defaults: {},
+    })
     try {
       const res = await fetch(`${gatewayV1}/models/sync`, {
         method: "POST",
         headers: token ? { "x-api-key": token } : {},
       })
       if (res.status === 401)
-        return "couldn't refresh models — not authenticated. Run /connect and paste a vs-… token first."
-      if (!res.ok) return `couldn't refresh models (gateway returned ${res.status}).`
+        return fail("couldn't refresh models — not authenticated. Run /connect and paste a vs-… token first.")
+      if (!res.ok) return fail(`couldn't refresh models (gateway returned ${res.status}).`)
       const j: any = await res.json()
-      return `model catalog refreshed — ${j?.added ?? 0} new, ${j?.total ?? "?"} total. Reopen the model picker to see changes.`
+      const pick = (v: unknown): string | undefined =>
+        typeof v === "string" && v ? v : undefined
+      return {
+        note: `model catalog refreshed — ${j?.added ?? 0} new, ${j?.total ?? "?"} total. Reopen the model picker to see changes.`,
+        defaults: {
+          defaultModel: pick(j?.opencode_default_model),
+          smallModel: pick(j?.opencode_small_model),
+        },
+      }
     } catch {
-      return "couldn't reach the VoidSwitch gateway to refresh models."
+      return fail("couldn't reach the VoidSwitch gateway to refresh models.")
     }
   }
 
@@ -836,13 +941,20 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
                 }
               } else if (action === "2") {
                 console.log("\nSyncing models from gateway...")
-                const note = await syncModels()
+                const { note, defaults } = await syncModels()
                 console.log(note)
                 if (!note.includes("couldn't") && !note.includes("not authenticated")) {
                   try {
                     const infos = await fetchModels(lastToken ?? loadAuthToken())
                     persistModels(infos)
-                    console.log(`${infos.length} models written to config. Reopen the model picker to see changes.`)
+                    console.log(`${infos.length} models written to config.`)
+                    // Sync the top-level `model` / `small_model` selectors from
+                    // the gateway's recommended defaults. A selector that is set
+                    // locally to a *different* value prompts for overwrite
+                    // confirmation on this same readline interface.
+                    const defNotes = await persistDefaultModels(defaults, rl)
+                    for (const n of defNotes) console.log(n)
+                    console.log("Reopen the model picker to see changes.")
                   } catch (e) {
                     console.error("[VoidSwitch] model persist failed:", e)
                   }

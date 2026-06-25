@@ -26,7 +26,7 @@ from voidswitch.core import auth
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
 from voidswitch.models.db import ModelEntry, Provider, VoidToken
-from voidswitch.services import models_catalog
+from voidswitch.services import models_catalog, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
 router = APIRouter(tags=["gateway"])
@@ -303,8 +303,20 @@ async def sync_models(
 
     Lets the OpenCode ``/models`` slash command keep the catalog in sync with
     what the providers currently serve. Only discovers already-served models, so
-    it is safe to expose to any valid client token.
+    it is safe to expose to any valid client token. Also returns the gateway's
+    recommended OpenCode ``model`` / ``small_model`` selectors (bare model ids,
+    same values as the public ``/api/auth/config`` endpoint) so the plugin can
+    sync the top-level config keys alongside the provider's model map.
     """
     await auth.authenticate_void_token(session, authorization, x_api_key)
     added, total = await models_catalog.sync_from_providers(session)
-    return JSONResponse({"added": added, "total": total})
+    return JSONResponse(
+        {
+            "added": added,
+            "total": total,
+            "opencode_default_model": settings_store.get_str(
+                "opencode_default_model", "claude-opus-4-8"
+            ),
+            "opencode_small_model": settings_store.get_str("opencode_small_model", ""),
+        }
+    )
