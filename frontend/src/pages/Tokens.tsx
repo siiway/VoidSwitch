@@ -16,9 +16,10 @@ import {
   TableRow,
   Text,
   Textarea,
+  Tooltip,
   tokens,
 } from "@fluentui/react-components";
-import { AddRegular, CopyRegular, DeleteRegular } from "@fluentui/react-icons";
+import { AddRegular, BugRegular, CopyRegular, DeleteRegular } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
@@ -75,6 +76,11 @@ export function Tokens() {
 
   async function toggle(t: VoidToken) {
     await api.patch(`/api/admin/tokens/${t.id}`, { enabled: !t.enabled });
+    list.reload();
+  }
+
+  async function toggleDebug(t: VoidToken) {
+    await api.patch(`/api/admin/tokens/${t.id}`, { debug_enabled: !t.debug_enabled });
     list.reload();
   }
 
@@ -158,6 +164,17 @@ export function Tokens() {
                       ? tr("common.disable" as TK)
                       : tr("common.enable" as TK)}
                   </Button>
+                  <Tooltip
+                    content={t.debug_enabled ? tr("tokens.debugDisable" as TK) : tr("tokens.debugEnable" as TK)}
+                    relationship="label"
+                  >
+                    <Button
+                      size="small"
+                      appearance={t.debug_enabled ? "primary" : "subtle"}
+                      icon={<BugRegular />}
+                      onClick={() => toggleDebug(t)}
+                    />
+                  </Tooltip>
                   <Button
                     size="small"
                     appearance="subtle"

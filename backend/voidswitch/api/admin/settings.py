@@ -31,14 +31,22 @@ async def update_settings_values(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
 ) -> SettingsOut:
+    old_values = await settings_store.get_all(session)
     values = await settings_store.update(session, body.values)
-    await record_audit(
-        session,
-        action=AuditAction.SETTINGS_UPDATE,
-        actor_sub=user.sub,
-        actor_name=actor_display_name(user),
-        target_type="settings",
-        detail={"changes": body.values},
-        ip=request.client.host if request.client else None,
-    )
+    # Only record the settings that actually changed.
+    changes = {}
+    for k, v in body.values.items():
+        if old_values.get(k) != v:
+            changes[k] = v
+    if changes:
+        await record_audit(
+            session,
+            action=AuditAction.SETTINGS_UPDATE,
+            actor_sub=user.sub,
+            actor_name=actor_display_name(user),
+            target_type="settings",
+            detail={"changes": changes},
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
     return SettingsOut(values=values)

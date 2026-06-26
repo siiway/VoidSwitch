@@ -246,8 +246,6 @@ const en = {
     accountId: "Account ID",
     apiToken: "API token",
     addToPool: "Add",
-    debugEnable: "Enable debug logging for this key",
-    debugDisable: "Disable debug logging for this key",
   },
   models: {
     title: "Models",
@@ -364,6 +362,8 @@ const en = {
     copied: "Copied",
     userIdHint: "User ID (blank = yourself)",
     allowedModelsHint: "Allowed models (blank = all; one per line)",
+    debugEnable: "Enable debug logging for this token",
+    debugDisable: "Disable debug logging for this token",
   },
   users: {
     title: "Users",

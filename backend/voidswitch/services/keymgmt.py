@@ -267,8 +267,6 @@ async def update_key(
         key.note = body.note
     if body.pool is not None:
         key.pool = body.pool
-    if body.debug_enabled is not None:
-        key.debug_enabled = body.debug_enabled
     await session.flush()
     # Non-secret changes go in the detail; a replaced secret (raw key or OAuth
     # bundle field) is captured in the owner-only sensitive blob instead.

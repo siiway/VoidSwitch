@@ -88,6 +88,9 @@ class VoidToken(Base, TimestampMixin):
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # When enabled, all requests using this token record full request/response
+    # detail (headers, body) for debugging.
+    debug_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped[User] = relationship(back_populates="tokens", lazy="selectin")
 
@@ -227,9 +230,6 @@ class ApiKey(Base, TimestampMixin):
     # only the keys they added; null for legacy/seeded rows.
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
-    # When enabled, all requests routed through this key record full
-    # request/response detail (headers, body) for debugging.
-    debug_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     provider: Mapped[Provider] = relationship(back_populates="keys", lazy="selectin")
 

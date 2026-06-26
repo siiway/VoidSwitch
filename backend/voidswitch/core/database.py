@@ -100,7 +100,6 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("api_keys", "added_by", "INTEGER"),
     ("api_keys", "added_by_name", "VARCHAR(255)"),
     ("api_keys", "disabled_since", "DATETIME"),
-    ("api_keys", "debug_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
     ("audit_logs", "sensitive_ciphertext", "TEXT"),
     ("audit_logs", "scope", "VARCHAR(16) NOT NULL DEFAULT 'admin'"),
     ("audit_logs", "user_agent", "VARCHAR(512)"),
@@ -114,6 +113,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("request_logs", "resp_body", "JSON"),
     ("request_logs", "upstream_url", "VARCHAR(1024)"),
     ("request_logs", "proxy_url", "VARCHAR(512)"),
+    ("void_tokens", "debug_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
     ("models", "mapped_id", "VARCHAR(255)"),
     ("models", "display_name", "VARCHAR(255)"),
 )

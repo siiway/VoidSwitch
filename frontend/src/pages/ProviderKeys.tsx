@@ -25,7 +25,6 @@ import {
 import {
   ArrowLeftRegular,
   ArrowSyncRegular,
-  BugRegular,
   DeleteRegular,
   EditRegular,
   EyeRegular,
@@ -411,13 +410,6 @@ export function ProviderKeys() {
     keys.reload();
   }
 
-  async function toggleDebug(k: ApiKey) {
-    await api.patch(`/api/admin/providers/${providerId}/keys/${k.id}`, {
-      debug_enabled: !k.debug_enabled,
-    });
-    keys.reload();
-  }
-
   async function remove(k: ApiKey) {
     const ok = await confirm({
       title: t("providerKeys.deleteTitle" as TK),
@@ -458,6 +450,14 @@ export function ProviderKeys() {
     }
   }
 
+  async function toggleProvider() {
+    if (!current) return;
+    await api.patch(`/api/admin/providers/${providerId}`, {
+      enabled: !current.enabled,
+    });
+    provider.reload();
+  }
+
   return (
     <div>
       <Button
@@ -480,7 +480,16 @@ export function ProviderKeys() {
           provider.reload();
         }}
         action={
-          supportsBalance ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+            <Button
+              appearance={current?.enabled ? "primary" : "secondary"}
+              onClick={toggleProvider}
+            >
+              {current?.enabled
+                ? t("common.disable" as TK)
+                : t("common.enable" as TK)}
+            </Button>
+            {supportsBalance ? (
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
               <Field label={t("providerKeys.rescanScope" as TK)}>
                 <Dropdown
@@ -522,7 +531,8 @@ export function ProviderKeys() {
                   : t("providerKeys.rescanBalances" as TK)}
               </Button>
             </div>
-          ) : undefined
+          ) : null}
+          </div>
         }
       />
 
@@ -937,17 +947,6 @@ export function ProviderKeys() {
                           ? t("common.disable" as TK)
                           : t("common.enable" as TK)}
                       </Button>
-                      <Tooltip
-                        content={k.debug_enabled ? t("providerKeys.debugDisable" as TK) : t("providerKeys.debugEnable" as TK)}
-                        relationship="label"
-                      >
-                        <Button
-                          size="small"
-                          appearance={k.debug_enabled ? "primary" : "subtle"}
-                          icon={<BugRegular />}
-                          onClick={() => toggleDebug(k)}
-                        />
-                      </Tooltip>
                       <Button
                         size="small"
                         appearance="subtle"

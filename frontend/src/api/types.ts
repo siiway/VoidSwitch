@@ -81,7 +81,6 @@ export interface ApiKey {
   disabled_since?: string | null;
   added_by?: number | null;
   added_by_name?: string | null;
-  debug_enabled?: boolean;
 }
 
 export interface Proxy {
@@ -115,6 +114,7 @@ export interface VoidToken {
   last_used_at?: string | null;
   expires_at?: string | null;
   created_at: string;
+  debug_enabled?: boolean;
 }
 
 export interface VoidTokenWithSecret extends VoidToken {

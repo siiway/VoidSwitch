@@ -191,29 +191,38 @@ async def update_provider(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found.")
     _ensure_can_edit(user, provider)
     changes = body.model_dump(exclude_unset=True)
+    # Filter out fields where the value didn't actually change.
+    real_changes: dict = {}
+    for field, value in changes.items():
+        old = getattr(provider, field, None)
+        if old != value:
+            real_changes[field] = value
+    if not real_changes:
+        await session.refresh(provider)
+        return _to_out(provider, show_key_api=is_owner(user))
     # Allow renaming a provider after creation, but keep names unique.
-    if "name" in changes and changes["name"] != provider.name:
+    if "name" in real_changes and real_changes["name"] != provider.name:
         clash = (
             await session.execute(
                 select(Provider.id).where(
-                    Provider.name == changes["name"], Provider.id != provider_id
+                    Provider.name == real_changes["name"], Provider.id != provider_id
                 )
             )
         ).first()
         if clash is not None:
             raise HTTPException(status.HTTP_409_CONFLICT, "Provider name already exists.")
-    if "proxy_mode" in changes or "proxy_ids" in changes:
+    if "proxy_mode" in real_changes or "proxy_ids" in real_changes:
         await _validate_proxy_config(
             session,
-            changes.get("proxy_mode", provider.proxy_mode),
-            changes.get("proxy_ids", provider.proxy_ids),
+            real_changes.get("proxy_mode", provider.proxy_mode),
+            real_changes.get("proxy_ids", provider.proxy_ids),
         )
-    for field, value in changes.items():
+    for field, value in real_changes.items():
         setattr(provider, field, value)
     await session.flush()
     # Record the actual changed values; divert any secret auth headers to the
     # owner-only sensitive blob so they never show in the plain detail.
-    public_changes, sensitive = split_sensitive(changes, {"extra_headers"})
+    public_changes, sensitive = split_sensitive(real_changes, {"extra_headers"})
     await record_audit(
         session,
         action=AuditAction.PROVIDER_UPDATE,

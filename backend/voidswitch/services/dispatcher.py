@@ -74,6 +74,7 @@ class DispatchRequest:
     user_agent: str | None = None
     client_type: str | None = None
     is_opencode: bool = False
+    debug_enabled: bool = False
     passthrough_headers: dict[str, str] = field(default_factory=dict)
 
 
@@ -544,7 +545,7 @@ async def _finalise_success(
 
     if req.stream and outcome.response is not None:
         # Log the success now (tokens filled in when the stream ends).
-        debug = bool(key.debug_enabled)
+        debug = req.debug_enabled
         log_row = RequestLog(
             token_id=req.token_id,
             user_sub=req.user_sub,
@@ -797,7 +798,7 @@ async def _log_request(
     resp_body: dict[str, Any] | None = None,
 ) -> None:
     usage = usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    debug = bool(key and key.debug_enabled)
+    debug = req.debug_enabled
     session.add(
         RequestLog(
             token_id=req.token_id,

@@ -230,7 +230,6 @@ class ApiKeyUpdate(BaseModel):
     note: str | None = None
     pool: str | None = None
     enabled: bool | None = None  # convenience: maps to active/disabled
-    debug_enabled: bool | None = None
     # OAuth bundle fields (Claude Code). When any are set, the bundle is rebuilt.
     access_token: str | None = None
     refresh_token: str | None = None
@@ -257,7 +256,6 @@ class ApiKeyOut(BaseModel):
     disabled_since: dt.datetime | None = None
     added_by: int | None = None
     added_by_name: str | None = None
-    debug_enabled: bool = False
 
 
 class ApiKeyCleanup(BaseModel):
@@ -356,6 +354,7 @@ class VoidTokenUpdate(BaseModel):
     rpm_limit: int | None = None
     daily_quota: int | None = None
     expires_at: dt.datetime | None = None
+    debug_enabled: bool | None = None
 
 
 class VoidTokenOut(BaseModel):
@@ -375,6 +374,7 @@ class VoidTokenOut(BaseModel):
     last_used_at: dt.datetime | None = None
     expires_at: dt.datetime | None = None
     created_at: dt.datetime
+    debug_enabled: bool = False
 
 
 class VoidTokenWithSecret(VoidTokenOut):

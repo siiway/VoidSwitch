@@ -12,11 +12,13 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  Tooltip,
   tokens,
 } from "@fluentui/react-components";
 import {
   AddRegular,
   ArrowSyncRegular,
+  BugRegular,
   CheckmarkRegular,
   CopyRegular,
   DeleteRegular,
@@ -183,6 +185,11 @@ export function MyToken() {
     await api.del(`/api/me/tokens/${token.id}`);
     tokensList.reload();
     usage.reload();
+  }
+
+  async function toggleDebug(token: VoidToken) {
+    await api.patch(`/api/me/tokens/${token.id}`, { debug_enabled: !token.debug_enabled });
+    tokensList.reload();
   }
 
   return (
@@ -410,6 +417,17 @@ export function MyToken() {
                   >
                     {t("myToken.rotate" as TK)}
                   </Button>
+                  <Tooltip
+                    content={token.debug_enabled ? t("tokens.debugDisable" as TK) : t("tokens.debugEnable" as TK)}
+                    relationship="label"
+                  >
+                    <Button
+                      size="small"
+                      appearance={token.debug_enabled ? "primary" : "subtle"}
+                      icon={<BugRegular />}
+                      onClick={() => toggleDebug(token)}
+                    />
+                  </Tooltip>
                   <Button
                     size="small"
                     appearance="subtle"

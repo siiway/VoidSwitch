@@ -67,6 +67,12 @@ async def authed_provider(
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Invalid or disabled key-management token."
         )
+    if not provider.enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "This provider is currently disabled. "
+            "Enable it from the dashboard to use the key-management API.",
+        )
     return provider
 
 

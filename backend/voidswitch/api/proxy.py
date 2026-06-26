@@ -152,6 +152,7 @@ async def _handle(
         user_agent=request.headers.get("user-agent"),
         client_type=request.headers.get(CLIENT_HINT_HEADER),
         is_opencode=request.headers.get(CLIENT_HINT_HEADER) == OPENCODE_CLIENT_HINT,
+        debug_enabled=authed.token.debug_enabled,
         passthrough_headers=passthrough,
     )
     result = await dispatch(req)
