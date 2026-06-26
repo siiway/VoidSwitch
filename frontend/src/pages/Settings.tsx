@@ -83,6 +83,7 @@ export function Settings() {
       opencode_small_model: t("settings.opencodeSmallModel" as TK),
       audit_log_retention_days: t("settings.auditLogRetentionDays" as TK),
       request_log_retention_days: t("settings.requestLogRetentionDays" as TK),
+      debug_log_retention_days: t("settings.debugLogRetentionDays" as TK),
       log_cleanup_enabled: t("settings.logCleanupEnabled" as TK),
       log_cleanup_interval_seconds: t("settings.logCleanupInterval" as TK),
     }),

@@ -230,6 +230,7 @@ class ApiKeyUpdate(BaseModel):
     note: str | None = None
     pool: str | None = None
     enabled: bool | None = None  # convenience: maps to active/disabled
+    debug_enabled: bool | None = None
     # OAuth bundle fields (Claude Code). When any are set, the bundle is rebuilt.
     access_token: str | None = None
     refresh_token: str | None = None
@@ -256,6 +257,7 @@ class ApiKeyOut(BaseModel):
     disabled_since: dt.datetime | None = None
     added_by: int | None = None
     added_by_name: str | None = None
+    debug_enabled: bool = False
 
 
 class ApiKeyCleanup(BaseModel):
@@ -407,6 +409,7 @@ class AuditLogOut(BaseModel):
     target_id: str | None = None
     detail: dict = Field(default_factory=dict)
     ip: str | None = None
+    user_agent: str | None = None
     # True when this entry carries an owner-only sensitive payload that can be
     # revealed via the dedicated endpoint. The payload itself is never inlined.
     has_sensitive: bool = False
@@ -451,6 +454,56 @@ class RequestLogOut(BaseModel):
     stream: bool
     attempts: int
     error: str | None = None
+    # Client metadata
+    user_agent: str | None = None
+    client_type: str | None = None
+    is_opencode: bool = False
+    debug: bool = False
+
+
+class RequestLogDetail(BaseModel):
+    """Full detail for a single request log entry (modal view).
+
+    Debug fields (req_headers, req_body, resp_headers, resp_body) are only
+    populated when the row was recorded in debug mode.  Admin users see
+    redacted keys; owners see everything.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ts: dt.datetime
+    user_sub: str | None = None
+    user_name: str | None = None
+    token_id: int | None = None
+    token_name: str | None = None
+    provider_name: str | None = None
+    key_id: int | None = None
+    key_preview: str | None = None
+    proxy_id: int | None = None
+    proxy_url: str | None = None
+    model: str | None = None
+    inbound_style: str | None = None
+    upstream_style: str | None = None
+    status_code: int | None = None
+    success: bool
+    latency_ms: float | None = None
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    stream: bool
+    attempts: int
+    error: str | None = None
+    user_agent: str | None = None
+    client_type: str | None = None
+    is_opencode: bool = False
+    debug: bool = False
+    upstream_url: str | None = None
+    # Debug-only — may be None when debug=False or when redacted for admin.
+    req_headers: dict | None = None
+    req_body: dict | None = None
+    resp_headers: dict | None = None
+    resp_body: dict | None = None
 
 
 class StatsOut(BaseModel):

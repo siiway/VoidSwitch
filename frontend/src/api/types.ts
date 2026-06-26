@@ -81,6 +81,7 @@ export interface ApiKey {
   disabled_since?: string | null;
   added_by?: number | null;
   added_by_name?: string | null;
+  debug_enabled?: boolean;
 }
 
 export interface Proxy {
@@ -167,6 +168,7 @@ export interface AuditLog {
   target_id?: string | null;
   detail: Record<string, unknown>;
   ip?: string | null;
+  user_agent?: string | null;
   has_sensitive?: boolean;
 }
 
@@ -202,6 +204,22 @@ export interface RequestLog {
   stream: boolean;
   attempts: number;
   error?: string | null;
+  user_agent?: string | null;
+  client_type?: string | null;
+  is_opencode?: boolean;
+  debug?: boolean;
+}
+
+export interface RequestLogDetail extends RequestLog {
+  key_id?: number | null;
+  key_preview?: string | null;
+  proxy_id?: number | null;
+  proxy_url?: string | null;
+  upstream_url?: string | null;
+  req_headers?: Record<string, unknown> | null;
+  req_body?: Record<string, unknown> | null;
+  resp_headers?: Record<string, unknown> | null;
+  resp_body?: Record<string, unknown> | null;
 }
 
 export interface Page<T> {

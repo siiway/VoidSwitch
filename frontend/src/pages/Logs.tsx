@@ -19,9 +19,14 @@ import {
   TableRow,
   Text,
   Textarea,
+  Tooltip,
   tokens,
 } from "@fluentui/react-components";
-import { DismissRegular, EyeRegular } from "@fluentui/react-icons";
+import {
+  DismissRegular,
+  EyeRegular,
+  InfoRegular,
+} from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
@@ -31,6 +36,7 @@ import type {
   AuditLog,
   Page,
   RequestLog,
+  RequestLogDetail,
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
@@ -85,11 +91,29 @@ export function Logs() {
 function RequestLogs({ refreshKey }: { refreshKey: number }) {
   const { t: tr } = useTranslation();
   type TK = keyof Translations;
+  const { isOwner } = useAuth();
   const [offset, setOffset] = useState(0);
+  const [detailLog, setDetailLog] = useState<RequestLogDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [revealMode, setRevealMode] = useState(false);
   const logs = useAsync<Page<RequestLog>>(
     () => api.get("/api/admin/logs/requests", { limit: PAGE, offset }),
     [offset, refreshKey],
   );
+
+  async function openDetail(r: RequestLog) {
+    setDetailLoading(true);
+    setRevealMode(false);
+    try {
+      const d = await api.get<RequestLogDetail>(`/api/admin/logs/requests/${r.id}`);
+      setDetailLog(d);
+    } catch (e) {
+      // fallback
+      setDetailLog(r as unknown as RequestLogDetail);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
 
   if (logs.loading) return <Loading />;
   if (logs.error) return <ErrorText error={logs.error} />;
@@ -98,19 +122,17 @@ function RequestLogs({ refreshKey }: { refreshKey: number }) {
 
   return (
     <>
-      <DataTable ariaLabel={tr("logs.requests" as TK)} minWidth={1040}>
+      <DataTable ariaLabel={tr("logs.requests" as TK)} minWidth={900}>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>{tr("logs.time" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.user" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.token" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.model" as TK)}</TableHeaderCell>
-            <TableHeaderCell>{tr("logs.provider" as TK)}</TableHeaderCell>
-            <TableHeaderCell>{tr("logs.route" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.status" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tokens" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tries" as TK)}</TableHeaderCell>
-            <TableHeaderCell>{tr("logs.error" as TK)}</TableHeaderCell>
+            <TableHeaderCell style={{ width: 60 }} />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -124,10 +146,6 @@ function RequestLogs({ refreshKey }: { refreshKey: number }) {
                 {r.token_name ?? (r.token_id != null ? `#${r.token_id}` : "—")}
               </TableCell>
               <TableCell>{r.model ?? "—"}</TableCell>
-              <TableCell>{r.provider_name ?? "—"}</TableCell>
-              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
-                {r.inbound_style}→{r.upstream_style} {r.stream ? "·stream" : ""}
-              </TableCell>
               <TableCell>
                 <Badge
                   color={r.success ? "success" : "danger"}
@@ -138,20 +156,150 @@ function RequestLogs({ refreshKey }: { refreshKey: number }) {
               </TableCell>
               <TableCell>{r.total_tokens}</TableCell>
               <TableCell>{r.attempts}</TableCell>
-              <TableCell
-                style={{
-                  color: tokens.colorPaletteRedForeground1,
-                  maxWidth: 240,
-                }}
-              >
-                {r.error ?? ""}
+              <TableCell>
+                <Tooltip content={tr("logs.viewDetail" as TK)} relationship="label">
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    icon={<InfoRegular />}
+                    disabled={detailLoading}
+                    onClick={() => openDetail(r)}
+                  />
+                </Tooltip>
               </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </DataTable>
       <Pager total={data.total} offset={offset} onChange={setOffset} />
+
+      {/* Detail modal */}
+      <Dialog
+        open={detailLog !== null}
+        onOpenChange={(_, d) => { if (!d.open) setDetailLog(null); }}
+        modalType="non-modal"
+      >
+        <DialogSurface style={{ maxWidth: 820, width: "100%" }}>
+          <DialogBody>
+            <DialogTitle>
+              {tr("logs.requestDetailTitle" as TK).replace("{id}", String(detailLog?.id ?? ""))}
+              {detailLog?.debug ? (
+                <Badge color="warning" appearance="tint" style={{ marginLeft: 8 }}>debug</Badge>
+              ) : null}
+            </DialogTitle>
+            <DialogContent>
+              {detailLog && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: tokens.fontFamilyBase }}>
+                  {/* Summary grid */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: tokens.fontSizeBase200 }}>
+                    <DetailRow label={tr("logs.time" as TK)} value={formatDate(detailLog.ts)} />
+                    <DetailRow label={tr("logs.status" as TK)} value={detailLog.success ? `${detailLog.status_code} OK` : `${detailLog.status_code ?? "ERR"}`} />
+                    <DetailRow label={tr("logs.user" as TK)} value={detailLog.user_name ?? detailLog.user_sub ?? "—"} />
+                    <DetailRow label={tr("logs.token" as TK)} value={detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")} />
+                    <DetailRow label={tr("logs.model" as TK)} value={detailLog.model ?? "—"} />
+                    <DetailRow label={tr("logs.provider" as TK)} value={detailLog.provider_name ?? "—"} />
+                    <DetailRow label={tr("logs.key" as TK)} value={detailLog.key_preview ?? (detailLog.key_id != null ? `#${detailLog.key_id}` : "—")} />
+                    <DetailRow label={tr("logs.proxy" as TK)} value={detailLog.proxy_url ?? (detailLog.proxy_id != null ? `#${detailLog.proxy_id}` : "—")} />
+                    <DetailRow label={tr("logs.route" as TK)} value={`${detailLog.inbound_style ?? "?"}→${detailLog.upstream_style ?? "?"}`} />
+                    <DetailRow label={tr("logs.stream" as TK)} value={detailLog.stream ? "yes" : "no"} />
+                    <DetailRow label={tr("logs.tries" as TK)} value={String(detailLog.attempts)} />
+                    <DetailRow label={tr("logs.tokens" as TK)} value={`${detailLog.prompt_tokens}+${detailLog.completion_tokens}=${detailLog.total_tokens}`} />
+                    {detailLog.latency_ms != null && <DetailRow label={tr("logs.latency" as TK)} value={`${Math.round(detailLog.latency_ms)}ms`} />}
+                    {detailLog.upstream_url && <DetailRow label={tr("logs.upstreamUrl" as TK)} value={detailLog.upstream_url} />}
+                    <DetailRow label={tr("logs.userAgent" as TK)} value={detailLog.user_agent ?? "—"} />
+                    <DetailRow label={tr("logs.clientType" as TK)} value={detailLog.client_type ?? "—"} />
+                    <DetailRow label={tr("logs.opencode" as TK)} value={detailLog.is_opencode ? "yes" : "no"} />
+                  </div>
+
+                  {detailLog.error && (
+                    <div>
+                      <Text size={200} weight="semibold" block style={{ color: tokens.colorPaletteRedForeground1, marginBottom: 2 }}>
+                        {tr("logs.error" as TK)}
+                      </Text>
+                      <Text size={200} block style={{ color: tokens.colorPaletteRedForeground1, fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                        {detailLog.error}
+                      </Text>
+                    </div>
+                  )}
+
+                  {/* Debug fields — owner can toggle reveal; admin sees nothing */}
+                  {detailLog.debug && (
+                    <div style={{ borderTop: `1px solid ${tokens.colorNeutralStroke2}`, paddingTop: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <Text size={200} weight="semibold">{tr("logs.debugData" as TK)}</Text>
+                        {isOwner && (
+                          <Button
+                            size="small"
+                            appearance={revealMode ? "primary" : "subtle"}
+                            icon={<EyeRegular />}
+                            onClick={() => setRevealMode(!revealMode)}
+                          >
+                            {revealMode ? tr("logs.revealOn" as TK) : tr("logs.revealSecret" as TK)}
+                          </Button>
+                        )}
+                      </div>
+                      {isOwner ? (
+                        <>
+                          <CodeBlock label={tr("logs.reqHeaders" as TK)} value={detailLog.req_headers} />
+                          <CodeBlock label={tr("logs.reqBody" as TK)} value={detailLog.req_body} />
+                          <CodeBlock label={tr("logs.respHeaders" as TK)} value={detailLog.resp_headers} />
+                          <CodeBlock label={tr("logs.respBody" as TK)} value={detailLog.resp_body} />
+                        </>
+                      ) : (
+                        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                          {tr("logs.debugOwnerOnly" as TK)}
+                        </Text>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="primary" onClick={() => setDetailLog(null)}>
+                {tr("common.close" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <Text size={200} weight="semibold" style={{ color: tokens.colorNeutralForeground3 }}>{label}</Text>
+      <Text size={200} style={{ wordBreak: "break-all" }}>{value}</Text>
+    </>
+  );
+}
+
+function CodeBlock({ label, value }: { label: string; value: unknown }) {
+  if (value == null) return null;
+  const str = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  if (!str || str === "{}" || str === "null") return null;
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <Text size={200} weight="semibold" block style={{ color: tokens.colorNeutralForeground3, marginBottom: 2 }}>
+        {label}
+      </Text>
+      <pre style={{
+        margin: 0,
+        padding: 8,
+        fontSize: tokens.fontSizeBase100,
+        fontFamily: "monospace",
+        background: tokens.colorNeutralBackground3,
+        borderRadius: tokens.borderRadiusMedium,
+        maxHeight: 240,
+        overflow: "auto",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-all",
+      }}>
+        {str}
+      </pre>
+    </div>
   );
 }
 
@@ -374,7 +522,7 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
         <ErrorText error={logs.error} />
       ) : !data ? null : (
         <>
-          <DataTable ariaLabel={ta("logs.audit" as TK)} minWidth={960}>
+          <DataTable ariaLabel={ta("logs.audit" as TK)} minWidth={1020}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>{ta("logs.id" as TK)}</TableHeaderCell>
@@ -385,6 +533,7 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
                 <TableHeaderCell>{ta("logs.target" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{ta("logs.detail" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{ta("logs.ip" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{ta("logs.userAgent" as TK)}</TableHeaderCell>
                 {isOwner ? <TableHeaderCell>{ta("logs.sensitive" as TK)}</TableHeaderCell> : null}
               </TableRow>
             </TableHeader>
@@ -418,15 +567,19 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
                       ? `${a.target_type}#${a.target_id ?? ""}`
                       : "—"}
                   </TableCell>
-                  <TableCell
-                    style={{
-                      color: tokens.colorNeutralForeground3,
-                      maxWidth: 280,
-                    }}
-                  >
-                    {JSON.stringify(a.detail)}
+                  <TableCell style={{ maxWidth: 280 }}>
+                    <DetailCell detail={a.detail} />
                   </TableCell>
                   <TableCell>{a.ip ?? "—"}</TableCell>
+                  <TableCell>
+                    {a.user_agent ? (
+                      <Tooltip content={a.user_agent} relationship="label" positioning="above">
+                        <Text size={200} style={{ color: tokens.colorNeutralForeground3, cursor: "default" }}>
+                          {a.user_agent.length > 20 ? `${a.user_agent.slice(0, 20)}…` : a.user_agent}
+                        </Text>
+                      </Tooltip>
+                    ) : "—"}
+                  </TableCell>
                   {isOwner ? (
                     <TableCell>
                       {a.has_sensitive ? (
@@ -485,6 +638,35 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
         </DialogSurface>
       </Dialog>
     </>
+  );
+}
+
+function DetailCell({ detail }: { detail: Record<string, unknown> }) {
+  const str = JSON.stringify(detail);
+  if (str.length <= 30) {
+    return (
+      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        {str}
+      </Text>
+    );
+  }
+  return (
+    <Tooltip content={str} relationship="label" positioning="above" withArrow>
+      <Text
+        size={200}
+        style={{
+          color: tokens.colorNeutralForeground3,
+          cursor: "default",
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {str}
+      </Text>
+    </Tooltip>
   );
 }
 

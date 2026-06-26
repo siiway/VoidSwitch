@@ -82,6 +82,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # runs on the interval below and can be disabled outright.
     "audit_log_retention_days": 0,
     "request_log_retention_days": 0,
+    "debug_log_retention_days": 0,
     "log_cleanup_enabled": True,
     "log_cleanup_interval_seconds": 86400,
     "opencode_default_model": "claude-opus-4-8",

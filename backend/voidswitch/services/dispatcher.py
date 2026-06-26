@@ -71,6 +71,9 @@ class DispatchRequest:
     token_id: int | None = None
     user_sub: str | None = None
     client_ip: str | None = None
+    user_agent: str | None = None
+    client_type: str | None = None
+    is_opencode: bool = False
     passthrough_headers: dict[str, str] = field(default_factory=dict)
 
 
@@ -345,6 +348,9 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                         success=False,
                         attempts=attempts,
                         error=f"client error {outcome.status_code}",
+                        upstream_url=adapter.upstream_url,
+                        resp_headers=outcome.resp_headers,
+                        resp_body=outcome.body_json,
                     )
                     return _passthrough_error(req, outcome, upstream_style)
 
@@ -434,6 +440,7 @@ class _Attempt:
     body_bytes: bytes | None = None
     body_json: Any = None
     response: httpx.Response | None = None  # kept open only for a successful stream
+    resp_headers: dict[str, str] | None = None
 
 
 async def _attempt(
@@ -478,9 +485,14 @@ async def _attempt(
                     status_code=response.status_code,
                     body_bytes=raw,
                     body_json=_try_json(raw),
+                    resp_headers=dict(response.headers),
                 )
             log.debug("upstream_response", status_code=response.status_code, stream=True)
-            return _Attempt(status_code=response.status_code, response=response)
+            return _Attempt(
+                status_code=response.status_code,
+                response=response,
+                resp_headers=dict(response.headers),
+            )
 
         response = await client.post(url, json=body, headers=headers)
         raw = response.content
@@ -494,6 +506,7 @@ async def _attempt(
             status_code=response.status_code,
             body_bytes=raw,
             body_json=_try_json(raw),
+            resp_headers=dict(response.headers),
         )
     except _NETWORK_ERRORS as exc:
         log.debug("outbound_network_error", url=url, error=f"{type(exc).__name__}: {exc}")
@@ -531,6 +544,7 @@ async def _finalise_success(
 
     if req.stream and outcome.response is not None:
         # Log the success now (tokens filled in when the stream ends).
+        debug = bool(key.debug_enabled)
         log_row = RequestLog(
             token_id=req.token_id,
             user_sub=req.user_sub,
@@ -545,6 +559,14 @@ async def _finalise_success(
             success=True,
             stream=True,
             attempts=attempts,
+            user_agent=req.user_agent,
+            client_type=req.client_type,
+            is_opencode=req.is_opencode,
+            debug=debug,
+            req_body=req.payload if debug else None,
+            resp_headers=outcome.resp_headers if debug else None,
+            upstream_url=adapter.upstream_url if debug else None,
+            proxy_url=proxy.url if proxy and debug else None,
         )
         session.add(log_row)
         await session.flush()
@@ -595,6 +617,9 @@ async def _finalise_success(
         attempts=attempts,
         error=None,
         usage=usage,
+        upstream_url=adapter.upstream_url,
+        resp_headers=outcome.resp_headers,
+        resp_body=outcome.body_json,
     )
     await _bump_token_usage(session, req.token_id, usage["total_tokens"])
 
@@ -766,8 +791,13 @@ async def _log_request(
     attempts: int,
     error: str | None,
     usage: dict[str, int] | None = None,
+    upstream_url: str | None = None,
+    req_headers: dict[str, Any] | None = None,
+    resp_headers: dict[str, Any] | None = None,
+    resp_body: dict[str, Any] | None = None,
 ) -> None:
     usage = usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    debug = bool(key and key.debug_enabled)
     session.add(
         RequestLog(
             token_id=req.token_id,
@@ -787,6 +817,16 @@ async def _log_request(
             completion_tokens=usage["completion_tokens"],
             total_tokens=usage["total_tokens"],
             error=error,
+            user_agent=req.user_agent,
+            client_type=req.client_type,
+            is_opencode=req.is_opencode,
+            debug=debug,
+            req_headers=req_headers if debug else None,
+            req_body=req.payload if debug else None,
+            resp_headers=resp_headers if debug else None,
+            resp_body=resp_body if debug else None,
+            upstream_url=upstream_url,
+            proxy_url=proxy.url if proxy and debug else None,
         )
     )
 

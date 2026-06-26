@@ -25,6 +25,7 @@ import {
 import {
   ArrowLeftRegular,
   ArrowSyncRegular,
+  BugRegular,
   DeleteRegular,
   EditRegular,
   EyeRegular,
@@ -406,6 +407,13 @@ export function ProviderKeys() {
     const enabled = k.status !== "active";
     await api.patch(`/api/admin/providers/${providerId}/keys/${k.id}`, {
       enabled,
+    });
+    keys.reload();
+  }
+
+  async function toggleDebug(k: ApiKey) {
+    await api.patch(`/api/admin/providers/${providerId}/keys/${k.id}`, {
+      debug_enabled: !k.debug_enabled,
     });
     keys.reload();
   }
@@ -929,6 +937,17 @@ export function ProviderKeys() {
                           ? t("common.disable" as TK)
                           : t("common.enable" as TK)}
                       </Button>
+                      <Tooltip
+                        content={k.debug_enabled ? t("providerKeys.debugDisable" as TK) : t("providerKeys.debugEnable" as TK)}
+                        relationship="label"
+                      >
+                        <Button
+                          size="small"
+                          appearance={k.debug_enabled ? "primary" : "subtle"}
+                          icon={<BugRegular />}
+                          onClick={() => toggleDebug(k)}
+                        />
+                      </Tooltip>
                       <Button
                         size="small"
                         appearance="subtle"

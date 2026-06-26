@@ -12,6 +12,7 @@ from voidswitch.core.audit import AuditAction, record_audit
 from voidswitch.core.auth import (
     actor_display_name,
     get_current_user,
+    is_owner,
     is_staff,
     require_owner,
     require_staff,
@@ -19,12 +20,13 @@ from voidswitch.core.auth import (
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.security import decrypt_secret
-from voidswitch.models.db import AuditLog, RequestLog, User, VoidToken
+from voidswitch.models.db import ApiKey, AuditLog, RequestLog, User, VoidToken
 from voidswitch.models.schemas import (
     AuditActor,
     AuditFilterOptions,
     AuditLogOut,
     Page,
+    RequestLogDetail,
     RequestLogOut,
 )
 
@@ -159,6 +161,7 @@ async def reveal_audit_sensitive(
         target_id=audit_id,
         detail={"revealed_action": entry.action, "revealed_actor": entry.actor_name},
         ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
     )
     return {"id": audit_id, "action": entry.action, "sensitive": payload}
 
@@ -220,3 +223,68 @@ async def request_logs(
         limit=limit,
         offset=offset,
     )
+
+
+def _redact_key_preview(preview: str | None) -> str | None:
+    """Show first 4 and last 4 chars with *** in between."""
+    if not preview or len(preview) <= 8:
+        return preview
+    return f"{preview[:4]}***{preview[-4:]}"
+
+
+@router.get("/requests/{log_id}", response_model=RequestLogDetail)
+async def request_log_detail(
+    log_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> RequestLogDetail:
+    """Return full detail for a single request log entry.
+
+    Owners (co-owner / owner) see everything including reveal-secret mode.
+    Admins see redacted key preview and no req/resp headers/body.
+    Members can only view their own logs.
+    """
+    row = await session.get(RequestLog, log_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
+
+    # Members can only see their own traffic.
+    if not is_staff(user) and row.user_sub != user.sub:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
+
+    owner = is_owner(user)
+    admin = is_staff(user) and not owner
+
+    detail = RequestLogDetail.model_validate(row)
+
+    # Resolve names.
+    if row.token_id is not None:
+        tok = await session.get(VoidToken, row.token_id)
+        if tok:
+            detail.token_name = tok.name
+    if row.user_sub:
+        u = (
+            await session.execute(select(User).where(User.sub == row.user_sub))
+        ).scalar_one_or_none()
+        if u:
+            label = u.username or u.name or u.email or u.sub
+            detail.user_name = f"{label}#{u.id}"
+
+    # Resolve key preview.
+    if row.key_id is not None:
+        key = await session.get(ApiKey, row.key_id)
+        if key:
+            if admin:
+                detail.key_preview = _redact_key_preview(key.key_preview)
+            else:
+                detail.key_preview = key.key_preview
+
+    # Admin: strip debug detail fields (headers, body).
+    if admin:
+        detail.req_headers = None
+        detail.req_body = None
+        detail.resp_headers = None
+        detail.resp_body = None
+
+    return detail

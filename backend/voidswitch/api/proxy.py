@@ -149,6 +149,9 @@ async def _handle(
         token_id=authed.token.id,
         user_sub=authed.user.sub,
         client_ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        client_type=request.headers.get(CLIENT_HINT_HEADER),
+        is_opencode=request.headers.get(CLIENT_HINT_HEADER) == OPENCODE_CLIENT_HINT,
         passthrough_headers=passthrough,
     )
     result = await dispatch(req)

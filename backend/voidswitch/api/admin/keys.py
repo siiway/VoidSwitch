@@ -48,6 +48,7 @@ def _actor(user: User, request: Request) -> keymgmt.Actor:
         user_id=user.id,
         is_staff=is_staff(user),
         ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
     )
 
 

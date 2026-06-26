@@ -57,6 +57,7 @@ class Actor:
     user_id: int | None = None
     is_staff: bool = True
     ip: str | None = None
+    user_agent: str | None = None
 
     @property
     def audit_scope(self) -> str:
@@ -181,6 +182,7 @@ async def add_keys(
         sensitive={"keys": sensitive_keys},
         secret_key=settings.server.secret_key,
         ip=actor.ip,
+        user_agent=actor.user_agent,
         scope=actor.audit_scope,
     )
     return created
@@ -265,6 +267,8 @@ async def update_key(
         key.note = body.note
     if body.pool is not None:
         key.pool = body.pool
+    if body.debug_enabled is not None:
+        key.debug_enabled = body.debug_enabled
     await session.flush()
     # Non-secret changes go in the detail; a replaced secret (raw key or OAuth
     # bundle field) is captured in the owner-only sensitive blob instead.
@@ -294,6 +298,7 @@ async def update_key(
         sensitive=sensitive,
         secret_key=settings.server.secret_key,
         ip=actor.ip,
+        user_agent=actor.user_agent,
         scope=actor.audit_scope,
     )
     return key
@@ -355,6 +360,7 @@ async def delete_key(
         },
         secret_key=settings.server.secret_key,
         ip=actor.ip,
+        user_agent=actor.user_agent,
         scope=actor.audit_scope,
     )
     await session.delete(key)
@@ -495,6 +501,7 @@ async def cleanup_keys(
             "key_ids": ids,
         },
         ip=actor.ip,
+        user_agent=actor.user_agent,
         scope=actor.audit_scope,
     )
     return len(ids)

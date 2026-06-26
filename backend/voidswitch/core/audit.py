@@ -138,6 +138,7 @@ async def record_audit(
     target_id: str | int | None = None,
     detail: dict[str, Any] | None = None,
     ip: str | None = None,
+    user_agent: str | None = None,
     sensitive: dict[str, Any] | None = None,
     secret_key: str | None = None,
     scope: str = AuditScope.ADMIN.value,
@@ -162,6 +163,7 @@ async def record_audit(
             target_id=str(target_id) if target_id is not None else None,
             detail=detail or {},
             ip=ip,
+            user_agent=user_agent,
             sensitive_ciphertext=sensitive_ciphertext,
             scope=str(scope),
         )

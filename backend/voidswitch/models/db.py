@@ -227,6 +227,9 @@ class ApiKey(Base, TimestampMixin):
     # only the keys they added; null for legacy/seeded rows.
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    # When enabled, all requests routed through this key record full
+    # request/response detail (headers, body) for debugging.
+    debug_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     provider: Mapped[Provider] = relationship(back_populates="keys", lazy="selectin")
 
@@ -278,6 +281,7 @@ class AuditLog(Base):
     target_id: Mapped[str | None] = mapped_column(String(64), default=None)
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     ip: Mapped[str | None] = mapped_column(String(64), default=None)
+    user_agent: Mapped[str | None] = mapped_column(String(512), default=None)
     # Encrypted (Fernet) JSON blob with owner-only sensitive context, e.g. the
     # plaintext of keys added or the full details of a deleted key. Never exposed
     # to admins or members; revealed to owners on explicit, confirmed request.
@@ -307,3 +311,16 @@ class RequestLog(Base):
     stream: Mapped[bool] = mapped_column(Boolean, default=False)
     attempts: Mapped[int] = mapped_column(Integer, default=1)
     error: Mapped[str | None] = mapped_column(Text, default=None)
+    # Client metadata
+    user_agent: Mapped[str | None] = mapped_column(String(512), default=None)
+    client_type: Mapped[str | None] = mapped_column(String(64), default=None)
+    is_opencode: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Whether this row was recorded with debug-level detail (full req/resp).
+    debug: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # Debug-only fields — populated only when the key has debug_enabled=True.
+    req_headers: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    req_body: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    resp_headers: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    resp_body: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    upstream_url: Mapped[str | None] = mapped_column(String(1024), default=None)
+    proxy_url: Mapped[str | None] = mapped_column(String(512), default=None)
