@@ -97,6 +97,7 @@ export function Settings() {
       <PageHeader
         title={t("settings.title" as TK)}
         subtitle={t("settings.subtitle" as TK)}
+        onRefresh={loaded.reload}
         action={
           <Button appearance="primary" disabled={saving} onClick={save}>
             {t("common.saveChanges" as TK)}

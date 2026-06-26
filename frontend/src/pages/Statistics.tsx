@@ -371,6 +371,7 @@ export function Statistics() {
       <PageHeader
         title={t("stats.title" as TK)}
         subtitle={t("stats.subtitle" as TK)}
+        onRefresh={stats.reload}
       />
 
       {stats.loading ? (

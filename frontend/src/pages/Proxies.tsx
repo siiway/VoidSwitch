@@ -188,6 +188,10 @@ export function Proxies() {
       <PageHeader
         title={t("proxies.title" as TK)}
         subtitle={t("proxies.subtitle" as TK)}
+        onRefresh={() => {
+          proxies.reload();
+          providers.reload();
+        }}
       />
 
       <Field label={t("proxies.proxyUrlsHint" as TK)} style={{ marginBottom: 8 }}>

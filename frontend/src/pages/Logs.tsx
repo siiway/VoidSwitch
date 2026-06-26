@@ -51,6 +51,7 @@ export function Logs() {
   type TK = keyof Translations;
   const { isStaff } = useAuth();
   const [tab, setTab] = useState<"requests" | "audit">("requests");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!isStaff && tab === "audit") setTab("requests");
@@ -65,6 +66,7 @@ export function Logs() {
             ? t("logs.subtitleStaff" as TK)
             : t("logs.subtitleMember" as TK)
         }
+        onRefresh={() => setRefreshKey((k) => k + 1)}
       />
       <TabList
         selectedValue={tab}
@@ -74,19 +76,19 @@ export function Logs() {
         {isStaff ? <Tab value="audit">{t("logs.audit" as TK)}</Tab> : null}
       </TabList>
       <div style={{ marginTop: 16 }}>
-        {tab === "requests" ? <RequestLogs /> : <AuditLogs />}
+        {tab === "requests" ? <RequestLogs refreshKey={refreshKey} /> : <AuditLogs refreshKey={refreshKey} />}
       </div>
     </div>
   );
 }
 
-function RequestLogs() {
+function RequestLogs({ refreshKey }: { refreshKey: number }) {
   const { t: tr } = useTranslation();
   type TK = keyof Translations;
   const [offset, setOffset] = useState(0);
   const logs = useAsync<Page<RequestLog>>(
     () => api.get("/api/admin/logs/requests", { limit: PAGE, offset }),
-    [offset],
+    [offset, refreshKey],
   );
 
   if (logs.loading) return <Loading />;
@@ -169,7 +171,7 @@ const EMPTY_FILTERS: AuditFilters = {
   q: "",
 };
 
-function AuditLogs() {
+function AuditLogs({ refreshKey }: { refreshKey: number }) {
   const { t: ta } = useTranslation();
   type TK = keyof Translations;
   const { isOwner } = useAuth();
@@ -177,6 +179,7 @@ function AuditLogs() {
   const notify = useNotify();
   const [offset, setOffset] = useState(0);
   const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
+  const [goToId, setGoToId] = useState("");
   const [revealed, setRevealed] = useState<{
     action: string;
     sensitive: unknown;
@@ -206,6 +209,7 @@ function AuditLogs() {
       filters.target_type,
       filters.actor_sub,
       filters.q,
+      refreshKey,
     ],
   );
 
@@ -333,6 +337,23 @@ function AuditLogs() {
           style={{ minWidth: 160 }}
           onChange={(_, d) => setFilter("q", d.value)}
         />
+        <Input
+          aria-label={ta("logs.goToId" as TK)}
+          placeholder={ta("logs.goToId" as TK)}
+          value={goToId}
+          type="number"
+          style={{ minWidth: 120 }}
+          onChange={(_, d) => setGoToId(d.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && goToId.trim()) {
+              const id = Number(goToId.trim());
+              if (!Number.isNaN(id) && id > 0) {
+                const page = Math.floor((id - 1) / PAGE) * PAGE;
+                setOffset(page);
+              }
+            }
+          }}
+        />
         {hasFilters ? (
           <Button
             appearance="subtle"
@@ -356,6 +377,7 @@ function AuditLogs() {
           <DataTable ariaLabel={ta("logs.audit" as TK)} minWidth={960}>
             <TableHeader>
               <TableRow>
+                <TableHeaderCell>{ta("logs.id" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{ta("logs.time" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{ta("logs.actor" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{ta("logs.scope" as TK)}</TableHeaderCell>
@@ -369,6 +391,9 @@ function AuditLogs() {
             <TableBody>
               {data.items.map((a) => (
                 <TableRow key={a.id}>
+                  <TableCell style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace" }}>
+                    {a.id}
+                  </TableCell>
                   <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                     {formatDate(a.ts)}
                   </TableCell>

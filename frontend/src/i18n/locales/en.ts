@@ -438,6 +438,8 @@ const en = {
     sensitiveTitle: "Sensitive data",
     sensitiveHint: "Handle with care — these are plaintext secrets.",
     revealFailed: "Reveal failed",
+    id: "ID",
+    goToId: "Go to ID…",
   },
   stats: {
     title: "Statistics",

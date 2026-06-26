@@ -427,6 +427,8 @@ const zh: Translations = {
     sensitiveTitle: "敏感数据",
     sensitiveHint: "请谨慎处理 — 这些是明文密钥。",
     revealFailed: "查看失败",
+    id: "ID",
+    goToId: "跳转到 ID…",
   },
   stats: {
     title: "统计",

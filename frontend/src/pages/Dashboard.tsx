@@ -44,6 +44,10 @@ export function Dashboard() {
       <PageHeader
         title={t("dashboard.title" as TK)}
         subtitle={t("dashboard.subtitle" as TK)}
+        onRefresh={() => {
+          stats.reload();
+          system.reload();
+        }}
       />
       {stats.loading ? (
         <Loading />

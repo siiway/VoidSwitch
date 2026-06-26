@@ -467,6 +467,10 @@ export function ProviderKeys() {
             ? t("providerKeys.claudeOAuthHint" as TK)
             : t("providerKeys.bulkPasteHint" as TK)
         }
+        onRefresh={() => {
+          keys.reload();
+          provider.reload();
+        }}
         action={
           supportsBalance ? (
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>

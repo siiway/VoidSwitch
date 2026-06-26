@@ -190,6 +190,11 @@ export function MyToken() {
       <PageHeader
         title={t("myToken.title" as TK)}
         subtitle={t("myToken.subtitle" as TK)}
+        onRefresh={() => {
+          tokensList.reload();
+          usage.reload();
+          config.reload();
+        }}
       />
 
       <Card style={{ padding: 18, marginBottom: 20 }}>

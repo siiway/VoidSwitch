@@ -334,6 +334,7 @@ export function Models() {
       <PageHeader
         title={t("models.title" as TK)}
         subtitle={t("models.subtitle" as TK)}
+        onRefresh={catalog.reload}
         action={
           <div style={{ display: "flex", gap: 8 }}>
             {isStaff && selected.size > 0 && (

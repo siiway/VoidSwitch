@@ -95,6 +95,7 @@ export function Tokens() {
       <PageHeader
         title={tr("tokens.title" as TK)}
         subtitle={tr("tokens.subtitle" as TK)}
+        onRefresh={list.reload}
         action={
           <Button
             appearance="primary"

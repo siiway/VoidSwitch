@@ -67,6 +67,7 @@ export function Users() {
       <PageHeader
         title={t("users.title" as TK)}
         subtitle={t("users.subtitle" as TK)}
+        onRefresh={users.reload}
       />
       {users.loading ? (
         <Loading />

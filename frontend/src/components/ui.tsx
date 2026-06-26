@@ -14,12 +14,14 @@ import {
   ToastBody,
   ToastTitle,
   Toaster,
+  Tooltip,
   makeStyles,
   mergeClasses,
   tokens,
   useId,
   useToastController,
 } from "@fluentui/react-components";
+import { ArrowSyncRegular } from "@fluentui/react-icons";
 import {
   createContext,
   useCallback,
@@ -195,10 +197,12 @@ export function PageHeader({
   title,
   subtitle,
   action,
+  onRefresh,
 }: {
   title: string;
   subtitle?: string;
   action?: ReactNode;
+  onRefresh?: () => void;
 }) {
   return (
     <div
@@ -212,9 +216,21 @@ export function PageHeader({
       }}
     >
       <div>
-        <Text size={600} weight="semibold" as="h1" block>
-          {title}
-        </Text>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <Text size={600} weight="semibold" as="h1">
+            {title}
+          </Text>
+          {onRefresh ? (
+            <Tooltip content="Refresh" relationship="label">
+              <Button
+                size="small"
+                appearance="subtle"
+                icon={<ArrowSyncRegular />}
+                onClick={onRefresh}
+              />
+            </Tooltip>
+          ) : null}
+        </div>
         {subtitle ? (
           <Text size={200} style={{ color: "var(--colorNeutralForeground3)" }}>
             {subtitle}

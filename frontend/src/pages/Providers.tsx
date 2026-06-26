@@ -364,6 +364,7 @@ export function Providers() {
       <PageHeader
         title={t("providers.title" as TK)}
         subtitle={t("providers.subtitle" as TK)}
+        onRefresh={providers.reload}
         action={
           <Button
             appearance="primary"
@@ -748,22 +749,26 @@ export function Providers() {
                 <Field label={t("providers.priorityHint" as TK)}>
                   <SpinButton
                     value={form?.priority ?? 100}
-                    onChange={(_, d) =>
-                      setForm((f) =>
-                        f ? { ...f, priority: d.value ?? f.priority } : f,
-                      )
-                    }
+                    onChange={(_, d) => {
+                      const next =
+                        d.value ??
+                        (d.displayValue ? Number(d.displayValue) : undefined);
+                      if (next != null && !Number.isNaN(next))
+                        setForm((f) => (f ? { ...f, priority: next } : f));
+                    }}
                   />
                 </Field>
                 <Field label={t("providers.weight" as TK)}>
                   <SpinButton
                     value={form?.weight ?? 1}
                     min={1}
-                    onChange={(_, d) =>
-                      setForm((f) =>
-                        f ? { ...f, weight: d.value ?? f.weight } : f,
-                      )
-                    }
+                    onChange={(_, d) => {
+                      const next =
+                        d.value ??
+                        (d.displayValue ? Number(d.displayValue) : undefined);
+                      if (next != null && !Number.isNaN(next))
+                        setForm((f) => (f ? { ...f, weight: next } : f));
+                    }}
                   />
                 </Field>
               </div>
