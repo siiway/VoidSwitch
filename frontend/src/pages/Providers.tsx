@@ -40,6 +40,7 @@ import { api, API_BASE } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
   AdapterMeta,
+  KeySelectMode,
   ModelRoute,
   Provider,
   ProviderKeyApi,
@@ -72,6 +73,7 @@ interface FormState {
   proxy_mode: ProxyMode;
   proxy_ids: number[];
   model_routes: string;
+  key_select_mode: KeySelectMode;
 }
 
 const EMPTY: FormState = {
@@ -86,6 +88,7 @@ const EMPTY: FormState = {
   proxy_mode: "all",
   proxy_ids: [],
   model_routes: "",
+  key_select_mode: "round_robin",
 };
 
 // Model routes use one line per route: `alias => upstream @ pool`
@@ -173,6 +176,14 @@ export function Providers() {
     selected: t("providers.proxyModeSelected" as TK),
   };
 
+  const KEY_SELECT_MODE_LABEL: Record<KeySelectMode, string> = {
+    round_robin: t("providers.keyModeRoundRobin" as TK),
+    random: t("providers.keyModeRandom" as TK),
+    fallback: t("providers.keyModeFallback" as TK),
+    pinned_round_robin: t("providers.keyModePinnedRoundRobin" as TK),
+    pinned_random: t("providers.keyModePinnedRandom" as TK),
+  };
+
   function openCreate() {
     setForm({ ...EMPTY });
   }
@@ -191,6 +202,7 @@ export function Providers() {
       proxy_mode: p.proxy_mode,
       proxy_ids: p.proxy_ids ?? [],
       model_routes: formatRoutes(p.model_routes),
+      key_select_mode: p.key_select_mode ?? "round_robin",
     });
   }
 
@@ -270,6 +282,7 @@ export function Providers() {
       proxy_mode: form.proxy_mode,
       proxy_ids: form.proxy_mode === "selected" ? form.proxy_ids : [],
       model_routes: parseRoutes(form.model_routes),
+      key_select_mode: form.key_select_mode,
     };
     setSaving(true);
     try {
@@ -841,6 +854,40 @@ export function Providers() {
                   </Dropdown>
                 </Field>
               )}
+              <Field
+                label={t("providers.keySelectMode" as TK)}
+                hint={t("providers.keySelectModeHint" as TK)}
+              >
+                <Dropdown
+                  value={
+                    form
+                      ? KEY_SELECT_MODE_LABEL[form.key_select_mode]
+                      : KEY_SELECT_MODE_LABEL.round_robin
+                  }
+                  selectedOptions={
+                    form ? [form.key_select_mode] : ["round_robin"]
+                  }
+                  onOptionSelect={(_, d) =>
+                    d.optionValue &&
+                    setForm((f) =>
+                      f
+                        ? {
+                            ...f,
+                            key_select_mode: d.optionValue as KeySelectMode,
+                          }
+                        : f,
+                    )
+                  }
+                >
+                  {(Object.keys(KEY_SELECT_MODE_LABEL) as KeySelectMode[]).map(
+                    (m) => (
+                      <Option key={m} value={m} text={KEY_SELECT_MODE_LABEL[m]}>
+                        {KEY_SELECT_MODE_LABEL[m]}
+                      </Option>
+                    ),
+                  )}
+                </Dropdown>
+              </Field>
               {form?.type === "claude-code" && (
                 <Switch
                   label={t("providers.dropIdentityLabel" as TK)}

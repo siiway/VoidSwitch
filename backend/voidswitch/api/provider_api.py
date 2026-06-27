@@ -33,6 +33,7 @@ from voidswitch.models.schemas import (
     ApiKeyCleanupResult,
     ApiKeyCreate,
     ApiKeyOut,
+    ApiKeyReorder,
     ApiKeyUpdate,
     ProviderOut,
 )
@@ -162,6 +163,19 @@ async def delete_key(
     key = await _get_key(session, provider, key_id)
     await keymgmt.delete_key(
         session, provider, key, actor=_actor(provider, request), settings=settings
+    )
+
+
+@subapp.post("/keys/reorder", response_model=list[ApiKeyOut], tags=["keys"])
+async def reorder_keys(
+    body: ApiKeyReorder,
+    request: Request,
+    provider: Provider = Depends(authed_provider),
+    session: AsyncSession = Depends(get_session),
+) -> list[ApiKey]:
+    """Persist a new drag-sorted order for this provider's keys."""
+    return await keymgmt.reorder_keys(
+        session, provider, body, actor=_actor(provider, request)
     )
 
 

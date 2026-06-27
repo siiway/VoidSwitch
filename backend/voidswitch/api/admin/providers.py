@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import KeyStatus, ProxyMode
+from voidswitch.constants import KeySelectMode, KeyStatus, ProxyMode
 from voidswitch.core.audit import AuditAction, record_audit, split_sensitive
 from voidswitch.core.auth import (
     actor_display_name,
@@ -45,6 +45,15 @@ log = get_logger("admin.providers")
 router = APIRouter(prefix="/api/admin/providers", tags=["admin:providers"])
 
 _PROXY_MODES = {m.value for m in ProxyMode}
+_KEY_SELECT_MODES = {m.value for m in KeySelectMode}
+
+
+def _validate_key_select_mode(mode: str | None) -> None:
+    if mode is not None and mode not in _KEY_SELECT_MODES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"key_select_mode must be one of {sorted(_KEY_SELECT_MODES)}.",
+        )
 
 
 def _to_out(
@@ -132,6 +141,7 @@ async def create_provider(
     models = body.models or list(cls.default_models)
     base_url = body.base_url or cls.default_base_url
     await _validate_proxy_config(session, body.proxy_mode, body.proxy_ids)
+    _validate_key_select_mode(body.key_select_mode)
 
     provider = Provider(
         name=body.name,
@@ -148,6 +158,7 @@ async def create_provider(
         drop_opencode_identity_block=body.drop_opencode_identity_block,
         proxy_mode=body.proxy_mode,
         proxy_ids=body.proxy_ids,
+        key_select_mode=body.key_select_mode,
         model_routes=[r.model_dump() for r in body.model_routes],
         added_by=user.id,
         added_by_name=actor_display_name(user),
@@ -217,6 +228,8 @@ async def update_provider(
             real_changes.get("proxy_mode", provider.proxy_mode),
             real_changes.get("proxy_ids", provider.proxy_ids),
         )
+    if "key_select_mode" in real_changes:
+        _validate_key_select_mode(real_changes["key_select_mode"])
     for field, value in real_changes.items():
         setattr(provider, field, value)
     await session.flush()

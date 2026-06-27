@@ -25,7 +25,7 @@ from sqlalchemy.orm import (
     relationship,
 )
 
-from voidswitch.constants import KeyStatus, ProxyMode, ProxyStatus, Role
+from voidswitch.constants import KeySelectMode, KeyStatus, ProxyMode, ProxyStatus, Role
 
 
 def _utcnow() -> dt.datetime:
@@ -173,6 +173,12 @@ class Provider(Base, TimestampMixin):
     proxy_mode: Mapped[str] = mapped_column(String(16), default=ProxyMode.ALL.value)
     # Proxy IDs this provider may use when proxy_mode == "selected".
     proxy_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    # How this provider picks which upstream key to lead with for each request:
+    # "round_robin" | "random" | "fallback" | "pinned_round_robin" |
+    # "pinned_random". See constants.KeySelectMode.
+    key_select_mode: Mapped[str] = mapped_column(
+        String(32), default=KeySelectMode.ROUND_ROBIN.value
+    )
     # Who created this provider (id + a display-name snapshot). Lets members
     # manage only the providers they added; null for legacy/seeded rows.
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
@@ -209,6 +215,10 @@ class ApiKey(Base, TimestampMixin):
     # Optional pool tag, e.g. "leaked" / "members". Empty = untagged. A model
     # route with a matching pool restricts dispatch to keys carrying that tag.
     pool: Mapped[str] = mapped_column(String(64), default="", index=True)
+    # Manual ordering position (lower = earlier). Drives the "fallback" key-select
+    # mode and the base order the other modes rotate/shuffle over. Drag-sortable
+    # from the dashboard.
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
     status: Mapped[str] = mapped_column(String(32), default=KeyStatus.ACTIVE.value, index=True)
     failed_count: Mapped[int] = mapped_column(Integer, default=0)
     weight: Mapped[int] = mapped_column(Integer, default=1)

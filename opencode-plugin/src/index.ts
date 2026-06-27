@@ -84,6 +84,15 @@ const H_SPEED = "x-voidswitch-speed"
 const H_THINKING = "x-voidswitch-thinking"
 const H_BASE_URL = "x-voidswitch-base-url"
 
+/**
+ * OpenCode's native per-conversation session id, forwarded to the gateway so its
+ * per-session pinned key-select modes can keep one session glued to one upstream
+ * key. Unlike the bridge headers above this one is *not* stripped before the
+ * request leaves — it is sent to (and consumed by) the gateway, which never
+ * forwards it to the real upstream provider.
+ */
+const H_SESSION = "x-voidswitch-session"
+
 const DEFAULT_GATEWAY = "http://localhost:8080"
 
 /** Fallback model list when `/v1/models` is unreachable (offline picker). */
@@ -993,6 +1002,10 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
     // request the betas the chosen features need.
     "chat.headers": async (input: any, output: { headers: Record<string, string> }) => {
       if (input.model?.providerID !== PROVIDER_ID) return
+      // Forward OpenCode's session id for *every* VoidSwitch model (not just
+      // Claude) so the gateway's per-session pinned key modes work regardless of
+      // upstream dialect. Sent straight to the gateway — not a stripped bridge header.
+      if (input.sessionID) output.headers[H_SESSION] = input.sessionID
       const id: string = input.model?.api?.id ?? input.model?.modelID ?? ""
       if (!isClaude(id)) return
 

@@ -74,6 +74,9 @@ class ProviderBase(BaseModel):
     proxy_ids: list[int] = Field(default_factory=list)
     # Alias → upstream model + key-pool routes.
     model_routes: list[ModelRoute] = Field(default_factory=list)
+    # Key selection: "round_robin" | "random" | "fallback" |
+    # "pinned_round_robin" | "pinned_random" (see constants.KeySelectMode).
+    key_select_mode: str = "round_robin"
 
 
 class ProviderCreate(ProviderBase):
@@ -96,6 +99,7 @@ class ProviderUpdate(BaseModel):
     proxy_mode: str | None = None
     proxy_ids: list[int] | None = None
     model_routes: list[ModelRoute] | None = None
+    key_select_mode: str | None = None
 
 
 class ProviderOut(ProviderBase):
@@ -243,6 +247,7 @@ class ApiKeyOut(BaseModel):
     provider_id: int
     key_preview: str
     pool: str = ""
+    sort_order: int = 0
     status: str
     failed_count: int
     weight: int
@@ -256,6 +261,17 @@ class ApiKeyOut(BaseModel):
     disabled_since: dt.datetime | None = None
     added_by: int | None = None
     added_by_name: str | None = None
+
+
+class ApiKeyReorder(BaseModel):
+    """Drag-sort: the full set of this provider's key ids in their new order.
+
+    Each id's position in ``order`` becomes its new ``sort_order``. Ids not owned
+    by the provider are rejected; any existing key omitted from the list keeps its
+    relative order after the listed ones.
+    """
+
+    order: list[int]
 
 
 class ApiKeyCleanup(BaseModel):

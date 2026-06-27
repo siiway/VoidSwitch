@@ -414,6 +414,108 @@ async def test_model_routes_and_key_pools():
     assert {k.key_hash for k in select_keys(prov, "")} == {"leaked-1", "member-1"}
 
 
+async def test_key_select_modes():
+    from voidswitch.constants import KeySelectMode
+    from voidswitch.models.db import ApiKey
+    from voidswitch.services.selector import reset_selection_state, select_keys
+
+    def _key(kid: int, order: int) -> ApiKey:
+        k = ApiKey(
+            provider_id=1,
+            key_ciphertext="x",
+            key_hash=f"k{kid}",
+            status="active",
+            weight=1,
+            failed_count=0,
+            total_requests=0,
+            sort_order=order,
+        )
+        k.id = kid
+        return k
+
+    prov = Provider(name="p", type="openai", models=["*"])
+    prov.id = 7
+    # Deliberately add out of manual order; sort_order is the source of truth.
+    prov.keys = [_key(3, 2), _key(1, 0), _key(2, 1)]
+
+    # fallback → always the manual order, leading with the lowest sort_order.
+    prov.key_select_mode = KeySelectMode.FALLBACK.value
+    reset_selection_state()
+    for _ in range(3):
+        assert [k.id for k in select_keys(prov)] == [1, 2, 3]
+
+    # round_robin → a different key leads each call, full fallback chain after it.
+    prov.key_select_mode = KeySelectMode.ROUND_ROBIN.value
+    reset_selection_state()
+    leads = [select_keys(prov)[0].id for _ in range(4)]
+    assert leads == [1, 2, 3, 1]
+    assert {k.id for k in select_keys(prov)} == {1, 2, 3}
+
+    # random → a permutation of every candidate.
+    prov.key_select_mode = KeySelectMode.RANDOM.value
+    reset_selection_state()
+    assert sorted(k.id for k in select_keys(prov)) == [1, 2, 3]
+
+    # pinned_round_robin → one key per session, sticky across requests.
+    prov.key_select_mode = KeySelectMode.PINNED_ROUND_ROBIN.value
+    reset_selection_state()
+    a1 = select_keys(prov, session_key="sess-a")[0].id
+    a2 = select_keys(prov, session_key="sess-a")[0].id
+    assert a1 == a2  # same session sticks to the same key
+    b1 = select_keys(prov, session_key="sess-b")[0].id
+    assert b1 != a1  # next session round-robins to the next key
+
+    # When the pinned key disappears (disabled), the session re-pins to a live one.
+    prov.keys = [k for k in prov.keys if k.id != a1]
+    a3 = select_keys(prov, session_key="sess-a")[0].id
+    assert a3 != a1
+    assert a3 in {k.id for k in prov.keys}
+
+    # pinned_random → still sticky per session.
+    prov.key_select_mode = KeySelectMode.PINNED_RANDOM.value
+    reset_selection_state()
+    c1 = select_keys(prov, session_key="sess-c")[0].id
+    c2 = select_keys(prov, session_key="sess-c")[0].id
+    assert c1 == c2
+
+
+async def test_session_key_precedence():
+    from voidswitch.constants import ApiStyle
+    from voidswitch.services.dispatcher import DispatchRequest, _session_key
+
+    def _req(**kw) -> DispatchRequest:
+        base = {
+            "inbound_style": ApiStyle.OPENAI,
+            "model": "m",
+            "payload": {},
+            "stream": False,
+            "token_id": 5,
+        }
+        base.update(kw)
+        return DispatchRequest(**base)
+
+    # 1. An explicit client session id wins outright.
+    k = _session_key(_req(session_id="ses_abc", payload={"metadata": {"user_id": "u"}}))
+    assert k == "t5:sid:ses_abc"
+
+    # 2. Anthropic metadata.user_id is the next-best signal.
+    assert _session_key(_req(payload={"metadata": {"user_id": "u9"}})) == "t5:u:u9"
+
+    # 3. Otherwise the conversation prefix is hashed — stable across turns, and a
+    #    different opening message yields a different key.
+    convo1 = {"system": "be nice", "messages": [{"role": "user", "content": "hi"}]}
+    a = _session_key(_req(payload=convo1))
+    convo2 = dict(convo1, messages=[*convo1["messages"], {"role": "assistant", "content": "yo"}])
+    b = _session_key(_req(payload=convo2))
+    assert a == b  # appending a turn keeps the same session
+    assert a.startswith("t5:s:")
+    other = _session_key(_req(payload={"messages": [{"role": "user", "content": "different"}]}))
+    assert other != a
+
+    # The token namespace keeps two tokens apart for the same session id.
+    assert _session_key(_req(session_id="x")) != _session_key(_req(token_id=6, session_id="x"))
+
+
 async def test_route_upstream_hidden_from_catalog_and_dispatch():
     from voidswitch.services.models_catalog import served_model_ids
     from voidswitch.services.selector import provider_serves_model

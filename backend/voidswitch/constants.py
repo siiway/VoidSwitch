@@ -35,6 +35,13 @@ class ApiStyle(StrEnum):
 CLIENT_HINT_HEADER = "x-voidswitch-client"
 OPENCODE_CLIENT_HINT = "opencode-plugin"
 
+# Inbound header carrying a stable, client-supplied session id (the OpenCode
+# plugin forwards its native ``sessionID``). When present it is the authoritative
+# session identity for the per-session pinned key-select modes, so the gateway
+# does not have to infer one from the request body. Consumed at the gateway and
+# never forwarded to the upstream provider.
+SESSION_HEADER = "x-voidswitch-session"
+
 # Non-standard status code returned *only* to the OpenCode plugin when no upstream
 # is available (no usable key / route / all keys exhausted). A bare 502 carries the
 # "Bad Gateway" reason phrase, which reads like the relay itself broke; this code is
@@ -49,6 +56,30 @@ class ProxyMode(StrEnum):
     ALL = "all"  # use any active proxy (global pool), direct only if none exist
     DIRECT = "direct"  # never use a proxy — always connect directly
     SELECTED = "selected"  # only the proxies assigned in Provider.proxy_ids
+
+
+class KeySelectMode(StrEnum):
+    """How a provider picks which upstream key to try first for a request.
+
+    In every mode the dispatcher still falls back through the remaining keys when
+    the chosen one is unavailable (rate-limited, disabled, network error, …); the
+    mode only governs *which key leads* the per-request candidate ordering.
+
+    * ``round_robin``        — advance to the next key (in manual order) each request.
+    * ``random``             — pick a random key each request.
+    * ``fallback``           — always lead with the first key in manual order,
+                               only moving on when it is unavailable.
+    * ``pinned_round_robin`` — pin one key per session (assigned round-robin),
+                               reused for that session unless it becomes unavailable.
+    * ``pinned_random``      — pin one key per session (assigned at random), same
+                               stickiness as ``pinned_round_robin``.
+    """
+
+    ROUND_ROBIN = "round_robin"
+    RANDOM = "random"
+    FALLBACK = "fallback"
+    PINNED_ROUND_ROBIN = "pinned_round_robin"
+    PINNED_RANDOM = "pinned_random"
 
 
 # Default operational thresholds; seeded into the settings table on first boot

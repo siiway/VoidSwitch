@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -62,6 +63,48 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
 
 
+def _stringify(value: Any) -> str:
+    """Stable string form of a payload fragment for session hashing."""
+    try:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _session_key(req: DispatchRequest) -> str:
+    """A stable identifier for the conversation/session behind a request.
+
+    Used by the per-session pinned key-select modes so the same session keeps
+    hitting the same upstream key. Precedence:
+
+    1. An explicit client-supplied session id (``x-voidswitch-session``; the
+       OpenCode plugin forwards its native ``sessionID``) — the most reliable.
+    2. An Anthropic ``metadata.user_id`` tag.
+    3. A hash of the conversation prefix — the system prompt plus the first
+       message — which stays constant across the turns of one session.
+
+    Always namespaced by the calling Void-Token so two tokens never share a pin.
+    """
+    if req.session_id:
+        return f"t{req.token_id}:sid:{req.session_id}"
+    payload = req.payload or {}
+    meta = payload.get("metadata")
+    if isinstance(meta, dict):
+        uid = meta.get("user_id")
+        if isinstance(uid, str) and uid:
+            return f"t{req.token_id}:u:{uid}"
+    parts: list[str] = []
+    system = payload.get("system")
+    if system is not None:
+        parts.append(_stringify(system))
+    messages = payload.get("messages")
+    if isinstance(messages, list) and messages:
+        parts.append(_stringify(messages[0]))
+    seed = "\x00".join(parts)
+    digest = hashlib.sha256(seed.encode("utf-8", "ignore")).hexdigest()[:16]
+    return f"t{req.token_id}:s:{digest}"
+
+
 @dataclass(slots=True)
 class DispatchRequest:
     inbound_style: ApiStyle
@@ -76,6 +119,9 @@ class DispatchRequest:
     is_opencode: bool = False
     debug_enabled: bool = False
     passthrough_headers: dict[str, str] = field(default_factory=dict)
+    # Client-supplied stable session id (e.g. the OpenCode plugin's sessionID).
+    # Authoritative for the per-session pinned key-select modes when present.
+    session_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -196,6 +242,7 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
     attempts = 0
     last_error = "no upstream available"
     last_status = 502
+    session_key = _session_key(req)
 
     async with db.session() as session:
         providers = await select_providers(session, req.model)
@@ -224,7 +271,12 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
             adapter = get_adapter(provider)
             # Alias routing: pick the upstream model + key pool for this inbound model.
             upstream_model, key_pool = resolve_model(provider, req.model)
-            keys = select_keys(provider, key_pool, rate_limit_recovery_seconds=rate_limit_recovery)
+            keys = select_keys(
+                provider,
+                key_pool,
+                rate_limit_recovery_seconds=rate_limit_recovery,
+                session_key=session_key,
+            )
             upstream_style = adapter.style
             timeout_override = provider.timeout_seconds or 0
             read_timeout = float(timeout_override) if timeout_override else request_timeout

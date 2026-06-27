@@ -34,6 +34,7 @@ export interface Provider {
   proxy_mode: ProxyMode;
   proxy_ids: number[];
   model_routes: ModelRoute[];
+  key_select_mode: KeySelectMode;
   created_at: string;
   updated_at: string;
   key_count: number;
@@ -57,6 +58,13 @@ export interface ProviderKeyApi {
 
 export type ProxyMode = "all" | "direct" | "selected";
 
+export type KeySelectMode =
+  | "round_robin"
+  | "random"
+  | "fallback"
+  | "pinned_round_robin"
+  | "pinned_random";
+
 export interface ModelRoute {
   alias: string;
   upstream: string;
@@ -68,6 +76,7 @@ export interface ApiKey {
   provider_id: number;
   key_preview: string;
   pool: string;
+  sort_order: number;
   status: string;
   failed_count: number;
   weight: number;

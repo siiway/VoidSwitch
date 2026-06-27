@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from voidswitch.constants import (
     CLIENT_HINT_HEADER,
     OPENCODE_CLIENT_HINT,
+    SESSION_HEADER,
     UPSTREAM_UNAVAILABLE_STATUS,
     ApiStyle,
 )
@@ -154,6 +155,7 @@ async def _handle(
         is_opencode=request.headers.get(CLIENT_HINT_HEADER) == OPENCODE_CLIENT_HINT,
         debug_enabled=authed.token.debug_enabled,
         passthrough_headers=passthrough,
+        session_id=request.headers.get(SESSION_HEADER),
     )
     result = await dispatch(req)
 

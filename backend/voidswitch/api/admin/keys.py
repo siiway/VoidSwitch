@@ -32,6 +32,7 @@ from voidswitch.models.schemas import (
     ApiKeyCleanupResult,
     ApiKeyCreate,
     ApiKeyOut,
+    ApiKeyReorder,
     ApiKeyUpdate,
     ClaudeOAuthComplete,
     ClaudeOAuthStart,
@@ -123,6 +124,19 @@ async def refresh_balance_one(
     return await keymgmt.refresh_balance_one(
         session, provider, key, actor=_actor(user, request), settings=settings
     )
+
+
+@router.post("/reorder", response_model=list[ApiKeyOut])
+async def reorder_keys(
+    provider_id: int,
+    body: ApiKeyReorder,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[ApiKey]:
+    """Persist a new drag-sorted order for this provider's keys (staff only)."""
+    provider = await _get_provider(session, provider_id)
+    return await keymgmt.reorder_keys(session, provider, body, actor=_actor(user, request))
 
 
 @router.post("/cleanup", response_model=ApiKeyCleanupResult)

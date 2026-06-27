@@ -20,7 +20,7 @@ import json
 from dataclasses import dataclass
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeyStatus
@@ -28,7 +28,12 @@ from voidswitch.core.audit import AuditAction, AuditScope, record_audit
 from voidswitch.core.config import Settings
 from voidswitch.core.security import decrypt_secret, encrypt_secret, hash_token
 from voidswitch.models.db import ApiKey, Provider
-from voidswitch.models.schemas import ApiKeyCleanup, ApiKeyCreate, ApiKeyUpdate
+from voidswitch.models.schemas import (
+    ApiKeyCleanup,
+    ApiKeyCreate,
+    ApiKeyReorder,
+    ApiKeyUpdate,
+)
 from voidswitch.services import oauth_tokens, settings_store
 from voidswitch.services.balance import refresh_key_balance
 from voidswitch.services.network import Route, get_pool
@@ -95,8 +100,74 @@ async def list_keys(session: AsyncSession, provider: Provider, actor: Actor) -> 
     stmt = select(ApiKey).where(ApiKey.provider_id == provider.id)
     if not actor.is_staff:
         stmt = stmt.where(ApiKey.added_by == actor.user_id)
-    rows = (await session.execute(stmt.order_by(ApiKey.id))).scalars().all()
+    rows = (
+        (await session.execute(stmt.order_by(ApiKey.sort_order, ApiKey.id))).scalars().all()
+    )
     return list(rows)
+
+
+async def reorder_keys(
+    session: AsyncSession,
+    provider: Provider,
+    body: ApiKeyReorder,
+    *,
+    actor: Actor,
+) -> list[ApiKey]:
+    """Persist a new drag-sorted order for a provider's keys.
+
+    ``sort_order`` is a provider-global ranking, so reordering is a staff-only
+    operation. Each id's index in ``body.order`` becomes its new ``sort_order``;
+    any key omitted from the list is appended after the listed ones in its
+    previous relative order.
+    """
+    if not actor.is_staff:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Only staff may reorder a provider's keys."
+        )
+    keys = (
+        (
+            await session.execute(
+                select(ApiKey).where(ApiKey.provider_id == provider.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {k.id: k for k in keys}
+    unknown = [kid for kid in body.order if kid not in by_id]
+    if unknown:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"Unknown key id(s) for this provider: {unknown}."
+        )
+
+    seen: set[int] = set()
+    ordered_ids: list[int] = []
+    for kid in body.order:
+        if kid not in seen:
+            seen.add(kid)
+            ordered_ids.append(kid)
+    remaining = [
+        k.id
+        for k in sorted(keys, key=lambda k: (k.sort_order, k.id))
+        if k.id not in seen
+    ]
+    final = ordered_ids + remaining
+    for index, kid in enumerate(final):
+        by_id[kid].sort_order = index
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.KEY_REORDER,
+        actor_sub=actor.sub,
+        actor_name=actor.name,
+        target_type="provider",
+        target_id=provider.id,
+        detail={"provider_name": provider.name, "order": final},
+        ip=actor.ip,
+        user_agent=actor.user_agent,
+        scope=actor.audit_scope,
+    )
+    return [by_id[kid] for kid in final]
 
 
 async def add_keys(
@@ -117,6 +188,15 @@ async def add_keys(
             )
         ).all()
     }
+    # New keys append after the existing ones so the operator's drag order is
+    # preserved (fallback / round-robin modes rely on this ordering).
+    max_order = (
+        await session.execute(
+            select(func.max(ApiKey.sort_order)).where(ApiKey.provider_id == provider.id)
+        )
+    ).scalar()
+    next_order = (max_order or 0) + 1
+
     created: list[ApiKey] = []
     seen: set[str] = set()
     sensitive_keys: list[dict[str, str | None]] = []
@@ -156,9 +236,11 @@ async def add_keys(
             weight=body.weight,
             note=comment or body.note,
             pool=body.pool or "",
+            sort_order=next_order,
             added_by=actor.user_id,
             added_by_name=actor.name,
         )
+        next_order += 1
         session.add(key)
         created.append(key)
 

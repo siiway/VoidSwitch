@@ -152,6 +152,84 @@ async def test_subapp_crud_and_isolation(client, seeded):
     assert resp.status_code == 204, resp.text
 
 
+async def test_key_reorder(client, seeded):
+    pid = seeded["provider_id"]
+    # Add two more keys (they append after the seeded one).
+    resp = await client.post(
+        f"/api/admin/providers/{pid}/keys",
+        headers=_session_headers(),
+        json={"keys": ["sk-aaa111", "sk-bbb222"]},
+    )
+    assert resp.status_code == 201, resp.text
+    new_ids = [k["id"] for k in resp.json()]
+    seeded_id = seeded["key_id"]
+
+    # Default order is insertion order (seeded first, then the two new keys).
+    resp = await client.get(
+        f"/api/admin/providers/{pid}/keys", headers=_session_headers()
+    )
+    assert [k["id"] for k in resp.json()] == [seeded_id, *new_ids]
+
+    # Reorder: put the last key first.
+    new_order = [new_ids[1], seeded_id, new_ids[0]]
+    resp = await client.post(
+        f"/api/admin/providers/{pid}/keys/reorder",
+        headers=_session_headers(),
+        json={"order": new_order},
+    )
+    assert resp.status_code == 200, resp.text
+    assert [k["id"] for k in resp.json()] == new_order
+    assert [k["sort_order"] for k in resp.json()] == [0, 1, 2]
+
+    # The new order persists on a fresh list.
+    resp = await client.get(
+        f"/api/admin/providers/{pid}/keys", headers=_session_headers()
+    )
+    assert [k["id"] for k in resp.json()] == new_order
+
+    # A partial order list appends the omitted keys after the listed ones.
+    resp = await client.post(
+        f"/api/admin/providers/{pid}/keys/reorder",
+        headers=_session_headers(),
+        json={"order": [seeded_id]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert next(k["id"] for k in resp.json()) == seeded_id
+
+    # Unknown id is rejected.
+    resp = await client.post(
+        f"/api/admin/providers/{pid}/keys/reorder",
+        headers=_session_headers(),
+        json={"order": [999999]},
+    )
+    assert resp.status_code == 404
+
+
+async def test_provider_key_select_mode(client, seeded):
+    pid = seeded["provider_id"]
+    # Default mode is round-robin.
+    resp = await client.get("/api/admin/providers", headers=_session_headers())
+    provider = next(p for p in resp.json() if p["id"] == pid)
+    assert provider["key_select_mode"] == "round_robin"
+
+    # Update to a valid mode.
+    resp = await client.patch(
+        f"/api/admin/providers/{pid}",
+        headers=_session_headers(),
+        json={"key_select_mode": "pinned_random"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["key_select_mode"] == "pinned_random"
+
+    # Reject an unknown mode.
+    resp = await client.patch(
+        f"/api/admin/providers/{pid}",
+        headers=_session_headers(),
+        json={"key_select_mode": "nonsense"},
+    )
+    assert resp.status_code == 422
+
+
 async def test_subapp_cleanup_targets(client, seeded):
     pid = seeded["provider_id"]
     token = await _enable(client, pid)

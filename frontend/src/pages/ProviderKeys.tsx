@@ -10,6 +10,11 @@ import {
   Dropdown,
   Field,
   Input,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   Option,
   SpinButton,
   TableBody,
@@ -25,10 +30,13 @@ import {
 import {
   ArrowLeftRegular,
   ArrowSyncRegular,
+  ArrowUploadRegular,
+  ArrowDownloadRegular,
   DeleteRegular,
   EditRegular,
   EyeRegular,
   PersonRegular,
+  ReOrderDotsVerticalRegular,
 } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -91,6 +99,15 @@ export function ProviderKeys() {
   const [bulk, setBulk] = useState("");
   const [pool, setPool] = useState("");
   const [adding, setAdding] = useState(false);
+
+  // Drag-sort state. ``rows`` mirrors the loaded keys but is locally reorderable;
+  // a drag (or the top/bottom menu) persists the new order to the backend.
+  const [rows, setRows] = useState<ApiKey[]>([]);
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [reordering, setReordering] = useState(false);
+  useEffect(() => {
+    setRows(keys.data ?? []);
+  }, [keys.data]);
 
   // Balance-refresh + cleanup state.
   const [refreshingAll, setRefreshingAll] = useState(false);
@@ -456,6 +473,50 @@ export function ProviderKeys() {
       enabled: !current.enabled,
     });
     provider.reload();
+  }
+
+  async function persistOrder(ordered: ApiKey[]) {
+    setReordering(true);
+    try {
+      const updated = await api.post<ApiKey[]>(
+        `/api/admin/providers/${providerId}/keys/reorder`,
+        { order: ordered.map((k) => k.id) },
+      );
+      setRows(updated);
+      keys.reload();
+    } catch (e) {
+      notify(
+        t("providerKeys.reorderFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+      setRows(keys.data ?? []); // revert to the last known-good order
+    } finally {
+      setReordering(false);
+    }
+  }
+
+  function onDropRow(targetId: number) {
+    const from = rows.findIndex((k) => k.id === dragId);
+    const to = rows.findIndex((k) => k.id === targetId);
+    setDragId(null);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...rows];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setRows(next);
+    persistOrder(next);
+  }
+
+  function moveKey(id: number, where: "top" | "bottom") {
+    const from = rows.findIndex((k) => k.id === id);
+    if (from < 0) return;
+    const next = [...rows];
+    const [moved] = next.splice(from, 1);
+    if (where === "top") next.unshift(moved);
+    else next.push(moved);
+    setRows(next);
+    persistOrder(next);
   }
 
   return (
@@ -828,6 +889,11 @@ export function ProviderKeys() {
         <DataTable ariaLabel={t("providerKeys.title" as TK)}>
           <TableHeader>
             <TableRow>
+              {isStaff && (
+                <TableHeaderCell style={{ width: 44 }}>
+                  {t("providerKeys.order" as TK)}
+                </TableHeaderCell>
+              )}
               <TableHeaderCell>
                 {t("providerKeys.key" as TK)}
               </TableHeaderCell>
@@ -866,8 +932,53 @@ export function ProviderKeys() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(keys.data ?? []).map((k) => (
-              <TableRow key={k.id}>
+            {rows.map((k) => (
+              <TableRow
+                key={k.id}
+                onDragOver={(e) => {
+                  if (isStaff && dragId != null) e.preventDefault();
+                }}
+                onDrop={() => isStaff && onDropRow(k.id)}
+                style={dragId === k.id ? { opacity: 0.4 } : undefined}
+              >
+                {isStaff && (
+                  <TableCell style={{ width: 44 }}>
+                    <Menu>
+                      <MenuTrigger disableButtonEnhancement>
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          disabled={reordering}
+                          icon={<ReOrderDotsVerticalRegular />}
+                          draggable
+                          onDragStart={(e) => {
+                            setDragId(k.id);
+                            e.dataTransfer.effectAllowed = "move";
+                          }}
+                          onDragEnd={() => setDragId(null)}
+                          style={{ cursor: "grab" }}
+                          title={t("providerKeys.dragHint" as TK)}
+                        />
+                      </MenuTrigger>
+                      <MenuPopover>
+                        <MenuList>
+                          <MenuItem
+                            icon={<ArrowUploadRegular />}
+                            onClick={() => moveKey(k.id, "top")}
+                          >
+                            {t("providerKeys.moveTop" as TK)}
+                          </MenuItem>
+                          <MenuItem
+                            icon={<ArrowDownloadRegular />}
+                            onClick={() => moveKey(k.id, "bottom")}
+                          >
+                            {t("providerKeys.moveBottom" as TK)}
+                          </MenuItem>
+                        </MenuList>
+                      </MenuPopover>
+                    </Menu>
+                  </TableCell>
+                )}
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {k.key_preview}
                 </TableCell>
