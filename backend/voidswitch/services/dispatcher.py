@@ -23,6 +23,7 @@ import hashlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -195,6 +196,85 @@ def _disable_key(key: ApiKey, status: KeyStatus, reason: str) -> None:
         key.disabled_since = _utcnow()
 
 
+def _parse_retry_after(headers: dict[str, str] | None) -> float | None:
+    """Seconds to wait from a ``Retry-After`` response header, per RFC 9110.
+
+    The value is either a non-negative integer count of seconds (delta-seconds)
+    or an HTTP-date; both forms are accepted. Returns ``None`` when the header is
+    absent or unparseable, so the caller can fall back to a configured cooldown.
+    """
+    if not headers:
+        return None
+    # Header names from httpx are case-insensitive-ish; normalise to be safe.
+    raw = None
+    for k, v in headers.items():
+        if k.lower() == "retry-after":
+            raw = v
+            break
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    # delta-seconds form.
+    try:
+        secs = float(raw)
+        return secs if secs >= 0 else None
+    except ValueError:
+        pass
+    # HTTP-date form.
+    try:
+        when = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.UTC)
+    delta = (when - _utcnow()).total_seconds()
+    return delta if delta > 0 else 0.0
+
+
+def _mark_rate_limited(
+    key: ApiKey,
+    *,
+    retry_after: float | None,
+    provider_cooldown: int,
+    global_cooldown: int,
+    max_cooldown: int,
+) -> float:
+    """Park a 429'd key out of the pool until it may be retried.
+
+    Cooldown precedence: the upstream's ``Retry-After`` header → the provider's
+    configured cooldown → the global ``rate_limit_recovery_seconds`` setting. The
+    result is clamped to ``max_cooldown`` (0 = uncapped) so a key is never parked
+    indefinitely. Returns the cooldown actually applied (seconds).
+    """
+    if retry_after is not None:
+        cooldown = retry_after
+    elif provider_cooldown > 0:
+        cooldown = float(provider_cooldown)
+    else:
+        cooldown = float(global_cooldown)
+    cooldown = max(0.0, cooldown)
+    if max_cooldown > 0:
+        cooldown = min(cooldown, float(max_cooldown))
+    now = _utcnow()
+    key.status = KeyStatus.RATE_LIMITED.value
+    key.last_checked_at = now
+    if key.disabled_since is None:
+        key.disabled_since = now
+    key.rate_limit_until = now + dt.timedelta(seconds=cooldown)
+    if retry_after is not None:
+        source = "retry-after"
+    elif provider_cooldown > 0:
+        source = "provider"
+    else:
+        source = "global"
+    key.disabled_reason = f"HTTP 429 rate limited (retry in {int(cooldown)}s via {source})"
+    return cooldown
+
+
 def _penalize_proxy(proxy: Proxy | None, reason: str, threshold: int) -> None:
     if proxy is None:
         return
@@ -220,6 +300,7 @@ def _reward_key(key: ApiKey) -> None:
         key.failed_count = 0
         key.disabled_reason = None
         key.disabled_since = None
+        key.rate_limit_until = None
         key.last_used_at = _utcnow()
 
 
@@ -237,6 +318,7 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
     request_timeout = float(settings_store.get_int("request_timeout_seconds", 300))
     stream_idle = float(settings_store.get_int("stream_idle_timeout_seconds", 120))
     rate_limit_recovery = settings_store.get_int("rate_limit_recovery_seconds", 180)
+    rate_limit_max_cooldown = settings_store.get_int("rate_limit_max_cooldown_seconds", 3600)
 
     pool = get_pool()
     attempts = 0
@@ -376,8 +458,14 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                         break  # next key
 
                     if err_class is ErrorClass.RATE_LIMITED:
-                        _disable_key(key, KeyStatus.RATE_LIMITED, "HTTP 429 rate limited")
-                        last_error = "rate limited"
+                        cooldown = _mark_rate_limited(
+                            key,
+                            retry_after=_parse_retry_after(outcome.resp_headers),
+                            provider_cooldown=provider.rate_limit_cooldown_seconds or 0,
+                            global_cooldown=rate_limit_recovery,
+                            max_cooldown=rate_limit_max_cooldown,
+                        )
+                        last_error = f"rate limited (cooldown {int(cooldown)}s)"
                         last_status = 429
                         await session.flush()
                         break  # next key

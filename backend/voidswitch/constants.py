@@ -92,9 +92,14 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # Slow background rescan that re-checks keys disabled for insufficient balance
     # and re-enables any that have been topped up. Defaults to once per day.
     "balance_rescan_interval_seconds": 86400,
-    # How long (seconds) a rate-limited key stays parked before it can be retried.
-    # After this interval elapses, the key is re-attempted on the next dispatch.
+    # How long (seconds) a rate-limited key stays parked before it can be retried,
+    # used as the fallback when the upstream's 429 carries no ``Retry-After`` header
+    # and the provider defines no per-provider cooldown.
     "rate_limit_recovery_seconds": 180,
+    # Safety cap (seconds) on any single rate-limit cooldown — even a large
+    # ``Retry-After`` or per-provider cooldown is clamped to this so a key can
+    # never be parked indefinitely. 0 = no cap.
+    "rate_limit_max_cooldown_seconds": 3600,
     # Throttle for on-demand "rescan all balances": at most this many balance
     # requests per second. 0 = unthrottled (fire as fast as possible).
     "balance_scan_rate_per_second": 5,

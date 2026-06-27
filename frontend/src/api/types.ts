@@ -35,6 +35,7 @@ export interface Provider {
   proxy_ids: number[];
   model_routes: ModelRoute[];
   key_select_mode: KeySelectMode;
+  rate_limit_cooldown_seconds: number;
   created_at: string;
   updated_at: string;
   key_count: number;
@@ -88,6 +89,7 @@ export interface ApiKey {
   last_checked_at?: string | null;
   created_at: string;
   disabled_since?: string | null;
+  rate_limit_until?: string | null;
   added_by?: number | null;
   added_by_name?: string | null;
 }

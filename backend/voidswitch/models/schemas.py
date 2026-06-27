@@ -77,6 +77,9 @@ class ProviderBase(BaseModel):
     # Key selection: "round_robin" | "random" | "fallback" |
     # "pinned_round_robin" | "pinned_random" (see constants.KeySelectMode).
     key_select_mode: str = "round_robin"
+    # Cooldown (seconds) for a key rate-limited by this provider when the 429 has
+    # no Retry-After header. 0 = use the global rate_limit_recovery_seconds.
+    rate_limit_cooldown_seconds: int = 0
 
 
 class ProviderCreate(ProviderBase):
@@ -100,6 +103,7 @@ class ProviderUpdate(BaseModel):
     proxy_ids: list[int] | None = None
     model_routes: list[ModelRoute] | None = None
     key_select_mode: str | None = None
+    rate_limit_cooldown_seconds: int | None = None
 
 
 class ProviderOut(ProviderBase):
@@ -259,6 +263,7 @@ class ApiKeyOut(BaseModel):
     last_checked_at: dt.datetime | None = None
     created_at: dt.datetime
     disabled_since: dt.datetime | None = None
+    rate_limit_until: dt.datetime | None = None
     added_by: int | None = None
     added_by_name: str | None = None
 

@@ -74,6 +74,7 @@ interface FormState {
   proxy_ids: number[];
   model_routes: string;
   key_select_mode: KeySelectMode;
+  rate_limit_cooldown_seconds: number;
 }
 
 const EMPTY: FormState = {
@@ -89,6 +90,7 @@ const EMPTY: FormState = {
   proxy_ids: [],
   model_routes: "",
   key_select_mode: "round_robin",
+  rate_limit_cooldown_seconds: 0,
 };
 
 // Model routes use one line per route: `alias => upstream @ pool`
@@ -203,6 +205,7 @@ export function Providers() {
       proxy_ids: p.proxy_ids ?? [],
       model_routes: formatRoutes(p.model_routes),
       key_select_mode: p.key_select_mode ?? "round_robin",
+      rate_limit_cooldown_seconds: p.rate_limit_cooldown_seconds ?? 0,
     });
   }
 
@@ -283,6 +286,10 @@ export function Providers() {
       proxy_ids: form.proxy_mode === "selected" ? form.proxy_ids : [],
       model_routes: parseRoutes(form.model_routes),
       key_select_mode: form.key_select_mode,
+      rate_limit_cooldown_seconds: Math.max(
+        0,
+        form.rate_limit_cooldown_seconds,
+      ),
     };
     setSaving(true);
     try {
@@ -887,6 +894,26 @@ export function Providers() {
                     ),
                   )}
                 </Dropdown>
+              </Field>
+              <Field
+                label={t("providers.rateLimitCooldown" as TK)}
+                hint={t("providers.rateLimitCooldownHint" as TK)}
+              >
+                <SpinButton
+                  value={form?.rate_limit_cooldown_seconds ?? 0}
+                  min={0}
+                  onChange={(_, d) => {
+                    const next =
+                      d.value ??
+                      (d.displayValue ? Number(d.displayValue) : undefined);
+                    if (next != null && !Number.isNaN(next))
+                      setForm((f) =>
+                        f
+                          ? { ...f, rate_limit_cooldown_seconds: Math.max(0, next) }
+                          : f,
+                      );
+                  }}
+                />
               </Field>
               {form?.type === "claude-code" && (
                 <Switch

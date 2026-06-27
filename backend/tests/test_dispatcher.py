@@ -377,6 +377,87 @@ async def test_dispatch_rate_limit_recovery(db, seeded):
     assert key.disabled_since is None
 
 
+async def test_dispatch_429_sets_retry_after_cooldown(db, seeded):
+    """A 429 with Retry-After parks the key out of the pool for that long, and a
+    second active key serves the request (rate-limited key ranked last)."""
+    import datetime as dt
+
+    from voidswitch.models.db import ApiKey
+    from voidswitch.services.selector import reset_selection_state
+
+    first = seeded["key_id"]
+    second = await _add_key(db, seeded["provider_id"], "sk-second")
+    reset_selection_state()
+
+    with respx.mock(assert_all_called=False) as mock:
+        # First key → 429 with a 2-minute Retry-After; second key → success.
+        mock.post(DS_URL).mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "120"}, json={"error": "slow down"}),
+                httpx.Response(200, json=OAI_RESPONSE),
+            ]
+        )
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.OPENAI,
+                model="deepseek-chat",
+                payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+
+    assert result.status_code == 200
+    async with db.session() as session:
+        k1 = await session.get(ApiKey, first)
+        k2 = await session.get(ApiKey, second)
+    # First key parked ~120s out (give scheduling slack); second key served + active.
+    assert k1.status == KeyStatus.RATE_LIMITED.value
+    assert k1.rate_limit_until is not None
+    until = k1.rate_limit_until
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=dt.UTC)
+    remaining = (until - dt.datetime.now(dt.UTC)).total_seconds()
+    assert 110 <= remaining <= 125
+    assert k2.status == KeyStatus.ACTIVE.value
+    assert k2.total_requests == 1
+
+
+async def test_dispatch_429_provider_cooldown_when_no_header(db, seeded):
+    """Without a Retry-After header, the provider's cooldown is used (over global)."""
+    import datetime as dt
+
+    from voidswitch.models.db import ApiKey, Provider
+    from voidswitch.services import settings_store
+
+    async with db.session() as session:
+        await settings_store.update(session, {"rate_limit_recovery_seconds": 180})
+        provider = await session.get(Provider, seeded["provider_id"])
+        provider.rate_limit_cooldown_seconds = 45  # provider overrides the 180s global
+        await session.flush()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(429, json={"error": "slow down"}))
+        await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.OPENAI,
+                model="deepseek-chat",
+                payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+
+    async with db.session() as session:
+        k = await session.get(ApiKey, seeded["key_id"])
+    assert k.status == KeyStatus.RATE_LIMITED.value
+    until = k.rate_limit_until
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=dt.UTC)
+    remaining = (until - dt.datetime.now(dt.UTC)).total_seconds()
+    assert 38 <= remaining <= 50  # ~45s from the provider cooldown, not 180s global
+
+
 async def test_dispatch_rate_limit_no_recovery_within_interval(db, seeded):
     """A rate-limited key is NOT retried if recovery interval hasn't elapsed."""
     import datetime as dt

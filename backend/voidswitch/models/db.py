@@ -179,6 +179,10 @@ class Provider(Base, TimestampMixin):
     key_select_mode: Mapped[str] = mapped_column(
         String(32), default=KeySelectMode.ROUND_ROBIN.value
     )
+    # How long (seconds) a key rate-limited by this provider stays out of the pool
+    # before it can be retried, when the upstream's 429 carries no ``Retry-After``
+    # header. 0 = fall back to the global ``rate_limit_recovery_seconds`` setting.
+    rate_limit_cooldown_seconds: Mapped[int] = mapped_column(Integer, default=0)
     # Who created this provider (id + a display-name snapshot). Lets members
     # manage only the providers they added; null for legacy/seeded rows.
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
@@ -229,6 +233,12 @@ class ApiKey(Base, TimestampMixin):
     # invalid, etc.). Used to age out long-dead keys (e.g. "no balance for N days")
     # and cleared whenever the key is re-enabled. Null while active.
     disabled_since: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # When a rate-limited (429) key may re-enter the candidate pool. Derived from
+    # the upstream's ``Retry-After`` header when present, else the provider/global
+    # cooldown. Null while the key is not rate-limited; cleared on recovery.
+    rate_limit_until: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
     total_requests: Mapped[int] = mapped_column(Integer, default=0)

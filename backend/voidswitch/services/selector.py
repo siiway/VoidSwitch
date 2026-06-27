@@ -187,18 +187,18 @@ def _lead_with(ordered: list[ApiKey], key_id: int) -> list[ApiKey]:
     return lead + rest
 
 
-def _ordered_candidates(
+def _apply_mode(
     provider: Provider,
     candidates: list[ApiKey],
     *,
     pool: str,
     session_key: str | None,
 ) -> list[ApiKey]:
-    """Apply the provider's key-select mode to a filtered candidate list.
+    """Apply the provider's key-select mode to a single candidate list.
 
-    The returned list is the per-request try order; the dispatcher walks it from
-    the front and falls back through the remainder on any failure, so "unless the
-    key is unavailable" is handled for free for every mode.
+    The returned list is a try order; the dispatcher walks it from the front and
+    falls back through the remainder on any failure, so "unless the key is
+    unavailable" is handled for free for every mode.
     """
     if len(candidates) <= 1:
         return candidates
@@ -240,6 +240,55 @@ def _ordered_candidates(
     return _rotate(manual, provider_id, pool)
 
 
+def _ordered_candidates(
+    provider: Provider,
+    active: list[ApiKey],
+    recovered: list[ApiKey],
+    *,
+    pool: str,
+    session_key: str | None,
+) -> list[ApiKey]:
+    """Full per-request try order: healthy keys first, recovered ones last.
+
+    Active keys are ordered by the provider's key-select mode. Keys that recovered
+    from a rate limit are *always* appended after them — they are a last resort,
+    so a request burns through every healthy key before re-touching one that was
+    recently 429'd (this is what keeps a pile of rate-limited keys from exhausting
+    the retry budget ahead of the few good ones). Recovered keys are themselves
+    ordered by who has been free longest.
+    """
+    ordered = _apply_mode(provider, active, pool=pool, session_key=session_key)
+    if recovered:
+        recovered = sorted(
+            recovered,
+            key=lambda k: (_lru_key(k.rate_limit_until), k.sort_order or 0, k.id or 0),
+        )
+        ordered = ordered + recovered
+    return ordered
+
+
+def _rate_limited_eligible(k: ApiKey, now: dt.datetime, recovery_seconds: int) -> bool:
+    """Whether a rate-limited key may re-enter the pool now.
+
+    Prefers the per-key ``rate_limit_until`` (set from ``Retry-After`` / the
+    provider cooldown). Falls back to the legacy ``disabled_since +
+    rate_limit_recovery_seconds`` window for rows parked before this field existed.
+    """
+    if k.status != KeyStatus.RATE_LIMITED.value:
+        return False
+    until = k.rate_limit_until
+    if until is not None:
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=dt.UTC)
+        return now >= until
+    if recovery_seconds <= 0 or k.disabled_since is None:
+        return False
+    disabled_since = k.disabled_since
+    if disabled_since.tzinfo is None:
+        disabled_since = disabled_since.replace(tzinfo=dt.UTC)
+    return (now - disabled_since).total_seconds() >= recovery_seconds
+
+
 def select_keys(
     provider: Provider,
     pool: str = "",
@@ -253,35 +302,31 @@ def select_keys(
     alias route can target e.g. just the "leaked" or "members" keys). An empty
     pool uses every active key regardless of tag.
 
-    Rate-limited keys that have been parked for longer than
-    ``rate_limit_recovery_seconds`` are also returned (so the dispatcher can
-    re-attempt them). When ``rate_limit_recovery_seconds`` is 0, rate-limited
-    keys are never re-attempted via this path.
+    A rate-limited key is **excluded from the pool entirely** until its cooldown
+    elapses (``rate_limit_until``, set from the upstream ``Retry-After`` header or
+    the provider/global cooldown; ``rate_limit_recovery_seconds`` is the legacy
+    fallback for rows parked before that field existed). Once eligible again it is
+    ranked *after* every active key, so healthy keys are always tried first.
 
-    The candidate set (active + recovered keys, filtered by pool) is then ordered
-    by ``provider.key_select_mode`` — round-robin, random, fallback, or one of the
-    per-session pinned variants (``session_key`` identifies the session).
+    The active set is ordered by ``provider.key_select_mode`` — round-robin,
+    random, fallback, or one of the per-session pinned variants (``session_key``
+    identifies the session).
     """
     now = _utcnow()
-    candidates: list[ApiKey] = []
+    active: list[ApiKey] = []
+    recovered: list[ApiKey] = []
     for k in provider.keys:
         if k.status == KeyStatus.ACTIVE.value:
-            candidates.append(k)
-        elif (
-            k.status == KeyStatus.RATE_LIMITED.value
-            and rate_limit_recovery_seconds > 0
-            and k.disabled_since is not None
-        ):
-            disabled_since = k.disabled_since
-            if disabled_since.tzinfo is None:
-                disabled_since = disabled_since.replace(tzinfo=dt.UTC)
-            elapsed = (now - disabled_since).total_seconds()
-            if elapsed >= rate_limit_recovery_seconds:
-                candidates.append(k)
+            active.append(k)
+        elif _rate_limited_eligible(k, now, rate_limit_recovery_seconds):
+            recovered.append(k)
     if pool:
-        candidates = [k for k in candidates if (k.pool or "") == pool]
+        active = [k for k in active if (k.pool or "") == pool]
+        recovered = [k for k in recovered if (k.pool or "") == pool]
 
-    return _ordered_candidates(provider, candidates, pool=pool, session_key=session_key)
+    return _ordered_candidates(
+        provider, active, recovered, pool=pool, session_key=session_key
+    )
 
 
 async def active_proxies(session: AsyncSession) -> list[Proxy]:

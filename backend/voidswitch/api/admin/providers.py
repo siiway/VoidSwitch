@@ -159,6 +159,7 @@ async def create_provider(
         proxy_mode=body.proxy_mode,
         proxy_ids=body.proxy_ids,
         key_select_mode=body.key_select_mode,
+        rate_limit_cooldown_seconds=max(0, body.rate_limit_cooldown_seconds),
         model_routes=[r.model_dump() for r in body.model_routes],
         added_by=user.id,
         added_by_name=actor_display_name(user),

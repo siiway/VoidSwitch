@@ -1026,6 +1026,11 @@ export function ProviderKeys() {
                 </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {k.disabled_reason ?? "—"}
+                  {k.status === "rate_limited" && k.rate_limit_until ? (
+                    <div style={{ fontSize: tokens.fontSizeBase100 }}>
+                      {t("providerKeys.retryAt" as TK)}: {formatDate(k.rate_limit_until)}
+                    </div>
+                  ) : null}
                 </TableCell>
                 <TableCell>
                   {isOwner && (

@@ -74,6 +74,7 @@ export function Settings() {
       max_retries: t("settings.maxRetries" as TK),
       stream_idle_timeout_seconds: t("settings.streamIdleTimeout" as TK),
       rate_limit_recovery_seconds: t("settings.rateLimitRecovery" as TK),
+      rate_limit_max_cooldown_seconds: t("settings.rateLimitMaxCooldown" as TK),
       auto_disable_zero_balance: t("settings.autoDisableZeroBalance" as TK),
       balance_probe_enabled: t("settings.balanceProbeEnabled" as TK),
       balance_rescan_enabled: t("settings.balanceRescanEnabled" as TK),

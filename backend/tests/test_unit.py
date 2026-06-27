@@ -479,6 +479,84 @@ async def test_key_select_modes():
     assert c1 == c2
 
 
+async def test_retry_after_parsing_and_cooldown():
+    import datetime as dt
+
+    from voidswitch.constants import KeyStatus
+    from voidswitch.models.db import ApiKey
+    from voidswitch.services.dispatcher import _mark_rate_limited, _parse_retry_after
+
+    # delta-seconds form.
+    assert _parse_retry_after({"retry-after": "120"}) == 120.0
+    assert _parse_retry_after({"Retry-After": "0"}) == 0.0
+    # HTTP-date form ~ 60s out (allow scheduling slack).
+    when = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=60)
+    http_date = when.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    secs = _parse_retry_after({"retry-after": http_date})
+    assert secs is not None and 50 <= secs <= 65
+    # Absent / blank / garbage → None (caller falls back to a configured cooldown).
+    assert _parse_retry_after(None) is None
+    assert _parse_retry_after({}) is None
+    assert _parse_retry_after({"retry-after": "  "}) is None
+    assert _parse_retry_after({"retry-after": "soon"}) is None
+
+    def _key() -> ApiKey:
+        return ApiKey(provider_id=1, key_ciphertext="x", key_hash="k", status="active")
+
+    # Precedence: Retry-After header wins over provider/global.
+    k = _key()
+    cd = _mark_rate_limited(k, retry_after=90, provider_cooldown=30, global_cooldown=180, max_cooldown=3600)
+    assert cd == 90.0
+    assert k.status == KeyStatus.RATE_LIMITED.value
+    assert k.rate_limit_until is not None
+
+    # No header → provider cooldown wins over global.
+    k = _key()
+    assert _mark_rate_limited(k, retry_after=None, provider_cooldown=30, global_cooldown=180, max_cooldown=3600) == 30.0
+
+    # No header, no provider cooldown → global.
+    k = _key()
+    assert _mark_rate_limited(k, retry_after=None, provider_cooldown=0, global_cooldown=180, max_cooldown=3600) == 180.0
+
+    # The cap clamps even a huge Retry-After; 0 = uncapped.
+    k = _key()
+    assert _mark_rate_limited(k, retry_after=99999, provider_cooldown=0, global_cooldown=180, max_cooldown=600) == 600.0
+    k = _key()
+    assert _mark_rate_limited(k, retry_after=99999, provider_cooldown=0, global_cooldown=180, max_cooldown=0) == 99999.0
+
+
+async def test_rate_limited_keys_excluded_and_ranked_last():
+    import datetime as dt
+
+    from voidswitch.constants import KeySelectMode, KeyStatus
+    from voidswitch.models.db import ApiKey
+    from voidswitch.services.selector import reset_selection_state, select_keys
+
+    now = dt.datetime.now(dt.UTC)
+
+    def _key(kid: int, *, status: str, until: dt.datetime | None = None, order: int = 0) -> ApiKey:
+        k = ApiKey(
+            provider_id=1, key_ciphertext="x", key_hash=f"k{kid}", status=status,
+            sort_order=order, rate_limit_until=until,
+        )
+        k.id = kid
+        return k
+
+    prov = Provider(name="p", type="openai", models=["*"])
+    prov.id = 11
+    prov.key_select_mode = KeySelectMode.FALLBACK.value
+    prov.keys = [
+        _key(1, status=KeyStatus.ACTIVE.value, order=0),
+        _key(2, status=KeyStatus.RATE_LIMITED.value, until=now + dt.timedelta(seconds=120), order=1),  # still cooling
+        _key(3, status=KeyStatus.RATE_LIMITED.value, until=now - dt.timedelta(seconds=5), order=2),  # recovered
+        _key(4, status=KeyStatus.ACTIVE.value, order=3),
+    ]
+    reset_selection_state()
+    ordered = [k.id for k in select_keys(prov)]
+    # Cooling key (2) excluded; active keys (1,4) first, recovered (3) last.
+    assert ordered == [1, 4, 3]
+
+
 async def test_session_key_precedence():
     from voidswitch.constants import ApiStyle
     from voidswitch.services.dispatcher import DispatchRequest, _session_key
