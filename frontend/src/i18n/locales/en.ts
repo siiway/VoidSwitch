@@ -37,6 +37,15 @@ const en = {
     updateFailed: "Update failed",
     settingsSaved: "Settings saved",
     settingsAppliedNote: "Changes take effect on the next task tick / request.",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
+    nothingHere: "Nothing here yet",
+  },
+  theme: {
+    label: "Theme",
+    system: "System",
+    light: "Light",
+    dark: "Dark",
   },
   nav: {
     overview: "Overview",
@@ -325,6 +334,8 @@ const en = {
   proxies: {
     title: "Outbound proxies",
     subtitle: "HTTP / SOCKS5 proxies for provider connections",
+    emptyTitle: "No proxies configured",
+    emptyDesc: "Add HTTP or SOCKS5 proxies above to route provider traffic through them.",
     add: "Add proxies",
     url: "URL",
     sourceIp: "Source IP",
@@ -355,6 +366,8 @@ const en = {
   tokens: {
     title: "Void-Tokens",
     subtitle: "Client credentials — one per user/app/device",
+    emptyTitle: "No tokens yet",
+    emptyDesc: "Mint a Void-Token to give a client, app, or device access to the gateway.",
     mint: "Mint token",
     name: "Name",
     fingerprint: "Fingerprint",

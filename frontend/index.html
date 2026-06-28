@@ -9,6 +9,30 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Resolve the theme before first paint to avoid a flash of the wrong
+      // scheme. Mirrors ThemeContext: an explicit "light"/"dark" wins, otherwise
+      // "system" follows the OS. Storage access is wrapped because some browsers
+      // block it (privacy mode), in which case we just follow the OS.
+      (function () {
+        try {
+          var saved = null;
+          try {
+            saved = localStorage.getItem("voidswitch.theme");
+          } catch (e) {}
+          var scheme =
+            saved === "light" || saved === "dark"
+              ? saved
+              : window.matchMedia &&
+                  window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          var root = document.documentElement;
+          root.setAttribute("data-theme", scheme);
+          root.style.colorScheme = scheme;
+        } catch (e) {}
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

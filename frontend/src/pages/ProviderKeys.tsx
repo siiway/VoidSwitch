@@ -56,6 +56,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
+import { PasswordInput } from "../components/PasswordInput";
 
 /** Render a key's stored balance blob into a short human string. */
 function formatBalance(balance: Record<string, unknown> | undefined): string {
@@ -730,7 +731,7 @@ export function ProviderKeys() {
               <Input value={cfAccountId} onChange={(_, d) => setCfAccountId(d.value)} />
             </Field>
             <Field label={t("providerKeys.apiToken" as TK)}>
-              <Input value={cfToken} onChange={(_, d) => setCfToken(d.value)} type="password" />
+              <PasswordInput value={cfToken} onChange={(_, d) => setCfToken(d.value)} autoComplete="current-password" />
             </Field>
             <Field label={t("providerKeys.commentOpt" as TK)}>
               <Input value={cfComment} onChange={(_, d) => setCfComment(d.value)} />
@@ -1104,9 +1105,9 @@ export function ProviderKeys() {
                     label={t("providerKeys.accessToken" as TK)}
                     hint={t("providerKeys.accessTokenHint" as TK)}
                   >
-                    <Input
+                    <PasswordInput
                       value={editAccessToken}
-                      type="password"
+                      autoComplete="current-password"
                       onChange={(_, d) => setEditAccessToken(d.value)}
                     />
                   </Field>
@@ -1114,9 +1115,9 @@ export function ProviderKeys() {
                     label={t("providerKeys.refreshToken" as TK)}
                     hint={t("providerKeys.refreshTokenHint" as TK)}
                   >
-                    <Input
+                    <PasswordInput
                       value={editRefreshToken}
-                      type="password"
+                      autoComplete="current-password"
                       onChange={(_, d) => setEditRefreshToken(d.value)}
                     />
                   </Field>
@@ -1136,9 +1137,9 @@ export function ProviderKeys() {
                   label={t("providerKeys.editKeyField" as TK)}
                   hint={t("providerKeys.editKeyHint" as TK)}
                 >
-                  <Input
+                  <PasswordInput
                     value={editSecret}
-                    type="password"
+                    autoComplete="current-password"
                     placeholder={`Current: ${editing?.key_preview ?? ""}`}
                     onChange={(_, d) => setEditSecret(d.value)}
                   />

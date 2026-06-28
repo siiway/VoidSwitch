@@ -1,9 +1,11 @@
-import { Card, Spinner, Text, tokens } from "@fluentui/react-components";
+import { Spinner, Text, tokens } from "@fluentui/react-components";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { setToken } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { AuthShell } from "../components/AuthShell";
+import { ErrorText } from "../components/ui";
 import type { Translations } from "../i18n/locales/en";
 
 type TK = keyof Translations;
@@ -32,38 +34,36 @@ export function LoginCallback() {
   }, []);
 
   return (
-    <div style={{ height: "100vh", display: "grid", placeItems: "center" }}>
-      <Card style={{ padding: 32, textAlign: "center", width: 360 }}>
-        {error ? (
-          <>
-            <Text
-              size={500}
-              weight="semibold"
-              block
-              style={{ marginBottom: 8 }}
-            >
-              {t("login.signInFailed" as TK)}
-            </Text>
-            <Text style={{ color: tokens.colorPaletteRedForeground1 }} block>
-              {error}
-            </Text>
-            <Text
-              as="span"
-              onClick={() => navigate("/login", { replace: true })}
-              style={{
-                cursor: "pointer",
-                marginTop: 16,
-                display: "block",
-                color: tokens.colorBrandForeground1,
-              }}
-            >
-              {t("login.tryAgain" as TK)}
-            </Text>
-          </>
-        ) : (
+    <AuthShell maxWidth={360}>
+      {error ? (
+        <div style={{ textAlign: "center" }}>
+          <Text
+            size={500}
+            weight="semibold"
+            block
+            style={{ marginBottom: 8 }}
+          >
+            {t("login.signInFailed" as TK)}
+          </Text>
+          <ErrorText error={error} />
+          <Text
+            as="span"
+            onClick={() => navigate("/login", { replace: true })}
+            style={{
+              cursor: "pointer",
+              marginTop: 16,
+              display: "block",
+              color: tokens.colorBrandForeground1,
+            }}
+          >
+            {t("login.tryAgain" as TK)}
+          </Text>
+        </div>
+      ) : (
+        <div style={{ display: "grid", placeItems: "center" }}>
           <Spinner label={t("login.completing" as TK)} />
-        )}
-      </Card>
-    </div>
+        </div>
+      )}
+    </AuthShell>
   );
 }

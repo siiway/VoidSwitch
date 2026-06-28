@@ -16,7 +16,7 @@ import {
   Textarea,
   tokens,
 } from "@fluentui/react-components";
-import { DeleteRegular, PulseRegular } from "@fluentui/react-icons";
+import { CloudRegular, DeleteRegular, PulseRegular } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
@@ -33,6 +33,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
+import { EmptyState } from "../components/EmptyState";
 
 export function Proxies() {
   const { t } = useTranslation();
@@ -225,6 +226,12 @@ export function Proxies() {
         <Loading />
       ) : proxies.error ? (
         <ErrorText error={proxies.error} />
+      ) : (proxies.data ?? []).length === 0 ? (
+        <EmptyState
+          icon={<CloudRegular />}
+          title={t("proxies.emptyTitle" as TK)}
+          description={t("proxies.emptyDesc" as TK)}
+        />
       ) : (
         <DataTable ariaLabel={t("proxies.title" as TK)}>
           <TableHeader>

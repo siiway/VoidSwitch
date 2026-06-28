@@ -7,6 +7,8 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  MessageBar,
+  MessageBarBody,
   Spinner,
   Table,
   Text,
@@ -22,6 +24,7 @@ import {
   useToastController,
 } from "@fluentui/react-components";
 import { ArrowSyncRegular } from "@fluentui/react-icons";
+import { useTranslation } from "react-i18next";
 import {
   createContext,
   useCallback,
@@ -131,6 +134,7 @@ type Confirm = (opts: ConfirmOptions) => Promise<boolean>;
 const ConfirmContext = createContext<Confirm>(async () => false);
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const [opts, setOpts] = useState<ConfirmOptions | null>(null);
   const resolver = useRef<((ok: boolean) => void) | null>(null);
 
@@ -159,12 +163,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>{opts?.title ?? "Are you sure?"}</DialogTitle>
-            <DialogContent>{opts?.message}</DialogContent>
-            <DialogActions>
-              <Button appearance="secondary" onClick={() => settle(false)}>
-                {opts?.cancelLabel ?? "Cancel"}
-              </Button>
+              <DialogTitle>
+                {opts?.title ?? t("common.areYouSure")}
+              </DialogTitle>
+              <DialogContent>{opts?.message}</DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" onClick={() => settle(false)}>
+                  {opts?.cancelLabel ?? t("common.cancel")}
+                </Button>
               <Button
                 appearance="primary"
                 style={
@@ -177,7 +183,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 }
                 onClick={() => settle(true)}
               >
-                {opts?.confirmLabel ?? "Confirm"}
+                {opts?.confirmLabel ?? t("common.confirm")}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -285,18 +291,24 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 export function Loading({ label }: { label?: string }) {
+  const { t } = useTranslation();
   return (
     <div style={{ display: "grid", placeItems: "center", padding: 48 }}>
-      <Spinner label={label ?? "Loading…"} />
+      <Spinner label={label ?? t("common.loading")} />
     </div>
   );
 }
 
+/**
+ * Prominent, page-level error surface. Uses Fluent's MessageBar (intent="error")
+ * so theme/accent-aware error styling stays consistent instead of bespoke red
+ * Text. Kept named `ErrorText` so existing call sites don't churn.
+ */
 export function ErrorText({ error }: { error: string }) {
   return (
-    <Text style={{ color: "var(--colorPaletteRedForeground1)" }} block>
-      {error}
-    </Text>
+    <MessageBar intent="error">
+      <MessageBarBody>{error}</MessageBarBody>
+    </MessageBar>
   );
 }
 

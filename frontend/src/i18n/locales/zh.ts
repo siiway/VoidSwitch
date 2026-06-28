@@ -39,6 +39,15 @@ const zh: Translations = {
     updateFailed: "更新失败",
     settingsSaved: "设置已保存",
     settingsAppliedNote: "更改将在下次任务周期/请求时生效。",
+    showPassword: "显示密码",
+    hidePassword: "隐藏密码",
+    nothingHere: "暂无内容",
+  },
+  theme: {
+    label: "主题",
+    system: "跟随系统",
+    light: "浅色",
+    dark: "深色",
   },
   nav: {
     overview: "概览",
@@ -316,6 +325,8 @@ const zh: Translations = {
   proxies: {
     title: "出站代理",
     subtitle: "用于提供商连接的 HTTP / SOCKS5 代理",
+    emptyTitle: "尚未配置代理",
+    emptyDesc: "在上方添加 HTTP 或 SOCKS5 代理，即可让提供商流量经其转发。",
     add: "添加代理",
     url: "URL",
     sourceIp: "来源 IP",
@@ -346,6 +357,8 @@ const zh: Translations = {
   tokens: {
     title: "Void-Tokens",
     subtitle: "客户端凭证 — 每个用户/应用/设备一个",
+    emptyTitle: "暂无令牌",
+    emptyDesc: "生成一个 Void-Token，让客户端、应用或设备可以访问网关。",
     mint: "生成令牌",
     name: "名称",
     fingerprint: "指纹",

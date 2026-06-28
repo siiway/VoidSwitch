@@ -2,6 +2,11 @@ import {
   Avatar,
   Badge,
   Button,
+  Menu,
+  MenuItemRadio,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   Text,
   Tooltip,
   makeStyles,
@@ -15,6 +20,7 @@ import {
   ChatRegular,
   CloudRegular,
   CubeRegular,
+  DesktopRegular,
   DocumentBulletListRegular,
   KeyRegular,
   NavigationRegular,
@@ -297,7 +303,7 @@ const useStyles = makeStyles({
 export function Layout() {
   const styles = useStyles();
   const { user, isStaff, isOwner, logout } = useAuth();
-  const { mode, toggle } = useTheme();
+  const { mode, scheme, setMode } = useTheme();
   const { t, i18n } = useTranslation();
   const location = useLocation();
 
@@ -451,27 +457,65 @@ export function Layout() {
                 </div>
               </div>
               <div className={styles.footerActions}>
-                <Tooltip
-                  content={
-                    mode === "dark"
-                      ? t("nav.lightMode" as TranslationKey)
-                      : t("nav.darkMode" as TranslationKey)
-                  }
-                  relationship="label"
+                <Menu
+                  checkedValues={{ theme: [mode] }}
+                  onCheckedValueChange={(_, data) => {
+                    const next = data.checkedItems[0];
+                    if (
+                      next === "system" ||
+                      next === "light" ||
+                      next === "dark"
+                    )
+                      setMode(next);
+                  }}
                 >
-                  <Button
-                    appearance="subtle"
-                    icon={
-                      mode === "dark" ? (
-                        <WeatherSunnyRegular />
-                      ) : (
-                        <WeatherMoonRegular />
-                      )
-                    }
-                    onClick={toggle}
-                    style={{ flex: 1 }}
-                  />
-                </Tooltip>
+                  <MenuTrigger disableButtonEnhancement>
+                    <Tooltip
+                      content={t("theme.label" as TranslationKey)}
+                      relationship="label"
+                    >
+                      <Button
+                        appearance="subtle"
+                        aria-label={t("theme.label" as TranslationKey)}
+                        icon={
+                          mode === "system" ? (
+                            <DesktopRegular />
+                          ) : scheme === "dark" ? (
+                            <WeatherMoonRegular />
+                          ) : (
+                            <WeatherSunnyRegular />
+                          )
+                        }
+                        style={{ flex: 1 }}
+                      />
+                    </Tooltip>
+                  </MenuTrigger>
+                  <MenuPopover>
+                    <MenuList>
+                      <MenuItemRadio
+                        name="theme"
+                        value="system"
+                        icon={<DesktopRegular />}
+                      >
+                        {t("theme.system" as TranslationKey)}
+                      </MenuItemRadio>
+                      <MenuItemRadio
+                        name="theme"
+                        value="light"
+                        icon={<WeatherSunnyRegular />}
+                      >
+                        {t("theme.light" as TranslationKey)}
+                      </MenuItemRadio>
+                      <MenuItemRadio
+                        name="theme"
+                        value="dark"
+                        icon={<WeatherMoonRegular />}
+                      >
+                        {t("theme.dark" as TranslationKey)}
+                      </MenuItemRadio>
+                    </MenuList>
+                  </MenuPopover>
+                </Menu>
                 <Tooltip
                   content={LANGUAGES.find((l) => l.code !== i18n.language)?.label ?? ""}
                   relationship="label"

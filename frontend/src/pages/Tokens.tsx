@@ -19,7 +19,7 @@ import {
   Tooltip,
   tokens,
 } from "@fluentui/react-components";
-import { AddRegular, BugRegular, CopyRegular, DeleteRegular } from "@fluentui/react-icons";
+import { AddRegular, BugRegular, CopyRegular, DeleteRegular, KeyRegular } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
@@ -35,6 +35,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
+import { EmptyState } from "../components/EmptyState";
 
 export function Tokens() {
   const { t: tr } = useTranslation();
@@ -117,6 +118,21 @@ export function Tokens() {
         <Loading />
       ) : list.error ? (
         <ErrorText error={list.error} />
+      ) : (list.data ?? []).length === 0 ? (
+        <EmptyState
+          icon={<KeyRegular />}
+          title={tr("tokens.emptyTitle" as TK)}
+          description={tr("tokens.emptyDesc" as TK)}
+          action={
+            <Button
+              appearance="primary"
+              icon={<AddRegular />}
+              onClick={() => setCreating(true)}
+            >
+              {tr("tokens.mint" as TK)}
+            </Button>
+          }
+        />
       ) : (
         <DataTable ariaLabel={tr("tokens.title" as TK)}>
           <TableHeader>

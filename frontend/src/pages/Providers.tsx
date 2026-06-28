@@ -57,6 +57,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
+import { PasswordInput } from "../components/PasswordInput";
 
 type TK = keyof Translations;
 
@@ -642,10 +643,10 @@ export function Providers() {
                     </Field>
                   </div>
                   <Field label={t("providers.fetchTokenLabel" as TK)} hint={t("providers.fetchTokenHint" as TK)}>
-                    <Input
-                      type="password"
+                    <PasswordInput
                       value={fetchToken}
                       placeholder="sk-…"
+                      autoComplete="current-password"
                       onChange={(_, d) => setFetchToken(d.value)}
                     />
                   </Field>
