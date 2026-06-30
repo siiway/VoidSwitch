@@ -21,6 +21,7 @@ import {
   TableHeaderCell,
   TableRow,
   Textarea,
+  Tooltip,
   tokens,
 } from "@fluentui/react-components";
 import {
@@ -359,6 +360,20 @@ export function Providers() {
     }
   }
 
+  async function toggleEnabled(p: Provider) {
+    try {
+      await api.patch(`/api/admin/providers/${p.id}`, { enabled: !p.enabled });
+      notify(t("providers.updated" as TK), p.name, "success");
+      providers.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
+  }
+
   async function remove(p: Provider) {
     const ok = await confirm({
       title: t("providers.deleteTitle" as TK),
@@ -431,48 +446,93 @@ export function Providers() {
                 </TableCell>
                 <TableCell>{p.priority}</TableCell>
                 <TableCell>
-                  <Badge
-                    color={p.enabled ? "success" : "subtle"}
-                    appearance="filled"
-                  >
-                    {p.enabled
-                      ? t("providers.enabled" as TK)
-                      : t("providers.disabled" as TK)}
-                  </Badge>
+                  {canEdit(p) ? (
+                    <Tooltip
+                      content={
+                        p.enabled
+                          ? t("providers.clickToDisable" as TK)
+                          : t("providers.clickToEnable" as TK)
+                      }
+                      relationship="label"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleEnabled(p)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                        }}
+                        aria-label={
+                          p.enabled
+                            ? t("providers.clickToDisable" as TK)
+                            : t("providers.clickToEnable" as TK)
+                        }
+                      >
+                        <Badge
+                          color={p.enabled ? "success" : "subtle"}
+                          appearance="filled"
+                        >
+                          {p.enabled
+                            ? t("providers.enabled" as TK)
+                            : t("providers.disabled" as TK)}
+                        </Badge>
+                      </button>
+                    </Tooltip>
+                  ) : (
+                    <Badge
+                      color={p.enabled ? "success" : "subtle"}
+                      appearance="filled"
+                    >
+                      {p.enabled
+                        ? t("providers.enabled" as TK)
+                        : t("providers.disabled" as TK)}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    size="small"
-                    icon={<KeyRegular />}
-                    appearance="subtle"
-                    onClick={() => navigate(`/providers/${p.id}/keys`)}
-                  >
-                    Keys
-                  </Button>
+                  <Tooltip content={t("providers.keys" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      icon={<KeyRegular />}
+                      appearance="subtle"
+                      onClick={() => navigate(`/providers/${p.id}/keys`)}
+                      aria-label={t("providers.keys" as TK)}
+                    />
+                  </Tooltip>
                   {canEdit(p) && (
-                    <Button
-                      size="small"
-                      icon={<EditRegular />}
-                      appearance="subtle"
-                      onClick={() => openEdit(p)}
-                    />
+                    <Tooltip content={t("common.edit" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        icon={<EditRegular />}
+                        appearance="subtle"
+                        onClick={() => openEdit(p)}
+                        aria-label={t("common.edit" as TK)}
+                      />
+                    </Tooltip>
                   )}
                   {isOwner && (
-                    <Button
-                      size="small"
-                      icon={<ShieldKeyholeRegular />}
-                      appearance="subtle"
-                      title={t("providers.keyApi" as TK)}
-                      onClick={() => openKeyApi(p)}
-                    />
+                    <Tooltip content={t("providers.keyApi" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        icon={<ShieldKeyholeRegular />}
+                        appearance="subtle"
+                        onClick={() => openKeyApi(p)}
+                        aria-label={t("providers.keyApi" as TK)}
+                      />
+                    </Tooltip>
                   )}
                   {isOwner && (
-                    <Button
-                      size="small"
-                      icon={<DeleteRegular />}
-                      appearance="subtle"
-                      onClick={() => remove(p)}
-                    />
+                    <Tooltip content={t("common.delete" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        icon={<DeleteRegular />}
+                        appearance="subtle"
+                        onClick={() => remove(p)}
+                        aria-label={t("common.delete" as TK)}
+                      />
+                    </Tooltip>
                   )}
                 </TableCell>
               </TableRow>

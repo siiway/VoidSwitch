@@ -142,4 +142,16 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "log_cleanup_interval_seconds": 86400,
     "opencode_default_model": "claude-opus-4-8",
     "opencode_small_model": "claude-haiku-4-5-20251001",
+    # Rows per page in the dashboard's Logs tables (audit + request logs).
+    "logs_page_size": 50,
+    # Proxy switching. When False the gateway stops rotating/failover over the
+    # proxy pool: every upstream request goes through ``static_proxy_url`` (or, if
+    # that is empty, directly / via the process HTTP(S)_PROXY env vars), and a
+    # proxy is never auto-disabled on failure. Use this when an external proxy
+    # (e.g. mihomo) already handles egress routing.
+    "proxy_switching_enabled": True,
+    # The single proxy URL used for every request when proxy switching is off.
+    # Empty → connect directly, falling back to the HTTP_PROXY/HTTPS_PROXY/
+    # ALL_PROXY environment variables when present.
+    "static_proxy_url": "",
 }

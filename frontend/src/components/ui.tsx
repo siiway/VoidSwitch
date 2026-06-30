@@ -7,6 +7,7 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Input,
   MessageBar,
   MessageBarBody,
   Spinner,
@@ -23,7 +24,11 @@ import {
   useId,
   useToastController,
 } from "@fluentui/react-components";
-import { ArrowSyncRegular } from "@fluentui/react-icons";
+import {
+  ArrowSyncRegular,
+  ChevronLeftRegular,
+  ChevronRightRegular,
+} from "@fluentui/react-icons";
 import { useTranslation } from "react-i18next";
 import {
   createContext,
@@ -199,17 +204,45 @@ export function useConfirm(): Confirm {
 
 // --- small presentational helpers ----------------------------------------- //
 
+const useSpinStyles = makeStyles({
+  spin: {
+    animationName: {
+      from: { transform: "rotate(0deg)" },
+      to: { transform: "rotate(360deg)" },
+    },
+    animationDuration: "0.7s",
+    animationIterationCount: "infinite",
+    animationTimingFunction: "linear",
+  },
+});
+
 export function PageHeader({
   title,
   subtitle,
   action,
   onRefresh,
+  refreshing,
 }: {
   title: string;
   subtitle?: string;
   action?: ReactNode;
   onRefresh?: () => void;
+  // Keep the icon spinning while an async reload is in flight.
+  refreshing?: boolean;
 }) {
+  const spinStyles = useSpinStyles();
+  const { t } = useTranslation();
+  const [spinning, setSpinning] = useState(false);
+  const spin = spinning || !!refreshing;
+
+  const handleRefresh = useCallback(() => {
+    if (!onRefresh) return;
+    setSpinning(true);
+    onRefresh();
+    // Visual feedback even when the reload resolves instantly.
+    window.setTimeout(() => setSpinning(false), 700);
+  }, [onRefresh]);
+
   return (
     <div
       style={{
@@ -227,12 +260,15 @@ export function PageHeader({
             {title}
           </Text>
           {onRefresh ? (
-            <Tooltip content="Refresh" relationship="label">
+            <Tooltip content={t("common.refresh")} relationship="label">
               <Button
                 size="small"
                 appearance="subtle"
-                icon={<ArrowSyncRegular />}
-                onClick={onRefresh}
+                icon={
+                  <ArrowSyncRegular className={spin ? spinStyles.spin : undefined} />
+                }
+                onClick={handleRefresh}
+                aria-label={t("common.refresh")}
               />
             </Tooltip>
           ) : null}
@@ -417,6 +453,101 @@ export function DataTable({
       >
         {children}
       </Table>
+    </div>
+  );
+}
+
+// --- pagination ------------------------------------------------------------ //
+
+/**
+ * Pager with prev/next, an item-range + page-count readout, and a "jump to
+ * page" input. ``offset``/``limit`` are item-based; pages are derived.
+ */
+export function Pager({
+  total,
+  offset,
+  limit,
+  onChange,
+}: {
+  total: number;
+  offset: number;
+  limit: number;
+  onChange: (offset: number) => void;
+}) {
+  const { t } = useTranslation();
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const current = Math.floor(offset / limit) + 1;
+  const [draft, setDraft] = useState("");
+
+  const goPage = useCallback(
+    (page: number) => {
+      const clamped = Math.min(Math.max(1, page), pages);
+      onChange((clamped - 1) * limit);
+    },
+    [pages, limit, onChange],
+  );
+
+  function submitJump() {
+    const n = Number(draft.trim());
+    if (!Number.isNaN(n) && n >= 1) goPage(n);
+    setDraft("");
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        marginTop: 12,
+        flexWrap: "wrap",
+      }}
+    >
+      <Button
+        size="small"
+        appearance="subtle"
+        icon={<ChevronLeftRegular />}
+        disabled={offset === 0}
+        onClick={() => onChange(Math.max(0, offset - limit))}
+        aria-label={t("common.previous")}
+      />
+      <Button
+        size="small"
+        appearance="subtle"
+        icon={<ChevronRightRegular />}
+        disabled={offset + limit >= total}
+        onClick={() => onChange(offset + limit)}
+        aria-label={t("common.next")}
+      />
+      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        {total === 0
+          ? t("common.pagerEmpty")
+          : t("common.pagerRange")
+              .replace("{from}", String(offset + 1))
+              .replace("{to}", String(Math.min(offset + limit, total)))
+              .replace("{total}", String(total))}
+      </Text>
+      <span style={{ flex: 1 }} />
+      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        {t("common.pageOf")
+          .replace("{current}", String(current))
+          .replace("{pages}", String(pages))}
+      </Text>
+      <Input
+        size="small"
+        type="number"
+        value={draft}
+        placeholder={String(current)}
+        style={{ width: 84 }}
+        onChange={(_, d) => setDraft(d.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submitJump();
+        }}
+        aria-label={t("common.goToPage")}
+      />
+      <Button size="small" onClick={submitJump} disabled={!draft.trim()}>
+        {t("common.go")}
+      </Button>
     </div>
   );
 }

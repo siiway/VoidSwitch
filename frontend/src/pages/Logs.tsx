@@ -26,7 +26,9 @@ import {
   DismissRegular,
   EyeRegular,
   InfoRegular,
+  SearchRegular,
 } from "@fluentui/react-icons";
+import { makeStyles } from "@fluentui/react-components";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
@@ -44,13 +46,26 @@ import {
   ErrorText,
   Loading,
   PageHeader,
+  Pager,
   formatDate,
   useAsync,
   useConfirm,
   useNotify,
 } from "../components/ui";
 
-const PAGE = 50;
+const DEFAULT_PAGE = 50;
+
+// Briefly flash a row the user jumped to so it's easy to spot.
+const useHighlightStyles = makeStyles({
+  row: {
+    animationName: {
+      "0%": { backgroundColor: tokens.colorBrandBackground2 },
+      "100%": { backgroundColor: "transparent" },
+    },
+    animationDuration: "2.4s",
+    animationTimingFunction: "ease-out",
+  },
+});
 
 export function Logs() {
   const { t } = useTranslation();
@@ -58,6 +73,10 @@ export function Logs() {
   const { isStaff } = useAuth();
   const [tab, setTab] = useState<"requests" | "audit">("requests");
   const [refreshKey, setRefreshKey] = useState(0);
+  const config = useAsync<{ logs_page_size?: number }>(() =>
+    api.get("/api/auth/config"),
+  );
+  const pageSize = Math.max(1, config.data?.logs_page_size || DEFAULT_PAGE);
 
   useEffect(() => {
     if (!isStaff && tab === "audit") setTab("requests");
@@ -82,24 +101,68 @@ export function Logs() {
         {isStaff ? <Tab value="audit">{t("logs.audit" as TK)}</Tab> : null}
       </TabList>
       <div style={{ marginTop: 16 }}>
-        {tab === "requests" ? <RequestLogs refreshKey={refreshKey} /> : <AuditLogs refreshKey={refreshKey} />}
+        {tab === "requests" ? (
+          <RequestLogs refreshKey={refreshKey} pageSize={pageSize} />
+        ) : (
+          <AuditLogs refreshKey={refreshKey} pageSize={pageSize} />
+        )}
       </div>
     </div>
   );
 }
 
-function RequestLogs({ refreshKey }: { refreshKey: number }) {
+function RequestLogs({
+  refreshKey,
+  pageSize,
+}: {
+  refreshKey: number;
+  pageSize: number;
+}) {
   const { t: tr } = useTranslation();
   type TK = keyof Translations;
   const { isOwner } = useAuth();
+  const hl = useHighlightStyles();
+  const notify = useNotify();
   const [offset, setOffset] = useState(0);
+  const [q, setQ] = useState("");
+  const [goToId, setGoToId] = useState("");
+  const [highlightId, setHighlightId] = useState<number | null>(null);
   const [detailLog, setDetailLog] = useState<RequestLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [revealMode, setRevealMode] = useState(false);
   const logs = useAsync<Page<RequestLog>>(
-    () => api.get("/api/admin/logs/requests", { limit: PAGE, offset }),
-    [offset, refreshKey],
+    () =>
+      api.get("/api/admin/logs/requests", {
+        limit: pageSize,
+        offset,
+        q: q || undefined,
+      }),
+    [offset, refreshKey, pageSize, q],
   );
+
+  async function jumpToId() {
+    const id = Number(goToId.trim());
+    if (Number.isNaN(id) || id <= 0) return;
+    try {
+      const r = await api.get<{ offset: number; found: boolean }>(
+        "/api/admin/logs/requests/locate",
+        { id, q: q || undefined },
+      );
+      if (!r.found) {
+        notify(tr("logs.jumpNotFound" as TK), `#${id}`, "warning");
+        return;
+      }
+      setOffset(Math.floor(r.offset / pageSize) * pageSize);
+      setHighlightId(id);
+      window.setTimeout(() => setHighlightId(null), 2600);
+    } catch (e) {
+      notify(
+        tr("logs.jumpFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
+  }
 
   async function openDetail(r: RequestLog) {
     setDetailLoading(true);
@@ -122,9 +185,54 @@ function RequestLogs({ refreshKey }: { refreshKey: number }) {
 
   return (
     <>
-      <DataTable ariaLabel={tr("logs.requests" as TK)} minWidth={900}>
+      <div
+        style={{
+          marginBottom: 12,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "flex-end",
+        }}
+      >
+        <Input
+          contentBefore={<SearchRegular />}
+          aria-label={tr("logs.filterSearch" as TK)}
+          placeholder={tr("logs.requestSearch" as TK)}
+          value={q}
+          style={{ minWidth: 220 }}
+          onChange={(_, d) => {
+            setOffset(0);
+            setQ(d.value);
+          }}
+        />
+        <Input
+          aria-label={tr("logs.goToId" as TK)}
+          placeholder={tr("logs.goToId" as TK)}
+          value={goToId}
+          type="number"
+          style={{ minWidth: 120 }}
+          onChange={(_, d) => setGoToId(d.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void jumpToId();
+          }}
+        />
+        {q ? (
+          <Button
+            appearance="subtle"
+            icon={<DismissRegular />}
+            onClick={() => {
+              setOffset(0);
+              setQ("");
+            }}
+          >
+            {tr("logs.clearFilters" as TK)}
+          </Button>
+        ) : null}
+      </div>
+      <DataTable ariaLabel={tr("logs.requests" as TK)} minWidth={960}>
         <TableHeader>
           <TableRow>
+            <TableHeaderCell>{tr("logs.id" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.time" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.user" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.token" as TK)}</TableHeaderCell>
@@ -137,7 +245,18 @@ function RequestLogs({ refreshKey }: { refreshKey: number }) {
         </TableHeader>
         <TableBody>
           {data.items.map((r) => (
-            <TableRow key={r.id}>
+            <TableRow
+              key={r.id}
+              className={r.id === highlightId ? hl.row : undefined}
+            >
+              <TableCell
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                }}
+              >
+                {r.id}
+              </TableCell>
               <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                 {formatDate(r.ts)}
               </TableCell>
@@ -171,7 +290,12 @@ function RequestLogs({ refreshKey }: { refreshKey: number }) {
           ))}
         </TableBody>
       </DataTable>
-      <Pager total={data.total} offset={offset} onChange={setOffset} />
+      <Pager
+        total={data.total}
+        offset={offset}
+        limit={pageSize}
+        onChange={setOffset}
+      />
 
       {/* Detail modal */}
       <Dialog
@@ -319,15 +443,23 @@ const EMPTY_FILTERS: AuditFilters = {
   q: "",
 };
 
-function AuditLogs({ refreshKey }: { refreshKey: number }) {
+function AuditLogs({
+  refreshKey,
+  pageSize,
+}: {
+  refreshKey: number;
+  pageSize: number;
+}) {
   const { t: ta } = useTranslation();
   type TK = keyof Translations;
   const { isOwner } = useAuth();
   const confirm = useConfirm();
   const notify = useNotify();
+  const hl = useHighlightStyles();
   const [offset, setOffset] = useState(0);
   const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [goToId, setGoToId] = useState("");
+  const [highlightId, setHighlightId] = useState<number | null>(null);
   const [revealed, setRevealed] = useState<{
     action: string;
     sensitive: unknown;
@@ -342,7 +474,7 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
   const logs = useAsync<Page<AuditLog>>(
     () =>
       api.get("/api/admin/logs/audit", {
-        limit: PAGE,
+        limit: pageSize,
         offset,
         scope: filters.scope || undefined,
         action: filters.action || undefined,
@@ -358,8 +490,40 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
       filters.actor_sub,
       filters.q,
       refreshKey,
+      pageSize,
     ],
   );
+
+  async function jumpToId() {
+    const id = Number(goToId.trim());
+    if (Number.isNaN(id) || id <= 0) return;
+    try {
+      const r = await api.get<{ offset: number; found: boolean }>(
+        "/api/admin/logs/audit/locate",
+        {
+          id,
+          scope: filters.scope || undefined,
+          action: filters.action || undefined,
+          target_type: filters.target_type || undefined,
+          actor_sub: filters.actor_sub || undefined,
+          q: filters.q || undefined,
+        },
+      );
+      if (!r.found) {
+        notify(ta("logs.jumpNotFound" as TK), `#${id}`, "warning");
+        return;
+      }
+      setOffset(Math.floor(r.offset / pageSize) * pageSize);
+      setHighlightId(id);
+      window.setTimeout(() => setHighlightId(null), 2600);
+    } catch (e) {
+      notify(
+        ta("logs.jumpFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
+  }
 
   function setFilter<K extends keyof AuditFilters>(
     key: K,
@@ -493,13 +657,7 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
           style={{ minWidth: 120 }}
           onChange={(_, d) => setGoToId(d.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && goToId.trim()) {
-              const id = Number(goToId.trim());
-              if (!Number.isNaN(id) && id > 0) {
-                const page = Math.floor((id - 1) / PAGE) * PAGE;
-                setOffset(page);
-              }
-            }
+            if (e.key === "Enter") void jumpToId();
           }}
         />
         {hasFilters ? (
@@ -539,7 +697,10 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
             </TableHeader>
             <TableBody>
               {data.items.map((a) => (
-                <TableRow key={a.id}>
+                <TableRow
+                  key={a.id}
+                  className={a.id === highlightId ? hl.row : undefined}
+                >
                   <TableCell style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace" }}>
                     {a.id}
                   </TableCell>
@@ -601,7 +762,12 @@ function AuditLogs({ refreshKey }: { refreshKey: number }) {
               ))}
             </TableBody>
           </DataTable>
-          <Pager total={data.total} offset={offset} onChange={setOffset} />
+          <Pager
+            total={data.total}
+            offset={offset}
+            limit={pageSize}
+            onChange={setOffset}
+          />
         </>
       )}
 
@@ -670,36 +836,3 @@ function DetailCell({ detail }: { detail: Record<string, unknown> }) {
   );
 }
 
-function Pager({
-  total,
-  offset,
-  onChange,
-}: {
-  total: number;
-  offset: number;
-  onChange: (n: number) => void;
-}) {
-  return (
-    <div
-      style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}
-    >
-      <Button
-        size="small"
-        disabled={offset === 0}
-        onClick={() => onChange(Math.max(0, offset - PAGE))}
-      >
-        Previous
-      </Button>
-      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-        {offset + 1}–{Math.min(offset + PAGE, total)} of {total}
-      </Text>
-      <Button
-        size="small"
-        disabled={offset + PAGE >= total}
-        onClick={() => onChange(offset + PAGE)}
-      >
-        Next
-      </Button>
-    </div>
-  );
-}

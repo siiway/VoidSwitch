@@ -14,6 +14,7 @@ import {
   Option,
   Text,
   Textarea,
+  Tooltip,
   makeStyles,
   shorthands,
   tokens,
@@ -60,8 +61,26 @@ const useStyles = makeStyles({
     gap: "8px",
   },
   title: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 },
-  desc: { color: tokens.colorNeutralForeground2, minHeight: "18px" },
-  badges: { display: "flex", flexWrap: "wrap", gap: "6px" },
+  desc: {
+    color: tokens.colorNeutralForeground2,
+    minHeight: "18px",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+  },
+  badges: { display: "flex", flexWrap: "wrap", gap: "6px", minWidth: 0 },
+  mapPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    maxWidth: "100%",
+    minWidth: 0,
+  },
+  mapTeam: {
+    maxWidth: "180px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   mapRow: {
     display: "flex",
     alignItems: "flex-end",
@@ -231,29 +250,44 @@ export function RoleGroups() {
                   </Text>
                 ) : (
                   g.mappings.map((m) => (
-                    <Badge key={m.id} appearance="outline" color="informative">
-                      {m.team_id} ≥ {m.min_role}
-                    </Badge>
+                    <span key={m.id} className={styles.mapPill}>
+                      <Tooltip content={m.team_id} relationship="label">
+                        <Badge
+                          appearance="outline"
+                          color="informative"
+                          className={styles.mapTeam}
+                        >
+                          {m.team_id}
+                        </Badge>
+                      </Tooltip>
+                      <Badge appearance="tint" color="brand">
+                        {m.min_role}
+                      </Badge>
+                    </span>
                   ))
                 )}
               </div>
 
               {!g.builtin && (
                 <div className={styles.actions}>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    icon={<EditRegular />}
-                    onClick={() => openEdit(g)}
-                  >
-                    {t("common.edit" as TK)}
-                  </Button>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    icon={<DeleteRegular />}
-                    onClick={() => remove(g)}
-                  />
+                  <Tooltip content={t("common.edit" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<EditRegular />}
+                      onClick={() => openEdit(g)}
+                      aria-label={t("common.edit" as TK)}
+                    />
+                  </Tooltip>
+                  <Tooltip content={t("common.delete" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<DeleteRegular />}
+                      onClick={() => remove(g)}
+                      aria-label={t("common.delete" as TK)}
+                    />
+                  </Tooltip>
                 </div>
               )}
             </Card>

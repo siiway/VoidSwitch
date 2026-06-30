@@ -87,6 +87,9 @@ export function Settings() {
       debug_log_retention_days: t("settings.debugLogRetentionDays" as TK),
       log_cleanup_enabled: t("settings.logCleanupEnabled" as TK),
       log_cleanup_interval_seconds: t("settings.logCleanupInterval" as TK),
+      logs_page_size: t("settings.logsPageSize" as TK),
+      proxy_switching_enabled: t("settings.proxySwitchingEnabled" as TK),
+      static_proxy_url: t("settings.staticProxyUrl" as TK),
     }),
     [t],
   );

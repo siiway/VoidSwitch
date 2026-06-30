@@ -15,6 +15,12 @@ const en = {
     enable: "Enable",
     previous: "Previous",
     next: "Next",
+    refresh: "Refresh",
+    go: "Go",
+    goToPage: "Go to page",
+    pageOf: "Page {current} / {pages}",
+    pagerRange: "{from}–{to} of {total}",
+    pagerEmpty: "No entries",
     noData: "No data yet.",
     unknown: "Unknown",
     enabled: "enabled",
@@ -116,6 +122,8 @@ const en = {
     actions: "Actions",
     enabled: "enabled",
     disabled: "disabled",
+    clickToEnable: "Click to enable",
+    clickToDisable: "Click to disable",
     adapterType: "Adapter type",
     modelsHint: "Models (one per line; use * for any)",
     modelRoutes: "Model routes (alias → upstream, key pool)",
@@ -473,6 +481,11 @@ const en = {
     debugLogRetentionDays: "Debug log detail retention (days, 0 = keep forever)",
     logCleanupEnabled: "Auto-clean old logs",
     logCleanupInterval: "Log cleanup interval (s)",
+    logsPageSize: "Logs page size (rows per page)",
+    proxySwitchingEnabled:
+      "Proxy switching enabled (off = always use the static proxy below, no failover)",
+    staticProxyUrl:
+      "Static proxy URL (used when switching is off; blank = direct / env HTTP(S)_PROXY)",
   },
   logs: {
     title: "Logs",
@@ -513,6 +526,9 @@ const en = {
     revealFailed: "Reveal failed",
     id: "ID",
     goToId: "Go to ID…",
+    requestSearch: "Search model / user / provider / error…",
+    jumpNotFound: "No entry with that ID under the current filters",
+    jumpFailed: "Jump failed",
     viewDetail: "View detail",
     requestDetailTitle: "Request #{id}",
     key: "Key",
@@ -604,6 +620,14 @@ const en = {
     macosLinux: "macOS / Linux",
     windowsPs: "Windows (PowerShell)",
     manual: "Manual setup (no script)",
+    manualIntro:
+      "Prefer the one-line installer above — it also wires up the VoidSwitch plugin (reasoning effort, fast mode, thinking, 1M context). If you can't run a script, paste this complete <code>opencode.json</code> instead: every available model is pre-listed with its tuned config.",
+    manualStep1:
+      "1. Save the config above — leave out <code>apiKey</code> so OpenCode prompts for it.",
+    manualStep2:
+      "2. Run <code>/connect</code>; <strong>VoidSwitch</strong> appears in the provider list — select it.",
+    manualStep3:
+      "3. Paste a <code>vs-…</code> token at the <em>API key</em> prompt, then pick a model.",
     createToken: "Create token",
     newTokenName: "New token name",
     name: "Name",

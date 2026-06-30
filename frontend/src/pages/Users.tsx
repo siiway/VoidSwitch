@@ -8,8 +8,13 @@ import {
   TableHeader,
   TableHeaderCell,
   TableRow,
+  Tooltip,
   tokens,
 } from "@fluentui/react-components";
+import {
+  CheckmarkCircleRegular,
+  ProhibitedRegular,
+} from "@fluentui/react-icons";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -142,14 +147,29 @@ export function Users() {
                   {formatDate(u.last_login_at)}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    disabled={u.id === me?.id || !isOwner}
-                    onClick={() => toggle(u)}
+                  <Tooltip
+                    content={
+                      u.enabled
+                        ? t("common.disable" as TK)
+                        : t("common.enable" as TK)
+                    }
+                    relationship="label"
                   >
-                    {u.enabled ? t("common.disable" as TK) : t("common.enable" as TK)}
-                  </Button>
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={
+                        u.enabled ? <ProhibitedRegular /> : <CheckmarkCircleRegular />
+                      }
+                      disabled={u.id === me?.id || !isOwner}
+                      onClick={() => toggle(u)}
+                      aria-label={
+                        u.enabled
+                          ? t("common.disable" as TK)
+                          : t("common.enable" as TK)
+                      }
+                    />
+                  </Tooltip>
                 </TableCell>
               </TableRow>
             ))}

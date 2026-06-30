@@ -39,6 +39,10 @@ async def auth_config(settings: Settings = Depends(get_settings)) -> dict[str, o
             "opencode_default_model", "claude-opus-4-8"
         ),
         "opencode_small_model": settings_store.get_str("opencode_small_model", ""),
+        # Non-secret: drives the Logs tables' page size. Exposed here (not the
+        # staff-only settings endpoint) so members can browse their own logs with
+        # the same pagination.
+        "logs_page_size": settings_store.get_int("logs_page_size", 50),
     }
 
 

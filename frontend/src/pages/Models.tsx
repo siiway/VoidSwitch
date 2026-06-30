@@ -518,39 +518,46 @@ export function Models() {
 
                 {isStaff && (
                   <div className={styles.actions}>
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<EditRegular />}
-                      onClick={() => openEdit(m)}
-                    >
-                      {t("common.edit" as TK)}
-                    </Button>
-                    <Tooltip
-                      content={t("models.accessTooltip" as TK)}
-                      relationship="label"
-                    >
+                    <Tooltip content={t("common.edit" as TK)} relationship="label">
                       <Button
                         size="small"
                         appearance="subtle"
-                        icon={<PeopleTeamRegular />}
-                        onClick={() => openGroupEdit(m)}
-                      >
-                        {m.allowed_role_group_ids.length > 0
+                        icon={<EditRegular />}
+                        onClick={() => openEdit(m)}
+                        aria-label={t("common.edit" as TK)}
+                      />
+                    </Tooltip>
+                    <Tooltip
+                      content={
+                        m.allowed_role_group_ids.length > 0
                           ? t("models.accessCount" as TK).replace(
                               "{count}",
                               String(m.allowed_role_group_ids.length),
                             )
-                          : t("models.access" as TK)}
-                      </Button>
-                    </Tooltip>
-                    {m.registered && (
+                          : t("models.accessTooltip" as TK)
+                      }
+                      relationship="label"
+                    >
                       <Button
                         size="small"
-                        appearance="subtle"
-                        icon={<DeleteRegular />}
-                        onClick={() => remove(m)}
+                        appearance={
+                          m.allowed_role_group_ids.length > 0 ? "primary" : "subtle"
+                        }
+                        icon={<PeopleTeamRegular />}
+                        onClick={() => openGroupEdit(m)}
+                        aria-label={t("models.access" as TK)}
                       />
+                    </Tooltip>
+                    {m.registered && (
+                      <Tooltip content={t("common.delete" as TK)} relationship="label">
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<DeleteRegular />}
+                          onClick={() => remove(m)}
+                          aria-label={t("common.delete" as TK)}
+                        />
+                      </Tooltip>
                     )}
                   </div>
                 )}

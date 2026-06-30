@@ -44,6 +44,7 @@ from voidswitch.services.selector import (
     routes_for_provider,
     select_keys,
     select_providers,
+    static_routes,
 )
 
 log = get_logger("dispatcher")
@@ -339,11 +340,24 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                 ),
                 model=req.model,
             )
-        proxy_pool = await active_proxies(session)
+        # Proxy switching off (external proxy like mihomo handles egress): every
+        # request goes through a single fixed route and no proxy is ever disabled.
+        proxy_switching = settings_store.get_bool("proxy_switching_enabled", True)
+        fixed_routes = (
+            None
+            if proxy_switching
+            else static_routes(settings_store.get_str("static_proxy_url", ""))
+        )
+        proxy_pool = await active_proxies(session) if proxy_switching else []
 
         for provider in providers:
-            # Per-provider outbound routes — honours proxy_mode (all/direct/selected).
-            routes = routes_for_provider(provider, proxy_pool)
+            # Per-provider outbound routes — honours proxy_mode (all/direct/selected),
+            # unless proxy switching is disabled (then a single fixed route is used).
+            routes = (
+                fixed_routes
+                if fixed_routes is not None
+                else routes_for_provider(provider, proxy_pool)
+            )
             if not routes:
                 last_error = (
                     f"provider '{provider.name}': no available proxy (mode={provider.proxy_mode})"

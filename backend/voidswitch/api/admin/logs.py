@@ -78,6 +78,45 @@ async def audit_logs(
     )
 
 
+@router.get("/audit/locate")
+async def audit_locate(
+    id: int = Query(..., ge=1, description="Audit entry id to locate."),
+    action: str | None = Query(default=None),
+    scope: str | None = Query(default=None),
+    actor_sub: str | None = Query(default=None),
+    target_type: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_staff),
+) -> dict[str, object]:
+    """Return the zero-based offset of audit entry ``id`` under the given filters.
+
+    The list is ordered by ``id`` descending, so the offset is the number of
+    matching rows with a larger id. Gap-safe (survives deletions) — used by the
+    dashboard's "jump to id" so it lands on the right page regardless of order.
+    """
+    filters = []
+    if action:
+        filters.append(AuditLog.action == action)
+    if scope:
+        filters.append(AuditLog.scope == scope)
+    if actor_sub:
+        filters.append(AuditLog.actor_sub == actor_sub)
+    if target_type:
+        filters.append(AuditLog.target_type == target_type)
+    if q:
+        filters.append(AuditLog.actor_name.ilike(f"%{q}%"))
+
+    exists_stmt = select(func.count(AuditLog.id)).where(AuditLog.id == id)
+    before_stmt = select(func.count(AuditLog.id)).where(AuditLog.id > id)
+    for clause in filters:
+        exists_stmt = exists_stmt.where(clause)
+        before_stmt = before_stmt.where(clause)
+    found = (await session.execute(exists_stmt)).scalar_one() > 0
+    offset = int((await session.execute(before_stmt)).scalar_one())
+    return {"id": id, "offset": offset, "found": found}
+
+
 @router.get("/audit/filters", response_model=AuditFilterOptions)
 async def audit_filter_options(
     session: AsyncSession = Depends(get_session),
@@ -166,27 +205,42 @@ async def reveal_audit_sensitive(
     return {"id": audit_id, "action": entry.action, "sensitive": payload}
 
 
+def _request_log_filters(user: User, success: bool | None, model: str | None, q: str | None):
+    """Shared WHERE clauses for the request-log list and locate endpoints."""
+    clauses = []
+    if not is_staff(user):
+        # Members may browse the request log, but only their own traffic.
+        clauses.append(RequestLog.user_sub == user.sub)
+    if success is not None:
+        clauses.append(RequestLog.success.is_(success))
+    if model:
+        clauses.append(RequestLog.model == model)
+    if q:
+        like = f"%{q}%"
+        clauses.append(
+            RequestLog.model.ilike(like)
+            | RequestLog.user_sub.ilike(like)
+            | RequestLog.provider_name.ilike(like)
+            | RequestLog.error.ilike(like)
+        )
+    return clauses
+
+
 @router.get("/requests", response_model=Page[RequestLogOut])
 async def request_logs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     success: bool | None = None,
     model: str | None = None,
+    q: str | None = Query(default=None, description="Free-text match on model/user/provider."),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> Page[RequestLogOut]:
     stmt = select(RequestLog).order_by(RequestLog.id.desc())
     count_stmt = select(func.count(RequestLog.id))
-    if not is_staff(user):
-        # Members may browse the request log, but only their own traffic.
-        stmt = stmt.where(RequestLog.user_sub == user.sub)
-        count_stmt = count_stmt.where(RequestLog.user_sub == user.sub)
-    if success is not None:
-        stmt = stmt.where(RequestLog.success.is_(success))
-        count_stmt = count_stmt.where(RequestLog.success.is_(success))
-    if model:
-        stmt = stmt.where(RequestLog.model == model)
-        count_stmt = count_stmt.where(RequestLog.model == model)
+    for clause in _request_log_filters(user, success, model, q):
+        stmt = stmt.where(clause)
+        count_stmt = count_stmt.where(clause)
     total = (await session.execute(count_stmt)).scalar_one()
     rows = (await session.execute(stmt.limit(limit).offset(offset))).scalars().all()
 
@@ -223,6 +277,27 @@ async def request_logs(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/requests/locate")
+async def request_locate(
+    id: int = Query(..., ge=1, description="Request log id to locate."),
+    success: bool | None = None,
+    model: str | None = None,
+    q: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    """Zero-based offset of request log ``id`` under the given filters (id desc)."""
+    clauses = _request_log_filters(user, success, model, q)
+    exists_stmt = select(func.count(RequestLog.id)).where(RequestLog.id == id)
+    before_stmt = select(func.count(RequestLog.id)).where(RequestLog.id > id)
+    for clause in clauses:
+        exists_stmt = exists_stmt.where(clause)
+        before_stmt = before_stmt.where(clause)
+    found = (await session.execute(exists_stmt)).scalar_one() > 0
+    offset = int((await session.execute(before_stmt)).scalar_one())
+    return {"id": id, "offset": offset, "found": found}
 
 
 def _redact_key_preview(preview: str | None) -> str | None:

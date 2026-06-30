@@ -61,7 +61,18 @@ interface Usage {
 
 interface ModelOption {
   id: string;
+  display_name?: string;
   owned_by?: string;
+}
+
+// Rank a model against a search query: id matches outrank custom-name matches,
+// which outrank provider matches. Returns -1 when nothing matches.
+function rankModel(m: ModelOption, query: string): number {
+  if (!query) return 0;
+  if (m.id.toLowerCase().includes(query)) return 0;
+  if ((m.display_name ?? "").toLowerCase().includes(query)) return 1;
+  if ((m.owned_by ?? "").toLowerCase().includes(query)) return 2;
+  return -1;
 }
 
 export function Chat() {
@@ -348,13 +359,15 @@ export function Chat() {
           onChange={(e) => setModel((e.target as HTMLInputElement).value)}
         >
           {models
-            .filter((m) =>
-              model.toLowerCase()
-                ? m.id.toLowerCase().includes(model.toLowerCase())
-                : true,
+            .map((m) => ({ m, rank: rankModel(m, model.trim().toLowerCase()) }))
+            .filter((x) => x.rank >= 0)
+            .sort(
+              (a, b) =>
+                a.rank - b.rank || a.m.id.localeCompare(b.m.id),
             )
-            .map((m) => (
+            .map(({ m }) => (
               <Option key={m.id} value={m.id} text={m.id}>
+                {m.display_name ? `${m.display_name}  ·  ` : ""}
                 {m.id}
                 {m.owned_by ? `  ·  ${m.owned_by}` : ""}
               </Option>

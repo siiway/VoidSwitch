@@ -27,7 +27,7 @@ import { useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
 import { api, API_BASE } from "../api/client";
-import type { VoidToken, VoidTokenWithSecret } from "../api/types";
+import type { ModelEntry, VoidToken, VoidTokenWithSecret } from "../api/types";
 import {
   ErrorText,
   DataTable,
@@ -53,21 +53,42 @@ export OPENAI_API_KEY=vs-...`;
 const CLAUDE_SNIPPET = `export ANTHROPIC_BASE_URL=${API_BASE}
 export ANTHROPIC_AUTH_TOKEN=vs-...`;
 
-const OPENCODE_SNIPPET = (model: string, smallModel: string) => `// ~/.config/opencode/opencode.json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "model": "voidswitch/${model}",${
-    smallModel ? `\n  "small_model": "voidswitch/${smallModel}",` : ""
+// Build the complete manual opencode.json from the live catalog: every served
+// model is listed with its per-model OpenCode config mixed in, so the user gets
+// a ready-to-paste config without running the installer.
+function buildOpencodeConfig(
+  model: string,
+  smallModel: string,
+  models: ModelEntry[],
+): string {
+  const modelMap: Record<string, unknown> = {};
+  for (const m of models) {
+    if (!m.served || !m.enabled) continue;
+    modelMap[m.public_id] =
+      m.opencode_config && Object.keys(m.opencode_config).length
+        ? m.opencode_config
+        : {};
   }
-  "provider": {
-    "voidswitch": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "VoidSwitch",
-      "options": { "baseURL": "${API_BASE}/v1" },
-      "models": { "${model}": {}${smallModel && smallModel !== model ? `, "${smallModel}": {}` : ""} }
-    }
-  }
-}`;
+  // Guarantee the selected default + small models are present even if the
+  // catalog hasn't been synced yet.
+  if (model && !(model in modelMap)) modelMap[model] = {};
+  if (smallModel && !(smallModel in modelMap)) modelMap[smallModel] = {};
+
+  const config: Record<string, unknown> = {
+    $schema: "https://opencode.ai/config.json",
+    model: `voidswitch/${model}`,
+    ...(smallModel ? { small_model: `voidswitch/${smallModel}` } : {}),
+    provider: {
+      voidswitch: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "VoidSwitch",
+        options: { baseURL: `${API_BASE}/v1` },
+        models: modelMap,
+      },
+    },
+  };
+  return `// ~/.config/opencode/opencode.json\n${JSON.stringify(config, null, 2)}`;
+}
 
 /** A monospace code block with a one-click copy button. */
 function CodeBlock({ code }: { code: string }) {
@@ -134,12 +155,19 @@ export function MyToken() {
     opencode_default_model?: string;
     opencode_small_model?: string;
   }>(() => api.get("/api/auth/config"));
+  // Catalog drives the manual OpenCode snippet (each model + its tuned config).
+  const models = useAsync<ModelEntry[]>(() => api.get("/api/models"));
   const [name, setName] = useState("default");
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [client, setClient] = useState("openai");
 
   const ocModel = config.data?.opencode_default_model || "claude-opus-4-8";
   const ocSmallModel = config.data?.opencode_small_model || "";
+  const opencodeConfig = buildOpencodeConfig(
+    ocModel,
+    ocSmallModel,
+    models.data ?? [],
+  );
 
   async function create() {
     try {
@@ -201,6 +229,7 @@ export function MyToken() {
           tokensList.reload();
           usage.reload();
           config.reload();
+          models.reload();
         }}
       />
 
@@ -299,7 +328,17 @@ export function MyToken() {
                   marginTop: 10,
                 }}
               >
-                <CodeBlock code={OPENCODE_SNIPPET(ocModel, ocSmallModel)} />
+                <Text
+                  size={200}
+                  block
+                  style={{ color: tokens.colorNeutralForeground3 }}
+                >
+                  <Trans
+                    i18nKey="myToken.manualIntro"
+                    components={{ code: <code /> }}
+                  />
+                </Text>
+                <CodeBlock code={opencodeConfig} />
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 4 }}
                 >
@@ -308,25 +347,27 @@ export function MyToken() {
                     block
                     style={{ color: tokens.colorNeutralForeground3 }}
                   >
-                    1. Save the config above — leave out <code>apiKey</code> so
-                    OpenCode stores it for you.
+                    <Trans i18nKey="myToken.manualStep1" components={{ code: <code /> }} />
                   </Text>
                   <Text
                     size={200}
                     block
                     style={{ color: tokens.colorNeutralForeground3 }}
                   >
-                    2. Run <code>/connect</code>; <strong>VoidSwitch</strong>{" "}
-                    appears in the provider list (because you saved it) — select
-                    it.
+                    <Trans
+                      i18nKey="myToken.manualStep2"
+                      components={{ code: <code />, strong: <strong /> }}
+                    />
                   </Text>
                   <Text
                     size={200}
                     block
                     style={{ color: tokens.colorNeutralForeground3 }}
                   >
-                    3. Paste a <code>vs-…</code> token at the <em>API key</em>{" "}
-                    prompt, then pick a model.
+                    <Trans
+                      i18nKey="myToken.manualStep3"
+                      components={{ code: <code />, em: <em /> }}
+                    />
                   </Text>
                 </div>
               </div>
@@ -409,14 +450,15 @@ export function MyToken() {
                   {formatDate(token.last_used_at)}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    icon={<ArrowSyncRegular />}
-                    onClick={() => rotate(token)}
-                  >
-                    {t("myToken.rotate" as TK)}
-                  </Button>
+                  <Tooltip content={t("myToken.rotate" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<ArrowSyncRegular />}
+                      onClick={() => rotate(token)}
+                      aria-label={t("myToken.rotate" as TK)}
+                    />
+                  </Tooltip>
                   <Tooltip
                     content={token.debug_enabled ? t("tokens.debugDisable" as TK) : t("tokens.debugEnable" as TK)}
                     relationship="label"
@@ -426,14 +468,18 @@ export function MyToken() {
                       appearance={token.debug_enabled ? "primary" : "subtle"}
                       icon={<BugRegular />}
                       onClick={() => toggleDebug(token)}
+                      aria-label={t("tokens.debugEnable" as TK)}
                     />
                   </Tooltip>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    icon={<DeleteRegular />}
-                    onClick={() => remove(token)}
-                  />
+                  <Tooltip content={t("common.delete" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<DeleteRegular />}
+                      onClick={() => remove(token)}
+                      aria-label={t("common.delete" as TK)}
+                    />
+                  </Tooltip>
                 </TableCell>
               </TableRow>
             ))}

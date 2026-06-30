@@ -7,6 +7,7 @@ and recently-failed resources drift to the back of the queue.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import random
 import time
 from fnmatch import fnmatch
@@ -372,6 +373,38 @@ def routes_for_provider(
     if not proxies:
         return [(Route(), None)]
     return _routes(proxies)
+
+
+# Process HTTP(S) proxy env vars consulted (in order) when proxy switching is
+# off and no explicit static proxy URL is configured.
+_ENV_PROXY_VARS = (
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+)
+
+
+def _env_proxy_url() -> str | None:
+    for var in _ENV_PROXY_VARS:
+        value = os.environ.get(var)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def static_routes(static_proxy_url: str) -> list[tuple[Route, Proxy | None]]:
+    """The single fixed outbound route used when proxy switching is disabled.
+
+    Uses ``static_proxy_url`` when set; otherwise falls back to the process
+    HTTP(S)_PROXY/ALL_PROXY env vars, and finally a direct connection. The
+    ``Proxy`` element is always ``None`` so the dispatcher never disables a DB
+    proxy row on failure (there is nothing to rotate to).
+    """
+    url = (static_proxy_url or "").strip() or _env_proxy_url()
+    return [(Route(proxy_url=url or None), None)]
 
 
 async def select_routes(
