@@ -177,6 +177,15 @@ export interface RoleGroup {
   updated_at: string;
 }
 
+export interface RoleGroupMember {
+  user_id: number;
+  name: string;
+  email?: string | null;
+  role: Role;
+  source: "auto" | "manual";
+  enabled: boolean;
+}
+
 export interface ModelSyncResult {
   added: number;
   total: number;

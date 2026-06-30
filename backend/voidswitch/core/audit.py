@@ -109,6 +109,7 @@ class AuditAction(StrEnum):
     ROLE_GROUP_CREATE = "role_group.create"
     ROLE_GROUP_UPDATE = "role_group.update"
     ROLE_GROUP_DELETE = "role_group.delete"
+    ROLE_GROUP_MEMBER_REMOVE = "role_group.member_remove"
 
     # Audit / housekeeping
     AUDIT_REVEAL = "audit.reveal"

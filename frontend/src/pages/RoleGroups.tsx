@@ -23,13 +23,19 @@ import {
   AddRegular,
   DeleteRegular,
   EditRegular,
+  PeopleListRegular,
   PeopleTeamRegular,
   ShieldRegular,
 } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
-import type { RoleGroup, RoleGroupMappingIn, TeamRole } from "../api/types";
+import type {
+  RoleGroup,
+  RoleGroupMappingIn,
+  RoleGroupMember,
+  TeamRole,
+} from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
   ErrorText,
@@ -108,6 +114,61 @@ export function RoleGroups() {
 
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Member list / temporary removal (staff-only emergency access revocation).
+  const [membersFor, setMembersFor] = useState<RoleGroup | null>(null);
+  const [members, setMembers] = useState<RoleGroupMember[] | null>(null);
+  const [membersLoading, setMembersLoading] = useState(false);
+
+  async function openMembers(g: RoleGroup) {
+    setMembersFor(g);
+    setMembers(null);
+    setMembersLoading(true);
+    try {
+      const list = await api.get<RoleGroupMember[]>(
+        `/api/admin/role-groups/${g.id}/members`,
+      );
+      setMembers(list);
+    } catch (e) {
+      notify(
+        t("common.loading" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+      setMembers([]);
+    } finally {
+      setMembersLoading(false);
+    }
+  }
+
+  async function removeMember(m: RoleGroupMember) {
+    if (!membersFor) return;
+    const ok = await confirm({
+      title: t("roleGroups.removeMemberTitle" as TK),
+      message: t("roleGroups.removeMemberMsg" as TK)
+        .replace("{user}", m.name)
+        .replace("{group}", membersFor.name),
+      confirmLabel: t("roleGroups.removeMember" as TK),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.del(
+        `/api/admin/role-groups/${membersFor.id}/members/${m.user_id}`,
+      );
+      notify(t("roleGroups.memberRemoved" as TK), m.name, "success");
+      setMembers((prev) =>
+        prev ? prev.filter((x) => x.user_id !== m.user_id) : prev,
+      );
+      groups.reload();
+    } catch (e) {
+      notify(
+        t("common.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
+  }
 
   function openNew() {
     setEdit({ id: null, name: "", description: "", mappings: [] });
@@ -270,6 +331,21 @@ export function RoleGroups() {
 
               {!g.builtin && (
                 <div className={styles.actions}>
+                  <Tooltip
+                    content={t("roleGroups.members" as TK).replace(
+                      "{count}",
+                      String(g.member_count),
+                    )}
+                    relationship="label"
+                  >
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<PeopleListRegular />}
+                      onClick={() => openMembers(g)}
+                      aria-label={t("roleGroups.viewMembers" as TK)}
+                    />
+                  </Tooltip>
                   <Tooltip content={t("common.edit" as TK)} relationship="label">
                     <Button
                       size="small"
@@ -373,6 +449,86 @@ export function RoleGroups() {
               </Button>
               <Button appearance="primary" disabled={saving} onClick={save}>
                 {t("common.save" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={membersFor !== null}
+        onOpenChange={(_, d) => {
+          if (!d.open) {
+            setMembersFor(null);
+            setMembers(null);
+          }
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>
+              {t("roleGroups.membersTitle" as TK).replace(
+                "{name}",
+                membersFor?.name ?? "",
+              )}
+            </DialogTitle>
+            <DialogContent
+              style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 8 }}
+            >
+              <Text size={200} className={styles.dim}>
+                {t("roleGroups.membersHelp" as TK)}
+              </Text>
+              {membersLoading ? (
+                <Text size={200} className={styles.dim}>
+                  {t("common.loading" as TK)}
+                </Text>
+              ) : !members || members.length === 0 ? (
+                <Text size={200} className={styles.dim}>
+                  {t("roleGroups.noMembers" as TK)}
+                </Text>
+              ) : (
+                members.map((m) => (
+                  <div
+                    key={m.user_id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      <Text size={200} truncate wrap={false}>
+                        {m.name}
+                      </Text>
+                      {!m.enabled && (
+                        <Badge appearance="tint" color="danger" size="small">
+                          {t("common.disabled" as TK)}
+                        </Badge>
+                      )}
+                      <Badge appearance="outline" size="small">
+                        {m.source}
+                      </Badge>
+                    </div>
+                    <Tooltip
+                      content={t("roleGroups.removeMember" as TK)}
+                      relationship="label"
+                    >
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<DeleteRegular />}
+                        onClick={() => removeMember(m)}
+                        aria-label={t("roleGroups.removeMember" as TK)}
+                      />
+                    </Tooltip>
+                  </div>
+                ))
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="primary" onClick={() => setMembersFor(null)}>
+                {t("common.close" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

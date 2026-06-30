@@ -22,6 +22,7 @@ from voidswitch.models.db import RoleGroup, RoleGroupMapping, RoleGroupMembershi
 from voidswitch.models.schemas import (
     RoleGroupCreate,
     RoleGroupMappingOut,
+    RoleGroupMemberOut,
     RoleGroupOut,
     RoleGroupUpdate,
 )
@@ -209,6 +210,107 @@ async def update_role_group(
         )
     counts = await _member_counts(session)
     return _to_out(group, counts.get(group.id, 0))
+
+
+@router.get("/{group_id}/members", response_model=list[RoleGroupMemberOut])
+async def list_role_group_members(
+    group_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_staff),
+) -> list[RoleGroupMemberOut]:
+    """List the members of a custom role group.
+
+    The built-in moderator group has no stored members (membership is derived
+    from the user's role), so it cannot be listed here.
+    """
+    group = await session.get(RoleGroup, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Role group not found.")
+    if group.builtin:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "The built-in moderator group has no stored members "
+            "(membership comes from the user's role).",
+        )
+    rows = (
+        await session.execute(
+            select(RoleGroupMembership, User)
+            .join(User, User.id == RoleGroupMembership.user_id)
+            .where(RoleGroupMembership.role_group_id == group_id)
+            .order_by(User.id)
+        )
+    ).all()
+    out: list[RoleGroupMemberOut] = []
+    for membership, user in rows:
+        label = user.username or user.name or user.email or user.sub
+        out.append(
+            RoleGroupMemberOut(
+                user_id=user.id,
+                name=f"{label}#{user.id}",
+                email=user.email,
+                role=user.role,
+                source=membership.source,
+                enabled=user.enabled,
+            )
+        )
+    return out
+
+
+@router.delete(
+    "/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def remove_role_group_member(
+    group_id: int,
+    user_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    actor: User = Depends(require_staff),
+) -> None:
+    """Temporarily remove a user from a role group.
+
+    Cuts the user's access to that group's models immediately — useful when an
+    account can't be disabled right away but its access must be revoked now. The
+    removal is *temporary*: an ``auto`` membership is re-granted at the user's
+    next login if a team mapping still matches. Not available for the built-in
+    moderator group.
+    """
+    group = await session.get(RoleGroup, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Role group not found.")
+    if group.builtin:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Cannot remove members from the built-in moderator group "
+            "(it is derived from the user's role — change the role instead).",
+        )
+    membership = (
+        await session.execute(
+            select(RoleGroupMembership).where(
+                RoleGroupMembership.role_group_id == group_id,
+                RoleGroupMembership.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User is not in this role group.")
+    target = await session.get(User, user_id)
+    await session.delete(membership)
+    await record_audit(
+        session,
+        action=AuditAction.ROLE_GROUP_MEMBER_REMOVE,
+        actor_sub=actor.sub,
+        actor_name=actor_display_name(actor),
+        target_type="role_group",
+        target_id=group_id,
+        detail={
+            "group": group.name,
+            "user_id": user_id,
+            "user": actor_display_name(target) if target is not None else str(user_id),
+            "was_source": membership.source,
+            "temporary": True,
+        },
+        ip=request.client.host if request.client else None,
+    )
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)

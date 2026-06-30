@@ -377,6 +377,16 @@ const en = {
     deleteTitle: "Delete role group",
     deleteMsg:
       'Delete role group "{name}"? Members lose it and any model that only allowed this group becomes moderator-only.',
+    viewMembers: "View members",
+    membersTitle: 'Members · {name}',
+    membersHelp:
+      "Temporarily remove a member to cut their model access now (e.g. when the account can't be disabled yet). Auto memberships are re-granted at the member's next login if a team mapping still matches.",
+    noMembers: "No members.",
+    removeMember: "Remove",
+    removeMemberTitle: "Remove from role group",
+    removeMemberMsg:
+      'Remove "{user}" from "{group}"? Their access to this group\'s models is revoked immediately (until they log in again).',
+    memberRemoved: "Member removed",
   },
   proxies: {
     title: "Outbound proxies",

@@ -644,3 +644,15 @@ class RoleGroupOut(BaseModel):
     member_count: int = 0
     created_at: dt.datetime
     updated_at: dt.datetime
+
+
+class RoleGroupMemberOut(BaseModel):
+    """A member of a (custom) role group, for the moderator member-list view."""
+
+    user_id: int
+    name: str
+    email: str | None = None
+    role: str
+    # How the membership was granted: "auto" (a team mapping) or "manual".
+    source: str = "auto"
+    enabled: bool = True

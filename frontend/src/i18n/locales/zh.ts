@@ -366,6 +366,16 @@ const zh: Translations = {
     deleted: "身份组已删除",
     deleteTitle: "删除身份组",
     deleteMsg: "删除身份组“{name}”？成员将失去它，仅允许该组的模型将变为仅管理员可用。",
+    viewMembers: "查看成员",
+    membersTitle: "成员 · {name}",
+    membersHelp:
+      "可临时将成员移出以立即收回其模型访问权限（例如暂时无法禁用该账号时）。若团队映射仍匹配，自动成员会在下次登录时重新分配。",
+    noMembers: "暂无成员。",
+    removeMember: "移出",
+    removeMemberTitle: "移出身份组",
+    removeMemberMsg:
+      "将“{user}”移出“{group}”？其对该组模型的访问将立即被收回（直到其重新登录）。",
+    memberRemoved: "已移出成员",
   },
   proxies: {
     title: "出站代理",
