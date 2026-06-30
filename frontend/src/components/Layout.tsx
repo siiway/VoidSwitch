@@ -25,6 +25,7 @@ import {
   KeyRegular,
   NavigationRegular,
   PeopleRegular,
+  PeopleTeamRegular,
   PlugConnectedRegular,
   SettingsRegular,
   SignOutRegular,
@@ -96,6 +97,13 @@ const SECTIONS: NavSection[] = [
     headingKey: "nav.operations",
     items: [
       { to: "/users", label: "Users", labelKey: "nav.users", icon: <PeopleRegular />, scope: "staff" },
+      {
+        to: "/role-groups",
+        label: "Role Groups",
+        labelKey: "nav.roleGroups",
+        icon: <PeopleTeamRegular />,
+        scope: "staff",
+      },
       {
         to: "/stats",
         label: "Statistics",

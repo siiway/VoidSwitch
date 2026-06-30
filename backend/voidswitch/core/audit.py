@@ -105,6 +105,11 @@ class AuditAction(StrEnum):
     USER_UPDATE = "user.update"
     SETTINGS_UPDATE = "settings.update"
 
+    # Role groups ("身份组")
+    ROLE_GROUP_CREATE = "role_group.create"
+    ROLE_GROUP_UPDATE = "role_group.update"
+    ROLE_GROUP_DELETE = "role_group.delete"
+
     # Audit / housekeeping
     AUDIT_REVEAL = "audit.reveal"
     LOGS_CLEANUP = "logs.cleanup"

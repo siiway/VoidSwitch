@@ -27,7 +27,7 @@ from voidswitch.core import auth
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
 from voidswitch.models.db import ModelEntry, Provider, VoidToken
-from voidswitch.services import models_catalog, settings_store
+from voidswitch.services import models_catalog, role_groups, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
 router = APIRouter(tags=["gateway"])
@@ -121,6 +121,14 @@ async def _handle(
     model = await _resolve_public_model(session, model)
     payload["model"] = model
 
+    # Role-group access: a non-moderator may only call models whose allowed role
+    # groups intersect their own. Moderators may call everything.
+    if not await role_groups.user_can_access_model(session, authed.user, model):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"Model '{model}' is not available to your role group.",
+        )
+
     stream = bool(payload.get("stream", False))
     passthrough: dict[str, str] = {}
     beta = request.headers.get("anthropic-beta")
@@ -211,7 +219,8 @@ async def list_models(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
 ) -> JSONResponse:
-    token = (await auth.authenticate_void_token(session, authorization, x_api_key)).token
+    authed = await auth.authenticate_void_token(session, authorization, x_api_key)
+    token = authed.token
 
     providers = (
         (await session.execute(select(Provider).where(Provider.enabled.is_(True)))).scalars().all()
@@ -221,6 +230,10 @@ async def list_models(
     entries = {
         e.model_id: e for e in (await session.execute(select(ModelEntry))).scalars().all()
     }
+    # Role-group access: moderators see every model; others only models whose
+    # allowed role groups include one of theirs.
+    is_mod = role_groups.is_moderator(authed.user)
+    group_ids = set() if is_mod else await role_groups.user_group_ids(session, authed.user.id)
     seen: set[str] = set()
     data: list[dict[str, object]] = []
     allowed = token.allowed_models or []
@@ -233,6 +246,8 @@ async def list_models(
                 continue
             entry = entries.get(model)
             if entry is not None and not entry.enabled:
+                continue
+            if not role_groups.model_allowed_for_groups(entry, group_ids, is_mod=is_mod):
                 continue
             # Advertise (and accept) the public alias when one is set; the raw
             # upstream id is hidden so it never leaks and can't be called directly.
@@ -270,6 +285,8 @@ async def list_models(
                 continue
             entry = entries.get(alias)
             if entry is not None and not entry.enabled:
+                continue
+            if not role_groups.model_allowed_for_groups(entry, group_ids, is_mod=is_mod):
                 continue
             # Skip if the alias's public id is already listed (e.g. alias also
             # appears as a raw model name on another provider, or the mapped_id

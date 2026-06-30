@@ -12,6 +12,25 @@ class Role(StrEnum):
     MEMBER = "member"
 
 
+# Stable slug of the built-in "moderator" role group. Owner / co-owner / admin
+# are implicitly members of it and may always call every model; it is seeded on
+# first boot and can never be deleted or have its model access narrowed.
+MODERATOR_GROUP_SLUG = "moderator"
+
+# Ranking of a Prism *team* role, used when evaluating team→role-group mappings
+# ("assign when the member's effective role is >= the mapping's role") and the
+# main_team_id moderator mapping. Higher = more privileged. There is exactly one
+# owner per team; co-owner sits just below it.
+TEAM_ROLE_RANK: dict[str, int] = {
+    "owner": 4,
+    "co-owner": 3,
+    "co_owner": 3,
+    "coowner": 3,
+    "admin": 2,
+    "member": 1,
+}
+
+
 class KeyStatus(StrEnum):
     ACTIVE = "active"
     INVALID = "invalid"

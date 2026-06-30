@@ -78,6 +78,19 @@ async def update_user(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot disable yourself.")
         changes["enabled"] = body.enabled
         target.enabled = body.enabled
+        if not body.enabled:
+            # Disabling: force every dashboard session out (bump the epoch so any
+            # outstanding JWT is rejected) and turn off all the user's Void-Tokens
+            # so they can't keep calling the gateway. Remember to re-enable the
+            # tokens at the user's next successful login (after re-enabling the
+            # account), which re-evaluates their role/groups.
+            target.session_epoch = (target.session_epoch or 0) + 1
+            for token in target.tokens:
+                token.enabled = False
+            target.void_tokens_admin_disabled = True
+            changes["void_tokens_disabled"] = True
+        # Re-enabling does NOT immediately reactivate the Void-Tokens: they stay
+        # off until the user logs in again, which forces a fresh role evaluation.
 
     if changes:
         await record_audit(

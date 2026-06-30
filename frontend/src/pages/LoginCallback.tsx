@@ -43,9 +43,13 @@ export function LoginCallback() {
             block
             style={{ marginBottom: 8 }}
           >
-            {t("login.signInFailed" as TK)}
+            {error === "access_denied"
+              ? t("login.accessDeniedTitle" as TK)
+              : t("login.signInFailed" as TK)}
           </Text>
-          <ErrorText error={error} />
+          <ErrorText
+            error={error === "access_denied" ? t("login.accessDenied" as TK) : error}
+          />
           <Text
             as="span"
             onClick={() => navigate("/login", { replace: true })}

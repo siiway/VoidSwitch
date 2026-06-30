@@ -47,6 +47,10 @@ prism:
     - "openid"
     - "profile"
     - "email"
+    # Required to read team memberships at login (team → role-group mapping and
+    # the main_team_id moderator mapping). Register the matching scope on the
+    # Prism app, or team-based access is unavailable.
+    - "teams:read"
 
 admin:
   # Prism subject IDs (`sub`) that always receive owner rights.
@@ -64,3 +68,9 @@ admin:
   # When the user table is empty, the first user to log in becomes an owner
   # (bootstrap convenience for fresh deployments).
   bootstrap_first_user: true
+  # Prism team whose owner / co-owner / admin members are force-mapped to the
+  # matching VoidSwitch tier (the platform "moderators", who can use every
+  # model). Leave empty to disable team-based moderator mapping. Override with
+  # VOIDSWITCH_ADMIN__MAIN_TEAM_ID. Other teams can still grant role groups
+  # (and thus model access) via the dashboard's Role Groups tab.
+  main_team_id: ""

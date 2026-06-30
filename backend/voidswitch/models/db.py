@@ -65,8 +65,19 @@ class User(Base, TimestampMixin):
     prism_role: Mapped[str | None] = mapped_column(String(32), default=None)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # Bumped whenever every existing dashboard session must be invalidated (e.g.
+    # an owner disables the account). A session JWT carries the epoch it was
+    # minted at; a mismatch is rejected, forcing a fresh login.
+    session_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    # Set when an owner disables the account: the user's Void-Tokens are turned
+    # off and this flag remembers to turn them back on at the user's next login
+    # (after the account is re-enabled), so re-enabling forces a role re-eval.
+    void_tokens_admin_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     tokens: Mapped[list[VoidToken]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
+    group_memberships: Mapped[list[RoleGroupMembership]] = relationship(
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -131,6 +142,11 @@ class ModelEntry(Base, TimestampMixin):
     # When False the model is hidden from the advertised list (/v1/models) and
     # the OpenCode picker, even if a provider still serves it.
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Role groups whose members may call this model. The built-in "moderator"
+    # group (owner/co-owner/admin) is always allowed and is *not* listed here.
+    # An empty list therefore means "moderators only". A user who is not a
+    # moderator may call the model only if one of their role groups is listed.
+    allowed_role_group_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
     # Who first registered metadata for this model (id + display-name snapshot).
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
@@ -283,6 +299,91 @@ class Setting(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+class RoleGroup(Base, TimestampMixin):
+    """A named "身份组" that determines which models its members may call.
+
+    The built-in ``moderator`` group (``builtin=True``, ``slug="moderator"``) is
+    seeded on first boot, always grants access to every model, and may not be
+    deleted. Custom groups gate access to the specific models that list them in
+    ``ModelEntry.allowed_role_group_ids``. Membership is recomputed at every
+    login from the team→role mappings below.
+    """
+
+    __tablename__ = "role_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Stable identifier for the built-in group ("moderator"); null for custom.
+    slug: Mapped[str | None] = mapped_column(String(64), unique=True, default=None)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    mappings: Mapped[list[RoleGroupMapping]] = relationship(
+        back_populates="group", cascade="all, delete-orphan", lazy="selectin"
+    )
+    memberships: Mapped[list[RoleGroupMembership]] = relationship(
+        back_populates="group", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class RoleGroupMapping(Base):
+    """Auto-assignment rule: members of a Prism team at/above a role get the group.
+
+    At login the user's effective role in ``team_id`` is compared against
+    ``min_role`` (using ``constants.TEAM_ROLE_RANK``); a role that ranks equal or
+    higher grants membership of ``group``.
+    """
+
+    __tablename__ = "role_group_mappings"
+    __table_args__ = (
+        UniqueConstraint("role_group_id", "team_id", "min_role", name="uq_group_team_role"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    role_group_id: Mapped[int] = mapped_column(
+        ForeignKey("role_groups.id", ondelete="CASCADE"), index=True
+    )
+    team_id: Mapped[str] = mapped_column(String(120), index=True)
+    min_role: Mapped[str] = mapped_column(String(32), default=Role.MEMBER.value)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+    group: Mapped[RoleGroup] = relationship(back_populates="mappings", lazy="selectin")
+
+
+class RoleGroupMembership(Base):
+    """A user's membership of a (custom) role group.
+
+    Rows are recomputed at every login from the team mappings; ``source`` records
+    how the membership was granted. The built-in moderator group is *not* stored
+    here — moderator status is derived from the user's VoidSwitch role.
+    """
+
+    __tablename__ = "role_group_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "role_group_id", name="uq_user_group"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role_group_id: Mapped[int] = mapped_column(
+        ForeignKey("role_groups.id", ondelete="CASCADE"), index=True
+    )
+    # How the membership was granted: "auto" (a team mapping matched) or
+    # "manual" (assigned by a moderator from the dashboard). Auto memberships are
+    # re-evaluated on every login; manual ones persist until removed.
+    source: Mapped[str] = mapped_column(String(16), default="auto")
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="group_memberships", lazy="selectin")
+    group: Mapped[RoleGroup] = relationship(back_populates="memberships", lazy="selectin")
 
 
 class AuditLog(Base):

@@ -21,7 +21,7 @@ from voidswitch.core.auth import (
     require_staff,
 )
 from voidswitch.core.database import get_session
-from voidswitch.models.db import ModelEntry, User
+from voidswitch.models.db import ModelEntry, RoleGroup, User
 from voidswitch.models.schemas import (
     ModelBatchResult,
     ModelBatchUpdate,
@@ -46,6 +46,9 @@ def _to_out(item: models_catalog.CatalogItem) -> ModelOut:
         description=entry.description if entry is not None else None,
         opencode_config=entry.opencode_config if entry is not None else {},
         enabled=item.enabled,
+        allowed_role_group_ids=(
+            list(entry.allowed_role_group_ids or []) if entry is not None else []
+        ),
         providers=item.providers,
         served=item.served,
         registered=item.registered,
@@ -108,6 +111,21 @@ async def upsert_model(
         entry.opencode_config = body.opencode_config
     if body.enabled is not None:
         entry.enabled = body.enabled
+    if body.allowed_role_group_ids is not None:
+        # Drop ids that no longer exist (e.g. a deleted group) and the built-in
+        # moderator group (always allowed, never stored).
+        valid_ids = set(
+            (
+                await session.execute(
+                    select(RoleGroup.id).where(RoleGroup.builtin.is_(False))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        entry.allowed_role_group_ids = [
+            gid for gid in body.allowed_role_group_ids if gid in valid_ids
+        ]
     await session.flush()
     await record_audit(
         session,

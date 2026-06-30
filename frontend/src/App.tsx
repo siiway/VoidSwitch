@@ -11,6 +11,7 @@ import { ProviderKeys } from "./pages/ProviderKeys";
 import { Proxies } from "./pages/Proxies";
 import { Tokens } from "./pages/Tokens";
 import { Users } from "./pages/Users";
+import { RoleGroups } from "./pages/RoleGroups";
 import { SettingsPage } from "./pages/Settings";
 import { Logs } from "./pages/Logs";
 import { Statistics } from "./pages/Statistics";
@@ -112,6 +113,14 @@ export function App() {
           element={
             <Protected staff>
               <Users />
+            </Protected>
+          }
+        />
+        <Route
+          path="/role-groups"
+          element={
+            <Protected staff>
+              <RoleGroups />
             </Protected>
           }
         />

@@ -25,6 +25,7 @@ import {
   ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
+  PeopleTeamRegular,
   SearchRegular,
 } from "@fluentui/react-icons";
 import JSON5 from "json5";
@@ -32,7 +33,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { ModelEntry, ModelSyncResult } from "../api/types";
+import type { ModelEntry, ModelSyncResult, RoleGroup } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
   ErrorText,
@@ -124,11 +125,62 @@ export function Models() {
   const confirm = useConfirm();
   const { isStaff } = useAuth();
   const catalog = useAsync<ModelEntry[]>(() => api.get("/api/models"));
+  const roleGroups = useAsync<RoleGroup[]>(() =>
+    isStaff ? api.get("/api/admin/role-groups") : Promise.resolve([]),
+  );
 
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Per-model "which role groups may call this model" editor.
+  const [groupEdit, setGroupEdit] = useState<{
+    model_id: string;
+    ids: Set<number>;
+  } | null>(null);
+  const [groupSearch, setGroupSearch] = useState("");
+  const customGroups = useMemo(
+    () => (roleGroups.data ?? []).filter((g) => !g.builtin),
+    [roleGroups.data],
+  );
+
+  function openGroupEdit(m: ModelEntry) {
+    setGroupSearch("");
+    setGroupEdit({ model_id: m.model_id, ids: new Set(m.allowed_role_group_ids) });
+  }
+
+  function toggleGroup(id: number) {
+    setGroupEdit((g) => {
+      if (!g) return g;
+      const ids = new Set(g.ids);
+      if (ids.has(id)) ids.delete(id);
+      else ids.add(id);
+      return { ...g, ids };
+    });
+  }
+
+  async function saveGroups() {
+    if (!groupEdit) return;
+    setSaving(true);
+    try {
+      await api.put("/api/models", {
+        model_id: groupEdit.model_id,
+        allowed_role_group_ids: [...groupEdit.ids],
+      });
+      notify(t("models.accessSaved" as TK), groupEdit.model_id, "success");
+      setGroupEdit(null);
+      catalog.reload();
+    } catch (e) {
+      notify(
+        t("common.saveFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
   const [syncing, setSyncing] = useState(false);
   const [cleaning, setCleaning] = useState(false);
 
@@ -474,6 +526,24 @@ export function Models() {
                     >
                       {t("common.edit" as TK)}
                     </Button>
+                    <Tooltip
+                      content={t("models.accessTooltip" as TK)}
+                      relationship="label"
+                    >
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<PeopleTeamRegular />}
+                        onClick={() => openGroupEdit(m)}
+                      >
+                        {m.allowed_role_group_ids.length > 0
+                          ? t("models.accessCount" as TK).replace(
+                              "{count}",
+                              String(m.allowed_role_group_ids.length),
+                            )
+                          : t("models.access" as TK)}
+                      </Button>
+                    </Tooltip>
                     {m.registered && (
                       <Button
                         size="small"
@@ -614,6 +684,74 @@ export function Models() {
               </Button>
               <Button appearance="primary" disabled={saving} onClick={saveBatch}>
                 {t("common.apply" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={groupEdit !== null}
+        onOpenChange={(_, d) => !d.open && setGroupEdit(null)}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{t("models.accessTitle" as TK)}</DialogTitle>
+            <DialogContent
+              style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 8 }}
+            >
+              <Text size={200} className={styles.dim}>
+                {t("models.accessHelp" as TK).replace(
+                  "{id}",
+                  groupEdit?.model_id ?? "",
+                )}
+              </Text>
+              <Input
+                contentBefore={<SearchRegular />}
+                placeholder={t("models.accessSearch" as TK)}
+                value={groupSearch}
+                onChange={(_, d) => setGroupSearch(d.value)}
+              />
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  maxHeight: 280,
+                  overflowY: "auto",
+                }}
+              >
+                {customGroups.length === 0 ? (
+                  <Text size={200} className={styles.dim}>
+                    {t("models.accessNoGroups" as TK)}
+                  </Text>
+                ) : (
+                  customGroups
+                    .filter((g) => {
+                      const q = groupSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        g.name.toLowerCase().includes(q) ||
+                        (g.description ?? "").toLowerCase().includes(q)
+                      );
+                    })
+                    .map((g) => (
+                      <Checkbox
+                        key={g.id}
+                        checked={groupEdit?.ids.has(g.id) ?? false}
+                        onChange={() => toggleGroup(g.id)}
+                        label={g.name}
+                      />
+                    ))
+                )}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setGroupEdit(null)}>
+                {t("common.cancel" as TK)}
+              </Button>
+              <Button appearance="primary" disabled={saving} onClick={saveGroups}>
+                {t("common.save" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

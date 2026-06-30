@@ -67,7 +67,7 @@ async def dev_login(
     token = create_session_token(
         secret=settings.server.secret_key,
         subject=user.sub,
-        extra={"role": user.role, "name": user.name},
+        extra={"role": user.role, "name": user.name, "epoch": user.session_epoch},
         ttl_minutes=ttl,
     )
     return SessionOut(access_token=token, expires_in=ttl * 60, user=UserOut.model_validate(user))
@@ -110,6 +110,10 @@ async def callback(
             ip=request.client.host if request.client else None,
             scope=AuditScope.SELF.value,
         )
+    except auth.LoginDenied as exc:
+        log.info("oauth_callback_access_denied", error=str(exc))
+        params = urlencode({"error": "access_denied"})
+        return RedirectResponse(f"{target}#{params}", status_code=302)
     except Exception as exc:
         detail = getattr(exc, "detail", "") or str(exc) or repr(exc)
         log.warning("oauth_callback_failed", type=type(exc).__name__, error=detail, detail=detail)
@@ -120,7 +124,7 @@ async def callback(
     token = create_session_token(
         secret=settings.server.secret_key,
         subject=user.sub,
-        extra={"role": user.role, "name": user.name},
+        extra={"role": user.role, "name": user.name, "epoch": user.session_epoch},
         ttl_minutes=ttl,
     )
     params = urlencode({"access_token": token, "expires_in": ttl * 60})

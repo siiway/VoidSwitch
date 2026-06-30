@@ -30,6 +30,9 @@ from voidswitch.api.admin import (
     proxies as proxies_api,
 )
 from voidswitch.api.admin import (
+    role_groups as role_groups_api,
+)
+from voidswitch.api.admin import (
     settings as settings_api,
 )
 from voidswitch.api.admin import (
@@ -47,7 +50,7 @@ from voidswitch.api.admin import (
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import RequestSessionMiddleware, init_database
 from voidswitch.core.logging import configure_logging, get_logger
-from voidswitch.services import settings_store
+from voidswitch.services import role_groups, settings_store
 from voidswitch.services.network import get_pool
 from voidswitch.tasks.balance_probe import run_balance_probe
 from voidswitch.tasks.balance_rescan import run_balance_rescan
@@ -67,6 +70,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with db.session() as session:
         await settings_store.ensure_defaults(session)
         await settings_store.load_all(session)
+        await role_groups.ensure_moderator_group(session)
     log.info("database_ready", url=_redact(settings.database.url))
 
     manager = TaskManager()
@@ -184,6 +188,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(settings_api.router)
     app.include_router(logs_api.router)
     app.include_router(users_api.router)
+    app.include_router(role_groups_api.router)
     app.include_router(stats_api.router)
     app.include_router(usage_api.router)
     app.include_router(system_api.router)

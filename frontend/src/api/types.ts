@@ -141,12 +141,40 @@ export interface ModelEntry {
   description?: string | null;
   opencode_config: Record<string, unknown>;
   enabled: boolean;
+  // Role groups allowed to call this model (moderator always allowed, not listed).
+  allowed_role_group_ids: number[];
   providers: string[];
   served: boolean;
   registered: boolean;
   added_by_name?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+// Role groups ("身份组").
+export type TeamRole = "owner" | "co-owner" | "admin" | "member";
+
+export interface RoleGroupMapping {
+  id: number;
+  team_id: string;
+  min_role: TeamRole;
+}
+
+export interface RoleGroupMappingIn {
+  team_id: string;
+  min_role: TeamRole;
+}
+
+export interface RoleGroup {
+  id: number;
+  slug?: string | null;
+  name: string;
+  description?: string | null;
+  builtin: boolean;
+  mappings: RoleGroupMapping[];
+  member_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ModelSyncResult {

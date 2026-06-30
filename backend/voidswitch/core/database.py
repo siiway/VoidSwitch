@@ -120,6 +120,9 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("void_tokens", "debug_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
     ("models", "mapped_id", "VARCHAR(255)"),
     ("models", "display_name", "VARCHAR(255)"),
+    ("models", "allowed_role_group_ids", "JSON NOT NULL DEFAULT '[]'"),
+    ("users", "session_epoch", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "void_tokens_admin_disabled", "BOOLEAN NOT NULL DEFAULT 0"),
 )
 
 

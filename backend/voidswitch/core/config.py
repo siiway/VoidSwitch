@@ -72,7 +72,13 @@ class PrismSettings(BaseSettings):
     client_id: str = ""
     client_secret: str = ""
     redirect_uri: str = ""
-    scopes: list[str] = Field(default_factory=lambda: ["openid", "profile", "email"])
+    # ``teams:read`` lets the backend read the user's team memberships via
+    # ``/api/oauth/me/teams`` at login — required for team→role-group mapping and
+    # the ``main_team_id`` admin mapping. Register the matching scope on the
+    # Prism app or the team lookup is skipped (and team-based access denied).
+    scopes: list[str] = Field(
+        default_factory=lambda: ["openid", "profile", "email", "teams:read"]
+    )
 
     @property
     def authorize_url(self) -> str:
@@ -101,6 +107,13 @@ class AdminSettings(BaseSettings):
     # *admin* (staff, not owner). Owner-only actions stay reserved for owners.
     trust_prism_admin: bool = True
     bootstrap_first_user: bool = True
+    # Prism team whose owner / co-owner / admin members are force-mapped onto the
+    # matching VoidSwitch tier (owner→owner, co-owner→co-owner, admin→admin) —
+    # these are the platform "moderators". A team id string (see the Prism Teams
+    # UI / API). When empty, no team grants moderator power and only
+    # owner_subs/owner_emails (and the optional bootstrap-first-user) do.
+    # Override with VOIDSWITCH_ADMIN__MAIN_TEAM_ID=<team-id>.
+    main_team_id: str = ""
 
 
 class Settings(BaseSettings):

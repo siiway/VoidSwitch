@@ -15,7 +15,7 @@ import datetime as dt
 import hashlib
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
 
@@ -151,6 +151,13 @@ def build_authorize_url(settings: Settings) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 
 
+class LoginDenied(Exception):
+    """Raised when a successfully-authenticated user is not allowed onto the
+    platform — they are neither a moderator (owner/co-owner/admin) nor mapped to
+    any role group, so they have no reason to be here. The OAuth callback turns
+    this into an ``access_denied`` redirect rather than a generic failure."""
+
+
 @dataclass(slots=True)
 class PrismIdentity:
     sub: str
@@ -159,6 +166,9 @@ class PrismIdentity:
     name: str | None
     picture: str | None
     prism_role: str | None
+    # Team memberships from ``/api/oauth/me/teams`` (each ``{"id", "role", ...}``),
+    # used for the main-team moderator mapping and role-group auto-assignment.
+    teams: list[dict[str, Any]] = field(default_factory=list)
 
 
 async def exchange_code(settings: Settings, code: str, state: str) -> PrismIdentity:
@@ -190,7 +200,43 @@ async def exchange_code(settings: Settings, code: str, state: str) -> PrismIdent
 
     claims = _decode_id_token(settings, tokens.get("id_token"))
     identity = await _fetch_userinfo(settings, tokens.get("access_token"), claims)
+    identity.teams = await _fetch_teams(settings, tokens.get("access_token"))
     return identity
+
+
+async def _fetch_teams(settings: Settings, access_token: str | None) -> list[dict[str, Any]]:
+    """Fetch the user's team memberships (effective roles, inherited included).
+
+    Calls ``/api/oauth/me/teams`` with the OAuth access token; requires the
+    ``teams:read`` scope on the Prism app. A failure (missing scope, network)
+    yields an empty list — team-based moderator mapping and role-group
+    assignment then simply don't apply.
+    """
+    if not access_token:
+        return []
+    url = f"{settings.prism.issuer.rstrip('/')}/api/oauth/me/teams"
+    try:
+        client = await get_pool().get(Route(), connect_timeout=15.0, read_timeout=30.0)
+        resp = await client.get(url, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        log.debug("teams_fetch_failed", error=str(exc))
+        return []
+    if resp.status_code != 200:
+        log.debug("teams_fetch_non_200", status=resp.status_code, body=resp.text[:200])
+        return []
+    try:
+        data = resp.json()
+    except ValueError:
+        return []
+    # Accept a bare list or a wrapped ``{"teams": [...]}`` / ``{"data": [...]}``.
+    if isinstance(data, dict):
+        for key in ("teams", "data", "items"):
+            if isinstance(data.get(key), list):
+                data = data[key]
+                break
+    if not isinstance(data, list):
+        return []
+    return [t for t in data if isinstance(t, dict)]
 
 
 def _decode_id_token(settings: Settings, id_token: str | None) -> dict[str, Any]:
@@ -243,6 +289,7 @@ async def _fetch_userinfo(
         name=merged.get("name"),
         picture=merged.get("picture"),
         prism_role=str(merged.get("role")) if merged.get("role") else None,
+        teams=[],
     )
 
 
@@ -261,6 +308,25 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
 
     role = _resolve_role(settings, identity, is_first_user)
 
+    # Role-group auto-assignment from the team mappings (recomputed every login).
+    from voidswitch.services import role_groups
+
+    auto_group_ids = await role_groups.evaluate_auto_group_ids(session, identity.teams)
+
+    # Access policy: a non-moderator who isn't mapped to any role group — and has
+    # no explicit owner/bootstrap grant — has no business on the platform. Refuse
+    # the login outright (e.g. someone not in main_team_id and not in any mapped
+    # team position).
+    privileged = role.value in STAFF_ROLES
+    explicit = (
+        identity.sub in settings.admin.owner_subs
+        or bool(identity.email and identity.email in settings.admin.owner_emails)
+        or (is_first_user and settings.admin.bootstrap_first_user)
+    )
+    if not privileged and not explicit and not auto_group_ids:
+        log.info("login_denied_no_access", sub=identity.sub[:12])
+        raise LoginDenied("No platform access: not a moderator and no role group applies.")
+
     if existing is None:
         user = User(
             sub=identity.sub,
@@ -274,17 +340,29 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
         )
         session.add(user)
         await session.flush()
-        return user
+    else:
+        existing.username = identity.username or existing.username
+        existing.email = identity.email or existing.email
+        existing.name = identity.name or existing.name
+        existing.picture = identity.picture or existing.picture
+        existing.prism_role = identity.prism_role
+        existing.last_login_at = dt.datetime.now(dt.UTC)
+        existing.role = _merge_role(existing.role, role)
+        await session.flush()
+        user = existing
 
-    existing.username = identity.username or existing.username
-    existing.email = identity.email or existing.email
-    existing.name = identity.name or existing.name
-    existing.picture = identity.picture or existing.picture
-    existing.prism_role = identity.prism_role
-    existing.last_login_at = dt.datetime.now(dt.UTC)
-    existing.role = _merge_role(existing.role, role)
-    await session.flush()
-    return existing
+    await role_groups.sync_auto_memberships(session, user, auto_group_ids)
+
+    # If the account was disabled and later re-enabled by an owner, its
+    # Void-Tokens were parked off; bring them back now that the user has proven
+    # they can still log in (forcing a fresh role/group evaluation).
+    if user.enabled and user.void_tokens_admin_disabled:
+        for token in user.tokens:
+            token.enabled = True
+        user.void_tokens_admin_disabled = False
+        await session.flush()
+
+    return user
 
 
 def _merge_role(existing: str, resolved: Role) -> str:
@@ -363,11 +441,16 @@ def _resolve_role(settings: Settings, identity: PrismIdentity, is_first_user: bo
         return Role.OWNER
     if identity.email and identity.email in admin.owner_emails:
         return Role.OWNER
+    # The main team's owner / co-owner / admin are the platform moderators. This
+    # is the *only* team whose roles confer platform power — opening the gateway
+    # to more teams never grants their owners platform-owner rights.
+    from voidswitch.services.role_groups import resolve_main_team_role
+
+    main_role = resolve_main_team_role(admin.main_team_id, identity.teams)
+    if main_role is not None:
+        return main_role
+    # Prism instance admins (site-wide) become local admins when trusted.
     prism = _normalise_prism_role(identity.prism_role)
-    # Prism owners/co-owners map straight onto the VoidSwitch owner tier.
-    if prism in (Role.OWNER, Role.CO_OWNER):
-        return prism
-    # Prism instance admins become local admins (staff, not owner) when trusted.
     if prism == Role.ADMIN and admin.trust_prism_admin:
         return Role.ADMIN
     if is_first_user and admin.bootstrap_first_user:
@@ -406,6 +489,14 @@ async def get_current_user(
     ).scalar_one_or_none()
     if user is None or not user.enabled:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or disabled.")
+    # Session invalidation: a JWT minted before the user's epoch was bumped (e.g.
+    # the account was disabled) is no longer valid — force a fresh login.
+    try:
+        token_epoch = int(str(claims.get("epoch", 0) or 0))
+    except (TypeError, ValueError):
+        token_epoch = 0
+    if token_epoch != (user.session_epoch or 0):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired. Please sign in again.")
     return user
 
 

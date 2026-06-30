@@ -169,6 +169,9 @@ class ModelOut(BaseModel):
     description: str | None = None
     opencode_config: dict = Field(default_factory=dict)
     enabled: bool = True
+    # Role groups allowed to call this model (moderator implicitly always allowed
+    # and never listed here). Empty → moderators only.
+    allowed_role_group_ids: list[int] = Field(default_factory=list)
     # Names of enabled providers that currently serve this model.
     providers: list[str] = Field(default_factory=list)
     # True when at least one enabled provider serves it right now.
@@ -191,6 +194,9 @@ class ModelUpsert(BaseModel):
     description: str | None = None
     opencode_config: dict | None = None
     enabled: bool | None = None
+    # Role groups allowed to call this model (moderator is always allowed and is
+    # never listed). Omit (null) to leave unchanged; send [] for "moderators only".
+    allowed_role_group_ids: list[int] | None = None
 
 
 class ModelBatchUpdate(BaseModel):
@@ -588,3 +594,53 @@ class UsageAnalyticsOut(BaseModel):
     by_user: list[UsageGroupRow]
     by_token: list[UsageGroupRow]
     by_model: list[UsageGroupRow]
+
+
+# --------------------------------------------------------------------------- #
+# Role groups ("身份组")
+# --------------------------------------------------------------------------- #
+
+
+class RoleGroupMappingIn(BaseModel):
+    """One team→role auto-assignment rule.
+
+    A member whose *effective* role in ``team_id`` is at least ``min_role`` is
+    auto-assigned the group at login.
+    """
+
+    team_id: str
+    # owner | co-owner | admin | member (team roles).
+    min_role: str = "member"
+
+
+class RoleGroupMappingOut(RoleGroupMappingIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+
+
+class RoleGroupCreate(BaseModel):
+    name: str
+    description: str | None = None
+    mappings: list[RoleGroupMappingIn] = Field(default_factory=list)
+
+
+class RoleGroupUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    # When provided, fully replaces the group's mapping set.
+    mappings: list[RoleGroupMappingIn] | None = None
+
+
+class RoleGroupOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    slug: str | None = None
+    name: str
+    description: str | None = None
+    builtin: bool = False
+    mappings: list[RoleGroupMappingOut] = Field(default_factory=list)
+    member_count: int = 0
+    created_at: dt.datetime
+    updated_at: dt.datetime
