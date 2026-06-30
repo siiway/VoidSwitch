@@ -1023,3 +1023,21 @@ async def test_database_init_and_settings_defaults(db):
         rows = (await session.execute(select(Setting))).scalars().all()
         keys = {r.key for r in rows}
     assert set(DEFAULT_SETTINGS).issubset(keys)
+
+
+async def test_deep_merge_opencode_config():
+    from voidswitch.api.models import _deep_merge
+
+    base = {"name": "A", "limit": {"context": 100, "output": 8}, "tags": ["x"]}
+    override = {"limit": {"context": 200}, "tags": ["y"], "extra": True}
+    merged = _deep_merge(base, override)
+    # Nested dicts deep-merge; scalars/lists from override replace.
+    assert merged == {
+        "name": "A",
+        "limit": {"context": 200, "output": 8},
+        "tags": ["y"],
+        "extra": True,
+    }
+    # Inputs are not mutated.
+    assert base["limit"] == {"context": 100, "output": 8}
+    assert "extra" not in base

@@ -33,12 +33,22 @@ log = get_logger("tasks.log_cleanup")
 
 
 async def run_log_cleanup() -> None:
+    """Periodic-task entry point: apply retention, discard the counts."""
+    await cleanup_logs()
+
+
+async def cleanup_logs() -> dict[str, int]:
+    """Apply the configured retention windows now. Returns the affected counts.
+
+    Used both by the periodic task and the dashboard's "clean now" action.
+    """
     db = get_database()
     audit_days = settings_store.get_int("audit_log_retention_days", 0)
     request_days = settings_store.get_int("request_log_retention_days", 0)
     debug_days = settings_store.get_int("debug_log_retention_days", 0)
+    empty = {"deleted_request_logs": 0, "deleted_audit_logs": 0, "stripped_debug_logs": 0}
     if audit_days <= 0 and request_days <= 0 and debug_days <= 0:
-        return  # nothing to do — retention disabled for all
+        return empty  # nothing to do — retention disabled for all
 
     now = dt.datetime.now(dt.UTC)
     async with db.session() as session:
@@ -100,6 +110,12 @@ async def run_log_cleanup() -> None:
                 },
                 scope=AuditScope.SYSTEM.value,
             )
+
+        return {
+            "deleted_request_logs": deleted_requests,
+            "deleted_audit_logs": deleted_audits,
+            "stripped_debug_logs": stripped_debug,
+        }
 
 
 async def _count_older(session, model, ts_column, cutoff: dt.datetime) -> int:

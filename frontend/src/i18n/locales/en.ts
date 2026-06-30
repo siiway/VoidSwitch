@@ -339,6 +339,16 @@ const en = {
     batchUnchanged: "Leave unchanged",
     batchAvailable: "Available",
     batchHidden: "Hidden",
+    batchAccessLabel: "Set access role groups for all selected",
+    batchAccessHint:
+      "Replaces each selected model's allowed role groups (moderators always have access).",
+    batchConfigLabel: "Set OpenCode config for all selected",
+    batchConfigMerge: "Merge (deep-merge into existing)",
+    batchConfigOverwrite: "Overwrite (replace existing)",
+    batchConfigMergeHint:
+      "Deep-merged into each model's existing OpenCode config; nested keys are combined.",
+    batchConfigOverwriteHint:
+      "Replaces each selected model's OpenCode config entirely.",
     updated: "Models updated",
     catalogSynced: "Catalog synced",
     syncResult: "{added} new model(s) registered ({total} total).",
@@ -419,6 +429,11 @@ const en = {
     unassignFailed: "Unassign failed",
     deleted: "Proxy deleted",
     localSourceIp: "Local source IP (optional, applies to this batch)",
+    disabledTitle: "Proxy switching is disabled",
+    disabledDesc:
+      "An external proxy handles egress (proxy switching is off in Settings). Proxy management is unavailable until it's turned back on.",
+    goToSettings: "Open Settings",
+    goHome: "Go home",
   },
   tokens: {
     title: "Void-Tokens",
@@ -493,9 +508,25 @@ const en = {
     logCleanupInterval: "Log cleanup interval (s)",
     logsPageSize: "Logs page size (rows per page)",
     proxySwitchingEnabled:
-      "Proxy switching enabled (off = always use the static proxy below, no failover)",
+      "Proxy switching enabled (off = always use the static proxy below)",
     staticProxyUrl:
-      "Static proxy URL (used when switching is off; blank = direct / env HTTP(S)_PROXY)",
+      "Static proxy URL (used when switching is off; blank = per environment)",
+    sectionProxy: "Proxy & routing",
+    sectionKeys: "Keys & balance",
+    sectionRateLimit: "Rate limiting",
+    sectionTimeouts: "Timeouts & retries",
+    sectionLogs: "Logs & retention",
+    sectionOpencode: "OpenCode defaults",
+    sectionOther: "Other",
+    readOnlyNote: "Read-only — only an owner / co-owner can change these settings.",
+    cleanNow: "Clean now",
+    cleaning: "Cleaning…",
+    cleanNowTitle: "Clean logs now",
+    cleanNowMsg:
+      "Apply the configured retention windows right now? Logs older than each window are deleted permanently.",
+    cleanedTitle: "Logs cleaned",
+    cleanedDetail:
+      "{requests} request log(s) deleted, {audits} audit log(s) deleted, {debug} debug detail(s) stripped.",
   },
   logs: {
     title: "Logs",

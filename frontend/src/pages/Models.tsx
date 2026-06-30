@@ -188,6 +188,38 @@ export function Models() {
   const [batchDescOn, setBatchDescOn] = useState(true);
   const [batchDesc, setBatchDesc] = useState("");
   const [batchEnabled, setBatchEnabled] = useState<BatchEnabled>("unchanged");
+  // Batch: access (role groups) + OpenCode config (merge / overwrite).
+  const [batchGroupsOn, setBatchGroupsOn] = useState(false);
+  const [batchGroupIds, setBatchGroupIds] = useState<Set<number>>(new Set());
+  const [batchGroupSearch, setBatchGroupSearch] = useState("");
+  const [batchConfigOn, setBatchConfigOn] = useState(false);
+  const [batchConfig, setBatchConfig] = useState("");
+  const [batchConfigMode, setBatchConfigMode] = useState<"merge" | "overwrite">(
+    "merge",
+  );
+
+  function openBatch() {
+    // Reset the optional toggles each time so nothing is applied unintentionally.
+    setBatchDescOn(false);
+    setBatchDesc("");
+    setBatchEnabled("unchanged");
+    setBatchGroupsOn(false);
+    setBatchGroupIds(new Set());
+    setBatchGroupSearch("");
+    setBatchConfigOn(false);
+    setBatchConfig("");
+    setBatchConfigMode("merge");
+    setBatchOpen(true);
+  }
+
+  function toggleBatchGroup(id: number) {
+    setBatchGroupIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const items = catalog.data ?? [];
   const filtered = useMemo(() => {
@@ -339,6 +371,20 @@ export function Models() {
     const payload: Record<string, unknown> = { model_ids: ids };
     if (batchDescOn) payload.description = batchDesc;
     if (batchEnabled !== "unchanged") payload.enabled = batchEnabled === "enabled";
+    if (batchGroupsOn) payload.allowed_role_group_ids = [...batchGroupIds];
+    if (batchConfigOn) {
+      const cfg = parseConfig(batchConfig);
+      if (cfg === "INVALID") {
+        notify(
+          t("models.invalidConfig" as TK),
+          t("models.invalidConfigMsg" as TK),
+          "error",
+        );
+        return;
+      }
+      payload.opencode_config = cfg;
+      payload.opencode_config_mode = batchConfigMode;
+    }
     setSaving(true);
     try {
       await api.post("/api/models/batch", payload);
@@ -390,7 +436,7 @@ export function Models() {
         action={
           <div style={{ display: "flex", gap: 8 }}>
             {isStaff && selected.size > 0 && (
-              <Button icon={<EditRegular />} onClick={() => setBatchOpen(true)}>
+              <Button icon={<EditRegular />} onClick={openBatch}>
                 {t("models.editSelected" as TK).replace("{count}", String(selected.size))}
               </Button>
             )}
@@ -684,6 +730,102 @@ export function Models() {
                   <Option value="disabled">{t("models.batchHidden" as TK)}</Option>
                 </Dropdown>
               </Field>
+
+              <Checkbox
+                checked={batchGroupsOn}
+                onChange={(_, d) => setBatchGroupsOn(!!d.checked)}
+                label={t("models.batchAccessLabel" as TK)}
+              />
+              {batchGroupsOn ? (
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                >
+                  <Input
+                    contentBefore={<SearchRegular />}
+                    placeholder={t("models.accessSearch" as TK)}
+                    value={batchGroupSearch}
+                    onChange={(_, d) => setBatchGroupSearch(d.value)}
+                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                      maxHeight: 180,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {customGroups.length === 0 ? (
+                      <Text size={200} className={styles.dim}>
+                        {t("models.accessNoGroups" as TK)}
+                      </Text>
+                    ) : (
+                      customGroups
+                        .filter((g) => {
+                          const q = batchGroupSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            g.name.toLowerCase().includes(q) ||
+                            (g.description ?? "").toLowerCase().includes(q)
+                          );
+                        })
+                        .map((g) => (
+                          <Checkbox
+                            key={g.id}
+                            checked={batchGroupIds.has(g.id)}
+                            onChange={() => toggleBatchGroup(g.id)}
+                            label={g.name}
+                          />
+                        ))
+                    )}
+                  </div>
+                  <Text size={100} className={styles.dim}>
+                    {t("models.batchAccessHint" as TK)}
+                  </Text>
+                </div>
+              ) : null}
+
+              <Checkbox
+                checked={batchConfigOn}
+                onChange={(_, d) => setBatchConfigOn(!!d.checked)}
+                label={t("models.batchConfigLabel" as TK)}
+              />
+              {batchConfigOn ? (
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
+                  <Dropdown
+                    value={
+                      batchConfigMode === "merge"
+                        ? t("models.batchConfigMerge" as TK)
+                        : t("models.batchConfigOverwrite" as TK)
+                    }
+                    selectedOptions={[batchConfigMode]}
+                    onOptionSelect={(_, d) =>
+                      setBatchConfigMode(
+                        (d.optionValue as "merge" | "overwrite") ?? "merge",
+                      )
+                    }
+                  >
+                    <Option value="merge">{t("models.batchConfigMerge" as TK)}</Option>
+                    <Option value="overwrite">
+                      {t("models.batchConfigOverwrite" as TK)}
+                    </Option>
+                  </Dropdown>
+                  <Textarea
+                    value={batchConfig}
+                    rows={5}
+                    placeholder={t("models.configPlaceholder" as TK)}
+                    style={{ fontFamily: tokens.fontFamilyMonospace }}
+                    onChange={(_, d) => setBatchConfig(d.value)}
+                  />
+                  <Text size={100} className={styles.dim}>
+                    {batchConfigMode === "merge"
+                      ? t("models.batchConfigMergeHint" as TK)
+                      : t("models.batchConfigOverwriteHint" as TK)}
+                  </Text>
+                </div>
+              ) : null}
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setBatchOpen(false)}>

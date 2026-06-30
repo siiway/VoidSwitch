@@ -205,7 +205,13 @@ class ModelBatchUpdate(BaseModel):
     model_ids: list[str]
     description: str | None = None
     opencode_config: dict | None = None
+    # How to apply ``opencode_config`` to each model: "merge" (deep-merge into the
+    # model's existing config) or "overwrite" (replace it wholesale).
+    opencode_config_mode: str = "merge"
     enabled: bool | None = None
+    # Role groups allowed to call the selected models (replaces the existing set
+    # on each). Omit (null) to leave unchanged; [] = moderators only.
+    allowed_role_group_ids: list[int] | None = None
 
 
 class ModelBatchResult(BaseModel):

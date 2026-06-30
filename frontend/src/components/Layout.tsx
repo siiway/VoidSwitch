@@ -35,6 +35,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { LANGUAGES } from "../i18n";
@@ -319,6 +320,16 @@ export function Layout() {
   const [isNarrow, setIsNarrow] = useState(
     () => window.matchMedia("(max-width: 768px)").matches,
   );
+  // When proxy switching is disabled the Proxies tab is hidden. Re-checked on
+  // navigation so toggling the setting reflects without a full reload.
+  const [proxySwitching, setProxySwitching] = useState(true);
+
+  useEffect(() => {
+    api
+      .get<{ proxy_switching_enabled?: boolean }>("/api/auth/config")
+      .then((c) => setProxySwitching(c.proxy_switching_enabled !== false))
+      .catch(() => {});
+  }, [location.pathname]);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 768px)");
@@ -352,9 +363,12 @@ export function Layout() {
         heading: t(s.headingKey as TranslationKey),
         items: s.items
           .filter((i) => canSee(i.scope))
+          // Proxy switching off → an external proxy handles egress, so the
+          // Proxies tab is irrelevant; hide it.
+          .filter((i) => proxySwitching || i.to !== "/proxies")
           .map((i) => ({ ...i, label: t(i.labelKey as TranslationKey) })),
       })).filter((s) => s.items.length > 0),
-    [t, isStaff, isOwner],
+    [t, isStaff, isOwner, proxySwitching],
   );
 
   const roleColor =

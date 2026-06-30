@@ -35,6 +35,22 @@ from voidswitch.services import models_catalog
 router = APIRouter(prefix="/api/models", tags=["models"])
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge ``override`` into ``base``, returning a new dict.
+
+    Nested dicts are merged key-by-key; every other value (lists, scalars) from
+    ``override`` replaces the one in ``base``. Inputs are not mutated.
+    """
+    result = dict(base)
+    for key, value in override.items():
+        existing = result.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            result[key] = _deep_merge(existing, value)
+        else:
+            result[key] = value
+    return result
+
+
 def _to_out(item: models_catalog.CatalogItem) -> ModelOut:
     entry = item.entry
     return ModelOut(
@@ -157,14 +173,35 @@ async def batch_update_models(
     ids = [m.strip() for m in body.model_ids if m and m.strip()]
     if not ids:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "model_ids is required.")
+    # Resolve the valid (non-builtin) role-group ids once for the whole batch.
+    role_group_ids: list[int] | None = None
+    if body.allowed_role_group_ids is not None:
+        valid_ids = set(
+            (
+                await session.execute(
+                    select(RoleGroup.id).where(RoleGroup.builtin.is_(False))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        role_group_ids = [gid for gid in body.allowed_role_group_ids if gid in valid_ids]
+    merge = body.opencode_config_mode != "overwrite"
     for model_id in ids:
         entry = await _get_or_create_entry(session, model_id, user)
         if body.description is not None:
             entry.description = body.description
         if body.opencode_config is not None:
-            entry.opencode_config = body.opencode_config
+            # Deep-merge into the existing config, or replace it wholesale.
+            entry.opencode_config = (
+                _deep_merge(entry.opencode_config or {}, body.opencode_config)
+                if merge
+                else body.opencode_config
+            )
         if body.enabled is not None:
             entry.enabled = body.enabled
+        if role_group_ids is not None:
+            entry.allowed_role_group_ids = list(role_group_ids)
     await session.flush()
     await record_audit(
         session,

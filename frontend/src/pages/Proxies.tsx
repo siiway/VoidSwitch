@@ -16,11 +16,18 @@ import {
   Textarea,
   tokens,
 } from "@fluentui/react-components";
-import { CloudRegular, DeleteRegular, PulseRegular } from "@fluentui/react-icons";
+import {
+  CloudOffRegular,
+  CloudRegular,
+  DeleteRegular,
+  PulseRegular,
+} from "@fluentui/react-icons";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import type { Provider, Proxy } from "../api/types";
 import {
   DataTable,
@@ -40,6 +47,11 @@ export function Proxies() {
   type TK = keyof Translations;
   const notify = useNotify();
   const confirm = useConfirm();
+  const navigate = useNavigate();
+  const { isOwner } = useAuth();
+  const config = useAsync<{ proxy_switching_enabled?: boolean }>(() =>
+    api.get("/api/auth/config"),
+  );
   const proxies = useAsync<Proxy[]>(() => api.get("/api/admin/proxies"));
   const providers = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
   const [bulk, setBulk] = useState("");
@@ -182,6 +194,39 @@ export function Proxies() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Proxy switching disabled → an external proxy handles egress. The nav hides
+  // this tab, but a direct URL still lands here; show an explicit notice.
+  if (config.data?.proxy_switching_enabled === false) {
+    return (
+      <div>
+        <PageHeader
+          title={t("proxies.title" as TK)}
+          subtitle={t("proxies.subtitle" as TK)}
+        />
+        <EmptyState
+          icon={<CloudOffRegular />}
+          title={t("proxies.disabledTitle" as TK)}
+          description={t("proxies.disabledDesc" as TK)}
+          action={
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              {isOwner ? (
+                <Button
+                  appearance="primary"
+                  onClick={() => navigate("/settings")}
+                >
+                  {t("proxies.goToSettings" as TK)}
+                </Button>
+              ) : null}
+              <Button onClick={() => navigate("/")}>
+                {t("proxies.goHome" as TK)}
+              </Button>
+            </div>
+          }
+        />
+      </div>
+    );
   }
 
   return (
