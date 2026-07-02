@@ -9,7 +9,9 @@ export default defineConfig({
   title: "VoidSwitch Docs",
   description: "How to use VoidSwitch — the multi-provider LLM API gateway.",
   cleanUrls: true,
-  lastUpdated: true,
+  // Off: "last updated" shells out to git, which isn't present in the Docker
+  // build stage (and .git isn't in the build context anyway).
+  lastUpdated: false,
   ignoreDeadLinks: true,
   themeConfig: {
     nav: [
