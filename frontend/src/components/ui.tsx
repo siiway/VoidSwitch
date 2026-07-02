@@ -554,6 +554,14 @@ export function Pager({
 
 export function formatDate(value?: string | null): string {
   if (!value) return "—";
-  const d = new Date(value);
+  // Backend timestamps are UTC, but (on SQLite) may be serialized as a *naive*
+  // ISO string with no timezone suffix. `new Date()` would then read them as
+  // local time, showing the UTC wall-clock instead of the viewer's timezone.
+  // Treat any tz-less value as UTC so `toLocaleString()` renders it in the
+  // browser's local timezone; values that already carry a `Z`/±HH:MM offset are
+  // left untouched.
+  const trimmed = value.trim();
+  const hasTz = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(trimmed);
+  const d = new Date(hasTz ? trimmed : `${trimmed}Z`);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }

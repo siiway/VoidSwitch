@@ -92,6 +92,10 @@ interface EditState {
 
 type BatchEnabled = "unchanged" | "enabled" | "disabled";
 
+// Which field(s) the catalog search box matches against. "all" (default) checks
+// every field, including the custom display name.
+type SearchField = "all" | "id" | "name" | "description" | "provider";
+
 function prettyJson(value: unknown): string {
   if (!value || (typeof value === "object" && Object.keys(value).length === 0)) {
     return "";
@@ -130,6 +134,7 @@ export function Models() {
   );
 
   const [search, setSearch] = useState("");
+  const [searchField, setSearchField] = useState<SearchField>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
@@ -225,14 +230,47 @@ export function Models() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return items;
-    return items.filter(
-      (m) =>
-        m.model_id.toLowerCase().includes(q) ||
-        m.public_id.toLowerCase().includes(q) ||
-        (m.description ?? "").toLowerCase().includes(q) ||
-        m.providers.some((p) => p.toLowerCase().includes(q)),
-    );
-  }, [items, search]);
+    const matchId = (m: ModelEntry) =>
+      m.model_id.toLowerCase().includes(q) ||
+      m.public_id.toLowerCase().includes(q);
+    const matchName = (m: ModelEntry) =>
+      (m.display_name ?? "").toLowerCase().includes(q);
+    const matchDesc = (m: ModelEntry) =>
+      (m.description ?? "").toLowerCase().includes(q);
+    const matchProvider = (m: ModelEntry) =>
+      m.providers.some((p) => p.toLowerCase().includes(q));
+    return items.filter((m) => {
+      switch (searchField) {
+        case "id":
+          return matchId(m);
+        case "name":
+          return matchName(m);
+        case "description":
+          return matchDesc(m);
+        case "provider":
+          return matchProvider(m);
+        default:
+          return (
+            matchId(m) || matchName(m) || matchDesc(m) || matchProvider(m)
+          );
+      }
+    });
+  }, [items, search, searchField]);
+
+  function searchFieldLabel(field: SearchField): string {
+    switch (field) {
+      case "id":
+        return t("models.searchFieldId" as TK);
+      case "name":
+        return t("models.searchFieldName" as TK);
+      case "description":
+        return t("models.searchFieldDescription" as TK);
+      case "provider":
+        return t("models.searchFieldProvider" as TK);
+      default:
+        return t("models.searchFieldAll" as TK);
+    }
+  }
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -474,6 +512,25 @@ export function Models() {
       />
 
       <div className={styles.toolbar}>
+        <Dropdown
+          aria-label={t("models.searchField" as TK)}
+          style={{ minWidth: 130 }}
+          selectedOptions={[searchField]}
+          value={searchFieldLabel(searchField)}
+          onOptionSelect={(_, d) =>
+            setSearchField((d.optionValue as SearchField) ?? "all")
+          }
+        >
+          <Option value="all">{t("models.searchFieldAll" as TK)}</Option>
+          <Option value="id">{t("models.searchFieldId" as TK)}</Option>
+          <Option value="name">{t("models.searchFieldName" as TK)}</Option>
+          <Option value="description">
+            {t("models.searchFieldDescription" as TK)}
+          </Option>
+          <Option value="provider">
+            {t("models.searchFieldProvider" as TK)}
+          </Option>
+        </Dropdown>
         <Input
           className={styles.search}
           contentBefore={<SearchRegular />}
