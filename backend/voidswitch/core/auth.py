@@ -62,6 +62,17 @@ _ROLE_RANK = {
 }
 
 
+def role_rank(role: str | None) -> int:
+    """Comparable privilege rank for a VoidSwitch role.
+
+    member < admin < co-owner == owner. Used to decide tier-based permissions
+    such as "may manage a resource authored by a *lower* tier" (owner/co-owner
+    share the top rank, so they cannot manage each other's — matching the rule
+    that same-tier peers can't act on one another).
+    """
+    return _ROLE_RANK.get(role or "", 0)
+
+
 def is_owner(user: User) -> bool:
     return user.role in OWNER_ROLES
 

@@ -154,4 +154,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # Empty → connect directly, falling back to the HTTP_PROXY/HTTPS_PROXY/
     # ALL_PROXY environment variables when present.
     "static_proxy_url": "",
+    # How many announcements to show inline on the dashboard's home panel before
+    # the "view all" action is needed to open the rest. 0 = show none inline
+    # (only the full-list dialog). The login popup always shows recent ones.
+    "announcements_home_count": 3,
 }

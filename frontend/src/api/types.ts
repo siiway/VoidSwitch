@@ -186,6 +186,20 @@ export interface RoleGroupMember {
   enabled: boolean;
 }
 
+export interface Announcement {
+  id: number;
+  title: string;
+  body: string;
+  created_by?: number | null;
+  created_by_name?: string | null;
+  created_by_role: Role;
+  edited: boolean;
+  created_at: string;
+  updated_at: string;
+  // Whether the current user may edit/delete this announcement.
+  can_manage: boolean;
+}
+
 export interface ModelSyncResult {
   added: number;
   total: number;

@@ -83,6 +83,10 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
     titleKey: "settings.sectionOpencode",
     keys: ["opencode_default_model", "opencode_small_model"],
   },
+  {
+    titleKey: "settings.sectionAnnouncements",
+    keys: ["announcements_home_count"],
+  },
 ];
 
 // Proxy-pool settings that are meaningless when proxy switching is off (an
@@ -202,6 +206,7 @@ export function Settings() {
       logs_page_size: t("settings.logsPageSize" as TK),
       proxy_switching_enabled: t("settings.proxySwitchingEnabled" as TK),
       static_proxy_url: t("settings.staticProxyUrl" as TK),
+      announcements_home_count: t("settings.announcementsHomeCount" as TK),
     }),
     [t],
   );

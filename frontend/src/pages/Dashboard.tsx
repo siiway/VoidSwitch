@@ -1,6 +1,7 @@
 import { Badge, Card, Text, tokens } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import type { Stats, SystemInfo } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
@@ -10,8 +11,15 @@ import {
   formatDate,
   useAsync,
 } from "../components/ui";
+import { AnnouncementsPanel } from "../components/Announcements";
 
 type TK = keyof Translations;
+
+interface MyUsage {
+  requests: number;
+  tokens: number;
+  token_count: number;
+}
 
 function Stat({
   label,
@@ -34,7 +42,40 @@ function Stat({
   );
 }
 
-export function Dashboard() {
+// Member view: their own usage only (no platform-wide stats or task internals).
+function MemberDashboard() {
+  const { t } = useTranslation();
+  const usage = useAsync<MyUsage>(() => api.get("/api/me/usage"));
+
+  return (
+    <div>
+      <PageHeader
+        title={t("dashboard.title" as TK)}
+        subtitle={t("dashboard.subtitleMember" as TK)}
+        onRefresh={usage.reload}
+      />
+      <AnnouncementsPanel />
+      {usage.loading ? (
+        <Loading />
+      ) : usage.error ? (
+        <ErrorText error={usage.error} />
+      ) : usage.data ? (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+          <Stat label={t("dashboard.myRequests" as TK)} value={usage.data.requests} />
+          <Stat
+            label={t("dashboard.myTokens" as TK)}
+            value={usage.data.tokens}
+            accent={tokens.colorPaletteGreenForeground1}
+          />
+          <Stat label={t("dashboard.myApiKeys" as TK)} value={usage.data.token_count} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Staff view: platform-wide statistics + background task status.
+function StaffDashboard() {
   const { t } = useTranslation();
   const stats = useAsync<Stats>(() => api.get("/api/admin/stats"));
   const system = useAsync<SystemInfo>(() => api.get("/api/admin/system"));
@@ -49,6 +90,7 @@ export function Dashboard() {
           system.reload();
         }}
       />
+      <AnnouncementsPanel />
       {stats.loading ? (
         <Loading />
       ) : stats.error ? (
@@ -138,4 +180,9 @@ export function Dashboard() {
       ) : null}
     </div>
   );
+}
+
+export function Dashboard() {
+  const { isStaff } = useAuth();
+  return isStaff ? <StaffDashboard /> : <MemberDashboard />;
 }

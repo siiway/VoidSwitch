@@ -603,6 +603,38 @@ class UsageAnalyticsOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Announcements
+# --------------------------------------------------------------------------- #
+
+
+class AnnouncementCreate(BaseModel):
+    title: str
+    body: str = ""
+
+
+class AnnouncementUpdate(BaseModel):
+    title: str | None = None
+    body: str | None = None
+
+
+class AnnouncementOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    body: str
+    created_by: int | None = None
+    created_by_name: str | None = None
+    created_by_role: str = "member"
+    edited: bool = False
+    created_at: dt.datetime
+    updated_at: dt.datetime
+    # Whether the requesting user may edit/delete this announcement (own, or a
+    # lower-tier author's). Computed per-request; not stored.
+    can_manage: bool = False
+
+
+# --------------------------------------------------------------------------- #
 # Role groups ("身份组")
 # --------------------------------------------------------------------------- #
 

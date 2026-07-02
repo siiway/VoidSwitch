@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { setToken } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { armAnnouncementsPopup } from "../components/Announcements";
 import { AuthShell } from "../components/AuthShell";
 import { ErrorText } from "../components/ui";
 import type { Translations } from "../i18n/locales/en";
@@ -26,6 +27,8 @@ export function LoginCallback() {
     }
     if (token) {
       setToken(token);
+      // Show the announcements popup once after this fresh sign-in.
+      armAnnouncementsPopup();
       void reload().then(() => navigate("/", { replace: true }));
     } else {
       setError("missing_token");

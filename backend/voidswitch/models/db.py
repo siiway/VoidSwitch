@@ -386,6 +386,31 @@ class RoleGroupMembership(Base):
     group: Mapped[RoleGroup] = relationship(back_populates="memberships", lazy="selectin")
 
 
+class Announcement(Base, TimestampMixin):
+    """A platform announcement, shown in a login popup and on the dashboard.
+
+    Published by staff (owner / co-owner / admin). The author's display name and
+    role are snapshotted so the card can attribute it and so deletion/edit
+    permission can be evaluated by tier (a user may always manage their own
+    announcement, and may manage those authored by a *lower* tier). Edit history
+    — including the previous and new title/body — is kept in the audit trail with
+    the content stored as an owner-revealable secret, like other secrets.
+    """
+
+    __tablename__ = "announcements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    # Author snapshot (id + display name + role at publish time). ``created_by``
+    # may be null if the author was later deleted; the name/role snapshots stay.
+    created_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
+    created_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    created_by_role: Mapped[str] = mapped_column(String(32), default=Role.MEMBER.value)
+    # Set once the announcement has been edited at least once (for an "edited" tag).
+    edited: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

@@ -19,9 +19,9 @@ from voidswitch.constants import KeyStatus
 from voidswitch.core.audit import AuditAction, record_audit
 from voidswitch.core.auth import (
     actor_display_name,
-    get_current_user,
     is_staff,
     require_owner,
+    require_staff,
 )
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
@@ -72,7 +72,7 @@ async def list_keys(
     provider_id: int,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> list[ApiKey]:
     provider = await _get_provider(session, provider_id)
     return await keymgmt.list_keys(session, provider, _actor(user, request))
@@ -84,7 +84,7 @@ async def add_keys(
     body: ApiKeyCreate,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> list[ApiKey]:
     provider = await _get_provider(session, provider_id)
@@ -99,7 +99,7 @@ async def refresh_balances(
     request: Request,
     pool: str | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> list[ApiKey]:
     """Rescan balances for this provider's keys (optionally one ``pool`` only)."""
@@ -115,7 +115,7 @@ async def refresh_balance_one(
     key_id: int,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> ApiKey:
     """Refresh a single key's balance on demand."""
@@ -132,7 +132,7 @@ async def reorder_keys(
     body: ApiKeyReorder,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> list[ApiKey]:
     """Persist a new drag-sorted order for this provider's keys (staff only)."""
     provider = await _get_provider(session, provider_id)
@@ -146,7 +146,7 @@ async def cleanup_keys(
     request: Request,
     pool: str | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> ApiKeyCleanupResult:
     """Delete keys stuck in a dead state: ``invalid`` or ``insufficient_balance``."""
@@ -164,7 +164,7 @@ async def update_key(
     body: ApiKeyUpdate,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> ApiKey:
     provider = await _get_provider(session, provider_id)
@@ -180,7 +180,7 @@ async def delete_key(
     key_id: int,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> None:
     provider = await _get_provider(session, provider_id)
@@ -208,7 +208,7 @@ async def oauth_start(
     provider_id: int,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> ClaudeOAuthStart:
     """Begin a Claude subscription OAuth login: return the authorize URL + state."""
     provider = await _get_provider(session, provider_id)
@@ -233,7 +233,7 @@ async def oauth_complete(
     body: ClaudeOAuthComplete,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> ApiKey:
     """Exchange the pasted code for a credential bundle and store it as a key."""

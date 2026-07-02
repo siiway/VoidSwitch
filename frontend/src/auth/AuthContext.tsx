@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, API_BASE, clearToken, getToken, setToken } from "../api/client";
+import { armAnnouncementsPopup } from "../components/Announcements";
 import type { User } from "../api/types";
 
 interface SessionOut {
@@ -58,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function devLogin() {
     const session = await api.post<SessionOut>("/api/auth/dev-login");
     setToken(session.access_token);
+    armAnnouncementsPopup();
     setUser(session.user);
   }
 

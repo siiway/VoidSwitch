@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from voidswitch import __version__
+from voidswitch.api import announcements as announcements_api
 from voidswitch.api import auth as auth_api
 from voidswitch.api import install as install_api
 from voidswitch.api import me as me_api
@@ -179,6 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Auth + self-service.
     app.include_router(auth_api.router)
     app.include_router(me_api.router)
+    app.include_router(announcements_api.router)
     app.include_router(models_api.router)
     # Admin.
     app.include_router(providers_api.router)

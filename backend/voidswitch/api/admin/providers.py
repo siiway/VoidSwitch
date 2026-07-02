@@ -12,10 +12,10 @@ from voidswitch.core.audit import AuditAction, record_audit, split_sensitive
 from voidswitch.core.auth import (
     actor_display_name,
     audit_scope_for,
-    get_current_user,
     is_owner,
     is_staff,
     require_owner,
+    require_staff,
 )
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
@@ -111,16 +111,15 @@ async def _validate_proxy_config(
 @router.get("", response_model=list[ProviderOut])
 async def list_providers(
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> list[ProviderOut]:
     rows = (
         (await session.execute(select(Provider).order_by(Provider.priority, Provider.id)))
         .scalars()
         .all()
     )
-    redact = not is_staff(user)
     show_key_api = is_owner(user)
-    return [_to_out(p, redact=redact, show_key_api=show_key_api) for p in rows]
+    return [_to_out(p, show_key_api=show_key_api) for p in rows]
 
 
 @router.post("", response_model=ProviderOut, status_code=status.HTTP_201_CREATED)
@@ -128,7 +127,7 @@ async def create_provider(
     body: ProviderCreate,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> ProviderOut:
     existing = (
@@ -195,7 +194,7 @@ async def update_provider(
     body: ProviderUpdate,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
     settings: Settings = Depends(get_settings),
 ) -> ProviderOut:
     provider = await session.get(Provider, provider_id)
@@ -438,7 +437,7 @@ async def reveal_key_api(
 
 
 @router.get("/catalog/types")
-async def provider_catalog(_: User = Depends(get_current_user)) -> list[dict[str, object]]:
+async def provider_catalog(_: User = Depends(require_staff)) -> list[dict[str, object]]:
     return adapter_catalog()
 
 
@@ -452,7 +451,7 @@ class FetchModelsRequest(BaseModel):
 @router.post("/fetch-models")
 async def fetch_provider_models(
     body: FetchModelsRequest,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_staff),
 ) -> dict:
     """Proxy a GET/POST call to a provider's model-listing endpoint.
 

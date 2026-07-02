@@ -37,14 +37,15 @@ function Protected({
     );
   }
   if (!user) return <Navigate to="/login" replace />;
-  if (owner && !isOwner) return <Navigate to="/providers" replace />;
-  if (staff && !isStaff) return <Navigate to="/providers" replace />;
+  if (owner && !isOwner) return <Navigate to="/dashboard" replace />;
+  if (staff && !isStaff) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
 
 function Home() {
-  const { isStaff } = useAuth();
-  return <Navigate to={isStaff ? "/dashboard" : "/providers"} replace />;
+  // Everyone lands on the dashboard: staff see platform stats, members see
+  // their own usage. Both see announcements there.
+  return <Navigate to="/dashboard" replace />;
 }
 
 export function App() {
@@ -63,7 +64,7 @@ export function App() {
         <Route
           path="/dashboard"
           element={
-            <Protected staff>
+            <Protected>
               <Dashboard />
             </Protected>
           }
@@ -71,7 +72,7 @@ export function App() {
         <Route
           path="/providers"
           element={
-            <Protected>
+            <Protected staff>
               <Providers />
             </Protected>
           }
@@ -87,7 +88,7 @@ export function App() {
         <Route
           path="/providers/:id/keys"
           element={
-            <Protected>
+            <Protected staff>
               <ProviderKeys />
             </Protected>
           }

@@ -48,6 +48,9 @@ async def auth_config(settings: Settings = Depends(get_settings)) -> dict[str, o
         "proxy_switching_enabled": settings_store.get_bool(
             "proxy_switching_enabled", True
         ),
+        # Non-secret: how many announcements the dashboard home panel shows inline
+        # before the "view all" action reveals the rest.
+        "announcements_home_count": settings_store.get_int("announcements_home_count", 3),
     }
 
 

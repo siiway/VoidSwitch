@@ -16,6 +16,7 @@ import {
 } from "@fluentui/react-components";
 import {
   BoardRegular,
+  BookRegular,
   ChartMultipleRegular,
   ChatRegular,
   CloudRegular,
@@ -24,6 +25,7 @@ import {
   DocumentBulletListRegular,
   KeyRegular,
   NavigationRegular,
+  OpenRegular,
   PeopleRegular,
   PeopleTeamRegular,
   PlugConnectedRegular,
@@ -35,11 +37,12 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { api } from "../api/client";
+import { api, API_BASE, getToken } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { LANGUAGES } from "../i18n";
 import type { Translations } from "../i18n/locales/en";
+import { AnnouncementsPopup } from "./Announcements";
 import { ConfirmProvider, ToastProvider } from "./ui";
 import type { ReactElement } from "react";
 
@@ -55,6 +58,9 @@ interface NavItem {
   labelKey: string;
   icon: ReactElement;
   scope: NavScope;
+  // When set, the item is an external link opened in a new tab (e.g. the private
+  // docs site), not an in-app route. The session token is appended at click time.
+  external?: boolean;
 }
 
 interface NavSection {
@@ -73,7 +79,7 @@ const SECTIONS: NavSection[] = [
         label: "Dashboard",
         labelKey: "nav.dashboard",
         icon: <BoardRegular />,
-        scope: "staff",
+        scope: "member",
       },
     ],
   },
@@ -86,7 +92,7 @@ const SECTIONS: NavSection[] = [
         label: "Providers",
         labelKey: "nav.providers",
         icon: <PlugConnectedRegular />,
-        scope: "member",
+        scope: "staff",
       },
       { to: "/models", label: "Models", labelKey: "nav.models", icon: <CubeRegular />, scope: "member" },
       { to: "/proxies", label: "Proxies", labelKey: "nav.proxies", icon: <CloudRegular />, scope: "staff" },
@@ -134,9 +140,25 @@ const SECTIONS: NavSection[] = [
     items: [
       { to: "/chat", label: "Chat", labelKey: "nav.chat", icon: <ChatRegular />, scope: "member" },
       { to: "/token", label: "My API Key", labelKey: "nav.myApiKey", icon: <KeyRegular />, scope: "member" },
+      {
+        to: "/docs/",
+        label: "Docs",
+        labelKey: "nav.docs",
+        icon: <BookRegular />,
+        scope: "member",
+        external: true,
+      },
     ],
   },
 ];
+
+// Build the docs URL with the session token so the (private) docs site can
+// authenticate a full-page navigation; it exchanges the token for a cookie.
+function docsHref(path: string): string {
+  const token = getToken();
+  const base = `${API_BASE}${path}`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
 
 const useStyles = makeStyles({
   shell: {
@@ -432,6 +454,22 @@ export function Layout() {
                     {section.heading}
                   </Text>
                   {section.items.map((item) => {
+                    if (item.external) {
+                      return (
+                        <a
+                          key={item.to}
+                          href={docsHref(item.to)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.item}
+                          onClick={handleNavClick}
+                        >
+                          <span className={styles.itemIcon}>{item.icon}</span>
+                          <span style={{ flex: 1 }}>{item.label}</span>
+                          <OpenRegular fontSize={16} />
+                        </a>
+                      );
+                    }
                     const active =
                       location.pathname === item.to ||
                       location.pathname.startsWith(item.to + "/");
@@ -567,6 +605,7 @@ export function Layout() {
             <Outlet />
           </main>
         </div>
+        <AnnouncementsPopup />
       </ConfirmProvider>
     </ToastProvider>
   );
