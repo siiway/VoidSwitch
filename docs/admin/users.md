@@ -7,9 +7,11 @@ last login. **Viewing** the list is staff-level; **mutating** a user is
 ## Roles
 
 - **Grant / revoke admin** (owner-only) — promote a member to admin or demote back.
-  Owner and co-owner roles are authoritative from Prism and can't be set here.
-- A "local override" is flagged when someone is a VoidSwitch admin while Prism
-  still reports them as a member.
+  Owner and co-owner roles come from the main team on Prism and can't be set here.
+- The **Team role** column shows the user's role in the main team (Prism).
+- A "local override" is flagged when someone is a VoidSwitch admin but is **not**
+  an admin of the main team — i.e. the admin role was granted here rather than
+  coming from Prism.
 
 ## Disabling an account (owner-only)
 

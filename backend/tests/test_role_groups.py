@@ -15,14 +15,13 @@ from voidswitch.models.db import (
 from voidswitch.services import role_groups
 
 
-def _identity(sub: str, *, teams=None, role=None) -> auth.PrismIdentity:
+def _identity(sub: str, *, teams=None) -> auth.PrismIdentity:
     return auth.PrismIdentity(
         sub=sub,
         username=sub,
         email=f"{sub}@example.com",
         name=sub,
         picture=None,
-        prism_role=role,
         teams=teams or [],
     )
 
@@ -141,6 +140,43 @@ async def test_login_grants_moderator_from_main_team(db):
     async with db.session() as session:
         user = await auth.upsert_user(session, settings, identity)
         assert user.role == "owner"
+
+
+@pytest.mark.asyncio
+async def test_admin_comes_from_main_team_role(db):
+    """The admin tier is the main team's ``admin`` role — and it's snapshotted."""
+    settings = _settings(main_team_id="main")
+    identity = _identity("mod", teams=[{"id": "main", "role": "admin"}])
+    async with db.session() as session:
+        user = await auth.upsert_user(session, settings, identity)
+        assert user.role == "admin"
+        # prism_role snapshots the *main-team* role (drives the override badge).
+        assert user.prism_role == "admin"
+
+
+@pytest.mark.asyncio
+async def test_admin_in_other_team_is_not_platform_admin(db):
+    """Being admin of a non-main team never confers the platform admin tier.
+
+    (This is also the shape of a former "Prism instance admin": privileged
+    elsewhere, but only a member here — with model access via a role group.)
+    """
+    settings = _settings(main_team_id="main")
+    async with db.session() as session:
+        group = RoleGroup(name="Mapped", builtin=False)
+        session.add(group)
+        await session.flush()
+        session.add(
+            RoleGroupMapping(role_group_id=group.id, team_id="other", min_role="member")
+        )
+        await session.flush()
+
+    identity = _identity("outsider", teams=[{"id": "other", "role": "admin"}])
+    async with db.session() as session:
+        user = await auth.upsert_user(session, settings, identity)
+        assert user.role == "member"
+        # Not in the main team → no main-team role recorded.
+        assert user.prism_role is None
 
 
 @pytest.mark.asyncio

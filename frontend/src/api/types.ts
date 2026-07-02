@@ -10,6 +10,8 @@ export interface User {
   name?: string | null;
   picture?: string | null;
   role: Role;
+  // The user's role in the main team (Prism): owner/co-owner/admin/member/null.
+  // Used to flag a "local admin override".
   prism_role?: string | null;
   enabled: boolean;
   last_login_at?: string | null;

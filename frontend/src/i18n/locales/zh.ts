@@ -494,7 +494,7 @@ const zh: Translations = {
     user: "用户",
     email: "邮箱",
     role: "角色",
-    prismRole: "Prism 角色",
+    prismRole: "团队角色",
     status: "状态",
     lastLogin: "上次登录",
     actions: "操作",

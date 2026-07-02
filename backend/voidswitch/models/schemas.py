@@ -26,8 +26,9 @@ class UserOut(BaseModel):
     name: str | None = None
     picture: str | None = None
     role: str
-    # The role Prism reported at last login. Surfaced so the dashboard can flag
-    # a "local admin override" (VS role=admin while Prism still says member).
+    # The user's role in the main team (Prism) at last login. Surfaced so the
+    # dashboard can flag a "local admin override" (VS role=admin while the main
+    # team doesn't make them an admin).
     prism_role: str | None = None
     enabled: bool
     last_login_at: dt.datetime | None = None

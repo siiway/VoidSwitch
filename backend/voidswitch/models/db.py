@@ -62,6 +62,10 @@ class User(Base, TimestampMixin):
     name: Mapped[str | None] = mapped_column(String(255), default=None)
     picture: Mapped[str | None] = mapped_column(Text, default=None)
     role: Mapped[str] = mapped_column(String(32), default=Role.MEMBER.value)
+    # The user's role in the configured main team (Prism), snapshotted at login:
+    # "owner" / "co-owner" / "admin" / "member" / None. Used for display and to
+    # flag a "local admin override" (a VoidSwitch admin who is not a main-team
+    # admin). Not the user's instance/site-wide Prism role.
     prism_role: Mapped[str | None] = mapped_column(String(32), default=None)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)

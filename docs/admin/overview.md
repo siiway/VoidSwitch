@@ -26,10 +26,18 @@ Reserved for owners and co-owners:
 
 ## Where roles come from
 
-- **Owner / co-owner** are authoritative from Prism (the main team's owner/co-owner)
-  or an explicit owner grant. They can't be assigned from the dashboard.
-- **Admin** can be granted locally by an owner on the [Users](/admin/users) page,
-  or inherited from a trusted Prism instance admin.
+Platform tiers are derived from the user's role in the configured **main team**
+on Prism (`main_team_id`): the team's **owner → owner**, **co-owner → co-owner**,
+**admin → admin**. This is the *only* source of a tier from Prism — a Prism
+**instance / site-wide** admin is **not** trusted (being a Prism system admin
+doesn't make you a VoidSwitch admin), and other teams never confer a tier (they
+can still grant [role groups](/admin/role-groups) for model access).
+
+- **Owner / co-owner** come from the main team's owner/co-owner role, or an
+  explicit `owner_subs` / `owner_emails` grant (or the first-user bootstrap).
+  They can't be assigned from the dashboard.
+- **Admin** comes from the main team's `admin` role, or can be granted locally by
+  an owner on the [Users](/admin/users) page (a "local admin override").
 - **Member** is the default for anyone else with platform access.
 
 ## The management pages

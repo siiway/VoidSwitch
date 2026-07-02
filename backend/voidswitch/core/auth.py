@@ -176,9 +176,10 @@ class PrismIdentity:
     email: str | None
     name: str | None
     picture: str | None
-    prism_role: str | None
     # Team memberships from ``/api/oauth/me/teams`` (each ``{"id", "role", ...}``),
     # used for the main-team moderator mapping and role-group auto-assignment.
+    # Platform tiers are derived from the user's role in the *main team*, never
+    # from any instance/site-wide Prism role.
     teams: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -299,7 +300,6 @@ async def _fetch_userinfo(
         email=merged.get("email"),
         name=merged.get("name"),
         picture=merged.get("picture"),
-        prism_role=str(merged.get("role")) if merged.get("role") else None,
         teams=[],
     )
 
@@ -324,6 +324,12 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
 
     auto_group_ids = await role_groups.evaluate_auto_group_ids(session, identity.teams)
 
+    # The user's role in the *main team* (Prism), snapshotted for display and to
+    # flag a "local admin override" (a VoidSwitch admin who is not an admin of the
+    # main team, i.e. was granted the role from the dashboard). None when there is
+    # no main team configured or the user isn't in it.
+    main_team_role = role_groups.effective_team_role(identity.teams, settings.admin.main_team_id)
+
     # Access policy: a non-moderator who isn't mapped to any role group — and has
     # no explicit owner/bootstrap grant — has no business on the platform. Refuse
     # the login outright (e.g. someone not in main_team_id and not in any mapped
@@ -346,7 +352,7 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
             name=identity.name,
             picture=identity.picture,
             role=role.value,
-            prism_role=identity.prism_role,
+            prism_role=main_team_role,
             last_login_at=dt.datetime.now(dt.UTC),
         )
         session.add(user)
@@ -356,7 +362,7 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
         existing.email = identity.email or existing.email
         existing.name = identity.name or existing.name
         existing.picture = identity.picture or existing.picture
-        existing.prism_role = identity.prism_role
+        existing.prism_role = main_team_role
         existing.last_login_at = dt.datetime.now(dt.UTC)
         existing.role = _merge_role(existing.role, role)
         await session.flush()
@@ -426,44 +432,23 @@ async def dev_login_user(session: AsyncSession, settings: Settings) -> User:
     return user
 
 
-# Prism role strings (case/separator-insensitive) → VoidSwitch role.
-_PRISM_ROLE_MAP = {
-    "owner": Role.OWNER,
-    "coowner": Role.CO_OWNER,
-    "admin": Role.ADMIN,
-}
-
-
-def _normalise_prism_role(value: str | None) -> Role | None:
-    """Map a Prism ``role`` claim onto a VoidSwitch role.
-
-    Accepts ``owner``, ``co-owner``/``co_owner``/``coowner`` and ``admin`` in any
-    case; everything else (incl. ``member``) returns ``None``.
-    """
-    if not value:
-        return None
-    key = value.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
-    return _PRISM_ROLE_MAP.get(key)
-
-
 def _resolve_role(settings: Settings, identity: PrismIdentity, is_first_user: bool) -> Role:
     admin = settings.admin
     if identity.sub in admin.owner_subs:
         return Role.OWNER
     if identity.email and identity.email in admin.owner_emails:
         return Role.OWNER
-    # The main team's owner / co-owner / admin are the platform moderators. This
-    # is the *only* team whose roles confer platform power — opening the gateway
-    # to more teams never grants their owners platform-owner rights.
+    # Platform tiers come from the user's role in the *main team* (Prism):
+    # owner → owner, co-owner → co-owner, admin → admin. This is the only team
+    # whose roles confer platform power — opening the gateway to more teams never
+    # grants their members platform tiers (they can still be mapped to role groups
+    # for model access). Instance/site-wide Prism roles are deliberately ignored:
+    # being a Prism system admin does not make you a VoidSwitch admin.
     from voidswitch.services.role_groups import resolve_main_team_role
 
     main_role = resolve_main_team_role(admin.main_team_id, identity.teams)
     if main_role is not None:
         return main_role
-    # Prism instance admins (site-wide) become local admins when trusted.
-    prism = _normalise_prism_role(identity.prism_role)
-    if prism == Role.ADMIN and admin.trust_prism_admin:
-        return Role.ADMIN
     if is_first_user and admin.bootstrap_first_user:
         return Role.OWNER
     return Role.MEMBER

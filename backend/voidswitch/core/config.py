@@ -104,21 +104,18 @@ class PrismSettings(BaseSettings):
 
 
 class AdminSettings(BaseSettings):
-    # Prism subjects / emails that are always VoidSwitch owners. Prism roles
-    # ``owner`` and ``co-owner`` are also recognised automatically and map to the
-    # VoidSwitch owner tier (owner → owner, co-owner → co-owner).
+    # Prism subjects / emails that are always VoidSwitch owners, regardless of
+    # team membership (a break-glass / bootstrap escape hatch).
     owner_subs: list[str] = Field(default_factory=list)
     owner_emails: list[str] = Field(default_factory=list)
-    # When true, a Prism instance admin (role == "admin") becomes a VoidSwitch
-    # *admin* (staff, not owner). Owner-only actions stay reserved for owners.
-    trust_prism_admin: bool = True
     bootstrap_first_user: bool = True
-    # Prism team whose owner / co-owner / admin members are force-mapped onto the
-    # matching VoidSwitch tier (owner→owner, co-owner→co-owner, admin→admin) —
-    # these are the platform "moderators". A team id string (see the Prism Teams
-    # UI / API). When empty, no team grants moderator power and only
-    # owner_subs/owner_emails (and the optional bootstrap-first-user) do.
-    # Override with VOIDSWITCH_ADMIN__MAIN_TEAM_ID=<team-id>.
+    # The Prism **team** whose members' roles confer platform tiers: a member's
+    # role in this team maps owner→owner, co-owner→co-owner, admin→admin (these
+    # are the platform "moderators"; everyone else is a member). This is the ONLY
+    # source of the admin tier from Prism — an instance/site-wide Prism admin is
+    # NOT trusted. A team id string (see the Prism Teams UI / API). When empty, no
+    # team grants a tier and only owner_subs/owner_emails (and the optional
+    # bootstrap-first-user) do. Override with VOIDSWITCH_ADMIN__MAIN_TEAM_ID.
     main_team_id: str = ""
 
 

@@ -509,7 +509,7 @@ const en = {
     user: "User",
     email: "Email",
     role: "Role",
-    prismRole: "Prism role",
+    prismRole: "Team role",
     status: "Status",
     lastLogin: "Last login",
     actions: "Actions",

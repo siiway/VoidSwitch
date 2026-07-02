@@ -53,24 +53,19 @@ prism:
     - "teams:read"
 
 admin:
-  # Prism subject IDs (`sub`) that always receive owner rights.
+  # Prism subject IDs (`sub`) that always receive owner rights (break-glass).
   owner_subs: []
   # Email addresses that always receive owner rights.
   owner_emails: []
-  # Prism roles "owner" and "co-owner" are recognised automatically and map to
-  # the VoidSwitch owner tier (owner → owner, co-owner → co-owner) — both can
-  # perform owner-only actions. Multiple owners/co-owners are supported.
-  #
-  # Treat a Prism instance admin (id_token role == "admin") as a VoidSwitch
-  # *admin* (staff, not owner). Owners can also grant this admin role locally to
-  # any member from the dashboard ("local admin override").
-  trust_prism_admin: true
   # When the user table is empty, the first user to log in becomes an owner
   # (bootstrap convenience for fresh deployments).
   bootstrap_first_user: true
-  # Prism team whose owner / co-owner / admin members are force-mapped to the
-  # matching VoidSwitch tier (the platform "moderators", who can use every
-  # model). Leave empty to disable team-based moderator mapping. Override with
-  # VOIDSWITCH_ADMIN__MAIN_TEAM_ID. Other teams can still grant role groups
-  # (and thus model access) via the dashboard's Role Groups tab.
+  # Prism **team** whose members' roles confer platform tiers: a member's role in
+  # this team maps owner → owner, co-owner → co-owner, admin → admin (the platform
+  # "moderators", who can use every model). This is the ONLY source of the admin
+  # tier from Prism — an instance/site-wide Prism admin is NOT trusted. Owners can
+  # still grant admin to any member locally from the dashboard Users tab ("local
+  # admin override"). Leave empty to disable team-based tiers. Override with
+  # VOIDSWITCH_ADMIN__MAIN_TEAM_ID. Other teams can still grant role groups (and
+  # thus model access) via the dashboard's Role Groups tab.
   main_team_id: ""
