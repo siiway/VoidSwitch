@@ -161,7 +161,12 @@ export function Users() {
                       icon={
                         u.enabled ? <ProhibitedRegular /> : <CheckmarkCircleRegular />
                       }
-                      disabled={u.id === me?.id || !isOwner}
+                      disabled={
+                        u.id === me?.id ||
+                        !isOwner ||
+                        // Same-tier peers (owner/co-owner) can't disable each other.
+                        (u.enabled && OWNER_TIER.includes(u.role))
+                      }
                       onClick={() => toggle(u)}
                       aria-label={
                         u.enabled

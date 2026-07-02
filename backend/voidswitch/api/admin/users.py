@@ -76,6 +76,14 @@ async def update_user(
     if body.enabled is not None and body.enabled != target.enabled:
         if target.id == actor.id and not body.enabled:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot disable yourself.")
+        # Peers of the same (owner) tier must not be able to disable one another.
+        # Only owners/co-owners reach this endpoint (require_owner), so refuse
+        # disabling any account that is itself owner-tier.
+        if not body.enabled and target.role in OWNER_ROLES:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Cannot disable an owner/co-owner; same-tier members can't disable each other.",
+            )
         changes["enabled"] = body.enabled
         target.enabled = body.enabled
         if not body.enabled:

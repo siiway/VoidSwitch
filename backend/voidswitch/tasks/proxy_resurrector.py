@@ -21,6 +21,11 @@ log = get_logger("tasks.resurrector")
 
 
 async def run_proxy_resurrector() -> None:
+    # When proxy switching is off an external proxy (e.g. mihomo) handles egress:
+    # there is no pool to probe or resurrect, so this task self-disables (mirrors
+    # the dashboard hiding its settings under that mode).
+    if not settings_store.get_bool("proxy_switching_enabled", True):
+        return
     db = get_database()
     probe_url = settings_store.get_cached("proxy_probe_url", "https://api.openai.com/v1/models")
 

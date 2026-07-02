@@ -85,11 +85,19 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
   },
 ];
 
-// Proxy-pool settings that are meaningless when proxy switching is off.
+// Proxy-pool settings that are meaningless when proxy switching is off (an
+// external proxy handles egress, so there is no pool to tune, probe, or
+// resurrect). Their background tasks are also short-circuited on the backend.
 const PROXY_SWITCHING_ONLY = new Set([
   "max_proxy_failures",
   "proxy_probe_interval_seconds",
+  "proxy_resurrector_enabled",
+  "proxy_probe_url",
 ]);
+
+// The single static upstream proxy URL only applies when switching is OFF; with
+// switching on the pool is used instead, so hide it.
+const PROXY_SWITCHING_OFF_ONLY = new Set(["static_proxy_url"]);
 
 export function Settings() {
   const { t } = useTranslation();
@@ -200,8 +208,10 @@ export function Settings() {
 
   function renderField(key: string) {
     if (!(key in values)) return null;
-    // Hide proxy-pool settings that don't apply when switching is off.
+    // Hide proxy-pool settings that don't apply when switching is off,
+    // and the static-proxy URL that only applies when switching is off.
     if (!proxySwitching && PROXY_SWITCHING_ONLY.has(key)) return null;
+    if (proxySwitching && PROXY_SWITCHING_OFF_ONLY.has(key)) return null;
     const value = values[key];
     const label = labels[key] ?? key;
 

@@ -427,6 +427,7 @@ const zh: Translations = {
     emptyTitle: "暂无令牌",
     emptyDesc: "生成一个 Void-Token，让客户端、应用或设备可以访问网关。",
     mint: "生成令牌",
+    id: "ID",
     name: "名称",
     fingerprint: "指纹",
     user: "用户",

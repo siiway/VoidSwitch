@@ -137,6 +137,7 @@ export function Tokens() {
         <DataTable ariaLabel={tr("tokens.title" as TK)}>
           <TableHeader>
             <TableRow>
+              <TableHeaderCell>{tr("tokens.id" as TK)}</TableHeaderCell>
               <TableHeaderCell>{tr("tokens.name" as TK)}</TableHeaderCell>
               <TableHeaderCell>{tr("tokens.fingerprint" as TK)}</TableHeaderCell>
               <TableHeaderCell>{tr("tokens.user" as TK)}</TableHeaderCell>
@@ -150,6 +151,14 @@ export function Tokens() {
           <TableBody>
             {(list.data ?? []).map((t) => (
               <TableRow key={t.id}>
+                <TableCell
+                  style={{
+                    color: tokens.colorNeutralForeground3,
+                    fontFamily: "monospace",
+                  }}
+                >
+                  {t.id}
+                </TableCell>
                 <TableCell>{t.name}</TableCell>
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {t.token_prefix}

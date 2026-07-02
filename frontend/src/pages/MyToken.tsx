@@ -38,6 +38,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
+import { buildOpencodeConfig, type ModelInfo } from "../lib/opencodeConfig";
 import { SecretDialog } from "./Tokens";
 
 interface Usage {
@@ -52,43 +53,6 @@ export OPENAI_API_KEY=vs-...`;
 
 const CLAUDE_SNIPPET = `export ANTHROPIC_BASE_URL=${API_BASE}
 export ANTHROPIC_AUTH_TOKEN=vs-...`;
-
-// Build the complete manual opencode.json from the live catalog: every served
-// model is listed with its per-model OpenCode config mixed in, so the user gets
-// a ready-to-paste config without running the installer.
-function buildOpencodeConfig(
-  model: string,
-  smallModel: string,
-  models: ModelEntry[],
-): string {
-  const modelMap: Record<string, unknown> = {};
-  for (const m of models) {
-    if (!m.served || !m.enabled) continue;
-    modelMap[m.public_id] =
-      m.opencode_config && Object.keys(m.opencode_config).length
-        ? m.opencode_config
-        : {};
-  }
-  // Guarantee the selected default + small models are present even if the
-  // catalog hasn't been synced yet.
-  if (model && !(model in modelMap)) modelMap[model] = {};
-  if (smallModel && !(smallModel in modelMap)) modelMap[smallModel] = {};
-
-  const config: Record<string, unknown> = {
-    $schema: "https://opencode.ai/config.json",
-    model: `voidswitch/${model}`,
-    ...(smallModel ? { small_model: `voidswitch/${smallModel}` } : {}),
-    provider: {
-      voidswitch: {
-        npm: "@ai-sdk/openai-compatible",
-        name: "VoidSwitch",
-        options: { baseURL: `${API_BASE}/v1` },
-        models: modelMap,
-      },
-    },
-  };
-  return `// ~/.config/opencode/opencode.json\n${JSON.stringify(config, null, 2)}`;
-}
 
 /** A monospace code block with a one-click copy button. */
 function CodeBlock({ code }: { code: string }) {
@@ -149,25 +113,54 @@ export function MyToken() {
   type TK = keyof Translations;
   const tokensList = useAsync<VoidToken[]>(() => api.get("/api/me/tokens"));
   const usage = useAsync<Usage>(() => api.get("/api/me/usage"));
-  // Public config carries the OpenCode model defaults (non-secret); the
-  // staff-only /api/admin/settings would 403 for ordinary members.
-  const config = useAsync<{
-    opencode_default_model?: string;
-    opencode_small_model?: string;
-  }>(() => api.get("/api/auth/config"));
-  // Catalog drives the manual OpenCode snippet (each model + its tuned config).
-  const models = useAsync<ModelEntry[]>(() => api.get("/api/models"));
   const [name, setName] = useState("default");
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [client, setClient] = useState("openai");
 
-  const ocModel = config.data?.opencode_default_model || "claude-opus-4-8";
-  const ocSmallModel = config.data?.opencode_small_model || "";
-  const opencodeConfig = buildOpencodeConfig(
-    ocModel,
-    ocSmallModel,
-    models.data ?? [],
-  );
+  // The manual (no-script) OpenCode config is only built once the user expands
+  // that section, and the catalog + defaults are fetched fresh from the API each
+  // time it's opened so the snippet always reflects the latest synced models.
+  const [manual, setManual] = useState<{
+    loading: boolean;
+    error?: string;
+    config?: string;
+  }>({ loading: false });
+
+  async function loadManualConfig() {
+    setManual({ loading: true });
+    try {
+      const [cfg, catalog] = await Promise.all([
+        api.get<{
+          opencode_default_model?: string;
+          opencode_small_model?: string;
+        }>("/api/auth/config"),
+        api.get<ModelEntry[]>("/api/models"),
+      ]);
+      const infos: ModelInfo[] = catalog
+        .filter((m) => m.served && m.enabled)
+        .map((m) => ({
+          id: m.public_id,
+          display_name: m.display_name ?? undefined,
+          description: m.description ?? undefined,
+          opencode:
+            m.opencode_config && Object.keys(m.opencode_config).length
+              ? m.opencode_config
+              : undefined,
+        }));
+      const config = buildOpencodeConfig(
+        cfg.opencode_default_model || "claude-opus-4-8",
+        cfg.opencode_small_model || "",
+        infos,
+        API_BASE,
+      );
+      setManual({ loading: false, config });
+    } catch (e) {
+      setManual({
+        loading: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
 
   async function create() {
     try {
@@ -228,8 +221,6 @@ export function MyToken() {
         onRefresh={() => {
           tokensList.reload();
           usage.reload();
-          config.reload();
-          models.reload();
         }}
       />
 
@@ -310,7 +301,15 @@ export function MyToken() {
 
             <Divider />
 
-            <details>
+            <details
+              onToggle={(e) => {
+                // Fetch + build the config fresh every time it's opened so it
+                // always reflects the latest synced models.
+                if ((e.currentTarget as HTMLDetailsElement).open) {
+                  void loadManualConfig();
+                }
+              }}
+            >
               <summary
                 style={{
                   cursor: "pointer",
@@ -338,7 +337,13 @@ export function MyToken() {
                     components={{ code: <code /> }}
                   />
                 </Text>
-                <CodeBlock code={opencodeConfig} />
+                {manual.loading ? (
+                  <Loading />
+                ) : manual.error ? (
+                  <ErrorText error={manual.error} />
+                ) : manual.config ? (
+                  <CodeBlock code={manual.config} />
+                ) : null}
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 4 }}
                 >
