@@ -158,4 +158,17 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # the "view all" action is needed to open the rest. 0 = show none inline
     # (only the full-list dialog). The login popup always shows recent ones.
     "announcements_home_count": 3,
+    # Per-user abuse rate limits (sliding window, in-process, single-node).
+    # Enforced for EVERYONE — including owners — with each user counted
+    # independently. 0 max = disabled.
+    #
+    # "operation" covers mutating dashboard/management actions (POST/PUT/PATCH/
+    # DELETE on the /api surface). Setting it too low is refused on save so an
+    # owner can never lock themselves (and everyone) out of the dashboard.
+    "operation_rate_limit_window_seconds": 10,
+    "operation_rate_limit_max_requests": 0,
+    # "call" covers the OpenAI/Anthropic gateway endpoints (/v1/chat/completions,
+    # /v1/messages).
+    "call_rate_limit_window_seconds": 60,
+    "call_rate_limit_max_requests": 0,
 }

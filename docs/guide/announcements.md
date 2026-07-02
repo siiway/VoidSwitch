@@ -5,11 +5,11 @@ policy changes, and so on.
 
 ## As a reader (everyone)
 
-- **Login popup** — when you sign in, any current announcements pop up
-  automatically so you don't miss them. Close the dialog to dismiss it for the
-  session; it appears again on your next sign-in.
-- **Dashboard panel** — the newest few announcements are listed on the Dashboard.
-  The number shown inline is configurable by owners
+- **Login popup** — when you sign in, the **most recent** announcement pops up so
+  you don't miss it. Close the dialog to dismiss it for the session; it appears
+  again on your next sign-in.
+- **Dashboard panel** — the newest few announcements are listed on the Dashboard
+  (3 by default). The number shown inline is configurable by owners
   ([Settings](/admin/settings) → *Announcements*). If there are more, use
   **View all** to read the rest.
 

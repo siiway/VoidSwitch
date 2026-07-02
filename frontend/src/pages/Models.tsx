@@ -594,7 +594,7 @@ export function Models() {
                 <div className={styles.badges}>
                   {!m.enabled && (
                     <Badge appearance="filled" color="subtle">
-                      {t("common.hidden" as TK)}
+                      {t("models.unavailableHidden" as TK)}
                     </Badge>
                   )}
                   {m.mapped_id && (

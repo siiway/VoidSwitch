@@ -113,7 +113,7 @@ Any of these carry your token:
 | ------ | ------- |
 | `401` | Missing/invalid token, or token expired/disabled. |
 | `403` | Token not allowed to call this model. |
-| `429` | You hit your token's RPM limit or daily quota. |
+| `429` | You hit your token's RPM limit / daily quota, or the platform per-user call rate limit. |
 | `5xx` | Upstream failed after failover; retry shortly. |
 
 ::: tip Interactive reference

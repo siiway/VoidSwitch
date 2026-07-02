@@ -32,6 +32,14 @@ allowed role groups, or OpenCode config. For the OpenCode config choose:
 
 ## Syncing & cleanup
 
-- **Sync from providers** adds catalog rows for every model ids the enabled
-  providers currently serve.
+- **Sync from providers** adds catalog rows for every model id the enabled
+  providers currently serve. Staff-only (`/api/models/sync`, `/v1/models/sync`,
+  or the OpenCode `/sync-models` command) — members can't reshape the shared
+  catalog.
 - **Clean unserved** removes metadata rows for models no provider serves anymore.
+
+## Hidden models
+
+Unchecking **Available** hides a model (it shows an "Unavailable (hidden)" badge
+for staff). Members never see hidden models — not on the Models page, in
+`/v1/models`, or the OpenCode picker.

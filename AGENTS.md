@@ -15,6 +15,18 @@ All `ty check` unresolved-import diagnostics are pre-existing (no venv at system
 
 Frontend `npm run lint` is `tsc --noEmit`; also run `npm run build` for anything non-trivial. Backend: `uv run pytest` from `backend/`.
 
+## Documentation
+
+There is a private, auth-gated VitePress **usage** site in `docs/` (served by the
+backend at `/docs/`; see `backend/voidswitch/api/docs_site.py`). When a change
+alters user-facing behaviour (a page, a permission, a setting, an endpoint, a
+flow), update the relevant `docs/**` page in the same change — keep it in sync.
+
+Keep the tone **usage-focused**: how to do things and the caveats that matter to
+users/operators. Avoid deep principle/architecture explanations (a short
+architecture overview belongs only in `docs/guide/introduction.md`). Don't
+document internal implementation detail that a user never touches.
+
 ## Permission tiers
 
 Three tiers, enforced on the backend and mirrored in the UI (`useAuth`: `isStaff`, `isOwner`; route `<Protected staff|owner>`; nav `scope`):

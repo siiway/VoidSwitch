@@ -76,12 +76,50 @@ async def test_member_cannot_edit(client, db, seeded):
     assert resp.status_code == 403
 
 
-async def test_member_can_view_and_sync(client, db, seeded):
+async def _member_headers(sub: str = "member-1") -> dict[str, str]:
+    token = create_session_token(
+        secret=get_settings().server.secret_key,
+        subject=sub,
+        extra={"role": "member", "name": "bob"},
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_member_can_view_but_not_sync(client, db, seeded):
     await _add_member(db)
-    assert (await client.get("/api/models", headers=_session_headers("member-1"))).status_code == 200
+    # Members may browse the catalog…
     assert (
-        await client.post("/api/models/sync", headers=_session_headers("member-1"))
+        await client.get("/api/models", headers=await _member_headers())
     ).status_code == 200
+    # …but syncing (reshaping the shared catalog) is staff-only now.
+    assert (
+        await client.post("/api/models/sync", headers=await _member_headers())
+    ).status_code == 403
+    # Staff can sync.
+    assert (
+        await client.post("/api/models/sync", headers=_session_headers())
+    ).status_code == 200
+
+
+async def test_member_does_not_see_hidden_models(client, db, seeded):
+    await _add_member(db)
+    # Staff hides deepseek-chat.
+    await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "enabled": False},
+    )
+    member_ids = {
+        m["model_id"]
+        for m in (await client.get("/api/models", headers=await _member_headers())).json()
+    }
+    assert "deepseek-chat" not in member_ids
+    # Staff still see it (to manage it).
+    staff_ids = {
+        m["model_id"]
+        for m in (await client.get("/api/models", headers=_session_headers())).json()
+    }
+    assert "deepseek-chat" in staff_ids
 
 
 async def test_batch_update(client, seeded):

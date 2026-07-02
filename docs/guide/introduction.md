@@ -21,7 +21,7 @@ VoidSwitch endpoint and let it:
 
 | Term | Meaning |
 | ---- | ------- |
-| **Void-Token** (`vs-…`) | Your personal client credential. Send it as the API key when calling the gateway. Create and manage these on the **My API Key** page. |
+| **Void-Token** (`vs-…`) | Your personal client credential. Send it as the API key when calling the gateway. Create and manage these on the **My Tokens** page. |
 | **Provider** | An upstream LLM platform (OpenAI, Anthropic, DeepSeek, …) configured by staff, with its own API keys and model list. |
 | **Model** | A model id served by one or more providers. Browse them on the **Models** page. |
 | **Role group** | A named group that grants access to specific models. Membership is assigned automatically from your team roles at sign-in. |

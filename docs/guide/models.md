@@ -18,15 +18,21 @@ per model. It's visible to every signed-in user.
   at sign-in.
 
 If a model you expect is missing, it may not be served by any enabled provider
-right now, or your role groups may not grant access — ask a moderator.
+right now, your role groups may not grant access, or it may be **hidden**
+(disabled) by staff — hidden models are not shown to members at all. Ask a
+moderator if you think a model should be available.
 
 ## Refreshing the catalog
 
-Any signed-in user can refresh the catalog so newly-served models appear:
+Refreshing the catalog (registering newly-served model ids) is **staff-only**
+(admin / co-owner / owner):
 
-- Use the refresh action on the **Models** page, or
+- the refresh/sync action on the **Models** page,
 - `POST /v1/models/sync`, or
-- the OpenCode `/sync-models` command.
+- the OpenCode `/sync-models` command (with a staff member's token).
+
+Members don't need to sync — served models already appear in the list and via
+`/v1/models`.
 
 ## Calling a model
 

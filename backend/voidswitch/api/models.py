@@ -18,6 +18,7 @@ from voidswitch.core.auth import (
     actor_display_name,
     audit_scope_for,
     get_current_user,
+    is_staff,
     require_staff,
 )
 from voidswitch.core.database import get_session
@@ -77,9 +78,13 @@ def _to_out(item: models_catalog.CatalogItem) -> ModelOut:
 @router.get("", response_model=list[ModelOut])
 async def list_models(
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> list[ModelOut]:
     catalog = await models_catalog.build_catalog(session)
+    # Members must not see hidden (disabled) models at all — only staff, who can
+    # manage them, get the full list with the "unavailable (hidden)" badge.
+    if not is_staff(user):
+        catalog = [i for i in catalog if i.enabled]
     return [_to_out(i) for i in catalog]
 
 
@@ -222,12 +227,12 @@ async def batch_update_models(
 async def sync_models(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_staff),
 ) -> ModelSyncResult:
     """Register a metadata row for every served model id that lacks one.
 
-    Open to any signed-in user (it only discovers what providers already serve),
-    so the OpenCode ``/models`` command can keep the catalog fresh.
+    Staff-only (admin / co-owner / owner): a member has no need to reshape the
+    shared catalog. It only discovers what providers already serve.
     """
     added, total = await models_catalog.sync_from_providers(
         session, added_by=user.id, added_by_name=actor_display_name(user)

@@ -89,6 +89,15 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
   },
 ];
 
+// Abuse rate-limit keys get a bespoke two-inputs-per-line layout (window + max),
+// so they're excluded from the generic sections (and the "Other" fallback).
+const RATE_LIMIT_KEYS = [
+  "operation_rate_limit_window_seconds",
+  "operation_rate_limit_max_requests",
+  "call_rate_limit_window_seconds",
+  "call_rate_limit_max_requests",
+];
+
 // Proxy-pool settings that are meaningless when proxy switching is off (an
 // external proxy handles egress, so there is no pool to tune, probe, or
 // resurrect). Their background tasks are also short-circuited on the backend.
@@ -284,10 +293,50 @@ export function Settings() {
     );
   }
 
+  function renderRateLimitRow(labelKey: TK, windowKey: string, maxKey: string) {
+    const windowVal = Number(values[windowKey] ?? 0);
+    const maxVal = Number(values[maxKey] ?? 0);
+    return (
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
+      >
+        <Text style={{ minWidth: 150 }}>{t(labelKey)}</Text>
+        <SpinButton
+          value={windowVal}
+          min={0}
+          disabled={!isOwner}
+          style={{ width: 96 }}
+          onChange={(_, d) => {
+            const next = d.value ?? (d.displayValue ? Number(d.displayValue) : windowVal);
+            if (!Number.isNaN(next)) set(windowKey, next);
+          }}
+        />
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+          {t("settings.rateLimitWithin" as TK)}
+        </Text>
+        <SpinButton
+          value={maxVal}
+          min={0}
+          disabled={!isOwner}
+          style={{ width: 96 }}
+          onChange={(_, d) => {
+            const next = d.value ?? (d.displayValue ? Number(d.displayValue) : maxVal);
+            if (!Number.isNaN(next)) set(maxKey, next);
+          }}
+        />
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+          {t("settings.rateLimitRequests" as TK)}
+        </Text>
+      </div>
+    );
+  }
+
+  const hasRateLimitKeys = RATE_LIMIT_KEYS.some((k) => k in values);
+
   if (loaded.loading) return <Loading />;
   if (loaded.error) return <ErrorText error={loaded.error} />;
 
-  const known = new Set(SECTIONS.flatMap((s) => s.keys));
+  const known = new Set([...SECTIONS.flatMap((s) => s.keys), ...RATE_LIMIT_KEYS]);
   const otherKeys = Object.keys(values).filter((k) => !known.has(k));
   const sections = [
     ...SECTIONS,
@@ -350,6 +399,28 @@ export function Settings() {
             </Card>
           );
         })}
+        {hasRateLimitKeys ? (
+          <Card
+            style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}
+          >
+            <Text weight="semibold" size={400}>
+              {t("settings.sectionAbuseLimits" as TK)}
+            </Text>
+            {renderRateLimitRow(
+              "settings.rateLimitOperation" as TK,
+              "operation_rate_limit_window_seconds",
+              "operation_rate_limit_max_requests",
+            )}
+            {renderRateLimitRow(
+              "settings.rateLimitCall" as TK,
+              "call_rate_limit_window_seconds",
+              "call_rate_limit_max_requests",
+            )}
+            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+              {t("settings.abuseLimitsHint" as TK)}
+            </Text>
+          </Card>
+        ) : null}
         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           {t("common.settingsAppliedNote" as TK)}
         </Text>

@@ -39,7 +39,7 @@ language toggle, and sign-out live in the footer.
 | ---- | ----------- |
 | Dashboard | everyone |
 | Models, Statistics, Logs | everyone |
-| Chat, My API Key, Docs | everyone |
+| Chat, My Tokens, Docs | everyone |
 | Providers, Proxies, Users, Role Groups, Settings | staff |
 | Tokens | owner / co-owner |
 

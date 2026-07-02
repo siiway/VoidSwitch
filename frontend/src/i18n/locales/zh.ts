@@ -71,7 +71,7 @@ const zh: Translations = {
     logs: "日志",
     settings: "设置",
     chat: "聊天",
-    myApiKey: "我的 API 密钥",
+    myApiKey: "我的令牌",
     docs: "文档",
     brand: "VoidSwitch",
     tagline: "LLM API 网关",
@@ -112,7 +112,7 @@ const zh: Translations = {
     backgroundTasks: "后台任务",
     myRequests: "我的请求数",
     myTokens: "我的 Token 用量",
-    myApiKeys: "我的 API 密钥数",
+    myApiKeys: "我的令牌数",
   },
   announcements: {
     title: "公告",
@@ -348,6 +348,7 @@ const zh: Translations = {
       '深度合并到 OpenCode 插件构建的模型块中。支持 JSONC/JSON5（允许尾随逗号和注释）— 例如 {"name": "…", "limit": {"context": 200000}}。',
     configPlaceholder: '{\n  "name": "My Model",\n  "limit": { "context": 200000 }\n}',
     availableLabel: "可用（取消勾选以从模型列表隐藏）",
+    unavailableHidden: "不可用 (隐藏)",
     deleteTitle: "删除模型元数据",
     deleteMsgServed: '删除 "{id}" 的描述和 OpenCode 配置？模型仍然可用（仍有提供商提供服务），但会丢失元数据。',
     deleteMsgUnserved: '删除 "{id}" 的描述和 OpenCode 配置？它已不再被任何提供商服务，将从目录中消失。',
@@ -531,6 +532,13 @@ const zh: Translations = {
     staticProxyUrl: "静态代理 URL（关闭切换时使用；留空 = 按环境配置）",
     announcementsHomeCount: "仪表盘展示的公告数量（超出后需“查看全部”）",
     sectionAnnouncements: "公告",
+    sectionAbuseLimits: "请求限流（防滥用）",
+    rateLimitOperation: "操作",
+    rateLimitCall: "OpenAI / Anthropic 调用",
+    rateLimitWithin: "秒内最多",
+    rateLimitRequests: "次请求",
+    abuseLimitsHint:
+      "即“N 秒内最多 X 个请求”。0 = 不限制。所有用户（含 owner）分别独立计算。“操作”指仪表盘的更改操作，“调用”指网关端点。操作限流值过低将在保存时被拒绝，以防锁死仪表盘。",
     sectionProxy: "代理与路由",
     sectionKeys: "密钥与余额",
     sectionRateLimit: "限流",
@@ -670,7 +678,7 @@ const zh: Translations = {
     tokenRejected: "令牌被拒绝 — 粘贴有效的 vs-… 令牌或铸造一个新令牌。",
   },
   myToken: {
-    title: "我的 API 密钥",
+    title: "我的令牌",
     subtitle: "你的 Void-Tokens 和 REST 端点",
     connectDesc: "使用下方的 <code>vs-…</code> 令牌将任何客户端指向网关。",
     connect: "连接客户端",
@@ -681,7 +689,7 @@ const zh: Translations = {
     windowsPs: "Windows (PowerShell)",
     manual: "手动设置（无脚本）",
     manualIntro:
-      "推荐使用上方的一行安装脚本——它还会接入 VoidSwitch 插件（推理强度、快速模式、思考、1M 上下文）。如果无法运行脚本，可直接粘贴下面这份完整的 <code>opencode.json</code>：其中已预置全部可用模型及其调优配置。",
+      "推荐使用上方的一行安装脚本——它还会接入 VoidSwitch 插件（支持设置 Claude Code 模型推理强度，并可从网关获取最新配置）。如果无法运行脚本，可直接粘贴下面这份完整的 <code>opencode.json</code>：其中已预置全部可用模型及其调优配置，但模型列表更新后需要手动重新获取。",
     manualStep1:
       "1. 保存上面的配置——不要填 <code>apiKey</code>，让 OpenCode 提示你输入。",
     manualStep2:

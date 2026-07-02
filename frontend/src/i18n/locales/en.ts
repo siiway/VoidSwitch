@@ -69,7 +69,7 @@ const en = {
     logs: "Logs",
     settings: "Settings",
     chat: "Chat",
-    myApiKey: "My API Key",
+    myApiKey: "My Tokens",
     docs: "Docs",
     brand: "VoidSwitch",
     tagline: "LLM API gateway",
@@ -110,7 +110,7 @@ const en = {
     backgroundTasks: "Background tasks",
     myRequests: "My requests",
     myTokens: "My tokens used",
-    myApiKeys: "My API keys",
+    myApiKeys: "My tokens",
   },
   announcements: {
     title: "Announcements",
@@ -355,6 +355,7 @@ const en = {
       'Deep-merged into the model block the OpenCode plugin builds. Accepts JSONC/JSON5 (trailing commas & comments OK) — e.g. {"name": "…", "limit": {"context": 200000}}.',
     configPlaceholder: '{\n  "name": "My Model",\n  "limit": { "context": 200000 }\n}',
     availableLabel: "Available (uncheck to hide from the model list)",
+    unavailableHidden: "Unavailable (hidden)",
     deleteTitle: "Delete model metadata",
     deleteMsgServed:
       'Remove the description and OpenCode config for "{id}"? The model stays available (a provider still serves it) but loses its metadata.',
@@ -549,6 +550,13 @@ const en = {
     announcementsHomeCount:
       "Announcements shown on the dashboard (before \"view all\")",
     sectionAnnouncements: "Announcements",
+    sectionAbuseLimits: "Rate limits (abuse protection)",
+    rateLimitOperation: "Operations",
+    rateLimitCall: "OpenAI / Anthropic calls",
+    rateLimitWithin: "s — at most",
+    rateLimitRequests: "requests",
+    abuseLimitsHint:
+      "Within N seconds, at most X requests. 0 = unlimited. Everyone (owners included) is counted independently. \"Operations\" covers dashboard changes; \"calls\" covers the gateway endpoints. An operation limit that's too low is rejected on save to avoid locking the dashboard.",
     sectionProxy: "Proxy & routing",
     sectionKeys: "Keys & balance",
     sectionRateLimit: "Rate limiting",
@@ -690,7 +698,7 @@ const en = {
     tokenRejected: "Token rejected — paste a valid vs-… token or mint a new one.",
   },
   myToken: {
-    title: "My API Key",
+    title: "My Tokens",
     subtitle: "Your Void-Tokens and REST endpoint",
     connectDesc: "Point any client at the gateway using a <code>vs-…</code> token from below.",
     connect: "Connect a client",
@@ -701,7 +709,7 @@ const en = {
     windowsPs: "Windows (PowerShell)",
     manual: "Manual setup (no script)",
     manualIntro:
-      "Prefer the one-line installer above — it also wires up the VoidSwitch plugin (reasoning effort, fast mode, thinking, 1M context). If you can't run a script, paste this complete <code>opencode.json</code> instead: every available model is pre-listed with its tuned config.",
+      "Prefer the one-line installer above — it also wires up the VoidSwitch plugin (set the Claude Code models' reasoning effort, and pull the latest config from the gateway). If you can't run a script, paste this complete <code>opencode.json</code> instead: every available model is pre-listed with its tuned config, but you'll need to manually fetch it again whenever the model list changes.",
     manualStep1:
       "1. Save the config above — leave out <code>apiKey</code> so OpenCode prompts for it.",
     manualStep2:

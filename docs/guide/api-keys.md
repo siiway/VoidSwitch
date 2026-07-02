@@ -1,11 +1,11 @@
 # Your API key (Void-Tokens)
 
 To call the gateway you need a **Void-Token** — a personal client credential that
-starts with `vs-`. Manage yours on the **My API Key** page.
+starts with `vs-`. Manage yours on the **My Tokens** page.
 
 ## Create a token
 
-1. Open **My API Key** from the sidebar (Account section).
+1. Open **My Tokens** from the sidebar (Account section).
 2. Click to create a new token and give it a **name** (e.g. `laptop`, `ci`).
 3. Optionally set:
    - **Allowed models** — restrict this token to specific model ids. Empty = all
@@ -47,5 +47,7 @@ export ANTHROPIC_AUTH_TOKEN=vs-your-token
 ## Quotas and limits
 
 If you exceed a token's RPM limit or daily quota, requests are rejected until the
-window resets. Model allow-lists reject calls to models not on the list. Your
-own usage is visible on the [Logs & usage](/guide/logs-usage) page.
+window resets. Model allow-lists reject calls to models not on the list. A
+platform-wide **per-user call rate limit** may also apply (set by owners), on top
+of your token's own limits. Your own usage is visible on the
+[Logs & usage](/guide/logs-usage) page.

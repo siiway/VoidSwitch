@@ -38,8 +38,10 @@ If you didn't embed a token during install:
 
 ## Refresh the model list
 
-The plugin reads the platform model catalog. Refresh it any time with the
-OpenCode `/sync-models` command (or from the **Models** page in the dashboard).
+The plugin reads the platform model catalog. New models served by providers
+appear automatically. **Registering** them in the catalog (the sync step) is
+staff-only: a staff member runs the OpenCode `/sync-models` command or uses the
+**Models** page. Members don't need to sync.
 
 ## Where the installer comes from
 

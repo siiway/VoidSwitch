@@ -407,8 +407,10 @@ export function AnnouncementsPopup() {
   useEffect(() => {
     if (sessionStorage.getItem(ANNOUNCE_POPUP_FLAG) !== "1") return;
     sessionStorage.removeItem(ANNOUNCE_POPUP_FLAG);
+    // Only the single most recent announcement pops up on login; the dashboard
+    // panel shows the latest few, with "view all" for the rest.
     api
-      .get<Announcement[]>("/api/announcements", { limit: 20 })
+      .get<Announcement[]>("/api/announcements", { limit: 1 })
       .then((list) => {
         if (list.length > 0) setItems(list);
       })

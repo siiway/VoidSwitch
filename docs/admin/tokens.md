@@ -2,7 +2,7 @@
 
 The **Tokens** page lets owners manage client **Void-Tokens** across all users —
 not just their own. It's **owner / co-owner only**. (Members manage their own
-tokens on [My API Key](/guide/api-keys).)
+tokens on [My Tokens](/guide/api-keys).)
 
 ## What you can do
 

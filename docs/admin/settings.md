@@ -22,6 +22,15 @@ buttons, strings as inputs. They're grouped into sections.
 - **OpenCode defaults** — the default and small model advertised to the plugin.
 - **Announcements** — how many announcements show on the dashboard before
   "view all".
+- **Rate limits (abuse protection)** — two per-user sliding-window limits, each
+  set as "within N seconds, at most X requests" (0 = unlimited):
+  - **Operations** — mutating dashboard actions (add/edit/delete/save).
+  - **OpenAI / Anthropic calls** — the gateway endpoints
+    (`/v1/chat/completions`, `/v1/messages`).
+
+  Both apply to **everyone, owners included**, and each user is counted
+  independently. To prevent a lockout, an operation limit that's too low
+  (below ~20 operations/minute) is **rejected on save**.
 
 ## Notes
 

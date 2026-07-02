@@ -23,7 +23,7 @@ from voidswitch.constants import (
     UPSTREAM_UNAVAILABLE_STATUS,
     ApiStyle,
 )
-from voidswitch.core import auth
+from voidswitch.core import auth, ratelimit
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
 from voidswitch.models.db import ModelEntry, Provider, VoidToken
@@ -51,6 +51,24 @@ def _check_rpm(token: VoidToken) -> None:
             f"Rate limit exceeded ({token.rpm_limit} req/min).",
         )
     window.append(now)
+
+
+def _check_call_rate_limit(user_id: int) -> None:
+    """Per-user abuse limit on the OpenAI/Anthropic gateway endpoints.
+
+    Independent of a token's own ``rpm_limit`` — this is a platform-wide guard
+    that everyone obeys (owners included), counted per user. Disabled when the
+    configured max is 0.
+    """
+    window = settings_store.get_int("call_rate_limit_window_seconds", 60)
+    max_requests = settings_store.get_int("call_rate_limit_max_requests", 0)
+    if not ratelimit.call_limiter.allow(
+        f"call:{user_id}", window_seconds=window, max_requests=max_requests
+    ):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Call rate limit exceeded ({max_requests} per {window}s). Slow down.",
+        )
 
 
 def _check_model_allowed(token: VoidToken, model: str) -> None:
@@ -108,6 +126,8 @@ async def _handle(
     inbound_style: ApiStyle,
 ) -> Response:
     authed = await auth.authenticate_void_token(session, authorization, x_api_key)
+    # Platform-wide per-user call rate limit (abuse guard, everyone incl. owners).
+    _check_call_rate_limit(authed.user.id)
     payload = await _body(request)
 
     model = payload.get("model")
@@ -325,13 +345,19 @@ async def sync_models(
     """Refresh the platform model catalog from the providers (token-authed).
 
     Lets the OpenCode ``/models`` slash command keep the catalog in sync with
-    what the providers currently serve. Only discovers already-served models, so
-    it is safe to expose to any valid client token. Also returns the gateway's
-    recommended OpenCode ``model`` / ``small_model`` selectors (bare model ids,
-    same values as the public ``/api/auth/config`` endpoint) so the plugin can
-    sync the top-level config keys alongside the provider's model map.
+    what the providers currently serve. Restricted to staff (admin / co-owner /
+    owner) token owners — a member has no need to reshape the shared catalog.
+    Also returns the gateway's recommended OpenCode ``model`` / ``small_model``
+    selectors (bare model ids, same values as the public ``/api/auth/config``
+    endpoint) so the plugin can sync the top-level config keys alongside the
+    provider's model map.
     """
-    await auth.authenticate_void_token(session, authorization, x_api_key)
+    authed = await auth.authenticate_void_token(session, authorization, x_api_key)
+    if not auth.is_staff(authed.user):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Syncing the model catalog requires admin privileges.",
+        )
     added, total = await models_catalog.sync_from_providers(session)
     return JSONResponse(
         {
