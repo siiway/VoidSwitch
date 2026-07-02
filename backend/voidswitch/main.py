@@ -12,10 +12,10 @@ from fastapi.responses import JSONResponse
 from voidswitch import __version__
 from voidswitch.api import announcements as announcements_api
 from voidswitch.api import auth as auth_api
+from voidswitch.api import docs_site, provider_api
 from voidswitch.api import install as install_api
 from voidswitch.api import me as me_api
 from voidswitch.api import models as models_api
-from voidswitch.api import provider_api
 from voidswitch.api import proxy as proxy_api
 from voidswitch.api import usage as usage_api
 from voidswitch.api.admin import (
@@ -141,6 +141,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         description="Multi-provider LLM API reverse proxy with proxy/key failover.",
         lifespan=lifespan,
+        # Swagger UI moves to /swagger so /docs can host the private VitePress
+        # documentation site (mounted below). ReDoc + the raw schema keep their
+        # defaults.
+        docs_url="/swagger",
     )
     app.state.settings = settings
 
@@ -199,6 +203,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # schema at /provider-api/docs). Authenticated by a provider's vsk-… token.
     app.mount("/provider-api", provider_api.subapp)
 
+    # Private documentation site (built VitePress) — auth-gated, served at /docs/.
+    # Only users who can sign in to the platform may view it.
+    app.mount("/docs", docs_site.subapp)
+
     @app.get("/healthz", tags=["system"])
     async def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": __version__})
@@ -212,7 +220,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "openai": "/v1/chat/completions",
                 "anthropic": "/v1/messages",
                 "models": "/v1/models",
-                "docs": "/docs",
+                "swagger": "/swagger",
+                "docs": "/docs/",
                 "provider_key_api_docs": "/provider-api/docs",
             },
         }

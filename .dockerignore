@@ -4,6 +4,11 @@
 frontend/
 opencode-plugin/node_modules/
 opencode-plugin/bun.lock
+# docs/ IS part of the context (built into the image for the /docs/ site), but
+# its install/build artifacts are rebuilt inside the image, so exclude them.
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 
 # --- Python build artifacts / caches ---
 **/.venv/
