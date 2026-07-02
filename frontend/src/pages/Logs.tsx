@@ -23,13 +23,14 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
+  ArrowEnterRegular,
   DismissRegular,
   EyeRegular,
   InfoRegular,
   SearchRegular,
 } from "@fluentui/react-icons";
 import { makeStyles } from "@fluentui/react-components";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -55,17 +56,78 @@ import {
 
 const DEFAULT_PAGE = 50;
 
-// Briefly flash a row the user jumped to so it's easy to spot.
+// Persistent highlight for a row the user jumped to. Unlike a brief flash this
+// stays visible (with a strong brand accent + left bar) until the user moves the
+// pointer / scrolls / types, so it's easy to spot even after an auto-scroll.
 const useHighlightStyles = makeStyles({
   row: {
-    animationName: {
-      "0%": { backgroundColor: tokens.colorBrandBackground2 },
-      "100%": { backgroundColor: "transparent" },
+    backgroundColor: tokens.colorBrandBackground2,
+    boxShadow: `inset 4px 0 0 0 ${tokens.colorBrandStroke1}`,
+    transition: "background-color 0.5s ease-out, box-shadow 0.5s ease-out",
+    // The first cell is sticky with its own opaque background, so it must be
+    // repainted too or the highlight would be clipped to columns 2+.
+    "& td:first-child": {
+      backgroundColor: tokens.colorBrandBackground2,
     },
-    animationDuration: "2.4s",
-    animationTimingFunction: "ease-out",
   },
 });
+
+/**
+ * Shared "jump to a row by id" behaviour for the log tables:
+ *   • auto-scrolls the target row into view once it renders (even when it was
+ *     already on the current page but off-screen);
+ *   • keeps a strong highlight on it until the user moves the pointer, scrolls,
+ *     or types — then it clears on its own.
+ *
+ * ``dataDep`` should be the current page data, so a jump that changes the page
+ * re-runs the scroll once the new rows arrive.
+ */
+function useIdJump(dataDep: unknown) {
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const [scrollTarget, setScrollTarget] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Scroll the target into view once it's present in the DOM. Runs again when
+  // the page data changes (i.e. after a cross-page jump reloads the rows).
+  useEffect(() => {
+    if (scrollTarget == null) return;
+    const el = containerRef.current?.querySelector<HTMLElement>(
+      `[data-log-row="${scrollTarget}"]`,
+    );
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setScrollTarget(null);
+    }
+  }, [scrollTarget, dataDep]);
+
+  // Clear the highlight on the first real user interaction after the jump. A
+  // short delay avoids the same Enter/click that triggered the jump clearing it.
+  useEffect(() => {
+    if (highlightId == null) return;
+    const clear = () => setHighlightId(null);
+    const opts: AddEventListenerOptions = { passive: true, once: true };
+    const timer = window.setTimeout(() => {
+      window.addEventListener("pointermove", clear, opts);
+      window.addEventListener("wheel", clear, opts);
+      window.addEventListener("touchmove", clear, opts);
+      window.addEventListener("keydown", clear, opts);
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointermove", clear);
+      window.removeEventListener("wheel", clear);
+      window.removeEventListener("touchmove", clear);
+      window.removeEventListener("keydown", clear);
+    };
+  }, [highlightId]);
+
+  const markJump = useCallback((id: number) => {
+    setHighlightId(id);
+    setScrollTarget(id);
+  }, []);
+
+  return { highlightId, containerRef, markJump };
+}
 
 export function Logs() {
   const { t } = useTranslation();
@@ -126,7 +188,6 @@ function RequestLogs({
   const [offset, setOffset] = useState(0);
   const [q, setQ] = useState("");
   const [goToId, setGoToId] = useState("");
-  const [highlightId, setHighlightId] = useState<number | null>(null);
   const [detailLog, setDetailLog] = useState<RequestLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [revealMode, setRevealMode] = useState(false);
@@ -139,6 +200,7 @@ function RequestLogs({
       }),
     [offset, refreshKey, pageSize, q],
   );
+  const { highlightId, containerRef, markJump } = useIdJump(logs.data);
 
   async function jumpToId() {
     const id = Number(goToId.trim());
@@ -153,8 +215,7 @@ function RequestLogs({
         return;
       }
       setOffset(Math.floor(r.offset / pageSize) * pageSize);
-      setHighlightId(id);
-      window.setTimeout(() => setHighlightId(null), 2600);
+      markJump(id);
     } catch (e) {
       notify(
         tr("logs.jumpFailed" as TK),
@@ -216,6 +277,16 @@ function RequestLogs({
             if (e.key === "Enter") void jumpToId();
           }}
         />
+        <Tooltip content={tr("logs.jump" as TK)} relationship="label">
+          <Button
+            icon={<ArrowEnterRegular />}
+            disabled={!goToId.trim()}
+            onClick={() => void jumpToId()}
+            aria-label={tr("logs.jump" as TK)}
+          >
+            {tr("logs.jump" as TK)}
+          </Button>
+        </Tooltip>
         {q ? (
           <Button
             appearance="subtle"
@@ -229,6 +300,7 @@ function RequestLogs({
           </Button>
         ) : null}
       </div>
+      <div ref={containerRef}>
       <DataTable ariaLabel={tr("logs.requests" as TK)} minWidth={960}>
         <TableHeader>
           <TableRow>
@@ -247,6 +319,7 @@ function RequestLogs({
           {data.items.map((r) => (
             <TableRow
               key={r.id}
+              data-log-row={r.id}
               className={r.id === highlightId ? hl.row : undefined}
             >
               <TableCell
@@ -290,6 +363,7 @@ function RequestLogs({
           ))}
         </TableBody>
       </DataTable>
+      </div>
       <Pager
         total={data.total}
         offset={offset}
@@ -459,7 +533,6 @@ function AuditLogs({
   const [offset, setOffset] = useState(0);
   const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [goToId, setGoToId] = useState("");
-  const [highlightId, setHighlightId] = useState<number | null>(null);
   const [revealed, setRevealed] = useState<{
     action: string;
     sensitive: unknown;
@@ -493,6 +566,7 @@ function AuditLogs({
       pageSize,
     ],
   );
+  const { highlightId, containerRef, markJump } = useIdJump(logs.data);
 
   async function jumpToId() {
     const id = Number(goToId.trim());
@@ -514,8 +588,7 @@ function AuditLogs({
         return;
       }
       setOffset(Math.floor(r.offset / pageSize) * pageSize);
-      setHighlightId(id);
-      window.setTimeout(() => setHighlightId(null), 2600);
+      markJump(id);
     } catch (e) {
       notify(
         ta("logs.jumpFailed" as TK),
@@ -660,6 +733,16 @@ function AuditLogs({
             if (e.key === "Enter") void jumpToId();
           }}
         />
+        <Tooltip content={ta("logs.jump" as TK)} relationship="label">
+          <Button
+            icon={<ArrowEnterRegular />}
+            disabled={!goToId.trim()}
+            onClick={() => void jumpToId()}
+            aria-label={ta("logs.jump" as TK)}
+          >
+            {ta("logs.jump" as TK)}
+          </Button>
+        </Tooltip>
         {hasFilters ? (
           <Button
             appearance="subtle"
@@ -680,6 +763,7 @@ function AuditLogs({
         <ErrorText error={logs.error} />
       ) : !data ? null : (
         <>
+          <div ref={containerRef}>
           <DataTable ariaLabel={ta("logs.audit" as TK)} minWidth={1020}>
             <TableHeader>
               <TableRow>
@@ -699,6 +783,7 @@ function AuditLogs({
               {data.items.map((a) => (
                 <TableRow
                   key={a.id}
+                  data-log-row={a.id}
                   className={a.id === highlightId ? hl.row : undefined}
                 >
                   <TableCell style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace" }}>
@@ -762,6 +847,7 @@ function AuditLogs({
               ))}
             </TableBody>
           </DataTable>
+          </div>
           <Pager
             total={data.total}
             offset={offset}

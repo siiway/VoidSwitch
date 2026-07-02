@@ -567,6 +567,7 @@ const en = {
     revealFailed: "Reveal failed",
     id: "ID",
     goToId: "Go to ID…",
+    jump: "Jump",
     requestSearch: "Search model / user / provider / error…",
     jumpNotFound: "No entry with that ID under the current filters",
     jumpFailed: "Jump failed",

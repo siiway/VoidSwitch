@@ -548,6 +548,7 @@ const zh: Translations = {
     revealFailed: "查看失败",
     id: "ID",
     goToId: "跳转到 ID…",
+    jump: "跳转",
     requestSearch: "搜索 模型 / 用户 / 提供商 / 错误…",
     jumpNotFound: "当前筛选下不存在该 ID 的记录",
     jumpFailed: "跳转失败",
