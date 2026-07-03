@@ -88,6 +88,7 @@ function useIdJump(dataDep: unknown) {
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [scrollTarget, setScrollTarget] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const autoScrolling = useRef(false);
 
   // Scroll the target into view once it's present in the DOM. Runs again when
   // the page data changes (i.e. after a cross-page jump reloads the rows).
@@ -97,27 +98,37 @@ function useIdJump(dataDep: unknown) {
       `[data-log-row="${scrollTarget}"]`,
     );
     if (el) {
+      autoScrolling.current = true;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       setScrollTarget(null);
     }
   }, [scrollTarget, dataDep]);
 
-  // Clear the highlight on the first real user interaction after the jump. A
-  // short delay avoids the same Enter/click that triggered the jump clearing it.
+  // Clear the highlight on user-initiated interaction (scroll, pointer move,
+  // keypress). Ignores scroll events emitted during the auto-scroll animation.
   useEffect(() => {
     if (highlightId == null) return;
-    const clear = () => setHighlightId(null);
-    const opts: AddEventListenerOptions = { passive: true, once: true };
-    const timer = window.setTimeout(() => {
-      window.addEventListener("pointermove", clear, opts);
-      window.addEventListener("wheel", clear, opts);
-      window.addEventListener("touchmove", clear, opts);
-      window.addEventListener("keydown", clear, opts);
-    }, 200);
+    const clear = () => {
+      autoScrolling.current = false;
+      setHighlightId(null);
+    };
+    const onScroll = () => {
+      if (autoScrolling.current) {
+        autoScrolling.current = false;
+        return;
+      }
+      setHighlightId(null);
+    };
+    const el = containerRef.current;
+    if (el) {
+      el.addEventListener("scroll", onScroll, { passive: true });
+    }
+    window.addEventListener("pointermove", clear, { passive: true, once: true });
+    window.addEventListener("touchmove", clear, { passive: true, once: true });
+    window.addEventListener("keydown", clear, { passive: true, once: true });
     return () => {
-      window.clearTimeout(timer);
+      if (el) el.removeEventListener("scroll", onScroll);
       window.removeEventListener("pointermove", clear);
-      window.removeEventListener("wheel", clear);
       window.removeEventListener("touchmove", clear);
       window.removeEventListener("keydown", clear);
     };
@@ -236,7 +247,6 @@ function RequestLogs({
       const d = await api.get<RequestLogDetail>(`/api/admin/logs/requests/${r.id}`);
       setDetailLog(d);
     } catch (e) {
-      // fallback
       setDetailLog(r as unknown as RequestLogDetail);
     } finally {
       setDetailLoading(false);

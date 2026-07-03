@@ -18,7 +18,6 @@ import {
   ToastTitle,
   Toaster,
   Tooltip,
-  makeStyles,
   mergeClasses,
   tokens,
   useId,
@@ -39,6 +38,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { makeStyles } from "@fluentui/react-components";
 
 // --- async data loading --------------------------------------------------- //
 
@@ -177,12 +177,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                   {opts?.cancelLabel ?? t("common.cancel")}
                 </Button>
               <Button
-                appearance="primary"
+                appearance={opts?.tone === "danger" ? "primary" : "primary"}
                 style={
                   opts?.tone === "danger"
                     ? {
-                        backgroundColor: "var(--colorPaletteRedBackground3)",
-                        borderColor: "var(--colorPaletteRedBackground3)",
+                        backgroundColor: tokens.colorPaletteRedBackground3,
+                        borderColor: tokens.colorPaletteRedBackground3,
                       }
                     : undefined
                 }

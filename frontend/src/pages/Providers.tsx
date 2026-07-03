@@ -108,24 +108,18 @@ function parseRoutes(text: string): ModelRoute[] {
     .map((l) => l.trim())
     .filter(Boolean)
     .map((line) => {
-      let rest = line;
-      let pool = "";
-      // Find " @ " (surrounded by spaces) as pool separator
-      // Use lastIndexOf to match rightmost occurrence
-      const at = rest.lastIndexOf(" @ ");
-      if (at >= 0) {
-        pool = rest.slice(at + 3).trim();
-        rest = rest.slice(0, at).trim();
-      }
-      let alias = rest;
-      let upstream = "";
-      // Find " => " (surrounded by spaces) as upstream separator
-      const arrow = rest.indexOf(" => ");
-      if (arrow >= 0) {
-        alias = rest.slice(0, arrow).trim();
-        upstream = rest.slice(arrow + 4).trim();
-      }
-      return { alias, upstream, pool };
+      // Format: `alias => upstream @ pool` where `=> upstream` and `@ pool`
+      // are both optional. Use a single regex to avoid parsing issues when
+      // the alias text happens to contain " @ " or " => ".
+      const m = line.match(
+        /^(.+?)(?:\s*=>\s*(.+?))?(?:\s*@\s*(.+))?$/,
+      );
+      if (!m) return { alias: line, upstream: "", pool: "" };
+      return {
+        alias: m[1].trim(),
+        upstream: (m[2] ?? "").trim(),
+        pool: (m[3] ?? "").trim(),
+      };
     })
     .filter((r) => r.alias);
 }
