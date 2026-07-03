@@ -41,6 +41,7 @@ import { api, API_BASE } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
   AdapterMeta,
+  ApiKey,
   KeySelectMode,
   ModelRoute,
   Provider,
@@ -77,6 +78,8 @@ interface FormState {
   model_routes: string;
   key_select_mode: KeySelectMode;
   rate_limit_cooldown_seconds: number;
+  initial_keys: string;
+  initial_keys_pool: string;
 }
 
 const EMPTY: FormState = {
@@ -93,6 +96,8 @@ const EMPTY: FormState = {
   model_routes: "",
   key_select_mode: "round_robin",
   rate_limit_cooldown_seconds: 0,
+  initial_keys: "",
+  initial_keys_pool: "",
 };
 
 // Model routes use one line per route: `alias => upstream @ pool`
@@ -208,6 +213,8 @@ export function Providers() {
       model_routes: formatRoutes(p.model_routes),
       key_select_mode: p.key_select_mode ?? "round_robin",
       rate_limit_cooldown_seconds: p.rate_limit_cooldown_seconds ?? 0,
+      initial_keys: "",
+      initial_keys_pool: "",
     });
   }
 
@@ -299,8 +306,39 @@ export function Providers() {
         await api.patch(`/api/admin/providers/${form.id}`, payload);
         notify(t("providers.updated" as TK), form.name, "success");
       } else {
-        await api.post("/api/admin/providers", payload);
+        const created = await api.post<Provider>(
+          "/api/admin/providers",
+          payload,
+        );
         notify(t("providers.created" as TK), form.name, "success");
+        // Optionally seed upstream keys entered in the create dialog.
+        const keyLines = form.initial_keys
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (keyLines.length && created?.id) {
+          try {
+            const createdKeys = await api.post<ApiKey[]>(
+              `/api/admin/providers/${created.id}/keys`,
+              { keys: keyLines, pool: form.initial_keys_pool.trim() },
+            );
+            notify(
+              t("providerKeys.created" as TK),
+              `${createdKeys.length} new key(s)${
+                form.initial_keys_pool.trim()
+                  ? ` in pool "${form.initial_keys_pool.trim()}"`
+                  : ""
+              }`,
+              "success",
+            );
+          } catch (e) {
+            notify(
+              t("providerKeys.addFailed" as TK),
+              e instanceof Error ? e.message : String(e),
+              "error",
+            );
+          }
+        }
       }
       setForm(null);
       providers.reload();
@@ -986,6 +1024,36 @@ export function Providers() {
                     )
                   }
                 />
+              )}
+              {!form?.id && (
+                <>
+                  <Field
+                    label={t("providers.initialKeys" as TK)}
+                    hint={t("providers.initialKeysHint" as TK)}
+                  >
+                    <Textarea
+                      value={form?.initial_keys ?? ""}
+                      rows={4}
+                      placeholder={"sk-...\nsk-... # optional description\nsk-..."}
+                      onChange={(_, d) =>
+                        setForm((f) => (f ? { ...f, initial_keys: d.value } : f))
+                      }
+                    />
+                  </Field>
+                  {(form?.initial_keys ?? "").trim() && (
+                    <Field label={t("providers.initialKeysPool" as TK)}>
+                      <Input
+                        value={form?.initial_keys_pool ?? ""}
+                        placeholder="(untagged)"
+                        onChange={(_, d) =>
+                          setForm((f) =>
+                            f ? { ...f, initial_keys_pool: d.value } : f,
+                          )
+                        }
+                      />
+                    </Field>
+                  )}
+                </>
               )}
             </DialogContent>
             <DialogActions>

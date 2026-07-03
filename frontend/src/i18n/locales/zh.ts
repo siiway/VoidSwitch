@@ -227,6 +227,10 @@ const zh: Translations = {
     keyApiDisableConfirm: "禁用密钥管理 API 并吊销其令牌？此操作无法撤销。",
     keyApiActionFailed: "操作失败",
     keyApiDocs: "打开 API 文档",
+    initialKeys: "上游密钥（可选）",
+    initialKeysHint:
+      "可在此预先填入密钥——每行一个。可用 # 添加行内备注（如 sk-abc # alice 的密钥）。也可稍后在密钥页面添加。",
+    initialKeysPool: "这些密钥所属的池（可选标签——如 leaked、members）",
   },
   providerKeys: {
     title: "密钥",

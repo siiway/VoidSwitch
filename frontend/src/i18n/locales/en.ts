@@ -228,6 +228,10 @@ const en = {
       "Disable the key-management API and revoke its token? This cannot be undone.",
     keyApiActionFailed: "Action failed",
     keyApiDocs: "Open API docs",
+    initialKeys: "Upstream keys (optional)",
+    initialKeysHint:
+      "Optionally seed keys now — one per line. Add an inline description with # (e.g. sk-abc # alice's key). You can also add them later on the Keys page.",
+    initialKeysPool: "Key pool for these keys (optional tag — e.g. leaked, members)",
   },
   providerKeys: {
     title: "Keys",
