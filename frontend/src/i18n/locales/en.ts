@@ -396,6 +396,13 @@ const en = {
     accessSearch: "Search role groups…",
     accessNoGroups: "No role groups yet. Create one under Operations → Role Groups.",
     accessSaved: "Model access updated",
+    filterProvider: "Provider",
+    filterAllProviders: "All providers",
+    filterAvailability: "Availability",
+    filterAllAvail: "All",
+    filterGroup: "Role group",
+    filterAllGroups: "All groups",
+    filterUnassigned: "Unassigned",
   },
   roleGroups: {
     title: "Role Groups",

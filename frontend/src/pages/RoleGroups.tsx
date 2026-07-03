@@ -318,7 +318,9 @@ export function RoleGroups() {
                           color="informative"
                           className={styles.mapTeam}
                         >
-                          {m.team_id}
+                          {m.team_id.length > 8
+                            ? m.team_id.slice(0, 4) + "..." + m.team_id.slice(-4)
+                            : m.team_id}
                         </Badge>
                       </Tooltip>
                       <Badge appearance="tint" color="brand">

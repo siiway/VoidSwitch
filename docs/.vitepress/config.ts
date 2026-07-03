@@ -31,7 +31,7 @@ export default defineConfig({
     nav: [
       { text: "Guide", link: "/guide/introduction" },
       { text: "Admin", link: "/admin/overview" },
-      { text: "Dashboard", link: "/" },
+      { text: "Dashboard", link: "https://voidswitch.siiway.org/" },
     ],
     sidebar: {
       "/guide/": [
@@ -76,7 +76,7 @@ export default defineConfig({
       ],
     },
     outline: { level: [2, 3] },
-    docFooter: { prev: true, next: true },
+    docFooter: { prev: "Previous page", next: "Next page" },
     search: { provider: "local" },
   },
 });

@@ -64,6 +64,13 @@ const useStyles = makeStyles({
     gap: "8px",
     ...shorthands.padding("16px"),
   },
+  cardHidden: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    ...shorthands.padding("16px"),
+    opacity: 0.55,
+  },
   head: {
     display: "flex",
     alignItems: "flex-start",
@@ -135,6 +142,9 @@ export function Models() {
 
   const [search, setSearch] = useState("");
   const [searchField, setSearchField] = useState<SearchField>("all");
+  const [filterProvider, setFilterProvider] = useState("all");
+  const [filterAvail, setFilterAvail] = useState("all");
+  const [filterGroup, setFilterGroup] = useState("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
@@ -227,35 +237,55 @@ export function Models() {
   }
 
   const items = catalog.data ?? [];
+
+  const allProviders = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of items) for (const p of m.providers) set.add(p);
+    return [...set].sort();
+  }, [items]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return items;
-    const matchId = (m: ModelEntry) =>
-      m.model_id.toLowerCase().includes(q) ||
-      m.public_id.toLowerCase().includes(q);
-    const matchName = (m: ModelEntry) =>
-      (m.display_name ?? "").toLowerCase().includes(q);
-    const matchDesc = (m: ModelEntry) =>
-      (m.description ?? "").toLowerCase().includes(q);
-    const matchProvider = (m: ModelEntry) =>
-      m.providers.some((p) => p.toLowerCase().includes(q));
-    return items.filter((m) => {
-      switch (searchField) {
-        case "id":
-          return matchId(m);
-        case "name":
-          return matchName(m);
-        case "description":
-          return matchDesc(m);
-        case "provider":
-          return matchProvider(m);
-        default:
-          return (
-            matchId(m) || matchName(m) || matchDesc(m) || matchProvider(m)
-          );
-      }
-    });
-  }, [items, search, searchField]);
+    let result = items;
+    if (q) {
+      const matchId = (m: ModelEntry) =>
+        m.model_id.toLowerCase().includes(q) ||
+        m.public_id.toLowerCase().includes(q);
+      const matchName = (m: ModelEntry) =>
+        (m.display_name ?? "").toLowerCase().includes(q);
+      const matchDesc = (m: ModelEntry) =>
+        (m.description ?? "").toLowerCase().includes(q);
+      const matchProvider = (m: ModelEntry) =>
+        m.providers.some((p) => p.toLowerCase().includes(q));
+      result = result.filter((m) => {
+        switch (searchField) {
+          case "id":
+            return matchId(m);
+          case "name":
+            return matchName(m);
+          case "description":
+            return matchDesc(m);
+          case "provider":
+            return matchProvider(m);
+          default:
+            return (
+              matchId(m) || matchName(m) || matchDesc(m) || matchProvider(m)
+            );
+        }
+      });
+    }
+    if (filterProvider !== "all")
+      result = result.filter((m) => m.providers.includes(filterProvider));
+    if (filterAvail === "available") result = result.filter((m) => m.enabled);
+    else if (filterAvail === "hidden") result = result.filter((m) => !m.enabled);
+    if (filterGroup === "unassigned")
+      result = result.filter((m) => m.allowed_role_group_ids.length === 0);
+    else if (filterGroup !== "all")
+      result = result.filter((m) =>
+        m.allowed_role_group_ids.includes(Number(filterGroup)),
+      );
+    return result;
+  }, [items, search, searchField, filterProvider, filterAvail, filterGroup]);
 
   function searchFieldLabel(field: SearchField): string {
     switch (field) {
@@ -545,6 +575,57 @@ export function Models() {
         </Text>
       </div>
 
+      <div className={styles.toolbar}>
+        <Dropdown
+          aria-label={t("models.filterProvider" as TK)}
+          style={{ minWidth: 150 }}
+          selectedOptions={[filterProvider]}
+          value={filterProvider === "all" ? t("models.filterAllProviders" as TK) : filterProvider}
+          onOptionSelect={(_, d) => setFilterProvider(d.optionValue ?? "all")}
+        >
+          <Option value="all">{t("models.filterAllProviders" as TK)}</Option>
+          {allProviders.map((p) => (
+            <Option key={p} value={p}>{p}</Option>
+          ))}
+        </Dropdown>
+        <Dropdown
+          aria-label={t("models.filterAvailability" as TK)}
+          style={{ minWidth: 130 }}
+          selectedOptions={[filterAvail]}
+          value={
+            filterAvail === "all"
+              ? t("models.filterAllAvail" as TK)
+              : filterAvail === "available"
+                ? t("common.enabled" as TK)
+                : t("models.unavailableHidden" as TK)
+          }
+          onOptionSelect={(_, d) => setFilterAvail(d.optionValue ?? "all")}
+        >
+          <Option value="all">{t("models.filterAllAvail" as TK)}</Option>
+          <Option value="available">{t("common.enabled" as TK)}</Option>
+          <Option value="hidden">{t("models.unavailableHidden" as TK)}</Option>
+        </Dropdown>
+        <Dropdown
+          aria-label={t("models.filterGroup" as TK)}
+          style={{ minWidth: 150 }}
+          selectedOptions={[filterGroup]}
+          value={
+            filterGroup === "all"
+              ? t("models.filterAllGroups" as TK)
+              : filterGroup === "unassigned"
+                ? t("models.filterUnassigned" as TK)
+                : (roleGroups.data ?? []).find((g) => String(g.id) === filterGroup)?.name ?? filterGroup
+          }
+          onOptionSelect={(_, d) => setFilterGroup(d.optionValue ?? "all")}
+        >
+          <Option value="all">{t("models.filterAllGroups" as TK)}</Option>
+          <Option value="unassigned">{t("models.filterUnassigned" as TK)}</Option>
+          {(roleGroups.data ?? []).filter((g) => !g.builtin).map((g) => (
+            <Option key={g.id} value={String(g.id)}>{g.name}</Option>
+          ))}
+        </Dropdown>
+      </div>
+
       {catalog.loading ? (
         <Loading />
       ) : catalog.error ? (
@@ -559,7 +640,7 @@ export function Models() {
             const hasConfig =
               m.opencode_config && Object.keys(m.opencode_config).length > 0;
             return (
-              <Card key={m.model_id} className={styles.card}>
+              <Card key={m.model_id} className={m.enabled ? styles.card : styles.cardHidden}>
                 <div className={styles.head}>
                   <div style={{ minWidth: 0 }}>
                     {m.display_name && (

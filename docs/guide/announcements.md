@@ -22,10 +22,17 @@ Owners, co-owners, and admins can publish announcements:
 
 1. Go to the **Dashboard**.
 2. In the Announcements panel, click **Publish**.
-3. Enter a **title** (required) and **content**, then **Publish**.
+3. Enter a **title** (required) and **content**.
+4. Optionally, pick one or more **target role groups** — only members of those
+   groups will see the announcement. Leave empty to send to everyone.
+5. Click **Publish**.
 
-The announcement is immediately visible to all users (and pops up on their next
-sign-in).
+When role groups are targeted, staff see a small badge on the announcement card
+(hover to show the full list of groups). Regular users only see announcements
+that target them (or everyone).
+
+The announcement is immediately visible to the targeted audience (and pops up on
+their next sign-in).
 
 ## Editing and deleting
 
