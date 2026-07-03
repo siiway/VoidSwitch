@@ -372,8 +372,18 @@ def _reward_key(key: ApiKey) -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def dispatch(req: DispatchRequest) -> DispatchResult:
-    db = get_database()
+async def dispatch(
+    req: DispatchRequest,
+    session: AsyncSession | None = None,
+) -> DispatchResult:
+    if session is None:
+        db = get_database()
+        async with db.session() as s:
+            return await _do_dispatch(req, s)
+    return await _do_dispatch(req, session)
+
+
+async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchResult:
     settings = get_settings()
     max_retries = max(1, settings_store.get_int("max_retries", 6))
     proxy_threshold = max(1, settings_store.get_int("max_proxy_failures", 3))
@@ -397,19 +407,18 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
     last_ctx: dict[str, Any] = {}
     last_outcome: _Attempt | None = None
 
-    async with db.session() as session:
-        providers = await select_providers(session, req.model)
-        if not providers:
-            return DispatchResult(
-                status_code=404,
-                is_stream=False,
-                content=_error_body(
-                    req.inbound_style,
-                    f"No enabled provider serves model '{req.model}'.",
-                    "model_not_found",
-                ),
-                model=req.model,
-            )
+    providers = await select_providers(session, req.model)
+    if not providers:
+        return DispatchResult(
+            status_code=404,
+            is_stream=False,
+            content=_error_body(
+                req.inbound_style,
+                f"No enabled provider serves model '{req.model}'.",
+                "model_not_found",
+            ),
+            model=req.model,
+        )
         # Proxy switching off (external proxy like mihomo handles egress): every
         # request goes through a single fixed route and no proxy is ever disabled.
         proxy_switching = settings_store.get_bool("proxy_switching_enabled", True)
