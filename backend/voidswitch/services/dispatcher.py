@@ -1191,6 +1191,20 @@ async def _log_request(
 ) -> None:
     usage = usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     debug = req.debug_enabled
+    # Force-capture the upstream response (headers + body only) on any error —
+    # even for non-debug tokens — so an upstream 4xx/5xx is always diagnosable.
+    # The request headers/body and the per-attempt trail are NOT captured in this
+    # forced case (only full debug tokens get those). This capture is treated as
+    # debug info: it is owner-only in the UI and pruned by the same
+    # ``debug_log_retention_days`` window, so the row is flagged ``debug``.
+    error_capture = (
+        not debug
+        and not success
+        and status_code is not None
+        and status_code >= 400
+        and (resp_headers is not None or resp_body is not None)
+    )
+    store_resp = debug or error_capture
     session.add(
         RequestLog(
             token_id=req.token_id,
@@ -1214,12 +1228,12 @@ async def _log_request(
             user_agent=req.user_agent,
             client_type=req.client_type,
             is_opencode=req.is_opencode,
-            debug=debug,
+            debug=debug or error_capture,
             req_method=req_method,
             req_headers=req_headers if debug else None,
             req_body=req.payload if debug else None,
-            resp_headers=resp_headers if debug else None,
-            resp_body=resp_body if debug else None,
+            resp_headers=resp_headers if store_resp else None,
+            resp_body=resp_body if store_resp else None,
             debug_attempts=debug_attempts if debug else None,
             upstream_url=upstream_url,
             proxy_url=proxy.url if proxy and debug else None,

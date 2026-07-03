@@ -82,6 +82,7 @@ async def cleanup_logs() -> dict[str, int]:
                         req_body=None,
                         resp_headers=None,
                         resp_body=None,
+                        debug_attempts=None,
                         upstream_url=None,
                         proxy_url=None,
                     )

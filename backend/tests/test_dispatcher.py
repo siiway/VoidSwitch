@@ -359,6 +359,51 @@ async def test_dispatch_upstream_500_exhaustion_is_traceable(db, seeded):
     assert hdr["authorization"].startswith("Bearer ***")
 
 
+async def test_dispatch_error_captures_response_for_non_debug_token(db, seeded):
+    """Even without a debug token, an upstream error (5xx/4xx) force-records the
+    response headers + body (owner-only debug info) — but NOT the request
+    headers/body or the per-attempt trail."""
+    err = {"error": {"message": "internal boom", "type": "server_error"}}
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(500, json=err))
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.OPENAI,
+                model="deepseek-chat",
+                payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+                stream=False,
+                token_id=seeded["token_id"],
+                debug_enabled=False,
+            )
+        )
+    assert result.status_code == 500
+    log = await _last_log(db)
+    assert log is not None
+    # Treated as debug info: flagged debug so it's owner-only + pruned by the
+    # debug retention window.
+    assert log.debug is True
+    # Response captured…
+    assert log.resp_body == err
+    assert log.resp_headers is not None
+    # …but the request headers/body and the per-attempt trail are NOT.
+    assert log.req_headers is None
+    assert log.req_body is None
+    assert log.debug_attempts is None
+
+
+async def test_dispatch_success_non_debug_captures_nothing(db, seeded):
+    """A successful non-debug request stays a plain summary row (no debug flag)."""
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await _dispatch_hi(seeded)
+    assert result.status_code == 200
+    log = await _last_log(db)
+    assert log is not None
+    assert log.debug is False
+    assert log.resp_body is None
+    assert log.resp_headers is None
+
+
 async def test_dispatch_no_provider_returns_404(db, seeded):
     # Narrow the seeded provider so it no longer matches via the "*" wildcard.
     from voidswitch.models.db import Provider
