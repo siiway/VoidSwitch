@@ -18,36 +18,16 @@ from voidswitch.api import me as me_api
 from voidswitch.api import models as models_api
 from voidswitch.api import proxy as proxy_api
 from voidswitch.api import usage as usage_api
-from voidswitch.api.admin import (
-    keys as keys_api,
-)
-from voidswitch.api.admin import (
-    logs as logs_api,
-)
-from voidswitch.api.admin import (
-    providers as providers_api,
-)
-from voidswitch.api.admin import (
-    proxies as proxies_api,
-)
-from voidswitch.api.admin import (
-    role_groups as role_groups_api,
-)
-from voidswitch.api.admin import (
-    settings as settings_api,
-)
-from voidswitch.api.admin import (
-    stats as stats_api,
-)
-from voidswitch.api.admin import (
-    system as system_api,
-)
-from voidswitch.api.admin import (
-    tokens as tokens_api,
-)
-from voidswitch.api.admin import (
-    users as users_api,
-)
+from voidswitch.api.admin import keys as keys_api
+from voidswitch.api.admin import logs as logs_api
+from voidswitch.api.admin import providers as providers_api
+from voidswitch.api.admin import proxies as proxies_api
+from voidswitch.api.admin import role_groups as role_groups_api
+from voidswitch.api.admin import settings as settings_api
+from voidswitch.api.admin import stats as stats_api
+from voidswitch.api.admin import system as system_api
+from voidswitch.api.admin import tokens as tokens_api
+from voidswitch.api.admin import users as users_api
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import RequestSessionMiddleware, init_database
 from voidswitch.core.logging import configure_logging, get_logger

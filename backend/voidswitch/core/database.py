@@ -84,6 +84,11 @@ class Database:
 # raise "no such column" against a database created by an earlier version. Each
 # entry is applied with ``ALTER TABLE ... ADD COLUMN`` only when absent — idempotent
 # and safe to run on every boot. SQLite/Postgres both accept this form.
+#
+# LIMITATION: This mechanism supports additive changes only (new columns).
+# Column renames, type changes, or deletions require a separate migration
+# strategy (e.g. Alembic) and are not handled here. Attempting such changes
+# without a proper migration will break the database.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("providers", "drop_opencode_identity_block", "BOOLEAN NOT NULL DEFAULT 0"),
     ("providers", "proxy_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),

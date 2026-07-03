@@ -150,7 +150,7 @@ class ModelEntry(Base, TimestampMixin):
     # group (owner/co-owner/admin) is always allowed and is *not* listed here.
     # An empty list therefore means "moderators only". A user who is not a
     # moderator may call the model only if one of their role groups is listed.
-    allowed_role_group_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    allowed_role_group_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     # Who first registered metadata for this model (id + display-name snapshot).
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
