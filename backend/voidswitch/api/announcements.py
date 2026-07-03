@@ -7,6 +7,10 @@ announcement; a user may also manage announcements authored by a *lower*
 permission tier (owner/co-owner share the top tier, so they cannot manage each
 other's — matching the "same-tier peers can't act on one another" rule).
 
+An announcement can target specific role groups. If ``target_role_group_ids``
+is empty, everyone sees it. Otherwise only members of at least one listed group
+receive it. Staff always see all announcements (for management).
+
 Editing keeps a trail in the audit log; the previous and new title/body are
 stored as an owner-revealable secret, like other secrets.
 """
@@ -27,7 +31,7 @@ from voidswitch.core.auth import (
 )
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
-from voidswitch.models.db import Announcement, User
+from voidswitch.models.db import Announcement, RoleGroupMembership, User
 from voidswitch.models.schemas import (
     AnnouncementCreate,
     AnnouncementOut,
@@ -56,12 +60,34 @@ async def list_announcements(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> list[AnnouncementOut]:
-    """List announcements newest-first. ``limit`` caps the count (for previews)."""
+    """List announcements newest-first. ``limit`` caps the count (for previews).
+
+    Non-staff users only see announcements whose ``target_role_group_ids`` is
+    empty (everyone) or includes at least one of the user's role groups.
+    """
     stmt = select(Announcement).order_by(Announcement.id.desc())
     if limit is not None:
         stmt = stmt.limit(limit)
     rows = (await session.execute(stmt)).scalars().all()
-    return [_to_out(user, a) for a in rows]
+
+    if is_staff(user):
+        return [_to_out(user, a) for a in rows]
+
+    # Collect the user's role group ids.
+    memberships = (
+        await session.execute(
+            select(RoleGroupMembership.role_group_id).where(
+                RoleGroupMembership.user_id == user.id
+            )
+        )
+    ).scalars().all()
+    user_group_ids = set(memberships)
+
+    result: list[AnnouncementOut] = []
+    for a in rows:
+        if not a.target_role_group_ids or user_group_ids & set(a.target_role_group_ids):
+            result.append(_to_out(user, a))
+    return result
 
 
 @router.post("", response_model=AnnouncementOut, status_code=status.HTTP_201_CREATED)
@@ -85,6 +111,7 @@ async def create_announcement(
         created_by=user.id,
         created_by_name=actor_display_name(user),
         created_by_role=user.role,
+        target_role_group_ids=body.target_role_group_ids,
     )
     session.add(ann)
     await session.flush()
@@ -133,6 +160,12 @@ async def update_announcement(
             changed = True
     if body.body is not None and body.body != ann.body:
         ann.body = body.body
+        changed = True
+    if (
+        body.target_role_group_ids is not None
+        and body.target_role_group_ids != ann.target_role_group_ids
+    ):
+        ann.target_role_group_ids = body.target_role_group_ids
         changed = True
     if changed:
         ann.edited = True

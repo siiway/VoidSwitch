@@ -1,6 +1,8 @@
 import {
+  Badge,
   Button,
   Card,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -21,12 +23,13 @@ import {
   DeleteRegular,
   EditRegular,
   MegaphoneRegular,
+  PeopleTeamRegular,
 } from "@fluentui/react-icons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { Announcement } from "../api/types";
+import type { Announcement, RoleGroup } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import { formatDate, useConfirm, useNotify } from "./ui";
 
@@ -93,15 +96,23 @@ function AuthorLine({ a }: { a: Announcement }) {
 
 function AnnouncementItem({
   a,
+  roleGroups,
   onEdit,
   onDelete,
 }: {
   a: Announcement;
+  roleGroups: RoleGroup[];
   onEdit?: (a: Announcement) => void;
   onDelete?: (a: Announcement) => void;
 }) {
   const styles = useStyles();
   const { t } = useTranslation();
+  const { isStaff } = useAuth();
+  const groupNames = useMemo(() => {
+    if (!a.target_role_group_ids.length) return [];
+    const map = new Map(roleGroups.map((g) => [g.id, g.name]));
+    return a.target_role_group_ids.map((id) => map.get(id) ?? `#${id}`);
+  }, [a.target_role_group_ids, roleGroups]);
   return (
     <div className={styles.item}>
       <div className={styles.itemHead}>
@@ -111,28 +122,47 @@ function AnnouncementItem({
           </Text>
           <AuthorLine a={a} />
         </div>
-        {a.can_manage && onEdit && onDelete ? (
-          <div className={styles.actions}>
-            <Tooltip content={t("common.edit" as TK)} relationship="label">
-              <Button
-                size="small"
-                appearance="subtle"
-                icon={<EditRegular />}
-                onClick={() => onEdit(a)}
-                aria-label={t("common.edit" as TK)}
-              />
+        <div className={styles.actions}>
+          {isStaff && groupNames.length > 0 && (
+            <Tooltip
+              content={
+                <div>
+                  {groupNames.map((n) => (
+                    <div key={n}>{n}</div>
+                  ))}
+                </div>
+              }
+              relationship="label"
+            >
+              <Badge appearance="tint" color="informative" size="small">
+                <PeopleTeamRegular style={{ fontSize: 12, marginRight: 4 }} />
+                {groupNames.length}
+              </Badge>
             </Tooltip>
-            <Tooltip content={t("common.delete" as TK)} relationship="label">
-              <Button
-                size="small"
-                appearance="subtle"
-                icon={<DeleteRegular />}
-                onClick={() => onDelete(a)}
-                aria-label={t("common.delete" as TK)}
-              />
-            </Tooltip>
-          </div>
-        ) : null}
+          )}
+          {a.can_manage && onEdit && onDelete ? (
+            <>
+              <Tooltip content={t("common.edit" as TK)} relationship="label">
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  icon={<EditRegular />}
+                  onClick={() => onEdit(a)}
+                  aria-label={t("common.edit" as TK)}
+                />
+              </Tooltip>
+              <Tooltip content={t("common.delete" as TK)} relationship="label">
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  icon={<DeleteRegular />}
+                  onClick={() => onDelete(a)}
+                  aria-label={t("common.delete" as TK)}
+                />
+              </Tooltip>
+            </>
+          ) : null}
+        </div>
       </div>
       {a.body ? (
         <Text size={300} className={styles.body}>
@@ -147,25 +177,41 @@ interface EditState {
   id: number | null;
   title: string;
   body: string;
+  target_role_group_ids: number[];
 }
 
 function EditorDialog({
   state,
+  roleGroups,
   onClose,
   onSaved,
 }: {
   state: EditState | null;
+  roleGroups: RoleGroup[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { t } = useTranslation();
+  const { isStaff } = useAuth();
   const notify = useNotify();
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<EditState>({ id: null, title: "", body: "" });
+  const [draft, setDraft] = useState<EditState>({ id: null, title: "", body: "", target_role_group_ids: [] });
+  const [groupSearch, setGroupSearch] = useState("");
+
+  const customGroups = useMemo(() => roleGroups.filter((g) => !g.builtin), [roleGroups]);
 
   useEffect(() => {
     if (state) setDraft(state);
   }, [state]);
+
+  function toggleGroup(id: number) {
+    setDraft((d) => {
+      const ids = d.target_role_group_ids.includes(id)
+        ? d.target_role_group_ids.filter((x) => x !== id)
+        : [...d.target_role_group_ids, id];
+      return { ...d, target_role_group_ids: ids };
+    });
+  }
 
   async function save() {
     const title = draft.title.trim();
@@ -175,11 +221,12 @@ function EditorDialog({
     }
     setSaving(true);
     try {
+      const payload = { title, body: draft.body, target_role_group_ids: draft.target_role_group_ids };
       if (draft.id == null) {
-        await api.post("/api/announcements", { title, body: draft.body });
+        await api.post("/api/announcements", payload);
         notify(t("announcements.published" as TK), title, "success");
       } else {
-        await api.patch(`/api/announcements/${draft.id}`, { title, body: draft.body });
+        await api.patch(`/api/announcements/${draft.id}`, payload);
         notify(t("announcements.saved" as TK), title, "success");
       }
       onClose();
@@ -222,6 +269,45 @@ function EditorDialog({
                 onChange={(_, d) => setDraft((s) => ({ ...s, body: d.value }))}
               />
             </Field>
+            {isStaff && customGroups.length > 0 && (
+              <Field
+                label={t("announcements.targetGroups" as TK)}
+                hint={t("announcements.targetGroupsHint" as TK)}
+              >
+                <Input
+                  contentBefore={<PeopleTeamRegular />}
+                  placeholder={t("announcements.targetGroupsSearch" as TK)}
+                  value={groupSearch}
+                  onChange={(_, d) => setGroupSearch(d.value)}
+                  size="small"
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    maxHeight: 160,
+                    overflowY: "auto",
+                    marginTop: 6,
+                  }}
+                >
+                  {customGroups
+                    .filter((g) => {
+                      const q = groupSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return g.name.toLowerCase().includes(q);
+                    })
+                    .map((g) => (
+                      <Checkbox
+                        key={g.id}
+                        checked={draft.target_role_group_ids.includes(g.id)}
+                        onChange={() => toggleGroup(g.id)}
+                        label={g.name}
+                      />
+                    ))}
+                </div>
+              </Field>
+            )}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={onClose}>
@@ -253,6 +339,7 @@ export function AnnouncementsPanel() {
   const [homeCount, setHomeCount] = useState(3);
   const [showAll, setShowAll] = useState(false);
   const [edit, setEdit] = useState<EditState | null>(null);
+  const [roleGroups, setRoleGroups] = useState<RoleGroup[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -273,7 +360,10 @@ export function AnnouncementsPanel() {
         ),
       )
       .catch(() => {});
-  }, [load]);
+    if (isStaff) {
+      api.get<RoleGroup[]>("/api/admin/role-groups").then(setRoleGroups).catch(() => {});
+    }
+  }, [load, isStaff]);
 
   async function remove(a: Announcement) {
     const ok = await confirm({
@@ -319,7 +409,7 @@ export function AnnouncementsPanel() {
               size="small"
               appearance="primary"
               icon={<AddRegular />}
-              onClick={() => setEdit({ id: null, title: "", body: "" })}
+              onClick={() => setEdit({ id: null, title: "", body: "", target_role_group_ids: [] })}
             >
               {t("announcements.publish" as TK)}
             </Button>
@@ -337,7 +427,8 @@ export function AnnouncementsPanel() {
             <AnnouncementItem
               key={a.id}
               a={a}
-              onEdit={(x) => setEdit({ id: x.id, title: x.title, body: x.body })}
+              roleGroups={roleGroups}
+              onEdit={(x) => setEdit({ id: x.id, title: x.title, body: x.body, target_role_group_ids: x.target_role_group_ids })}
               onDelete={remove}
             />
           ))}
@@ -352,7 +443,7 @@ export function AnnouncementsPanel() {
         </div>
       )}
 
-      <EditorDialog state={edit} onClose={() => setEdit(null)} onSaved={load} />
+      <EditorDialog state={edit} roleGroups={roleGroups} onClose={() => setEdit(null)} onSaved={load} />
 
       <Dialog open={showAll} onOpenChange={(_, d) => !d.open && setShowAll(false)}>
         <DialogSurface>
@@ -372,9 +463,10 @@ export function AnnouncementsPanel() {
                 <AnnouncementItem
                   key={a.id}
                   a={a}
+                  roleGroups={roleGroups}
                   onEdit={(x) => {
                     setShowAll(false);
-                    setEdit({ id: x.id, title: x.title, body: x.body });
+                    setEdit({ id: x.id, title: x.title, body: x.body, target_role_group_ids: x.target_role_group_ids });
                   }}
                   onDelete={remove}
                 />
@@ -454,7 +546,7 @@ export function AnnouncementsPopup() {
 }
 
 function AnnouncementCardReadonly({ a }: { a: Announcement }) {
-  return <AnnouncementItem a={a} />;
+  return <AnnouncementItem a={a} roleGroups={[]} />;
 }
 
 /** Marks that the announcements popup should show on the next dashboard load. */

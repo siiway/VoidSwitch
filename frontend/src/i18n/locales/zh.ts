@@ -136,6 +136,9 @@ const zh: Translations = {
     deleteMsg: "删除“{title}”？此操作无法撤销。",
     popupTitle: "公告",
     allTitle: "全部公告",
+    targetGroups: "目标身份组",
+    targetGroupsHint: "仅所选身份组的成员会收到此公告。不选择则所有人可见。",
+    targetGroupsSearch: "搜索身份组…",
   },
   providers: {
     title: "提供商",

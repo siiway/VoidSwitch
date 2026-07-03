@@ -123,6 +123,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("models", "allowed_role_group_ids", "JSON NOT NULL DEFAULT '[]'"),
     ("users", "session_epoch", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "void_tokens_admin_disabled", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("announcements", "target_role_group_ids", "JSON NOT NULL DEFAULT '[]'"),
 )
 
 

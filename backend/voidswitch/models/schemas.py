@@ -611,11 +611,13 @@ class UsageAnalyticsOut(BaseModel):
 class AnnouncementCreate(BaseModel):
     title: str
     body: str = ""
+    target_role_group_ids: list[int] = []
 
 
 class AnnouncementUpdate(BaseModel):
     title: str | None = None
     body: str | None = None
+    target_role_group_ids: list[int] | None = None
 
 
 class AnnouncementOut(BaseModel):
@@ -628,6 +630,7 @@ class AnnouncementOut(BaseModel):
     created_by_name: str | None = None
     created_by_role: str = "member"
     edited: bool = False
+    target_role_group_ids: list[int] = []
     created_at: dt.datetime
     updated_at: dt.datetime
     # Whether the requesting user may edit/delete this announcement (own, or a

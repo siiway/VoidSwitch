@@ -196,6 +196,7 @@ export interface Announcement {
   created_by_name?: string | null;
   created_by_role: Role;
   edited: boolean;
+  target_role_group_ids: number[];
   created_at: string;
   updated_at: string;
   // Whether the current user may edit/delete this announcement.

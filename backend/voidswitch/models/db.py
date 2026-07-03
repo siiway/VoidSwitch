@@ -413,6 +413,8 @@ class Announcement(Base, TimestampMixin):
     created_by_role: Mapped[str] = mapped_column(String(32), default=Role.MEMBER.value)
     # Set once the announcement has been edited at least once (for an "edited" tag).
     edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Role group ids this announcement targets. Empty = everyone.
+    target_role_group_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
 
 
 class AuditLog(Base):

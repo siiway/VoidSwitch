@@ -134,6 +134,9 @@ const en = {
     deleteMsg: 'Delete "{title}"? This cannot be undone.',
     popupTitle: "Announcements",
     allTitle: "All announcements",
+    targetGroups: "Target role groups",
+    targetGroupsHint: "Only members of the selected groups will see this announcement. Leave empty for everyone.",
+    targetGroupsSearch: "Search role groups…",
   },
   providers: {
     title: "Providers",
