@@ -127,17 +127,16 @@ async def probe_route(
 ) -> tuple[bool, float, int | None, str | None]:
     """Lightweight GET used by the proxy resurrector / health checks.
 
-    Returns ``(ok, latency_ms, status_code, error)``.
+    Returns ``(ok, latency_ms, status_code, error)``. Reuses the shared client
+    pool so TLS connections are kept alive across probes.
     """
     loop = asyncio.get_event_loop()
     start = loop.time()
     try:
-        async with httpx.AsyncClient(
-            transport=build_transport(route),
-            timeout=httpx.Timeout(timeout_seconds),
-            follow_redirects=False,
-        ) as client:
-            resp = await client.get(url, headers=headers or {})
+        client = await get_pool().get(
+            route, connect_timeout=timeout_seconds, read_timeout=timeout_seconds,
+        )
+        resp = await client.get(url, headers=headers or {})
         latency = (loop.time() - start) * 1000.0
         # Any HTTP response (even 401/403) proves the route reaches upstream.
         return True, latency, resp.status_code, None
