@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -477,6 +478,7 @@ class RequestLogOut(BaseModel):
     token_name: str | None = None
     provider_name: str | None = None
     model: str | None = None
+    upstream_model: str | None = None
     inbound_style: str | None = None
     upstream_style: str | None = None
     status_code: int | None = None
@@ -517,6 +519,7 @@ class RequestLogDetail(BaseModel):
     proxy_id: int | None = None
     proxy_url: str | None = None
     model: str | None = None
+    upstream_model: str | None = None
     inbound_style: str | None = None
     upstream_style: str | None = None
     status_code: int | None = None
@@ -533,11 +536,15 @@ class RequestLogDetail(BaseModel):
     is_opencode: bool = False
     debug: bool = False
     upstream_url: str | None = None
+    req_method: str | None = None
     # Debug-only — may be None when debug=False or when redacted for admin.
     req_headers: dict | None = None
     req_body: dict | None = None
     resp_headers: dict | None = None
-    resp_body: dict | None = None
+    resp_body: Any = None
+    # Per-attempt debug trail across the failover space (owner-only; stripped for
+    # admins). Each entry is a dict — see dispatcher._trail_entry.
+    debug_attempts: list | None = None
 
 
 class StatsOut(BaseModel):

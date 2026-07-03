@@ -262,6 +262,101 @@ async def test_dispatch_model_route_targets_key_pool(db, seeded):
     assert log is not None and log.key_id == leaked_id
 
 
+async def _enable_debug(db, token_id: int) -> None:
+    from voidswitch.models.db import VoidToken
+
+    async with db.session() as session:
+        tok = await session.get(VoidToken, token_id)
+        tok.debug_enabled = True
+        await session.flush()
+
+
+async def test_dispatch_records_upstream_model_for_route(db, seeded):
+    """A model route records both the inbound alias and the routed upstream id."""
+    from voidswitch.models.db import Provider
+
+    await _add_key_pool(db, seeded["provider_id"], "sk-leaked-1", "leaked")
+    async with db.session() as session:
+        prov = await session.get(Provider, seeded["provider_id"])
+        prov.model_routes = [{"alias": "ds-lkd", "upstream": "deepseek-chat", "pool": "leaked"}]
+        await session.flush()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.OPENAI,
+                model="ds-lkd",
+                payload={"model": "ds-lkd", "messages": [{"role": "user", "content": "hi"}]},
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+
+    assert result.status_code == 200
+    log = await _last_log(db)
+    assert log is not None
+    assert log.model == "ds-lkd"
+    assert log.upstream_model == "deepseek-chat"
+
+
+async def test_dispatch_upstream_500_exhaustion_is_traceable(db, seeded):
+    """A total failover on repeated upstream 500s still attributes the failing
+    row to the provider / route / upstream model it last tried (not "provider —").
+    With a debug token the last upstream body + a full per-attempt trail are kept."""
+    from voidswitch.models.db import Provider
+
+    await _enable_debug(db, seeded["token_id"])
+    async with db.session() as session:
+        prov = await session.get(Provider, seeded["provider_id"])
+        prov.model_routes = [{"alias": "codex-gpt-5.5", "upstream": "gpt-5.5", "pool": ""}]
+        await session.flush()
+
+    err = {"error": {"message": "internal boom", "type": "server_error"}}
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(500, json=err))
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.ANTHROPIC,
+                model="codex-gpt-5.5",
+                payload={
+                    "model": "codex-gpt-5.5",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                stream=False,
+                token_id=seeded["token_id"],
+                debug_enabled=True,
+            )
+        )
+
+    assert result.status_code == 500
+    log = await _last_log(db)
+    assert log is not None
+    # Traceability: the exhausted-everything row remembers what it last tried.
+    assert log.provider_name == "deepseek"
+    assert log.model == "codex-gpt-5.5"
+    assert log.upstream_model == "gpt-5.5"
+    assert log.upstream_style is not None
+    assert log.key_id == seeded["key_id"]
+    # Debug capture: the last upstream response + a per-attempt trail are present,
+    # so an upstream 500 is diagnosable instead of a two-word message.
+    assert log.debug is True
+    assert log.status_code == 500
+    assert log.resp_body == err
+    assert log.debug_attempts and len(log.debug_attempts) >= 1
+    first = log.debug_attempts[0]
+    assert first["status_code"] == 500
+    assert first["error_class"] == "server_error"
+    assert first["url"] == DS_URL
+    assert first["method"] == "POST"
+    assert first["resp_body"] == err
+    # The auth header is masked (only the credential is redacted).
+    hdr = {k.lower(): v for k, v in (first["req_headers"] or {}).items()}
+    assert "authorization" in hdr
+    assert "sk-test-1" not in hdr["authorization"]
+    assert hdr["authorization"].startswith("Bearer ***")
+
+
 async def test_dispatch_no_provider_returns_404(db, seeded):
     # Narrow the seeded provider so it no longer matches via the "*" wildcard.
     from voidswitch.models.db import Provider

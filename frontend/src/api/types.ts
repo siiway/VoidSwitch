@@ -258,6 +258,7 @@ export interface RequestLog {
   token_name?: string | null;
   provider_name?: string | null;
   model?: string | null;
+  upstream_model?: string | null;
   inbound_style?: string | null;
   upstream_style?: string | null;
   status_code?: number | null;
@@ -275,16 +276,41 @@ export interface RequestLog {
   debug?: boolean;
 }
 
+export interface RequestLogAttempt {
+  attempt: number;
+  provider?: string | null;
+  provider_id?: number | null;
+  key_id?: number | null;
+  key_preview?: string | null;
+  pool?: string | null;
+  upstream_model?: string | null;
+  method?: string | null;
+  url?: string | null;
+  proxy_url?: string | null;
+  local_address?: string | null;
+  req_headers?: Record<string, unknown> | null;
+  req_body?: unknown;
+  status_code?: number | null;
+  error_class?: string | null;
+  network_error?: boolean;
+  error?: string | null;
+  resp_headers?: Record<string, unknown> | null;
+  resp_body?: unknown;
+  duration_ms?: number | null;
+}
+
 export interface RequestLogDetail extends RequestLog {
   key_id?: number | null;
   key_preview?: string | null;
   proxy_id?: number | null;
   proxy_url?: string | null;
   upstream_url?: string | null;
+  req_method?: string | null;
   req_headers?: Record<string, unknown> | null;
   req_body?: Record<string, unknown> | null;
   resp_headers?: Record<string, unknown> | null;
-  resp_body?: Record<string, unknown> | null;
+  resp_body?: unknown;
+  debug_attempts?: RequestLogAttempt[] | null;
 }
 
 export interface Page<T> {

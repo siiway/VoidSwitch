@@ -21,6 +21,7 @@ import asyncio
 import datetime as dt
 import hashlib
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -327,6 +328,14 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
     last_status = 502
     session_key = _session_key(req)
 
+    # Per-attempt debug trail (only populated for debug-enabled tokens) and the
+    # context of the most recent attempt — so that even a total failover
+    # exhaustion is attributable to the provider / key / route / upstream model it
+    # last tried (instead of a bare "provider —, route anthropic→?").
+    debug_trail: list[dict[str, Any]] = []
+    last_ctx: dict[str, Any] = {}
+    last_outcome: _Attempt | None = None
+
     async with db.session() as session:
         providers = await select_providers(session, req.model)
         if not providers:
@@ -414,6 +423,27 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                         read_timeout=stream_idle if req.stream else read_timeout,
                     )
 
+                    # Remember this attempt for traceability + the debug trail.
+                    last_outcome = outcome
+                    last_ctx = {
+                        "provider": provider,
+                        "key": key,
+                        "proxy": proxy,
+                        "upstream_style": upstream_style,
+                        "upstream_model": upstream_model,
+                    }
+                    if req.debug_enabled:
+                        debug_trail.append(
+                            _trail_entry(
+                                attempt=attempts,
+                                provider=provider,
+                                key=key,
+                                adapter=adapter,
+                                upstream_model=upstream_model,
+                                outcome=outcome,
+                            )
+                        )
+
                     if outcome.network_error:
                         last_error = outcome.error or "network error"
                         last_status = 502
@@ -441,6 +471,7 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                             outcome=outcome,
                             upstream_model=upstream_model,
                             attempts=attempts,
+                            debug_attempts=debug_trail,
                         )
 
                     if err_class in (ErrorClass.KEY_INVALID, ErrorClass.INSUFFICIENT_BALANCE):
@@ -499,28 +530,42 @@ async def dispatch(req: DispatchRequest) -> DispatchResult:
                         key=key,
                         proxy=proxy,
                         upstream_style=upstream_style,
+                        upstream_model=upstream_model,
                         status_code=outcome.status_code,
                         success=False,
                         attempts=attempts,
                         error=f"client error {outcome.status_code}",
                         upstream_url=adapter.upstream_url,
+                        req_method=outcome.req_method,
+                        req_headers=outcome.req_headers,
                         resp_headers=outcome.resp_headers,
-                        resp_body=outcome.body_json,
+                        resp_body=_resp_body_repr(outcome),
+                        debug_attempts=debug_trail,
                     )
                     return _passthrough_error(req, outcome, upstream_style)
 
-        # Exhausted everything.
+        # Exhausted everything. Attribute the failure to the last provider / key /
+        # route / upstream model actually tried (when any attempt happened) and,
+        # for debug tokens, attach the last upstream response + the full per-attempt
+        # trail — so an "upstream 500" is diagnosable instead of a bare provider "—".
         await _log_request(
             session,
             req,
-            provider=None,
-            key=None,
-            proxy=None,
-            upstream_style=None,
+            provider=last_ctx.get("provider"),
+            key=last_ctx.get("key"),
+            proxy=last_ctx.get("proxy"),
+            upstream_style=last_ctx.get("upstream_style"),
+            upstream_model=last_ctx.get("upstream_model"),
             status_code=last_status,
             success=False,
             attempts=attempts,
             error=last_error,
+            upstream_url=last_outcome.url if last_outcome else None,
+            req_method=last_outcome.req_method if last_outcome else None,
+            req_headers=last_outcome.req_headers if last_outcome else None,
+            resp_headers=last_outcome.resp_headers if last_outcome else None,
+            resp_body=_resp_body_repr(last_outcome) if last_outcome else None,
+            debug_attempts=debug_trail,
         )
 
     # Distinguish "the gateway itself broke" from "no upstream could serve this
@@ -594,8 +639,17 @@ class _Attempt:
     status_code: int = 0
     body_bytes: bytes | None = None
     body_json: Any = None
+    body_text: str | None = None  # decoded fallback when the body is not JSON
     response: httpx.Response | None = None  # kept open only for a successful stream
     resp_headers: dict[str, str] | None = None
+    # Outbound request metadata (captured for the debug trail; headers redacted).
+    req_method: str | None = None
+    url: str | None = None
+    proxy_url: str | None = None
+    local_address: str | None = None
+    req_headers: dict[str, str] | None = None
+    req_body: dict[str, Any] | None = None
+    duration_ms: float | None = None
 
 
 async def _attempt(
@@ -610,18 +664,35 @@ async def _attempt(
     connect_timeout: float,
     read_timeout: float,
 ) -> _Attempt:
+    # Outbound request metadata, shared by every return path so the debug trail
+    # always knows exactly what was sent where. Auth headers are masked here.
+    redacted = redact_headers(headers)
+    req_meta: dict[str, Any] = {
+        "req_method": "POST",
+        "url": url,
+        "proxy_url": route.proxy_url,
+        "local_address": route.local_address,
+        "req_headers": redacted,
+        "req_body": body,
+    }
     # Verbose outbound tracing (debug mode only — gated by the log level so it
     # costs nothing when disabled). The auth header is masked by redact_headers.
     log.debug(
         "outbound_request",
         provider_type=adapter.type,
+        method="POST",
         url=url,
         stream=stream,
         proxy=route.proxy_url,
         local_address=route.local_address,
-        headers=redact_headers(headers),
+        headers=redacted,
         body=body,
     )
+    started = time.monotonic()
+
+    def _elapsed_ms() -> float:
+        return round((time.monotonic() - started) * 1000, 1)
+
     try:
         client = await pool.get(route, connect_timeout=connect_timeout, read_timeout=read_timeout)
         if stream:
@@ -630,23 +701,35 @@ async def _attempt(
             if response.status_code >= 300:
                 raw = await response.aread()
                 await response.aclose()
+                resp_headers = dict(response.headers)
                 log.debug(
                     "upstream_response",
                     status_code=response.status_code,
                     stream=True,
+                    headers=redact_headers(response.headers),
                     body=_try_json(raw),
                 )
                 return _Attempt(
                     status_code=response.status_code,
                     body_bytes=raw,
                     body_json=_try_json(raw),
-                    resp_headers=dict(response.headers),
+                    body_text=_body_text(raw),
+                    resp_headers=resp_headers,
+                    duration_ms=_elapsed_ms(),
+                    **req_meta,
                 )
-            log.debug("upstream_response", status_code=response.status_code, stream=True)
+            log.debug(
+                "upstream_response",
+                status_code=response.status_code,
+                stream=True,
+                headers=redact_headers(response.headers),
+            )
             return _Attempt(
                 status_code=response.status_code,
                 response=response,
                 resp_headers=dict(response.headers),
+                duration_ms=_elapsed_ms(),
+                **req_meta,
             )
 
         response = await client.post(url, json=body, headers=headers)
@@ -655,20 +738,34 @@ async def _attempt(
             "upstream_response",
             status_code=response.status_code,
             stream=False,
+            headers=redact_headers(response.headers),
             body=_try_json(raw),
         )
         return _Attempt(
             status_code=response.status_code,
             body_bytes=raw,
             body_json=_try_json(raw),
+            body_text=_body_text(raw),
             resp_headers=dict(response.headers),
+            duration_ms=_elapsed_ms(),
+            **req_meta,
         )
     except _NETWORK_ERRORS as exc:
         log.debug("outbound_network_error", url=url, error=f"{type(exc).__name__}: {exc}")
-        return _Attempt(network_error=True, error=f"{type(exc).__name__}: {exc}")
+        return _Attempt(
+            network_error=True,
+            error=f"{type(exc).__name__}: {exc}",
+            duration_ms=_elapsed_ms(),
+            **req_meta,
+        )
     except httpx.HTTPError as exc:  # any other httpx error -> treat as network
         log.debug("outbound_network_error", url=url, error=f"{type(exc).__name__}: {exc}")
-        return _Attempt(network_error=True, error=f"{type(exc).__name__}: {exc}")
+        return _Attempt(
+            network_error=True,
+            error=f"{type(exc).__name__}: {exc}",
+            duration_ms=_elapsed_ms(),
+            **req_meta,
+        )
 
 
 def _try_json(raw: bytes) -> Any:
@@ -676,6 +773,69 @@ def _try_json(raw: bytes) -> Any:
         return json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+# Cap a captured non-JSON body so a stray HTML error page / huge payload can't
+# bloat the log row. Generous enough to keep a useful upstream error message.
+_MAX_BODY_TEXT = 20_000
+
+
+def _body_text(raw: bytes | None) -> str | None:
+    """Decoded text form of a body that isn't JSON (e.g. an HTML 5xx page)."""
+    if not raw:
+        return None
+    if _try_json(raw) is not None:
+        return None
+    text = raw.decode("utf-8", errors="replace")
+    if len(text) > _MAX_BODY_TEXT:
+        return text[:_MAX_BODY_TEXT] + f"… [truncated {len(text) - _MAX_BODY_TEXT} chars]"
+    return text
+
+
+def _resp_body_repr(outcome: _Attempt) -> Any:
+    """Best representation of a response body for logging: JSON if it parsed,
+    else the decoded text fallback (or ``None`` when the body was empty)."""
+    if outcome.body_json is not None:
+        return outcome.body_json
+    return outcome.body_text
+
+
+def _trail_entry(
+    *,
+    attempt: int,
+    provider: Provider,
+    key: ApiKey,
+    adapter: BaseProvider,
+    upstream_model: str,
+    outcome: _Attempt,
+) -> dict[str, Any]:
+    """One row of the per-attempt debug trail (redaction already applied)."""
+    if outcome.network_error:
+        error_class = "network_error"
+    else:
+        error_class = adapter.classify(outcome.status_code, outcome.body_json).value
+    return {
+        "attempt": attempt,
+        "provider": provider.name,
+        "provider_id": provider.id,
+        "key_id": key.id,
+        "key_preview": key.key_preview or None,
+        "pool": key.pool or "",
+        "upstream_model": upstream_model,
+        "method": outcome.req_method,
+        "url": outcome.url,
+        "proxy_url": outcome.proxy_url,
+        "local_address": outcome.local_address,
+        "req_headers": outcome.req_headers,
+        "req_body": outcome.req_body,
+        "status_code": outcome.status_code or None,
+        "error_class": error_class,
+        "network_error": outcome.network_error,
+        "error": outcome.error,
+        "resp_headers": outcome.resp_headers,
+        "resp_body": _resp_body_repr(outcome),
+        "duration_ms": outcome.duration_ms,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -694,6 +854,7 @@ async def _finalise_success(
     outcome: _Attempt,
     upstream_model: str,
     attempts: int,
+    debug_attempts: list[dict[str, Any]] | None = None,
 ) -> DispatchResult:
     upstream_style = adapter.style
 
@@ -708,6 +869,7 @@ async def _finalise_success(
             key_id=key.id,
             proxy_id=proxy.id if proxy else None,
             model=req.model,
+            upstream_model=upstream_model,
             inbound_style=req.inbound_style.value,
             upstream_style=upstream_style.value,
             status_code=outcome.status_code,
@@ -718,8 +880,11 @@ async def _finalise_success(
             client_type=req.client_type,
             is_opencode=req.is_opencode,
             debug=debug,
+            req_method=outcome.req_method,
             req_body=req.payload if debug else None,
+            req_headers=outcome.req_headers if debug else None,
             resp_headers=outcome.resp_headers if debug else None,
+            debug_attempts=debug_attempts if debug else None,
             upstream_url=adapter.upstream_url if debug else None,
             proxy_url=proxy.url if proxy and debug else None,
         )
@@ -767,14 +932,18 @@ async def _finalise_success(
         key=key,
         proxy=proxy,
         upstream_style=upstream_style,
+        upstream_model=upstream_model,
         status_code=outcome.status_code,
         success=True,
         attempts=attempts,
         error=None,
         usage=usage,
         upstream_url=adapter.upstream_url,
+        req_method=outcome.req_method,
+        req_headers=outcome.req_headers,
         resp_headers=outcome.resp_headers,
-        resp_body=outcome.body_json,
+        resp_body=_resp_body_repr(outcome),
+        debug_attempts=debug_attempts,
     )
     await _bump_token_usage(session, req.token_id, usage["total_tokens"])
 
@@ -947,9 +1116,12 @@ async def _log_request(
     error: str | None,
     usage: dict[str, int] | None = None,
     upstream_url: str | None = None,
+    upstream_model: str | None = None,
+    req_method: str | None = None,
     req_headers: dict[str, Any] | None = None,
     resp_headers: dict[str, Any] | None = None,
-    resp_body: dict[str, Any] | None = None,
+    resp_body: Any = None,
+    debug_attempts: list[dict[str, Any]] | None = None,
 ) -> None:
     usage = usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     debug = req.debug_enabled
@@ -962,6 +1134,7 @@ async def _log_request(
             key_id=key.id if key else None,
             proxy_id=proxy.id if proxy else None,
             model=req.model,
+            upstream_model=upstream_model,
             inbound_style=req.inbound_style.value,
             upstream_style=upstream_style.value if upstream_style else None,
             status_code=status_code,
@@ -976,10 +1149,12 @@ async def _log_request(
             client_type=req.client_type,
             is_opencode=req.is_opencode,
             debug=debug,
+            req_method=req_method,
             req_headers=req_headers if debug else None,
             req_body=req.payload if debug else None,
             resp_headers=resp_headers if debug else None,
             resp_body=resp_body if debug else None,
+            debug_attempts=debug_attempts if debug else None,
             upstream_url=upstream_url,
             proxy_url=proxy.url if proxy and debug else None,
         )

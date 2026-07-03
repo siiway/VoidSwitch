@@ -452,6 +452,10 @@ class RequestLog(Base):
     key_id: Mapped[int | None] = mapped_column(Integer, default=None)
     proxy_id: Mapped[int | None] = mapped_column(Integer, default=None)
     model: Mapped[str | None] = mapped_column(String(120), default=None, index=True)
+    # The upstream model the inbound ``model`` was routed to (alias route /
+    # model_map). Equal to ``model`` when no routing applies. Non-sensitive, so
+    # it is always recorded (not debug-gated) to trace model routing.
+    upstream_model: Mapped[str | None] = mapped_column(String(120), default=None)
     inbound_style: Mapped[str | None] = mapped_column(String(32), default=None)
     upstream_style: Mapped[str | None] = mapped_column(String(32), default=None)
     status_code: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -469,10 +473,19 @@ class RequestLog(Base):
     is_opencode: Mapped[bool] = mapped_column(Boolean, default=False)
     # Whether this row was recorded with debug-level detail (full req/resp).
     debug: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    # Debug-only fields — populated only when the key has debug_enabled=True.
+    # HTTP method of the outbound upstream call (always POST today, recorded for
+    # completeness/traceability). Non-sensitive.
+    req_method: Mapped[str | None] = mapped_column(String(16), default=None)
+    # Debug-only fields — populated only when the token has debug_enabled=True.
     req_headers: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     req_body: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     resp_headers: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
-    resp_body: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    # May be a JSON object, or a decoded text string for non-JSON upstream errors.
+    resp_body: Mapped[Any | None] = mapped_column(JSON, default=None)
+    # Per-attempt debug trail across the failover space (provider/key/proxy/route):
+    # each entry has the outbound URL, method, proxy, redacted headers, body, the
+    # upstream status, response headers/body, error class, and timing. This is what
+    # makes an upstream 500 (or a total failover exhaustion) precisely diagnosable.
+    debug_attempts: Mapped[list[Any] | None] = mapped_column(JSON, default=None)
     upstream_url: Mapped[str | None] = mapped_column(String(1024), default=None)
     proxy_url: Mapped[str | None] = mapped_column(String(512), default=None)

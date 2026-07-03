@@ -24,6 +24,7 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowEnterRegular,
+  BugRegular,
   DismissRegular,
   EyeRegular,
   InfoRegular,
@@ -39,6 +40,7 @@ import type {
   AuditLog,
   Page,
   RequestLog,
+  RequestLogAttempt,
   RequestLogDetail,
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
@@ -190,6 +192,7 @@ function RequestLogs({
   const [goToId, setGoToId] = useState("");
   const [detailLog, setDetailLog] = useState<RequestLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailMode, setDetailMode] = useState<"info" | "debug">("info");
   const [revealMode, setRevealMode] = useState(false);
   const logs = useAsync<Page<RequestLog>>(
     () =>
@@ -225,9 +228,10 @@ function RequestLogs({
     }
   }
 
-  async function openDetail(r: RequestLog) {
+  async function openDetail(r: RequestLog, mode: "info" | "debug") {
     setDetailLoading(true);
     setRevealMode(false);
+    setDetailMode(mode);
     try {
       const d = await api.get<RequestLogDetail>(`/api/admin/logs/requests/${r.id}`);
       setDetailLog(d);
@@ -312,7 +316,7 @@ function RequestLogs({
             <TableHeaderCell>{tr("logs.status" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tokens" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tries" as TK)}</TableHeaderCell>
-            <TableHeaderCell style={{ width: 60 }} />
+            <TableHeaderCell style={{ width: 96 }} />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -349,15 +353,32 @@ function RequestLogs({
               <TableCell>{r.total_tokens}</TableCell>
               <TableCell>{r.attempts}</TableCell>
               <TableCell>
-                <Tooltip content={tr("logs.viewDetail" as TK)} relationship="label">
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    icon={<InfoRegular />}
-                    disabled={detailLoading}
-                    onClick={() => openDetail(r)}
-                  />
-                </Tooltip>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <Tooltip content={tr("logs.viewDetail" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<InfoRegular />}
+                      disabled={detailLoading}
+                      aria-label={tr("logs.viewDetail" as TK)}
+                      onClick={() => openDetail(r, "info")}
+                    />
+                  </Tooltip>
+                  {/* Debug detail is owner / co-owner only, and only exists for
+                      rows recorded in debug mode. */}
+                  {isOwner && r.debug ? (
+                    <Tooltip content={tr("logs.viewDebug" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<BugRegular />}
+                        disabled={detailLoading}
+                        aria-label={tr("logs.viewDebug" as TK)}
+                        onClick={() => openDetail(r, "debug")}
+                      />
+                    </Tooltip>
+                  ) : null}
+                </div>
               </TableCell>
             </TableRow>
           ))}
@@ -381,7 +402,7 @@ function RequestLogs({
           <DialogBody>
             <DialogTitle>
               {tr("logs.requestDetailTitle" as TK).replace("{id}", String(detailLog?.id ?? ""))}
-              {detailLog?.debug ? (
+              {detailMode === "debug" ? (
                 <Badge color="warning" appearance="tint" style={{ marginLeft: 8 }}>debug</Badge>
               ) : null}
             </DialogTitle>
@@ -395,6 +416,13 @@ function RequestLogs({
                     <DetailRow label={tr("logs.user" as TK)} value={detailLog.user_name ?? detailLog.user_sub ?? "—"} />
                     <DetailRow label={tr("logs.token" as TK)} value={detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")} />
                     <DetailRow label={tr("logs.model" as TK)} value={detailLog.model ?? "—"} />
+                    {detailLog.upstream_model &&
+                    detailLog.upstream_model !== detailLog.model ? (
+                      <DetailRow
+                        label={tr("logs.modelRoute" as TK)}
+                        value={`${detailLog.model ?? "?"} → ${detailLog.upstream_model}`}
+                      />
+                    ) : null}
                     <DetailRow label={tr("logs.provider" as TK)} value={detailLog.provider_name ?? "—"} />
                     <DetailRow label={tr("logs.key" as TK)} value={detailLog.key_preview ?? (detailLog.key_id != null ? `#${detailLog.key_id}` : "—")} />
                     <DetailRow label={tr("logs.proxy" as TK)} value={detailLog.proxy_url ?? (detailLog.proxy_id != null ? `#${detailLog.proxy_id}` : "—")} />
@@ -420,8 +448,9 @@ function RequestLogs({
                     </div>
                   )}
 
-                  {/* Debug fields — owner can toggle reveal; admin sees nothing */}
-                  {detailLog.debug && (
+                  {/* Debug view — owner / co-owner only, only reachable via the
+                      dedicated debug button on a debug-recorded row. */}
+                  {detailMode === "debug" && (
                     <div style={{ borderTop: `1px solid ${tokens.colorNeutralStroke2}`, paddingTop: 8 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                         <Text size={200} weight="semibold">{tr("logs.debugData" as TK)}</Text>
@@ -438,10 +467,19 @@ function RequestLogs({
                       </div>
                       {isOwner ? (
                         <>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: tokens.fontSizeBase200, marginBottom: 8 }}>
+                            <DetailRow label={tr("logs.method" as TK)} value={detailLog.req_method ?? "—"} />
+                            <DetailRow label={tr("logs.upstreamUrl" as TK)} value={detailLog.upstream_url ?? "—"} />
+                            <DetailRow label={tr("logs.proxy" as TK)} value={detailLog.proxy_url ?? (detailLog.proxy_id != null ? `#${detailLog.proxy_id}` : "—")} />
+                            <DetailRow label={tr("logs.key" as TK)} value={detailLog.key_preview ?? (detailLog.key_id != null ? `#${detailLog.key_id}` : "—")} />
+                          </div>
                           <CodeBlock label={tr("logs.reqHeaders" as TK)} value={detailLog.req_headers} />
                           <CodeBlock label={tr("logs.reqBody" as TK)} value={detailLog.req_body} />
                           <CodeBlock label={tr("logs.respHeaders" as TK)} value={detailLog.resp_headers} />
                           <CodeBlock label={tr("logs.respBody" as TK)} value={detailLog.resp_body} />
+                          {detailLog.debug_attempts && detailLog.debug_attempts.length > 0 ? (
+                            <AttemptTrail attempts={detailLog.debug_attempts} />
+                          ) : null}
                         </>
                       ) : (
                         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
@@ -497,6 +535,103 @@ function CodeBlock({ label, value }: { label: string; value: unknown }) {
       }}>
         {str}
       </pre>
+    </div>
+  );
+}
+
+function AttemptTrail({ attempts }: { attempts: RequestLogAttempt[] }) {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <Text
+        size={200}
+        weight="semibold"
+        block
+        style={{ color: tokens.colorNeutralForeground3, marginBottom: 4 }}
+      >
+        {t("logs.attempts" as TK)} ({attempts.length})
+      </Text>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {attempts.map((a, i) => {
+          const ok =
+            !a.network_error &&
+            a.status_code != null &&
+            a.status_code >= 200 &&
+            a.status_code < 300;
+          const statusLabel = a.network_error
+            ? t("logs.networkError" as TK)
+            : (a.status_code ?? "ERR");
+          return (
+            <div
+              key={a.attempt ?? i}
+              style={{
+                border: `1px solid ${tokens.colorNeutralStroke2}`,
+                borderRadius: tokens.borderRadiusMedium,
+                padding: 8,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 6,
+                }}
+              >
+                <Badge appearance="tint" color="informative">
+                  #{a.attempt ?? i + 1}
+                </Badge>
+                <Badge appearance="filled" color={ok ? "success" : "danger"}>
+                  {statusLabel}
+                </Badge>
+                {a.error_class ? (
+                  <Badge appearance="outline">{a.error_class}</Badge>
+                ) : null}
+                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                  {a.provider ?? "—"}
+                  {a.upstream_model ? ` · ${a.upstream_model}` : ""}
+                  {a.key_preview ? ` · ${a.key_preview}` : ""}
+                  {a.proxy_url ? ` · ${a.proxy_url}` : ` · ${t("logs.direct" as TK)}`}
+                  {a.duration_ms != null ? ` · ${Math.round(a.duration_ms)}ms` : ""}
+                </Text>
+              </div>
+              <Text
+                size={200}
+                block
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  wordBreak: "break-all",
+                  marginBottom: 4,
+                }}
+              >
+                {`${a.method ?? "POST"} ${a.url ?? "—"}`}
+              </Text>
+              {a.error ? (
+                <Text
+                  size={200}
+                  block
+                  style={{
+                    color: tokens.colorPaletteRedForeground1,
+                    fontFamily: "monospace",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                    marginBottom: 4,
+                  }}
+                >
+                  {a.error}
+                </Text>
+              ) : null}
+              <CodeBlock label={t("logs.reqHeaders" as TK)} value={a.req_headers} />
+              <CodeBlock label={t("logs.reqBody" as TK)} value={a.req_body} />
+              <CodeBlock label={t("logs.respHeaders" as TK)} value={a.resp_headers} />
+              <CodeBlock label={t("logs.respBody" as TK)} value={a.resp_body} />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

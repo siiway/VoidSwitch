@@ -19,7 +19,25 @@ The **Logs** page has two views:
 - **Audit** *(staff)* — the administrative trail of who changed what.
 
 Use the search box and filters to narrow results, and the pager to move through
-pages. Click a request to see its full detail.
+pages.
+
+Each request row has an **info** button (ℹ) that opens its normal detail —
+time, caller, token, model, provider, key, proxy, status, tokens, and any error.
+When a model was routed (an alias to a different upstream id), the detail shows
+the **model route** (e.g. `codex-gpt-5.5 → gpt-5.5`) so the mapping is easy to
+trace. Even a request that failed over every provider still names the provider,
+key, and route it last tried.
+
+### Debug detail (owner / co-owner)
+
+Requests made with a **debug-enabled token** get a second **debug** button (🐞),
+visible to **owner / co-owner only**. It opens the full capture: the outbound
+URL and method, the proxy used, the request headers and body, the response
+status, headers, and body — plus a **per-attempt trail** across the whole
+failover (each provider / key / proxy tried, with its upstream status and
+response). This is what turns a bare "upstream 500" into something you can
+pinpoint. Credential values in headers are always masked; nothing else is
+redacted. Admins see only the info button and never the debug capture.
 
 ## What members can see
 

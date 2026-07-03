@@ -11,9 +11,14 @@ tokens on [My Tokens](/guide/api-keys).)
 - **Enable / disable** a token to instantly cut or restore its access.
 - **Rotate** a token's secret (shown once).
 - **Delete** a token.
-- **Debug mode** — when enabled on a token, its requests record full
-  request/response detail for troubleshooting. This detail is sensitive and only
-  visible to owners in the [logs](/guide/logs-usage).
+- **Debug mode** — when enabled on a token, its requests record the full
+  troubleshooting detail: the outbound URL / method / proxy, the request headers
+  and body, the response status / headers / body, and a per-attempt trail across
+  the entire failover (every provider, key, and proxy tried, with each upstream's
+  status and response). Credential values in headers are masked; nothing else is
+  redacted. This capture is opened from the dedicated **debug** button on a
+  request row in the [logs](/guide/logs-usage) and is **owner / co-owner only**
+  (admins see the normal info only).
 
 ## Token fields recap
 

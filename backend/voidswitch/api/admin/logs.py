@@ -355,11 +355,14 @@ async def request_log_detail(
             else:
                 detail.key_preview = key.key_preview
 
-    # Admin: strip debug detail fields (headers, body).
+    # Admin: strip debug detail fields (headers, body, per-attempt trail). Admins
+    # may view the normal log info but never the debug-level request/response
+    # capture — that is owner / co-owner only.
     if admin:
         detail.req_headers = None
         detail.req_body = None
         detail.resp_headers = None
         detail.resp_body = None
+        detail.debug_attempts = None
 
     return detail
