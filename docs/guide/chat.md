@@ -1,23 +1,20 @@
-# Chat playground
+# 聊天测试
 
-The **Chat** page is a built-in playground for trying models straight from the
-dashboard — no external client or token setup required.
+**聊天**页面是一个内置的测试环境，可直接从控制台试用模型 — 无需外部客户端或令牌设置。
 
-## Using it
+## 使用方式
 
-1. Open **Chat** from the sidebar (Account section).
-2. Pick a model you're allowed to call.
-3. Type a message and send.
+1. 从侧边栏（账户部分）打开**聊天**。
+2. 选择一个你有权限调用的模型。
+3. 输入消息并发送。
 
-Responses stream back in real time. It's handy for:
+响应实时流式返回。适用于：
 
-- checking a model is reachable and behaving;
-- comparing outputs across models;
-- quick one-off prompts without wiring up an SDK.
+- 检查模型是否可达且正常运行；
+- 比较不同模型的输出；
+- 快速一次性提示，无需配置 SDK。
 
 ::: tip
-The playground calls the same gateway your API clients use, so what you see here
-reflects real routing, failover, and model availability. For automated or
-high-volume use, mint a [Void-Token](/guide/api-keys) and call the
-[API](/guide/using-the-api) directly.
+测试环境使用与你的 API 客户端相同的网关，因此你在这里看到的内容反映了真实的路由、故障转移和模型可用性。
+对于自动化或大量使用，请创建 [Void-Token](/guide/api-keys) 并直接调用 [API](/guide/using-the-api)。
 :::

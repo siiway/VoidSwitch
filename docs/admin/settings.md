@@ -1,40 +1,30 @@
-# Settings
+# 设置
 
-The **Settings** page holds operational thresholds and intervals, applied at
-runtime — no redeploy needed. **Admins can view** settings (read-only);
-**editing** and the **"clean logs now"** action are **owner-only**.
+**设置**页面包含运维阈值和间隔，运行时生效 — 无需重新部署。**管理员可以查看**设置（只读）；
+**编辑**和**"立即清理日志"**操作是**仅限所有者**的。
 
-Settings render generically by type: booleans as switches, numbers as spin
-buttons, strings as inputs. They're grouped into sections.
+设置按类型通用渲染：布尔值显示为开关，数字显示为微调按钮，字符串显示为输入框。它们按分组排列。
 
-## Sections
+## 分组
 
-- **Proxy & routing** — proxy switching on/off, the static proxy URL, failure
-  thresholds, probe interval and URL, and the resurrector toggle.
-- **Keys & balance** — key failure limits, auto-disable of zero-balance keys, and
-  the balance probe/rescan cadence and rate.
-- **Rate limiting** — default recovery window and a cap on any single cooldown.
-- **Timeouts & retries** — connect/request/stream-idle timeouts and the retry
-  budget.
-- **Logs & retention** — page size, auto-clean toggle and interval, and retention
-  windows for request/audit/debug logs (`0` = keep forever). Owners can also
-  **clean now**.
-- **OpenCode defaults** — the default and small model advertised to the plugin.
-- **Announcements** — how many announcements show on the dashboard before
-  "view all".
-- **Rate limits (abuse protection)** — two per-user sliding-window limits, each
-  set as "within N seconds, at most X requests" (0 = unlimited):
-  - **Operations** — mutating dashboard actions (add/edit/delete/save).
-  - **OpenAI / Anthropic calls** — the gateway endpoints
-    (`/v1/chat/completions`, `/v1/messages`).
+- **代理与路由** — 代理开关、静态代理 URL、失败阈值、探测间隔和 URL 以及复活器开关。
+- **密钥与余额** — 密钥失败限制、零余额密钥自动禁用以及余额探测/重新扫描节奏和速率。
+- **速率限制** — 默认恢复窗口和任何单次冷却的上限。
+- **超时与重试** — 连接/请求/流空闲超时和重试预算。
+- **日志与保留** — 页面大小、自动清理开关和间隔，以及请求/审计/调试日志的保留窗口
+  （`0` = 永久保留）。所有者还可以**立即清理**。
+- **OpenCode 默认值** — 向插件发布的默认模型和小型模型。
+- **公告** — 控制台上显示多少条公告后才显示"查看全部"。
+- **速率限制（滥用防护）** — 两个每用户滑动窗口限制，每个设置为
+  "在 N 秒内，最多 X 个请求"（0 = 无限制）：
+  - **运维操作** — 变更型控制台操作（添加/编辑/删除/保存）。
+  - **OpenAI / Anthropic 调用** — 网关端点
+    （`/v1/chat/completions`、`/v1/messages`）。
 
-  Both apply to **everyone, owners included**, and each user is counted
-  independently. To prevent a lockout, an operation limit that's too low
-  (below ~20 operations/minute) is **rejected on save**.
+  两者适用于**所有人，包括所有者**，每个用户独立计数。为防止锁定，过低的
+  操作限制（低于约 20 次操作/分钟）在保存时**会被拒绝**。
 
-## Notes
+## 注意事项
 
-- Settings that only matter under some condition are hidden otherwise (e.g. the
-  static proxy URL only shows when proxy switching is off).
-- Changes take effect on save; background tasks pick up new intervals on their
-  next tick.
+- 仅在特定条件下才有效的设置在其他情况下会被隐藏（例如静态代理 URL 仅在代理切换关闭时显示）。
+- 更改在保存时生效；后台任务在其下一次 tick 时获取新的间隔。

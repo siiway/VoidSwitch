@@ -1,30 +1,27 @@
-# Using with Claude Code
+# 与 Claude Code 一起使用
 
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) speaks the
-Anthropic API, so it points at VoidSwitch directly.
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) 使用 Anthropic API，
+因此可以直接指向 VoidSwitch。
 
-## Configure
+## 配置
 
-Set the base URL and your [Void-Token](/guide/api-keys) as the auth token:
+设置 Base URL 和你的 [Void-Token](/guide/api-keys) 作为认证令牌：
 
 ```bash
-export ANTHROPIC_BASE_URL=https://your-voidswitch-host
+export ANTHROPIC_BASE_URL=https://voidswitch.siiway.org
 export ANTHROPIC_AUTH_TOKEN=vs-your-token
 ```
 
-Then run Claude Code as usual. Requests flow through VoidSwitch, which routes
-them to a provider that serves the requested Claude model and handles key/proxy
-failover.
+然后像往常一样运行 Claude Code。请求通过 VoidSwitch 流转，VoidSwitch 将其路由到服务
+所请求 Claude 模型的供应商，并处理密钥/代理故障转移。
 
-## Choosing a model
+## 选择模型
 
-Use a model id that VoidSwitch advertises (see [Models](/guide/models) or call
-`/v1/models`). If your platform maps Claude models onto other upstreams, the
-mapping is transparent — just use the advertised id.
+使用 VoidSwitch 发布的模型 ID（参见[模型](/guide/models)或调用 `/v1/models`）。
+如果你的平台将 Claude 模型映射到其他上游，映射是透明的 — 只需使用发布的 ID 即可。
 
-## Notes
+## 注意事项
 
-- Streaming, tool use, and token usage reporting are supported end-to-end.
-- If you'd rather use **OpenCode**, install the dedicated plugin instead — it adds
-  the full Claude Code request surface (effort levels, fast mode, thinking) at the
-  wire level. See [OpenCode plugin](/guide/opencode).
+- 流式传输、工具调用和令牌用量报告均端到端支持。
+- 如果你更倾向于使用 **OpenCode**，请安装专用插件 — 它在线路层面添加了完整的 Claude Code
+  请求功能（effort levels、fast mode、thinking）。参见 [OpenCode 插件](/guide/opencode)。

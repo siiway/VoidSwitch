@@ -1,52 +1,42 @@
-# Logs & usage
+# 日志与用量
 
-VoidSwitch records every request so you can see what happened and how much you've
-used.
+VoidSwitch 记录每个请求，以便你查看发生了什么以及使用了多少。
 
-## Statistics
+## 统计
 
-The **Statistics** page shows usage analytics. Members see **their own** traffic;
-staff see platform-wide totals broken down by user, token, and model, over daily,
-weekly, monthly, and yearly windows.
+**统计**页面显示用量分析。成员查看**自己的**流量；管理人员查看按用户、令牌和模型细分的平台范围总量，
+覆盖日、周、月和年窗口。
 
-## Logs
+## 日志
 
-The **Logs** page has two views:
+**日志**页面有两个视图：
 
-- **Requests** — one row per gateway call: time, model, provider, status,
-  latency, token counts, and any error. Members see only their own requests;
-  staff see everyone's.
-- **Audit** *(staff)* — the administrative trail of who changed what.
+- **请求** — 每次网关调用一行：时间、模型、供应商、状态、延迟、令牌数量和任何错误。成员只看到自己的请求；
+  管理人员看到所有人的。
+- **审计** *(管理人员)* — 谁更改了什么的行政管理记录。
 
-Use the search box and filters to narrow results, and the pager to move through
-pages.
+使用搜索框和过滤器缩小结果范围，使用分页器浏览页面。
 
-Each request row has an **info** button (ℹ) that opens its normal detail —
-time, caller, token, model, provider, key, proxy, status, tokens, and any error.
-When a model was routed (an alias to a different upstream id), the detail shows
-the **model route** (e.g. `codex-gpt-5.5 → gpt-5.5`) so the mapping is easy to
-trace. Even a request that failed over every provider still names the provider,
-key, and route it last tried.
+每个请求行都有一个**信息**按钮（ℹ），打开其常规详情 —
+时间、调用者、令牌、模型、供应商、密钥、代理、状态、令牌和任何错误。
+当模型被路由（别名到不同的上游 ID）时，详情显示**模型路由**（例如 `codex-gpt-5.5 → gpt-5.5`），
+便于追踪映射关系。即使请求在所有供应商上都失败，详情仍会显示最后尝试的供应商、密钥和路由。
 
-### Debug detail (owner / co-owner)
+### 调试详情（仅限 owner / co-owner）
 
-Requests made with a **debug-enabled token** get a second **debug** button (🐞),
-visible to **owner / co-owner only**. It opens the full capture: the outbound
-URL and method, the proxy used, the request headers and body, the response
-status, headers, and body — plus a **per-attempt trail** across the whole
-failover (each provider / key / proxy tried, with its upstream status and
-response). This is what turns a bare "upstream 500" into something you can
-pinpoint. Credential values in headers are always masked; nothing else is
-redacted. Admins see only the info button and never the debug capture.
+使用**启用调试的令牌**发出的请求会获得第二个**调试**按钮（🐞），
+仅对 **owner / co-owner** 可见。它打开完整的捕获：出站 URL 和方法、使用的代理、请求头
+和请求体、响应状态码、响应头和响应体 — 以及整个故障转移过程中的**每次尝试记录**
+（每个尝试的供应商 / 密钥 / 代理，以及其上游状态和响应）。这能让你从笼统的"上游 500"
+精确定位到具体问题。请求头中的凭证值始终被屏蔽；其他内容不会被编辑。管理员只能看到信息按钮，
+永远看不到调试捕获。
 
-## What members can see
+## 成员可以看到什么
 
-- Your own request logs and usage.
-- Not: other users' traffic, the audit trail, or debug-level request/response
-  bodies (those are staff/owner-only).
+- 你自己的请求日志和用量。
+- 不能：其他用户的流量、审计记录或调试级别的请求/响应体（这些仅限于管理人员/所有者）。
 
-## Retention
+## 保留
 
-Old logs may be pruned automatically based on retention windows configured by
-owners (see [Settings](/admin/settings)). If retention is set to `0`, logs are
-kept indefinitely.
+旧日志可能会根据所有者配置的保留窗口自动清理（参见[设置](/admin/settings)）。
+如果保留设置为 `0`，日志将无限期保留。

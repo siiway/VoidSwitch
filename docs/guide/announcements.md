@@ -1,51 +1,40 @@
-# Announcements
+# 公告
 
-Announcements are short platform-wide notices — maintenance windows, new models,
-policy changes, and so on.
+公告是简短的平台范围通知 — 维护窗口、新模型上线、政策变更等。
 
-## As a reader (everyone)
+## 作为读者（所有人）
 
-- **Login popup** — when you sign in, the **most recent** announcement pops up so
-  you don't miss it. Close the dialog to dismiss it for the session; it appears
-  again on your next sign-in.
-- **Dashboard panel** — the newest few announcements are listed on the Dashboard
-  (3 by default). The number shown inline is configurable by owners
-  ([Settings](/admin/settings) → *Announcements*). If there are more, use
-  **View all** to read the rest.
+- **登录弹窗** — 当你登录时，**最新**的公告会弹出，确保你不会错过。关闭弹窗仅对当前会话生效；
+  下次登录时会再次显示。
+- **控制台面板** — 控制台上列出最新的几条公告（默认 3 条）。内联显示的数量可由所有者配置
+  （[设置](/admin/settings) → *公告*）。如果还有更多，使用**查看全部**来阅读其余内容。
 
-Each announcement shows its **title**, **content**, **who published it**, when,
-and an **edited** tag if it was changed.
+每条公告显示其**标题**、**内容**、**发布者**、发布时间，以及如果被修改过会显示**已编辑**标签。
 
-## Publishing (staff only)
+## 发布（仅限管理人员）
 
-Owners, co-owners, and admins can publish announcements:
+Owner、co-owner 和 admin 可以发布公告：
 
-1. Go to the **Dashboard**.
-2. In the Announcements panel, click **Publish**.
-3. Enter a **title** (required) and **content**.
-4. Optionally, pick one or more **target role groups** — only members of those
-   groups will see the announcement. Leave empty to send to everyone.
-5. Click **Publish**.
+1. 前往**控制台**。
+2. 在公告面板中，点击**发布**。
+3. 输入**标题**（必填）和**内容**。
+4. 可选地，选择一个或多个**目标身份组** — 只有这些组的成员才能看到该公告。留空则发送给所有人。
+5. 点击**发布**。
 
-When role groups are targeted, staff see a small badge on the announcement card
-(hover to show the full list of groups). Regular users only see announcements
-that target them (or everyone).
+当指定了目标身份组时，管理人员会在公告卡片上看到一个小徽章（悬停可显示完整的组列表）。
+普通用户只能看到针对他们的公告（或针对所有人的公告）。
 
-The announcement is immediately visible to the targeted audience (and pops up on
-their next sign-in).
+公告立即对目标受众可见（并在他们下次登录时弹出）。
 
-## Editing and deleting
+## 编辑和删除
 
-- You can **edit** or **delete** announcements you published yourself.
-- You can also **delete/edit** announcements published by someone of a **lower
-  permission tier** (e.g. an owner can manage an admin's announcement). Owners and
-  co-owners share the top tier, so they can't manage each other's — only their own.
+- 你可以**编辑**或**删除**你自己发布的公告。
+- 你也可以**删除/编辑**由**层级比你低**的人发布的公告（例如 owner 可以管理 admin 的公告）。
+  Owner 和 co-owner 共享最高层级，因此他们不能管理彼此的公告 — 只能管理自己的。
 
-Every edit is recorded in the [audit trail](/admin/audit). The full before/after
-content is stored as an **owner-revealable secret**, so there's a reviewable
-history without exposing content to everyone.
+每次编辑都会记录在[审计记录](/admin/audit)中。完整的修改前后内容被存储为**所有者可查看的机密**，
+因此有可审查的历史记录，而不会向所有人暴露内容。
 
 ::: tip
-Keep announcements concise. Content is shown as plain text (line breaks are
-preserved), so use short paragraphs.
+保持公告简洁。内容以纯文本形式显示（保留换行符），因此请使用短段落。
 :::

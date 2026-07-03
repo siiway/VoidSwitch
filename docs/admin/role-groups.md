@@ -1,36 +1,32 @@
-# Role groups
+# 身份组
 
-A **role group** ("身份组") determines which [models](/admin/models) its members
-may call. The **Role Groups** page is **staff-only**.
+**身份组**决定了其成员可以调用哪些[模型](/admin/models)。
+**身份组**页面是**仅限管理人员**的。
 
-## How membership works
+## 成员资格如何运作
 
-Membership is **auto-assigned at sign-in** from a user's Prism **team** roles. A
-group defines one or more **mappings**, each of the form:
+成员资格在**登录时根据用户的 Prism 团队角色自动分配**。
+一个组定义一个或多个**映射**，每个映射格式为：
 
-> members of team `T` whose effective role is at least `R` get this group.
+> 团队 `T` 中有效角色至少为 `R` 的成员获得此组。
 
-Roles rank `owner > co-owner > admin > member`. Auto memberships are recomputed on
-every login; a temporary manual removal is re-granted at the next sign-in if a
-mapping still matches.
+角色排序为 `owner > co-owner > admin > member`。自动成员资格在每次登录时重新计算；
+如果在映射仍然匹配的情况下进行临时手动移除，将在下次登录时重新授予。
 
-## Create a group
+## 创建组
 
-1. Open **Role Groups** → **Add**.
-2. Give it a **name** and optional description.
-3. Add **mappings**: a team id and the minimum role.
-4. Save. Then, on the [Models](/admin/models) page, list this group under the
-   models it should unlock.
+1. 打开**身份组** → **添加**。
+2. 为其命名并添加可选描述。
+3. 添加**映射**：团队 ID 和最低角色。
+4. 保存。然后在[模型](/admin/models)页面上，将此组列在它应解锁的模型下。
 
-## The built-in moderator group
+## 内置 moderator 组
 
-The **moderator** group is seeded on first boot, always grants access to every
-model, and can't be edited or deleted. Owner / co-owner / admin belong to it
-implicitly — that's why staff can always call any model.
+**moderator** 组在首次启动时创建，始终授予对所有模型的访问权限，且不可编辑或删除。
+Owner / co-owner / admin 隐式属于它 — 这就是为什么管理人员始终可以调用任何模型。
 
-## Emergency access removal
+## 紧急移除访问权限
 
-From a group's **members** view you can temporarily remove a user to cut their
-access to that group's models immediately (useful when you can't disable the
-account right away). It's re-granted at their next login if a mapping still
-matches — to make it permanent, remove the mapping or disable the account.
+从组的**成员**视图中，你可以临时移除用户，以立即切断其对该组模型的访问权限
+（适用于无法立即禁用账户的情况）。如果映射仍然匹配，将在下次登录时重新授予 —
+要使其永久生效，请移除映射或禁用账户。

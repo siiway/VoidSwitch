@@ -1,41 +1,39 @@
-# Calling the API
+# 调用 API
 
-VoidSwitch speaks **OpenAI Chat Completions**, **OpenAI Responses**, and
-**Anthropic Messages** APIs on the same host. Use whichever your client expects —
-the gateway translates between them as needed, regardless of which style the
-upstream provider speaks.
+VoidSwitch 在同一主机上支持 **OpenAI Chat Completions**、**OpenAI Responses** 和
+**Anthropic Messages** API。使用你的客户端期望的格式 —
+网关在需要时在它们之间转换，无论上游供应商使用何种格式。
 
-| Style | Endpoint |
+| 格式 | 端点 |
 | ----- | -------- |
 | OpenAI Chat Completions | `POST /v1/chat/completions` |
 | OpenAI Responses | `POST /v1/responses` |
 | Anthropic Messages | `POST /v1/messages` |
 
-Replace `https://your-voidswitch-host` with your deployment's URL and
-`vs-your-token` with a [Void-Token](/guide/api-keys).
+将 `https://voidswitch.siiway.org` 替换为你的部署 URL，将 `vs-your-token` 替换为 [Void-Token](/guide/api-keys)。
 
-## List available models
+## 列出可用模型
 
 ```bash
-curl https://your-voidswitch-host/v1/models \
+curl https://voidswitch.siiway.org/v1/models \
   -H "Authorization: Bearer vs-your-token"
 ```
 
-Only models you're allowed to call are returned. See [Models](/guide/models).
+仅返回你有权限调用的模型。参见[模型](/guide/models)。
 
-## OpenAI-style
+## OpenAI 风格
 
-Base URL: `https://your-voidswitch-host/v1`
+Base URL: `https://voidswitch.siiway.org/v1`
 
 ::: code-group
 
 ```bash [curl]
-curl https://your-voidswitch-host/v1/chat/completions \
+curl https://voidswitch.siiway.org/v1/chat/completions \
   -H "Authorization: Bearer vs-your-token" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "deepseek-chat",
-    "messages": [{"role": "user", "content": "Hello!"}]
+    "messages": [{"role": "user", "content": "你好！"}]
   }'
 ```
 
@@ -43,13 +41,13 @@ curl https://your-voidswitch-host/v1/chat/completions \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://your-voidswitch-host/v1",
+    base_url="https://voidswitch.siiway.org/v1",
     api_key="vs-your-token",
 )
 
 resp = client.chat.completions.create(
     model="deepseek-chat",
-    messages=[{"role": "user", "content": "Hello!"}],
+    messages=[{"role": "user", "content": "你好！"}],
 )
 print(resp.choices[0].message.content)
 ```
@@ -58,38 +56,37 @@ print(resp.choices[0].message.content)
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "https://your-voidswitch-host/v1",
+  baseURL: "https://voidswitch.siiway.org/v1",
   apiKey: "vs-your-token",
 });
 
 const resp = await client.chat.completions.create({
   model: "deepseek-chat",
-  messages: [{ role: "user", content: "Hello!" }],
+  messages: [{ role: "user", content: "你好！" }],
 });
 console.log(resp.choices[0].message.content);
 ```
 
 :::
 
-### Streaming
+### 流式传输
 
-Set `"stream": true` (or `stream=True`). Server-Sent Events are streamed through
-and translated if the upstream is Anthropic-style.
+设置 `"stream": true`（或 `stream=True`）。Server-Sent Events 会被流式传输，如果上游是 Anthropic 格式则会被转换。
 
-## OpenAI Responses-style
+## OpenAI Responses 风格
 
-Base URL: `https://your-voidswitch-host/v1` — the same base as Chat Completions,
-so an OpenAI SDK only needs to call the Responses method.
+Base URL: `https://voidswitch.siiway.org/v1` — 与 Chat Completions 相同的 base，因此 OpenAI SDK
+只需调用 Responses 方法即可。
 
 ::: code-group
 
 ```bash [curl]
-curl https://your-voidswitch-host/v1/responses \
+curl https://voidswitch.siiway.org/v1/responses \
   -H "Authorization: Bearer vs-your-token" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "deepseek-chat",
-    "input": "Hello!"
+    "input": "你好！"
   }'
 ```
 
@@ -97,35 +94,34 @@ curl https://your-voidswitch-host/v1/responses \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://your-voidswitch-host/v1",
+    base_url="https://voidswitch.siiway.org/v1",
     api_key="vs-your-token",
 )
 
 resp = client.responses.create(
     model="deepseek-chat",
-    input="Hello!",
+    input="你好！",
 )
 print(resp.output_text)
 ```
 
 :::
 
-The gateway accepts the Responses request whatever style the upstream provider
-speaks, and streams back Responses events when you set `"stream": true`.
+无论上游供应商使用何种格式，网关都会接受 Responses 请求，并在设置 `"stream": true` 时流式返回 Responses 事件。
 
-## Anthropic-style
+## Anthropic 风格
 
-Base URL: `https://your-voidswitch-host`
+Base URL: `https://voidswitch.siiway.org`
 
 ```bash
-curl https://your-voidswitch-host/v1/messages \
+curl https://voidswitch.siiway.org/v1/messages \
   -H "x-api-key: vs-your-token" \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-sonnet-4",
     "max_tokens": 512,
-    "messages": [{"role": "user", "content": "Hello!"}]
+    "messages": [{"role": "user", "content": "你好！"}]
   }'
 ```
 
@@ -133,35 +129,35 @@ curl https://your-voidswitch-host/v1/messages \
 from anthropic import Anthropic
 
 client = Anthropic(
-    base_url="https://your-voidswitch-host",
+    base_url="https://voidswitch.siiway.org",
     auth_token="vs-your-token",
 )
 
 msg = client.messages.create(
     model="claude-sonnet-4",
     max_tokens=512,
-    messages=[{"role": "user", "content": "Hello!"}],
+    messages=[{"role": "user", "content": "你好！"}],
 )
 print(msg.content[0].text)
 ```
 
-## Authentication
+## 认证
 
-Any of these carry your token:
+以下任一方式均可携带你的令牌：
 
-- `Authorization: Bearer vs-your-token` (OpenAI-style)
-- `x-api-key: vs-your-token` (Anthropic-style)
+- `Authorization: Bearer vs-your-token`（OpenAI 风格）
+- `x-api-key: vs-your-token`（Anthropic 风格）
 
-## Errors you may see
+## 可能遇到的错误
 
-| Status | Meaning |
-| ------ | ------- |
-| `401` | Missing/invalid token, or token expired/disabled. |
-| `403` | Token not allowed to call this model. |
-| `429` | You hit your token's RPM limit / daily quota, or the platform per-user call rate limit. |
-| `5xx` | Upstream failed after failover; retry shortly. |
+| 状态码 | 含义 |
+| ------ | ------ |
+| `401` | 令牌缺失/无效，或令牌已过期/已禁用。 |
+| `403` | 令牌不允许调用此模型。 |
+| `429` | 你达到了令牌的 RPM 限制 / 每日配额，或平台的每用户调用速率限制。 |
+| `5xx` | 上游在故障转移后失败；请稍后重试。 |
 
-::: tip Interactive reference
-The full request/response schema is available in **Swagger UI** at
-`https://your-voidswitch-host/swagger`.
+::: tip 交互式参考
+完整的请求/响应 schema 可在 **Swagger UI** 中查看，地址为
+`https://voidswitch.siiway.org/swagger`。
 :::

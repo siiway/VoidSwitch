@@ -1,40 +1,33 @@
-# Signing in
+# 登录
 
-VoidSwitch uses **Prism** (OAuth / OpenID Connect) for dashboard sign-in. There
-are no local passwords to manage.
+VoidSwitch 使用 **Prism**（OAuth / OpenID Connect）进行控制台登录。无需管理本地密码。
 
-## How to sign in
+## 如何登录
 
-1. Open the dashboard URL in your browser.
-2. Click **Sign in with Prism**.
-3. Authorize the app in Prism if prompted.
-4. You're redirected back and land on the **Dashboard**.
+1. 在浏览器中打开控制台 URL。
+2. 点击**通过 Prism 登录**。
+3. 如提示，在 Prism 中授权应用。
+4. 你将重定向回来并进入**控制台**。
 
-## Who is allowed in
+## 谁可以进入
 
-Signing in with Prism is necessary but not always sufficient — you also need a
-reason to be on the platform. You'll be admitted if **any** of these is true:
+通过 Prism 登录是必要的，但并非总是足够的 — 你还需要一个在平台上存在的理由。如果满足以下**任一**条件，你将被允许进入：
 
-- you're an owner / co-owner / admin of the platform's main team (a *moderator*);
-- your Prism team membership maps to at least one [role group](/admin/role-groups);
-- an owner added you explicitly, or you're the very first user (who becomes owner).
+- 你是平台主团队的 owner / co-owner / admin（*moderator*）；
+- 你的 Prism 团队成员资格映射到至少一个[身份组](/admin/role-groups)；
+- 管理员已明确添加你，或者你是第一个用户（将成为 owner）。
 
-If none apply, sign-in is refused with an **Access denied** message. Ask a
-moderator to grant you a role or map your team position.
+如果都不满足，登录将被拒绝，显示**访问被拒绝**消息。请联系管理员为你授予角色或映射你的团队职位。
 
-## Sessions
+## 会话
 
-- Your session is a signed token stored in the browser. It expires after a
-  configured period; just sign in again.
-- If an owner disables your account, all your sessions are invalidated
-  immediately and your Void-Tokens stop working until you're re-enabled and sign
-  in again.
-- Use **Sign out** in the sidebar footer to end your session.
+- 你的会话是存储在浏览器中的已签名令牌。它会在配置的时间后过期；只需重新登录即可。
+- 如果管理员禁用了你的账户，你的所有会话将立即失效，你的 Void-Token 将停止工作，直到你被重新启用并再次登录。
+- 使用侧边栏底部的**退出登录**来结束会话。
 
-## The docs site
+## 文档站点
 
-This documentation is served privately at `/docs/`. Opening it from the sidebar
-**Docs** tab carries your session automatically (in a new tab). If you open a
-`/docs/` link without a session you'll get a `401`/`403` — sign in first.
+此文档在 `/docs/` 下私有提供。从侧边栏的**文档**选项卡打开它会自动携带你的会话（在新标签页中）。
+如果你在没有会话的情况下打开 `/docs/` 链接，你将收到 `401`/`403` — 请先登录。
 
-Next: [The dashboard](/guide/dashboard).
+下一步：[控制台概览](/guide/dashboard)。

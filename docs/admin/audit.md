@@ -1,37 +1,33 @@
-# Audit & secrets
+# 审计与机密
 
-Every administrative action is recorded in the **audit trail**, viewable on the
-**Logs** page under the **Audit** tab (**staff**).
+每项管理操作都记录在**审计记录**中，可在**日志**页面下的**审计**选项卡中查看（**管理人员**）。
 
-## What's recorded
+## 记录了什么
 
-Each entry captures:
+每条记录包含：
 
-- **actor** — a stable `name#id` label plus the raw subject;
-- **action** — a `resource.verb` string (e.g. `provider.update`,
-  `announcement.update`, `key.reveal`);
-- **scope** — `admin` (management surface), `self` (a user acting on their own
-  resources), or `system` (a background task);
-- **target**, **detail** (non-secret context), IP, and user agent.
+- **操作者** — 稳定的 `名称#id` 标签加上原始 subject；
+- **操作** — 一个 `资源.动词` 字符串（例如 `provider.update`、
+  `announcement.update`、`key.reveal`）；
+- **范围** — `admin`（管理界面）、`self`（用户操作自己的资源）或 `system`（后台任务）；
+- **目标**、**详情**（非机密上下文）、IP 和 User Agent。
 
-Use the filters (action, scope, actor, target type) and search to narrow the
-trail, and "jump to id" to land on a specific entry.
+使用过滤器（操作、范围、操作者、目标类型）和搜索来缩小记录范围，
+并使用"跳转到 ID"定位到特定记录。
 
-## Secrets (owner-only)
+## 机密（仅限所有者）
 
-Some actions carry **sensitive context** that must never appear in the plain
-trail — for example:
+某些操作携带**敏感上下文**，绝不能出现在明文记录中 — 例如：
 
-- the plaintext of an added or deleted key / token;
-- secret provider auth headers;
-- the **before/after content of an edited announcement**.
+- 添加或删除的密钥/令牌的明文；
+- 机密供应商认证请求头；
+- **已编辑公告的修改前后内容**。
 
-These are stored **encrypted at rest** and marked with a "sensitive" indicator.
-An owner (or co-owner) can **reveal** one behind a secondary confirmation — and
-the reveal itself is audited, so there's always a record of who looked.
+这些信息**静态加密存储**并标记为"敏感"指示器。
+所有者（或 co-owner）可以在二次确认后**显示**一条 — 显示操作本身也会被审计，
+因此始终有谁查看了什么的记录。
 
-## Retention
+## 保留
 
-The audit trail is pruned according to the **audit log retention** window in
-[Settings](/admin/settings) (`0` = keep forever). Owners can also trigger an
-immediate cleanup.
+审计记录根据[设置](/admin/settings)中的**审计日志保留**窗口进行清理
+（`0` = 永久保留）。所有者也可以触发立即清理。

@@ -1,28 +1,24 @@
-# Proxies
+# 代理
 
-Proxies are optional egress routes the gateway uses to reach upstream providers.
-The **Proxies** page is **staff-only**.
+代理是网关用来连接上游供应商的可选出口路由。
+**代理**页面是**仅限管理人员**的。
 
-## Add proxies
+## 添加代理
 
-1. Open **Proxies**.
-2. Paste one or more proxy URLs, **one per line**, e.g.
-   `http://user:pass@host:port` or `socks5://host:port`.
-3. Optionally set a **local source IP** (`local_address`), **weight**, and note.
+1. 打开**代理**。
+2. 粘贴一个或多个代理 URL，**每行一个**，例如
+   `http://user:pass@host:port` 或 `socks5://host:port`。
+3. 可选地设置**本地源 IP**（`local_address`）、**权重**和备注。
 
-## How proxies are used
+## 代理如何使用
 
-- A provider's **outbound proxy** mode decides whether it uses **all** active
-  proxies, only **selected** ones, or connects **directly**.
-- On a network/timeout error the dispatcher fails over to another proxy and, past
-  a dynamic failure threshold, disables the bad one.
-- A background **proxy resurrector** periodically re-tests disabled proxies and
-  re-enables those that recover. Its interval is tunable in
-  [Settings](/admin/settings).
+- 供应商的**出口代理**模式决定它使用**所有**活跃代理、仅**选定**的代理，还是**直连**。
+- 在发生网络/超时错误时，调度器会故障转移到另一个代理，并在超过动态失败阈值后禁用有问题的代理。
+- 后台**代理复活器**会定期重新测试已禁用的代理，并重新启用那些恢复的代理。
+  其间隔可在[设置](/admin/settings)中调整。
 
-## Proxy switching off
+## 代理切换关闭
 
-If **proxy switching** is disabled in Settings (because an external proxy such as
-mihomo already handles egress), the Proxies tab is hidden and every request uses
-the single **static proxy URL** (or a direct connection). No failover or
-auto-disable happens in this mode.
+如果在设置中禁用了**代理切换**（因为外部代理如 mihomo 已经处理出口），
+代理选项卡将被隐藏，每个请求使用单一的**静态代理 URL**（或直连）。
+在此模式下不会发生故障转移或自动禁用。

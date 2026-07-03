@@ -1,55 +1,51 @@
-# Administration overview
+# 管理概览
 
-This section is for **staff** — owners, co-owners, and admins who run the
-platform. If you're a member, the [Guide](/guide/introduction) covers everything
-you need.
+本部分适用于**管理人员** — 运营平台的 owner、co-owner 和 admin。
+如果你是成员，[指南](/guide/introduction)涵盖了你需要的一切。
 
-## Permission tiers
+## 权限层级
 
-VoidSwitch enforces three tiers on the backend and mirrors them in the UI.
+VoidSwitch 在后端强制执行三个层级，并在 UI 中反映。
 
-| Tier | Roles | Scope |
+| 层级 | 角色 | 范围 |
 | ---- | ----- | ----- |
-| **Member** | member | Own resources only (own tokens, own logs/usage). |
-| **Staff** | owner, co-owner, admin | The day-to-day management surface: providers, keys, proxies, models, role groups, the user list, logs, settings, and publishing announcements. |
-| **Owner** | owner, co-owner | Sensitive actions on top of staff. |
+| **成员** | member | 仅限自己的资源（自己的令牌、自己的日志/用量）。 |
+| **管理人员** | owner、co-owner、admin | 日常管理界面：供应商、密钥、代理、模型、身份组、用户列表、日志、设置和发布公告。 |
+| **所有者** | owner、co-owner | 在管理人员基础上的敏感操作。 |
 
-### Owner-only (sensitive) actions
+### 仅限所有者的（敏感）操作
 
-Reserved for owners and co-owners:
+保留给 owner 和 co-owner：
 
-- disabling users and toggling global Void-Tokens;
-- deleting providers and managing the per-provider key-management API;
-- revealing audit secrets (plaintext keys, tokens, announcement edit history);
-- **editing** system settings and running **"clean logs now"** (admins may *view*
-  settings read-only).
+- 禁用用户和切换全局 Void-Token；
+- 删除供应商和管理每个供应商的密钥管理 API；
+- 显示审计机密（明文密钥、令牌、公告编辑历史）；
+- **编辑**系统设置和执行**"立即清理日志"**（管理员只能*查看*只读设置）。
 
-## Where roles come from
+## 角色的来源
 
-Platform tiers are derived from the user's role in the configured **main team**
-on Prism (`main_team_id`): the team's **owner → owner**, **co-owner → co-owner**,
-**admin → admin**. This is the *only* source of a tier from Prism — a Prism
-**instance / site-wide** admin is **not** trusted (being a Prism system admin
-doesn't make you a VoidSwitch admin), and other teams never confer a tier (they
-can still grant [role groups](/admin/role-groups) for model access).
+平台层级来源于用户在 Prism 上配置的**主团队**中的角色
+（`main_team_id`）：团队的 **owner → owner**，**co-owner → co-owner**，
+**admin → admin**。这是从 Prism 获取层级的*唯一*来源 — Prism 的
+**实例 / 站点范围**管理员**不**被信任（成为 Prism 系统管理员并不意味着你是
+VoidSwitch 管理员），其他团队也从不会授予层级（它们仍然可以授予[身份组](/admin/role-groups)用于模型访问）。
 
-- **Owner / co-owner** come from the main team's owner/co-owner role, or an
-  explicit `owner_subs` / `owner_emails` grant (or the first-user bootstrap).
-  They can't be assigned from the dashboard.
-- **Admin** comes from the main team's `admin` role, or can be granted locally by
-  an owner on the [Users](/admin/users) page (a "local admin override").
-- **Member** is the default for anyone else with platform access.
+- **Owner / co-owner** 来自主团队的 owner/co-owner 角色，或显式的
+  `owner_subs` / `owner_emails` 授予（或首个用户引导）。它们不能从控制台分配。
+- **Admin** 来自主团队的 `admin` 角色，或可由 owner 在[用户](/admin/users)页面上
+  本地授予（"本地管理员覆盖"）。
+- **Member** 是任何其他有平台访问权限的用户的默认角色。
 
-## The management pages
+## 管理页面
 
-| Page | Tier | What you do |
+| 页面 | 层级 | 功能 |
 | ---- | ---- | ----------- |
-| [Providers](/admin/providers) | staff | Add upstream platforms and their models. |
-| [Upstream keys](/admin/keys) | staff | Load and manage each provider's API keys. |
-| [Proxies](/admin/proxies) | staff | Configure egress proxies. |
-| [Models](/admin/models) | staff | Curate the model catalog and access. |
-| [Role groups](/admin/role-groups) | staff | Map team roles to model access. |
-| [Users](/admin/users) | staff/owner | View users; grant admin / disable (owner). |
-| [Void-Tokens](/admin/tokens) | owner | Manage client tokens across users. |
-| [Settings](/admin/settings) | staff/owner | Tune operational thresholds. |
-| [Audit & secrets](/admin/audit) | staff/owner | Review the trail; reveal secrets. |
+| [供应商](/admin/providers) | 管理人员 | 添加上游平台及其模型。 |
+| [上游密钥](/admin/keys) | 管理人员 | 加载和管理每个供应商的 API 密钥。 |
+| [代理](/admin/proxies) | 管理人员 | 配置出口代理。 |
+| [模型](/admin/models) | 管理人员 | 管理模型目录和访问权限。 |
+| [身份组](/admin/role-groups) | 管理人员 | 将团队角色映射到模型访问权限。 |
+| [用户](/admin/users) | 管理人员/所有者 | 查看用户；授予 admin / 禁用（所有者）。 |
+| [Void-Token](/admin/tokens) | 所有者 | 跨用户管理客户端令牌。 |
+| [设置](/admin/settings) | 管理人员/所有者 | 调整运维阈值。 |
+| [审计与机密](/admin/audit) | 管理人员/所有者 | 审查记录；显示机密信息。 |

@@ -1,40 +1,32 @@
-# Models catalog
+# 模型目录
 
-The **Models** page lists every model id available across the platform, one card
-per model. It's visible to every signed-in user.
+**模型**页面列出了平台中所有可用的模型 ID，每个模型一张卡片。所有已登录用户均可查看。
 
-## What a card shows
+## 卡片显示的内容
 
-- The **public id** you call it by (this may be an alias of the upstream id).
-- An optional **display name** and **description** set by staff.
-- Which **providers** currently serve it, and whether it's **served** right now.
-- Whether you're **allowed** to call it (based on your role groups).
+- 你调用时使用的**公开 ID**（可能是上游 ID 的别名）。
+- 管理人员设置的可选**显示名称**和**描述**。
+- 当前哪些**供应商**提供服务，以及是否**正在服务**。
+- 你是否**被允许**调用它（基于你的身份组）。
 
-## Which models can I call?
+## 我可以调用哪些模型？
 
-- **Staff** (owner / co-owner / admin) can call every model.
-- **Members** can call a model if one of their [role groups](/admin/role-groups)
-  is permitted for it. Membership is assigned automatically from your team roles
-  at sign-in.
+- **管理人员**（owner / co-owner / admin）可以调用所有模型。
+- **成员**可以调用模型，如果其某个[身份组](/admin/role-groups)被允许访问该模型。成员资格在登录时根据你的团队角色自动分配。
 
-If a model you expect is missing, it may not be served by any enabled provider
-right now, your role groups may not grant access, or it may be **hidden**
-(disabled) by staff — hidden models are not shown to members at all. Ask a
-moderator if you think a model should be available.
+如果你期望的模型缺失，可能是因为当前没有启用的供应商提供服务，你的身份组可能未授予访问权限，
+或者它可能被管理人员**隐藏**（禁用）了 — 隐藏的模型完全不向成员显示。如果你认为某个模型应该可用，请询问管理员。
 
-## Refreshing the catalog
+## 刷新目录
 
-Refreshing the catalog (registering newly-served model ids) is **staff-only**
-(admin / co-owner / owner):
+刷新目录（注册新服务的模型 ID）是**仅限管理人员**的操作（admin / co-owner / owner）：
 
-- the refresh/sync action on the **Models** page,
-- `POST /v1/models/sync`, or
-- the OpenCode `/sync-models` command (with a staff member's token).
+- **模型**页面上的刷新/同步操作，
+- `POST /v1/models/sync`，或
+- OpenCode `/sync-models` 命令（使用管理人员的令牌）。
 
-Members don't need to sync — served models already appear in the list and via
-`/v1/models`.
+成员无需同步 — 已服务的模型已出现在列表和 `/v1/models` 中。
 
-## Calling a model
+## 调用模型
 
-Use the model's **public id** as the `model` field in your request. See
-[Calling the API](/guide/using-the-api).
+使用模型的**公开 ID** 作为请求中的 `model` 字段。参见[调用 API](/guide/using-the-api)。

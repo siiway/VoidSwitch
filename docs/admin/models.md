@@ -1,45 +1,41 @@
-# Models (administration)
+# 模型（管理）
 
-The **Models** page is visible to everyone, but staff can curate it. See the
-[user-facing Models guide](/guide/models) for the reader's view.
+**模型**页面对所有人可见，但管理人员可以管理它。参见
+[用户版模型指南](/guide/models)了解读者视角。
 
-## Per-model metadata
+## 每个模型的元数据
 
-For any model id, staff can set:
+对于任何模型 ID，管理人员可以设置：
 
-- a **display name** and **description**;
-- a **public alias** (`mapped_id`) — when set, clients see and must call this id
-  instead of the raw upstream id, hiding the upstream and disambiguating clashes;
-- a custom **OpenCode config** that the plugin deep-merges into that model;
-- **enabled** — hide a model from `/v1/models` and the picker without removing it;
-- the **role groups** allowed to call it.
+- **显示名称**和**描述**；
+- **公开别名**（`mapped_id`） — 设置后，客户端看到并必须使用此 ID 而非原始上游 ID，
+  隐藏上游并消除歧义冲突；
+- 自定义**OpenCode 配置**，插件会将其深度合并到该模型中；
+- **启用** — 将模型从 `/v1/models` 和选择器中隐藏，而不删除它；
+- 允许调用它的**身份组**。
 
-## Batch edits
+## 批量编辑
 
-Apply the same change to many models at once — description, enabled state,
-allowed role groups, or OpenCode config. For the OpenCode config choose:
+同时将相同的更改应用到多个模型 — 描述、启用状态、允许的身份组或 OpenCode 配置。
+对于 OpenCode 配置，选择：
 
-- **merge** — deep-merge into each model's existing config (nested dicts combined,
-  lists/scalars replaced); or
-- **overwrite** — replace it wholesale.
+- **合并** — 深度合并到每个模型的现有配置中（嵌套字典合并，列表/标量替换）；或
+- **覆盖** — 完全替换。
 
-## Access control
+## 访问控制
 
-- The built-in **moderator** group (owner/co-owner/admin) can always call every
-  model.
-- Other users need a [role group](/admin/role-groups) that the model lists.
-- An empty allow-list therefore means "moderators only".
+- 内置的 **moderator** 组（owner/co-owner/admin）始终可以调用所有模型。
+- 其他用户需要模型列出的[身份组](/admin/role-groups)。
+- 因此，空的允许列表意味着"仅限 moderator"。
 
-## Syncing & cleanup
+## 同步与清理
 
-- **Sync from providers** adds catalog rows for every model id the enabled
-  providers currently serve. Staff-only (`/api/models/sync`, `/v1/models/sync`,
-  or the OpenCode `/sync-models` command) — members can't reshape the shared
-  catalog.
-- **Clean unserved** removes metadata rows for models no provider serves anymore.
+- **从供应商同步**为已启用供应商当前服务的所有模型 ID 添加目录行。
+  仅限管理人员（`/api/models/sync`、`/v1/models/sync` 或 OpenCode `/sync-models` 命令）—
+  成员不能重塑共享目录。
+- **清理未服务的**删除没有供应商再服务的模型元数据行。
 
-## Hidden models
+## 隐藏模型
 
-Unchecking **Available** hides a model (it shows an "Unavailable (hidden)" badge
-for staff). Members never see hidden models — not on the Models page, in
-`/v1/models`, or the OpenCode picker.
+取消勾选**可用**会隐藏模型（对管理人员显示"不可用（已隐藏）"徽章）。
+成员永远看不到隐藏模型 — 不在模型页面、`/v1/models` 或 OpenCode 选择器中。

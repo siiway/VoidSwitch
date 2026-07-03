@@ -22,6 +22,9 @@ backend at `/docs/`; see `backend/voidswitch/api/docs_site.py`). When a change
 alters user-facing behaviour (a page, a permission, a setting, an endpoint, a
 flow), update the relevant `docs/**` page in the same change — keep it in sync.
 
+**All documentation is written in Chinese** — the primary language of the
+platform's users across all regions.
+
 Keep the tone **usage-focused**: how to do things and the caveats that matter to
 users/operators. Avoid deep principle/architecture explanations (a short
 architecture overview belongs only in `docs/guide/introduction.md`). Don't

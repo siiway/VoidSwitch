@@ -1,55 +1,52 @@
-# Introduction
+# 简介
 
-VoidSwitch is a **multi-provider LLM API gateway**. Instead of wiring each app to
-a specific provider's API and juggling its keys, you point your client at one
-VoidSwitch endpoint and let it:
+VoidSwitch 是一个**多供应商 LLM API 网关**。与其将每个应用单独连接到特定供应商的 API
+并管理其密钥，不如将你的客户端指向一个 VoidSwitch 端点，让它来：
 
-- **route** each request to a provider that serves the requested model;
-- **rotate keys** when one is rate-limited, out of balance, or invalid;
-- **fail over proxies** when a network path breaks;
-- **translate** between OpenAI Chat Completions, OpenAI Responses, and
-  Anthropic APIs on the fly;
-- **enforce quotas** per user and per token.
+- **路由**每个请求到服务所请求模型的供应商；
+- **轮换密钥**当某个密钥被限流、余额不足或无效时；
+- **故障转移代理**当网络路径断开时；
+- 在 OpenAI Chat Completions、OpenAI Responses 和 Anthropic API 之间**实时转换**；
+- 按用户和令牌**执行配额**。
 
 ```
-       OpenAI client ─┐                          ┌─ OpenAI-style upstreams
-                      ├─►  VoidSwitch gateway  ──┤   (OpenAI, DeepSeek, Groq, …)
-  Claude Code / SDK ──┘   translate · failover   └─ Anthropic-style upstreams
-                            key + proxy rotation        (Anthropic / Claude)
+       OpenAI 客户端 ─┐                          ┌─ OpenAI 风格上游
+                      ├─►  VoidSwitch 网关  ─────┤   (OpenAI, DeepSeek, Groq, …)
+  Claude Code / SDK ──┘   转换 · 故障转移          └─ Anthropic 风格上游
+                            密钥 + 代理轮换              (Anthropic / Claude)
 ```
 
-## Key concepts
+## 核心概念
 
-| Term | Meaning |
-| ---- | ------- |
-| **Void-Token** (`vs-…`) | Your personal client credential. Send it as the API key when calling the gateway. Create and manage these on the **My Tokens** page. |
-| **Provider** | An upstream LLM platform (OpenAI, Anthropic, DeepSeek, …) configured by staff, with its own API keys and model list. |
-| **Model** | A model id served by one or more providers. Browse them on the **Models** page. |
-| **Role group** | A named group that grants access to specific models. Membership is assigned automatically from your team roles at sign-in. |
-| **Proxy** | An optional HTTP/SOCKS egress route the gateway can use to reach a provider. |
+| 术语 | 含义 |
+| ---- | ---- |
+| **Void-Token** (`vs-…`) | 你的个人客户端凭证。调用网关时作为 API 密钥发送。在**我的令牌**页面创建和管理。 |
+| **供应商** | 一个上游 LLM 平台（OpenAI、Anthropic、DeepSeek 等），由管理人员配置，拥有自己的 API 密钥和模型列表。 |
+| **模型** | 由一个或多个供应商提供服务的模型 ID。在**模型**页面浏览。 |
+| **身份组** | 授予特定模型访问权限的命名组。成员资格在登录时根据你的团队角色自动分配。 |
+| **代理** | 网关可用来连接供应商的可选 HTTP/SOCKS 出口路由。 |
 
-## Who can do what
+## 谁可以做什么
 
-VoidSwitch has three permission tiers. Most of this guide's **Using the gateway**
-section applies to everyone; the **Administration** section is for staff.
+VoidSwitch 有三个权限层级。本指南中**使用网关**部分适用于所有人；**管理**部分适用于管理人员。
 
-| Tier | Who | Can |
+| 层级 | 谁 | 可以 |
 | ---- | --- | --- |
-| **Member** | Any signed-in user | Mint their own Void-Tokens, call the API for models they're allowed, browse models, use chat, read their own logs/usage, read announcements. |
-| **Staff** | owner + co-owner + admin | Everything a member can, plus manage providers, keys, proxies, models, role groups, users, settings, and publish announcements. |
-| **Owner** | owner + co-owner | Everything staff can, plus sensitive actions: disabling users, deleting providers, revealing secrets, editing settings. |
+| **成员** | 任何已登录用户 | 创建自己的 Void-Token、调用允许的模型 API、浏览模型、使用聊天、查看自己的日志/用量、阅读公告。 |
+| **管理人员** | owner + co-owner + admin | 成员的所有权限，外加管理供应商、密钥、代理、模型、身份组、用户、设置和发布公告。 |
+| **所有者** | owner + co-owner | 管理人员的所有权限，外加敏感操作：禁用用户、删除供应商、显示机密信息、编辑设置。 |
 
-See [Overview & roles](/admin/overview) for the full breakdown.
+参见[概览与角色](/admin/overview)了解完整明细。
 
-## Endpoints at a glance
+## 端点一览
 
-| Path | Purpose |
-| ---- | ------- |
-| `/v1/chat/completions` | OpenAI-style chat completions |
+| 路径 | 用途 |
+| ---- | ---- |
+| `/v1/chat/completions` | OpenAI 风格聊天补全 |
 | `/v1/responses` | OpenAI Responses API |
-| `/v1/messages` | Anthropic-style messages |
-| `/v1/models` | List models you can call |
-| `/docs/` | This documentation site (private) |
-| `/swagger` | Interactive API reference (Swagger UI) |
+| `/v1/messages` | Anthropic 风格消息 |
+| `/v1/models` | 列出你可以调用的模型 |
+| `/docs/` | 此文档站点（私有） |
+| `/swagger` | 交互式 API 参考（Swagger UI） |
 
-Next: [Signing in](/guide/sign-in).
+下一步：[登录](/guide/sign-in)。

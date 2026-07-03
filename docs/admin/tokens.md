@@ -1,34 +1,30 @@
-# Void-Tokens (administration)
+# Void-Token（管理）
 
-The **Tokens** page lets owners manage client **Void-Tokens** across all users —
-not just their own. It's **owner / co-owner only**. (Members manage their own
-tokens on [My Tokens](/guide/api-keys).)
+**令牌**页面允许所有者跨所有用户管理客户端 **Void-Token** —
+而不仅仅是自己的。它是**仅限 owner / co-owner** 的。（成员在[我的令牌](/guide/api-keys)上管理自己的令牌。）
 
-## What you can do
+## 你可以做什么
 
-- **Mint a token for another user** — useful for service accounts or onboarding.
-- **Edit** a token's name, model allow-list, RPM limit, daily quota, and expiry.
-- **Enable / disable** a token to instantly cut or restore its access.
-- **Rotate** a token's secret (shown once).
-- **Delete** a token.
-- **Debug mode** — when enabled on a token, its requests record the full
-  troubleshooting detail: the outbound URL / method / proxy, the request headers
-  and body, the response status / headers / body, and a per-attempt trail across
-  the entire failover (every provider, key, and proxy tried, with each upstream's
-  status and response). Credential values in headers are masked; nothing else is
-  redacted. This capture is opened from the dedicated **debug** button on a
-  request row in the [logs](/guide/logs-usage) and is **owner / co-owner only**
-  (admins see the normal info only).
+- **为其他用户创建令牌** — 适用于服务账户或入职。
+- **编辑**令牌的名称、模型白名单、RPM 限制、每日配额和过期时间。
+- **启用 / 禁用**令牌以立即切断或恢复其访问权限。
+- **轮换**令牌的密钥（仅显示一次）。
+- **删除**令牌。
+- **调试模式** — 在令牌上启用后，其请求会记录完整的故障排除详情：
+  出站 URL / 方法 / 代理、请求头、请求体、响应状态码 / 响应头 / 响应体，
+  以及整个故障转移过程中的每次尝试记录（每个尝试的供应商、密钥和代理，
+  以及每个上游的状态和响应）。请求头中的凭证值被屏蔽；其他内容不会被编辑。
+  此捕获从[日志](/guide/logs-usage)中请求行上的专用**调试**按钮打开，
+  且**仅限 owner / co-owner**（管理员只能看到常规信息）。
 
-## Token fields recap
+## 令牌字段回顾
 
-| Field | Effect |
+| 字段 | 作用 |
 | ----- | ------ |
-| Allowed models | Empty = all permitted models; otherwise a strict allow-list. |
-| RPM limit | Max requests per minute (0 = unlimited). |
-| Daily quota | Max requests per day (0 = unlimited). |
-| Expiry | Token stops working after this time. |
+| 允许的模型 | 留空 = 所有允许的模型；否则为严格白名单。 |
+| RPM 限制 | 每分钟最大请求数（0 = 无限制）。 |
+| 每日配额 | 每天最大请求数（0 = 无限制）。 |
+| 过期时间 | 令牌在此时间后停止工作。 |
 
-Every mint, edit, rotate, and delete is recorded in the
-[audit trail](/admin/audit); the plaintext secret is kept as an owner-revealable
-secret so a lost token can be recovered.
+每次创建、编辑、轮换和删除都会记录在[审计记录](/admin/audit)中；
+明文密钥作为所有者可查看的机密保存，以便丢失的令牌可以被恢复。

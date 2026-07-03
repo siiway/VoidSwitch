@@ -1,29 +1,26 @@
-# Users
+# 用户
 
-The **Users** page lists everyone who has signed in, with their role, status, and
-last login. **Viewing** the list is staff-level; **mutating** a user is
-**owner-only**.
+**用户**页面列出所有已登录的用户，包括其角色、状态和最后登录时间。**查看**列表是管理人员级别；
+**变更**用户是**仅限所有者**的操作。
 
-## Roles
+## 角色
 
-- **Grant / revoke admin** (owner-only) — promote a member to admin or demote back.
-  Owner and co-owner roles come from the main team on Prism and can't be set here.
-- The **Team role** column shows the user's role in the main team (Prism).
-- A "local override" is flagged when someone is a VoidSwitch admin but is **not**
-  an admin of the main team — i.e. the admin role was granted here rather than
-  coming from Prism.
+- **授予 / 撤销 admin**（仅限所有者） — 将成员提升为 admin 或降级回来。
+  Owner 和 co-owner 角色来自 Prism 上的主团队，不能在此设置。
+- **团队角色**列显示用户在主团队（Prism）中的角色。
+- 当某人是 VoidSwitch admin 但**不是**主团队的 admin 时，会标记"本地覆盖" —
+  即 admin 角色是在此处授予的，而非来自 Prism。
 
-## Disabling an account (owner-only)
+## 禁用账户（仅限所有者）
 
-Disabling a user:
+禁用用户：
 
-- immediately invalidates all their dashboard sessions;
-- turns off all their Void-Tokens so they can't call the gateway.
+- 立即使其所有控制台会话失效；
+- 关闭其所有 Void-Token，使其无法调用网关。
 
-Re-enabling doesn't reactivate their tokens right away — they come back at the
-user's next successful sign-in, which re-evaluates their role and role groups.
+重新启用不会立即重新激活其令牌 — 它们会在用户下次成功登录时恢复，
+届时会重新评估其角色和身份组。
 
-::: warning Same-tier protection
-Owners and co-owners can't disable one another (same tier), and you can't disable
-or change your own role.
+::: warning 同级保护
+Owner 和 co-owner 不能互相禁用（同级），也不能禁用或更改自己的角色。
 :::

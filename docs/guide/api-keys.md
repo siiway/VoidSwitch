@@ -1,53 +1,44 @@
-# Your API key (Void-Tokens)
+# 你的 API 密钥（Void-Token）
 
-To call the gateway you need a **Void-Token** — a personal client credential that
-starts with `vs-`. Manage yours on the **My Tokens** page.
+要调用网关，你需要一个 **Void-Token** — 以 `vs-` 开头的个人客户端凭证。在**我的令牌**页面管理你的令牌。
 
-## Create a token
+## 创建令牌
 
-1. Open **My Tokens** from the sidebar (Account section).
-2. Click to create a new token and give it a **name** (e.g. `laptop`, `ci`).
-3. Optionally set:
-   - **Allowed models** — restrict this token to specific model ids. Empty = all
-     models you're permitted to call.
-   - **RPM limit** — max requests per minute (0 = unlimited).
-   - **Daily quota** — max requests per day (0 = unlimited).
-   - **Expiry** — a date after which the token stops working.
-4. Copy the token **immediately** — the secret is shown **once**. If you lose it,
-   rotate the token to get a new one.
+1. 从侧边栏（账户部分）打开**我的令牌**。
+2. 点击创建新令牌并为其命名（例如 `laptop`、`ci`）。
+3. 可选设置：
+   - **允许的模型** — 将此令牌限制为特定模型 ID。留空 = 你有权限调用的所有模型。
+   - **RPM 限制** — 每分钟最大请求数（0 = 无限制）。
+   - **每日配额** — 每天最大请求数（0 = 无限制）。
+   - **过期时间** — 令牌在此日期后停止工作。
+4. **立即**复制令牌 — 密钥仅显示**一次**。如果丢失，请轮换令牌以获取新密钥。
 
-## Manage tokens
+## 管理令牌
 
-- **Rotate** — generate a new secret for a token (the old one stops working).
-  Useful if a token may have leaked.
-- **Edit** — change the name, model allow-list, limits, or expiry.
-- **Delete** — permanently remove a token.
+- **轮换** — 为令牌生成新密钥（旧密钥停止工作）。适用于令牌可能已泄露的情况。
+- **编辑** — 更改名称、模型白名单、限制或过期时间。
+- **删除** — 永久移除令牌。
 
-::: warning Keep it secret
-A Void-Token grants access to the gateway as you. Treat it like a password:
-never commit it to source control or paste it into shared chats. Rotate
-immediately if exposed.
+::: warning 保密
+Void-Token 以你的身份授予网关访问权限。将其视为密码：切勿提交到源代码控制或粘贴到共享聊天中。如果暴露，请立即轮换。
 :::
 
-## Use a token
+## 使用令牌
 
-Send the token as the API key / bearer for your client. See
-[Calling the API](/guide/using-the-api) for full examples. In short:
+将令牌作为 API 密钥 / bearer 发送给你的客户端。参见[调用 API](/guide/using-the-api)获取完整示例。简而言之：
 
 ```bash
-# OpenAI-style
-export OPENAI_BASE_URL=https://your-voidswitch-host/v1
+# OpenAI 风格
+export OPENAI_BASE_URL=https://voidswitch.siiway.org/v1
 export OPENAI_API_KEY=vs-your-token
 
-# Anthropic-style / Claude Code
-export ANTHROPIC_BASE_URL=https://your-voidswitch-host
+# Anthropic 风格 / Claude Code
+export ANTHROPIC_BASE_URL=https://voidswitch.siiway.org
 export ANTHROPIC_AUTH_TOKEN=vs-your-token
 ```
 
-## Quotas and limits
+## 配额和限制
 
-If you exceed a token's RPM limit or daily quota, requests are rejected until the
-window resets. Model allow-lists reject calls to models not on the list. A
-platform-wide **per-user call rate limit** may also apply (set by owners), on top
-of your token's own limits. Your own usage is visible on the
-[Logs & usage](/guide/logs-usage) page.
+如果超出令牌的 RPM 限制或每日配额，请求将被拒绝，直到窗口重置。模型白名单会拒绝不在列表中的模型调用。
+平台范围的**每用户调用速率限制**可能也会生效（由所有者设置），叠加在你的令牌自身限制之上。
+你自己的用量可在[日志与用量](/guide/logs-usage)页面上查看。

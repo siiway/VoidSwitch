@@ -1,51 +1,48 @@
-# OpenCode plugin
+# OpenCode 插件
 
-VoidSwitch ships a first-class [OpenCode](https://opencode.ai) provider plugin.
-It registers VoidSwitch as a provider and reproduces the full Claude Code request
-surface (effort levels, fast mode, adaptive thinking, task budgets, 1M context)
-at the wire level.
+VoidSwitch 内置了一个一流的 [OpenCode](https://opencode.ai) 供应商插件。
+它将 VoidSwitch 注册为供应商，并在线路层面复现完整的 Claude Code 请求功能
+（effort levels、fast mode、adaptive thinking、task budgets、1M context）。
 
-## One-line install
+## 一行安装
 
-The gateway serves a self-contained installer. Run it against your VoidSwitch
-host — it merges a VoidSwitch provider into your `opencode.json`:
+网关提供一个自包含的安装程序。针对你的 VoidSwitch 主机运行它 —
+它会将 VoidSwitch 供应商合并到你的 `opencode.json` 中：
 
 ::: code-group
 
 ```bash [macOS / Linux]
-curl -fsSL https://your-voidswitch-host/install | bash
+curl -fsSL https://voidswitch.siiway.org/install | bash
 ```
 
 ```powershell [Windows]
-irm https://your-voidswitch-host/install | iex
+irm https://voidswitch.siiway.org/install | iex
 ```
 
 :::
 
-You can embed your token so no manual `/connect` step is needed:
+你可以嵌入你的令牌，这样就不需要手动 `/connect` 步骤：
 
 ```bash
-curl -fsSL "https://your-voidswitch-host/install?token=vs-your-token" | bash
+curl -fsSL "https://voidswitch.siiway.org/install?token=vs-your-token" | bash
 ```
 
-## Connect a token
+## 连接令牌
 
-If you didn't embed a token during install:
+如果在安装时没有嵌入令牌：
 
-1. Run `opencode`.
-2. Use `/connect` and choose **VoidSwitch**.
-3. Paste a [Void-Token](/guide/api-keys) (`vs-…`).
+1. 运行 `opencode`。
+2. 使用 `/connect` 并选择 **VoidSwitch**。
+3. 粘贴 [Void-Token](/guide/api-keys)（`vs-…`）。
 
-## Refresh the model list
+## 刷新模型列表
 
-The plugin reads the platform model catalog. New models served by providers
-appear automatically. **Registering** them in the catalog (the sync step) is
-staff-only: a staff member runs the OpenCode `/sync-models` command or uses the
-**Models** page. Members don't need to sync.
+插件读取平台模型目录。供应商新服务的模型会自动出现。在目录中**注册**它们（同步步骤）是
+仅限管理人员的操作：管理人员运行 OpenCode `/sync-models` 命令或使用**模型**页面。
+成员无需同步。
 
-## Where the installer comes from
+## 安装程序的来源
 
-`/install` content-negotiates on your shell (PowerShell → `.ps1`, otherwise
-bash). Force one with `/install.sh` or `/install.ps1`. The plugin source itself is
-served from `/opencode/voidswitch.ts`, so a self-hosted gateway is fully
-self-contained.
+`/install` 根据你的 shell 进行内容协商（PowerShell → `.ps1`，否则 bash）。
+通过 `/install.sh` 或 `/install.ps1` 强制指定。插件源码本身从 `/opencode/voidswitch.ts` 提供，
+因此自托管网关完全自包含。

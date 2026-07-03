@@ -1,46 +1,40 @@
-# The dashboard
+# 控制台概览
 
-After signing in you land on the **Dashboard** — your home page. What it shows
-depends on your tier.
+登录后你将进入**控制台** — 你的主页。显示的内容取决于你的层级。
 
-## For everyone
+## 所有人可见
 
-- **Announcements** — the latest platform announcements. See
-  [Announcements](/guide/announcements).
-- A **Docs** tab in the sidebar (Account section) opens this documentation in a
-  new tab.
+- **公告** — 最新的平台公告。参见[公告](/guide/announcements)。
+- 侧边栏中的**文档**选项卡（账户部分）在新标签页中打开此文档。
 
-## For members
+## 成员可见
 
-The dashboard summarizes **your own** activity:
+控制台汇总**你自己**的活动：
 
-- **My requests** — how many requests you've made through the gateway.
-- **My tokens used** — total tokens consumed by your requests.
-- **My API keys** — how many Void-Tokens you currently hold.
+- **我的请求** — 你通过网关发出的请求数量。
+- **我的令牌用量** — 你的请求消耗的总令牌数。
+- **我的 API 密钥** — 你当前持有的 Void-Token 数量。
 
-Members do not see platform-wide statistics or the Providers page.
+成员看不到平台范围统计或供应商页面。
 
-## For staff
+## 管理人员可见
 
-Staff see the platform-wide picture:
+管理人员看到平台范围的概况：
 
-- **Providers**, **Active keys**, **Active proxies**, **Void-Tokens** counts.
-- **24-hour activity**: requests, succeeded, failed, and tokens used.
-- **Background tasks**: the status of the balance probe, proxy resurrector, and
-  log-cleanup crons.
+- **供应商**、**活跃密钥**、**活跃代理**、**Void-Token** 数量。
+- **24 小时活动**：请求数、成功数、失败数和令牌使用量。
+- **后台任务**：余额探测、代理复活和日志清理定时任务的状态。
 
-## Sidebar navigation
+## 侧边栏导航
 
-The sidebar groups pages into **Overview**, **Routing**, **Operations**, and
-**Account**. You'll only see the pages your tier can access; the theme switch,
-language toggle, and sign-out live in the footer.
+侧边栏将页面分为**概览**、**路由**、**运维**和**账户**。你只会看到你的层级可以访问的页面；主题切换、语言切换和退出登录位于页脚。
 
-| Page | Who sees it |
-| ---- | ----------- |
-| Dashboard | everyone |
-| Models, Statistics, Logs | everyone |
-| Chat, My Tokens, Docs | everyone |
-| Providers, Proxies, Users, Role Groups, Settings | staff |
-| Tokens | owner / co-owner |
+| 页面 | 谁可见 |
+| ---- | ---- |
+| 控制台 | 所有人 |
+| 模型、统计、日志 | 所有人 |
+| 聊天、我的令牌、文档 | 所有人 |
+| 供应商、代理、用户、身份组、设置 | 管理人员 |
+| 令牌 | 所有者 |
 
-Next: [Announcements](/guide/announcements).
+下一步：[公告](/guide/announcements)。

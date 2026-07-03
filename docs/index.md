@@ -3,42 +3,38 @@ layout: home
 
 hero:
   name: VoidSwitch
-  text: LLM API gateway
-  tagline: One endpoint for every model — resilient key & proxy failover, OpenAI ⇄ Anthropic translation, and a self-service dashboard.
+  text: LLM API 网关
+  tagline: 一个端点访问所有模型 — 弹性密钥与代理故障转移，OpenAI ⇄ Anthropic 转换，以及自助服务控制台。
   actions:
     - theme: brand
-      text: Get started
+      text: 快速入门
       link: /guide/introduction
     - theme: alt
-      text: Using the API
+      text: 使用 API
       link: /guide/using-the-api
     - theme: alt
-      text: Administration
+      text: 管理
       link: /admin/overview
 
 features:
-  - title: One endpoint, many providers
-    details: Point an OpenAI SDK, an Anthropic SDK, or Claude Code at a single URL. VoidSwitch picks the provider, rotates keys, and fails over proxies for you.
-  - title: Self-service keys
-    details: Mint your own long-lived vs-… tokens, set per-token model allow-lists and rate limits, and rotate or revoke them any time.
+  - title: 一个端点，多个供应商
+    details: 将 OpenAI SDK、Anthropic SDK 或 Claude Code 指向一个 URL。VoidSwitch 替你选择供应商、轮换密钥和故障转移代理。
+  - title: 自助密钥
+    details: 创建你自己的长期 vs-… 令牌，设置每个令牌的模型白名单和速率限制，并可随时轮换或撤销。
   - title: OpenAI ⇄ Anthropic
-    details: Send OpenAI /v1/chat/completions, OpenAI /v1/responses, or Anthropic /v1/messages — requests, responses, and streaming are translated on the fly.
-  - title: OpenCode ready
-    details: A one-line installer adds VoidSwitch as a first-class OpenCode provider with the full Claude Code request surface.
+    details: 发送 OpenAI /v1/chat/completions、OpenAI /v1/responses 或 Anthropic /v1/messages — 请求、响应和流式传输在运行中自动转换。
+  - title: OpenCode 就绪
+    details: 一行安装命令即可将 VoidSwitch 添加为 OpenCode 的一级供应商，支持完整的 Claude Code 请求功能。
 ---
 
-## What is this?
+## 这是什么？
 
-VoidSwitch is a **multi-provider LLM API reverse proxy**. It accepts OpenAI Chat
-Completions, OpenAI Responses, and Anthropic-style traffic on one endpoint,
-translates between them, and forwards requests to whichever upstream provider can
-serve the model — handling key rotation, proxy failover, and per-user quotas
-along the way.
+VoidSwitch 是一个**多供应商 LLM API 反向代理**。它在一个端点上接受 OpenAI Chat
+Completions、OpenAI Responses 和 Anthropic 格式的流量，在它们之间进行转换，并将请求转发到
+能够服务该模型的任何上游供应商 — 同时处理密钥轮换、代理故障转移和每用户配额。
 
-This documentation site is **private**: only users who can sign in to the
-VoidSwitch dashboard can read it.
+此文档站点是**私有的**：只有能够登录 VoidSwitch 控制台的用户才能阅读。
 
-- New here? Start with the [Introduction](/guide/introduction).
-- Want to make requests? See [Your API key](/guide/api-keys) and
-  [Calling the API](/guide/using-the-api).
-- Running the platform? Head to [Administration](/admin/overview).
+- 刚来？从[简介](/guide/introduction)开始。
+- 想发送请求？参阅[你的 API 密钥](/guide/api-keys)和[调用 API](/guide/using-the-api)。
+- 运行平台？前往[管理](/admin/overview)。

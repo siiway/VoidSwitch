@@ -5,9 +5,9 @@ import { defineConfig } from "vitepress";
 // mount, and clean URLs are resolved by the docs server's static handler.
 export default defineConfig({
   base: "/docs/",
-  lang: "en-US",
-  title: "VoidSwitch Docs",
-  description: "How to use VoidSwitch — the multi-provider LLM API gateway.",
+  lang: "zh-CN",
+  title: "VoidSwitch 文档",
+  description: "VoidSwitch 使用指南 — 多供应商 LLM API 网关。",
   // Favicon: same lightning mark as the main site, but with the bolt/background
   // colours swapped (amber field, blue bolt) so the docs tab is easy to tell
   // apart from the dashboard.
@@ -29,54 +29,54 @@ export default defineConfig({
   ignoreDeadLinks: true,
   themeConfig: {
     nav: [
-      { text: "Guide", link: "/guide/introduction" },
-      { text: "Admin", link: "/admin/overview" },
-      { text: "Dashboard", link: "https://voidswitch.siiway.org/" },
+      { text: "指南", link: "/guide/introduction" },
+      { text: "管理", link: "/admin/overview" },
+      { text: "控制台", link: "https://voidswitch.siiway.org/" },
     ],
     sidebar: {
       "/guide/": [
         {
-          text: "Getting started",
+          text: "快速入门",
           items: [
-            { text: "Introduction", link: "/guide/introduction" },
-            { text: "Signing in", link: "/guide/sign-in" },
-            { text: "The dashboard", link: "/guide/dashboard" },
-            { text: "Announcements", link: "/guide/announcements" },
+            { text: "简介", link: "/guide/introduction" },
+            { text: "登录", link: "/guide/sign-in" },
+            { text: "控制台概览", link: "/guide/dashboard" },
+            { text: "公告", link: "/guide/announcements" },
           ],
         },
         {
-          text: "Using the gateway",
+          text: "使用网关",
           items: [
-            { text: "Your API key", link: "/guide/api-keys" },
-            { text: "Calling the API", link: "/guide/using-the-api" },
+            { text: "API 密钥", link: "/guide/api-keys" },
+            { text: "调用 API", link: "/guide/using-the-api" },
             { text: "Claude Code", link: "/guide/claude-code" },
-            { text: "OpenCode plugin", link: "/guide/opencode" },
-            { text: "Models catalog", link: "/guide/models" },
-            { text: "Chat playground", link: "/guide/chat" },
-            { text: "Logs & usage", link: "/guide/logs-usage" },
+            { text: "OpenCode 插件", link: "/guide/opencode" },
+            { text: "模型目录", link: "/guide/models" },
+            { text: "聊天测试", link: "/guide/chat" },
+            { text: "日志与用量", link: "/guide/logs-usage" },
           ],
         },
       ],
       "/admin/": [
         {
-          text: "Administration",
+          text: "管理",
           items: [
-            { text: "Overview & roles", link: "/admin/overview" },
-            { text: "Providers", link: "/admin/providers" },
-            { text: "Upstream keys", link: "/admin/keys" },
-            { text: "Proxies", link: "/admin/proxies" },
-            { text: "Models", link: "/admin/models" },
-            { text: "Role groups", link: "/admin/role-groups" },
-            { text: "Users", link: "/admin/users" },
-            { text: "Void-Tokens", link: "/admin/tokens" },
-            { text: "Settings", link: "/admin/settings" },
-            { text: "Audit & secrets", link: "/admin/audit" },
+            { text: "概览与角色", link: "/admin/overview" },
+            { text: "供应商", link: "/admin/providers" },
+            { text: "上游密钥", link: "/admin/keys" },
+            { text: "代理", link: "/admin/proxies" },
+            { text: "模型", link: "/admin/models" },
+            { text: "身份组", link: "/admin/role-groups" },
+            { text: "用户", link: "/admin/users" },
+            { text: "Void-Token", link: "/admin/tokens" },
+            { text: "设置", link: "/admin/settings" },
+            { text: "审计与机密", link: "/admin/audit" },
           ],
         },
       ],
     },
     outline: { level: [2, 3] },
-    docFooter: { prev: "Previous page", next: "Next page" },
+    docFooter: { prev: "上一页", next: "下一页" },
     search: { provider: "local" },
   },
 });

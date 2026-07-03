@@ -1,39 +1,36 @@
-# Upstream keys
+# 上游密钥
 
-Each provider has a pool of **upstream API keys** the gateway rotates through.
-Manage them from a provider's **Keys** page (**staff-only**).
+每个供应商都有一个网关轮换使用的**上游 API 密钥**池。
+从供应商的**密钥**页面管理它们（**仅限管理人员**）。
 
-## Add keys
+## 添加密钥
 
-1. Open **Providers** → a provider → its **Keys**.
-2. Paste one or more keys, **one per line**. Add an inline note after `#`
-   (e.g. `sk-abc… # alice`).
-3. Optionally tag the batch with a **pool** (used by model routes) and a **weight**.
+1. 打开**供应商** → 选择一个供应商 → 其**密钥**。
+2. 粘贴一个或多个密钥，**每行一个**。在 `#` 后添加内联备注
+   （例如 `sk-abc… # alice`）。
+3. 可选地为该批次标记一个**池**（由模型路由使用）和**权重**。
 
-## Manage keys
+## 管理密钥
 
-- **Status** — active, invalid, insufficient balance, rate-limited, or disabled.
-  The gateway updates these automatically based on upstream responses.
-- **Enable / disable**, **edit** the note/pool/weight, or **replace** the secret.
-- **Drag-sort** to set the order used by the "fallback" and pinned key-select modes.
-- **Refresh balance** — for providers that support it.
-- **Cleanup** — bulk-delete dead keys (`invalid` or `insufficient_balance`), with
-  an optional minimum-age filter for empty keys.
+- **状态** — 活跃、无效、余额不足、被限流或已禁用。
+  网关会根据上游响应自动更新这些状态。
+- **启用 / 禁用**、**编辑**备注/池/权重，或**替换**密钥。
+- **拖拽排序**以设置"故障转移"和固定密钥选择模式使用的顺序。
+- **刷新余额** — 适用于支持此功能的供应商。
+- **清理** — 批量删除失效密钥（`invalid` 或 `insufficient_balance`），
+  可选为空余额密钥设置最小存活时间过滤。
 
-## Claude Code subscription keys
+## Claude Code 订阅密钥
 
-For `claude-code` providers you can add a key via **subscription OAuth**: start
-the login, authorize, and paste the code back. VoidSwitch stores the resulting
-credential bundle as a key and refreshes it automatically.
+对于 `claude-code` 供应商，你可以通过**订阅 OAuth** 添加密钥：启动登录、授权，
+然后将回调码粘贴回来。VoidSwitch 将生成的凭证包存储为密钥并自动刷新。
 
-## Revealing a key (owner-only)
+## 显示密钥（仅限所有者）
 
-Owners can reveal a stored key's plaintext behind a confirmation. Every reveal is
-recorded in the [audit trail](/admin/audit).
+所有者可以在确认后查看存储密钥的明文。每次显示都会记录在[审计记录](/admin/audit)中。
 
-## Programmatic key management
+## 编程式密钥管理
 
-Owners can enable a per-provider **key-management API** (a `vsk-…` token) so an
-external integration can manage *that provider's* keys. The token is minted,
-rotated, revealed, and disabled from the provider row; its Swagger UI lives at
-`/provider-api/docs`.
+所有者可以为每个供应商启用**密钥管理 API**（一个 `vsk-…` 令牌），
+以便外部集成可以管理*该供应商的*密钥。令牌从供应商行创建、轮换、显示和禁用；
+其 Swagger UI 位于 `/provider-api/docs`。
