@@ -8,6 +8,7 @@ import {
 import { api, API_BASE, clearToken, getToken, setToken } from "../api/client";
 import { armAnnouncementsPopup } from "../components/Announcements";
 import type { User } from "../api/types";
+import { isStaff as checkStaff, isOwner as checkOwner } from "./constants";
 
 interface SessionOut {
   access_token: string;
@@ -69,8 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     location.assign("/login");
   }
 
-  const isOwner = user?.role === "owner" || user?.role === "co-owner";
-  const isStaff = isOwner || user?.role === "admin";
+  const isOwner = checkOwner(user?.role);
+  const isStaff = checkStaff(user?.role);
 
   return (
     <AuthContext.Provider
