@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -397,6 +399,94 @@ async def test_dispatch_translates_anthropic_inbound_to_openai_upstream(db, seed
     assert result.status_code == 200
     # Response must be in Anthropic shape for an Anthropic client.
     assert b'"type": "message"' in (result.content or b"")
+
+
+RESP_URL = "https://api.openai.com/v1/responses"
+
+RESPONSES_BODY = {
+    "id": "resp_1",
+    "object": "response",
+    "model": "gpt-5",
+    "status": "completed",
+    "output": [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "hello"}],
+        }
+    ],
+    "usage": {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+}
+
+
+async def _add_responses_provider(db) -> int:
+    from voidswitch.models.db import Provider
+
+    async with db.session() as session:
+        provider = Provider(
+            name="oair",
+            type="openai-resp",
+            base_url="https://api.openai.com/v1",
+            models=["gpt-5"],
+            priority=1,
+        )
+        session.add(provider)
+        await session.flush()
+        pid = provider.id
+    await _add_key(db, pid, "sk-resp-1")
+    return pid
+
+
+async def test_dispatch_openai_inbound_to_responses_upstream(db, seeded):
+    """OpenAI-chat inbound is translated to a Responses upstream and the Responses
+    reply is translated back into chat-completion shape for the client."""
+    await _add_responses_provider(db)
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(RESP_URL).mock(return_value=httpx.Response(200, json=RESPONSES_BODY))
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.OPENAI,
+                model="gpt-5",
+                payload={"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}]},
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+    assert result.status_code == 200
+    assert result.upstream_style == ApiStyle.OPENAI_RESPONSES.value
+    # The upstream was called with a Responses-shaped body (input, not messages).
+    sent = json.loads(route.calls.last.request.content)
+    assert "input" in sent and "messages" not in sent
+    # The client gets a chat.completion back.
+    body = json.loads(result.content or b"{}")
+    assert body["object"] == "chat.completion"
+    assert body["choices"][0]["message"]["content"] == "hello"
+    assert body["usage"]["total_tokens"] == 7
+
+
+async def test_dispatch_responses_inbound_to_openai_upstream(db, seeded):
+    """A /v1/responses (Responses) inbound request routes to a chat-completions
+    upstream and the reply is translated back into Responses shape."""
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.OPENAI_RESPONSES,
+                model="deepseek-chat",
+                payload={"model": "deepseek-chat", "input": "hi"},
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+    assert result.status_code == 200
+    # Upstream saw chat-completions shape (messages, not input).
+    sent = json.loads(route.calls.last.request.content)
+    assert "messages" in sent and "input" not in sent
+    # Client gets a Responses object back.
+    body = json.loads(result.content or b"{}")
+    assert body["object"] == "response"
+    assert body["output_text"] == "hello"
+    assert body["usage"]["total_tokens"] == 7
 
 
 async def test_dispatch_streaming_passthrough(db, seeded):

@@ -22,17 +22,18 @@ features:
   - title: Self-service keys
     details: Mint your own long-lived vs-… tokens, set per-token model allow-lists and rate limits, and rotate or revoke them any time.
   - title: OpenAI ⇄ Anthropic
-    details: Send OpenAI-style /v1/chat/completions or Anthropic-style /v1/messages — requests, responses, and streaming are translated on the fly.
+    details: Send OpenAI /v1/chat/completions, OpenAI /v1/responses, or Anthropic /v1/messages — requests, responses, and streaming are translated on the fly.
   - title: OpenCode ready
     details: A one-line installer adds VoidSwitch as a first-class OpenCode provider with the full Claude Code request surface.
 ---
 
 ## What is this?
 
-VoidSwitch is a **multi-provider LLM API reverse proxy**. It accepts both
-OpenAI-style and Anthropic-style traffic on one endpoint, translates between the
-two, and forwards requests to whichever upstream provider can serve the model —
-handling key rotation, proxy failover, and per-user quotas along the way.
+VoidSwitch is a **multi-provider LLM API reverse proxy**. It accepts OpenAI Chat
+Completions, OpenAI Responses, and Anthropic-style traffic on one endpoint,
+translates between them, and forwards requests to whichever upstream provider can
+serve the model — handling key rotation, proxy failover, and per-user quotas
+along the way.
 
 This documentation site is **private**: only users who can sign in to the
 VoidSwitch dashboard can read it.

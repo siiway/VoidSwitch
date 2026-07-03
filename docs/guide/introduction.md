@@ -7,7 +7,8 @@ VoidSwitch endpoint and let it:
 - **route** each request to a provider that serves the requested model;
 - **rotate keys** when one is rate-limited, out of balance, or invalid;
 - **fail over proxies** when a network path breaks;
-- **translate** between OpenAI-style and Anthropic-style APIs on the fly;
+- **translate** between OpenAI Chat Completions, OpenAI Responses, and
+  Anthropic APIs on the fly;
 - **enforce quotas** per user and per token.
 
 ```
@@ -45,6 +46,7 @@ See [Overview & roles](/admin/overview) for the full breakdown.
 | Path | Purpose |
 | ---- | ------- |
 | `/v1/chat/completions` | OpenAI-style chat completions |
+| `/v1/responses` | OpenAI Responses API |
 | `/v1/messages` | Anthropic-style messages |
 | `/v1/models` | List models you can call |
 | `/docs/` | This documentation site (private) |

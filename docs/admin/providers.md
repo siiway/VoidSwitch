@@ -12,6 +12,14 @@ presets). The **Providers** page is **staff-only**.
    `*` matches anything).
 4. Save, then load its [keys](/admin/keys).
 
+::: tip OpenAI Responses API
+Pick the **`openai-resp`** adapter for upstreams that speak OpenAI's newer
+[Responses API](https://developers.openai.com/api/reference/resources/responses)
+(`POST /v1/responses`) instead of Chat Completions. The gateway translates
+inbound OpenAI-chat / Anthropic requests into the Responses format (and the reply
+back) transparently, so callers don't need to change anything.
+:::
+
 ## Key settings
 
 - **Priority / weight** — lower priority is preferred; weight spreads load among

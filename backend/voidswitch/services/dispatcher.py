@@ -97,12 +97,22 @@ def _session_key(req: DispatchRequest) -> str:
         if isinstance(uid, str) and uid:
             return f"t{req.token_id}:u:{uid}"
     parts: list[str] = []
+    # ``system``/``messages`` (OpenAI-chat & Anthropic) or ``instructions``/``input``
+    # (OpenAI Responses) — whichever the inbound dialect carries.
     system = payload.get("system")
+    if system is None:
+        system = payload.get("instructions")
     if system is not None:
         parts.append(_stringify(system))
     messages = payload.get("messages")
     if isinstance(messages, list) and messages:
         parts.append(_stringify(messages[0]))
+    else:
+        raw_input = payload.get("input")
+        if isinstance(raw_input, str) and raw_input:
+            parts.append(raw_input)
+        elif isinstance(raw_input, list) and raw_input:
+            parts.append(_stringify(raw_input[0]))
     seed = "\x00".join(parts)
     digest = hashlib.sha256(seed.encode("utf-8", "ignore")).hexdigest()[:16]
     return f"t{req.token_id}:s:{digest}"
@@ -146,20 +156,73 @@ class DispatchResult:
 # --------------------------------------------------------------------------- #
 
 
+# OpenAI Chat Completions is the canonical hub: every cross-style conversion
+# pivots through it, so any pair of the three dialects is bridged by composing at
+# most two direct conversions (see services.transform).
+
+
+def _request_to_openai(style: ApiStyle, payload: dict) -> dict:
+    if style is ApiStyle.ANTHROPIC:
+        return transform.anthropic_request_to_openai(payload)
+    if style is ApiStyle.OPENAI_RESPONSES:
+        return transform.responses_request_to_openai(payload)
+    return payload
+
+
+def _request_from_openai(style: ApiStyle, payload: dict) -> dict:
+    if style is ApiStyle.ANTHROPIC:
+        return transform.openai_request_to_anthropic(payload)
+    if style is ApiStyle.OPENAI_RESPONSES:
+        return transform.openai_request_to_responses(payload)
+    return payload
+
+
 def _translate_request(inbound: ApiStyle, upstream: ApiStyle, payload: dict) -> dict:
     if inbound == upstream:
         return payload
-    if upstream is ApiStyle.ANTHROPIC:
-        return transform.openai_request_to_anthropic(payload)
-    return transform.anthropic_request_to_openai(payload)
+    return _request_from_openai(upstream, _request_to_openai(inbound, payload))
+
+
+def _response_to_openai(style: ApiStyle, body: dict, model: str) -> dict:
+    if style is ApiStyle.ANTHROPIC:
+        return transform.anthropic_response_to_openai(body, model=model)
+    if style is ApiStyle.OPENAI_RESPONSES:
+        return transform.responses_response_to_openai(body, model=model)
+    return body
+
+
+def _response_from_openai(style: ApiStyle, body: dict, model: str) -> dict:
+    if style is ApiStyle.ANTHROPIC:
+        return transform.openai_response_to_anthropic(body, model=model)
+    if style is ApiStyle.OPENAI_RESPONSES:
+        return transform.openai_response_to_responses(body, model=model)
+    return body
 
 
 def _translate_response(inbound: ApiStyle, upstream: ApiStyle, body: dict, model: str) -> dict:
     if inbound == upstream:
         return body
-    if upstream is ApiStyle.ANTHROPIC:
-        return transform.anthropic_response_to_openai(body, model=model)
-    return transform.openai_response_to_anthropic(body, model=model)
+    return _response_from_openai(inbound, _response_to_openai(upstream, body, model), model)
+
+
+def _stream_to_openai(
+    style: ApiStyle, byte_iter: AsyncIterator[bytes], model: str
+) -> AsyncIterator[bytes]:
+    if style is ApiStyle.ANTHROPIC:
+        return transform.anthropic_stream_to_openai(byte_iter, model=model)
+    if style is ApiStyle.OPENAI_RESPONSES:
+        return transform.responses_stream_to_openai(byte_iter, model=model)
+    return byte_iter
+
+
+def _stream_from_openai(
+    style: ApiStyle, byte_iter: AsyncIterator[bytes], model: str
+) -> AsyncIterator[bytes]:
+    if style is ApiStyle.ANTHROPIC:
+        return transform.openai_stream_to_anthropic(byte_iter, model=model)
+    if style is ApiStyle.OPENAI_RESPONSES:
+        return transform.openai_stream_to_responses(byte_iter, model=model)
+    return byte_iter
 
 
 def _translate_stream(
@@ -167,9 +230,7 @@ def _translate_stream(
 ) -> AsyncIterator[bytes]:
     if inbound == upstream:
         return byte_iter
-    if upstream is ApiStyle.ANTHROPIC:
-        return transform.anthropic_stream_to_openai(byte_iter, model=model)
-    return transform.openai_stream_to_anthropic(byte_iter, model=model)
+    return _stream_from_openai(inbound, _stream_to_openai(upstream, byte_iter, model), model)
 
 
 # --------------------------------------------------------------------------- #
@@ -1035,6 +1096,11 @@ def _sniff_usage(block: str, usage: dict[str, int]) -> None:
                 usage["completion_tokens"] = obj["usage"].get(
                     "output_tokens", usage["completion_tokens"]
                 )
+            # OpenAI Responses style — usage rides the terminal completed event.
+            if obj.get("type") in ("response.completed", "response.incomplete"):
+                u = (obj.get("response") or {}).get("usage") or {}
+                usage["prompt_tokens"] = u.get("input_tokens", usage["prompt_tokens"])
+                usage["completion_tokens"] = u.get("output_tokens", usage["completion_tokens"])
     usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
 
@@ -1056,7 +1122,7 @@ def _extract_usage(body: Any, upstream: ApiStyle) -> dict[str, int]:
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     if not isinstance(body, dict):
         return usage
-    if upstream is ApiStyle.ANTHROPIC:
+    if upstream in (ApiStyle.ANTHROPIC, ApiStyle.OPENAI_RESPONSES):
         u = body.get("usage", {})
         usage["prompt_tokens"] = u.get("input_tokens", 0)
         usage["completion_tokens"] = u.get("output_tokens", 0)

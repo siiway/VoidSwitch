@@ -25,6 +25,7 @@ from .openai import (
     NovitaProvider,
     NvidiaProvider,
     OpenAIProvider,
+    OpenAIResponsesProvider,
     OpenRouterProvider,
     PerplexityProvider,
     QwenProvider,
@@ -40,6 +41,7 @@ _ADAPTERS: dict[str, type[BaseProvider]] = {
     cls.type: cls
     for cls in (
         OpenAIProvider,
+        OpenAIResponsesProvider,
         AnthropicProvider,
         ClaudeCodeProvider,
         DeepSeekProvider,

@@ -1,7 +1,15 @@
 # Calling the API
 
-VoidSwitch speaks both **OpenAI-style** and **Anthropic-style** APIs on the same
-host. Use whichever your client expects — the gateway translates as needed.
+VoidSwitch speaks **OpenAI Chat Completions**, **OpenAI Responses**, and
+**Anthropic Messages** APIs on the same host. Use whichever your client expects —
+the gateway translates between them as needed, regardless of which style the
+upstream provider speaks.
+
+| Style | Endpoint |
+| ----- | -------- |
+| OpenAI Chat Completions | `POST /v1/chat/completions` |
+| OpenAI Responses | `POST /v1/responses` |
+| Anthropic Messages | `POST /v1/messages` |
 
 Replace `https://your-voidswitch-host` with your deployment's URL and
 `vs-your-token` with a [Void-Token](/guide/api-keys).
@@ -67,6 +75,43 @@ console.log(resp.choices[0].message.content);
 
 Set `"stream": true` (or `stream=True`). Server-Sent Events are streamed through
 and translated if the upstream is Anthropic-style.
+
+## OpenAI Responses-style
+
+Base URL: `https://your-voidswitch-host/v1` — the same base as Chat Completions,
+so an OpenAI SDK only needs to call the Responses method.
+
+::: code-group
+
+```bash [curl]
+curl https://your-voidswitch-host/v1/responses \
+  -H "Authorization: Bearer vs-your-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-chat",
+    "input": "Hello!"
+  }'
+```
+
+```python [Python (openai)]
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://your-voidswitch-host/v1",
+    api_key="vs-your-token",
+)
+
+resp = client.responses.create(
+    model="deepseek-chat",
+    input="Hello!",
+)
+print(resp.output_text)
+```
+
+:::
+
+The gateway accepts the Responses request whatever style the upstream provider
+speaks, and streams back Responses events when you set `"stream": true`.
 
 ## Anthropic-style
 

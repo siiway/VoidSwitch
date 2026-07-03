@@ -19,6 +19,21 @@ class OpenAIProvider(BaseProvider):
     default_models = ("gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3", "o4-mini")
 
 
+class OpenAIResponsesProvider(OpenAIProvider):
+    """OpenAI provider that speaks the newer **Responses API** (``/v1/responses``).
+
+    Same base URL and Bearer auth as :class:`OpenAIProvider`, but the upstream is
+    called with the Responses request/response/stream shape (OpenAI's recommended
+    primary API). The gateway translates inbound OpenAI-chat / Anthropic requests
+    to and from the Responses format transparently.
+    """
+
+    type = "openai-resp"
+    style = ApiStyle.OPENAI_RESPONSES
+    default_base_url = "https://api.openai.com/v1"
+    default_models = ("gpt-5", "gpt-5-mini", "gpt-4.1", "o3", "o4-mini")
+
+
 class SiliconFlowProvider(OpenAIProvider):
     type = "siliconflow"
     default_base_url = "https://api.siliconflow.cn/v1"

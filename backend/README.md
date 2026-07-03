@@ -1,21 +1,24 @@
 # VoidSwitch — backend
 
 A production-grade, multi-provider LLM API reverse proxy with resilient key &
-proxy failover. Accepts **OpenAI-style** (`/v1/chat/completions`) and
-**Anthropic-style** (`/v1/messages`, what Claude Code speaks) traffic, translates
-between the two transparently, and forwards to any configured upstream over
-optional HTTP/SOCKS proxies or specific local source IPs.
+proxy failover. Accepts **OpenAI-style** (`/v1/chat/completions`), **OpenAI
+Responses** (`/v1/responses`), and **Anthropic-style** (`/v1/messages`, what
+Claude Code speaks) traffic, translates between them transparently, and forwards
+to any configured upstream over optional HTTP/SOCKS proxies or specific local
+source IPs.
 
 ## Highlights
 
-- **Multi-provider** adapters: OpenAI, Anthropic, **Claude Code (subscription
-  OAuth)**, DeepSeek, SiliconFlow, OpenRouter, Groq, xAI, Moonshot, MiMo, NVIDIA,
-  Mistral, Together, Fireworks, Perplexity, Cerebras, DeepInfra, Gemini, Novita,
-  SambaNova, Hyperbolic, Nebius, GitHub Models, Zhipu/GLM, Qwen, Volcengine/Doubao,
-  MiniMax, plus a generic OpenAI-compatible catch-all.
-- **Bidirectional translation** OpenAI ⇄ Anthropic for requests, responses, and
-  streaming (SSE), so a client of either dialect can reach a provider of either
-  dialect. Point Claude Code's `ANTHROPIC_BASE_URL` here.
+- **Multi-provider** adapters: OpenAI, **OpenAI Responses API (`openai-resp`)**,
+  Anthropic, **Claude Code (subscription OAuth)**, DeepSeek, SiliconFlow,
+  OpenRouter, Groq, xAI, Moonshot, MiMo, NVIDIA, Mistral, Together, Fireworks,
+  Perplexity, Cerebras, DeepInfra, Gemini, Novita, SambaNova, Hyperbolic, Nebius,
+  GitHub Models, Zhipu/GLM, Qwen, Volcengine/Doubao, MiniMax, plus a generic
+  OpenAI-compatible catch-all.
+- **Three-way translation** between OpenAI Chat Completions, OpenAI Responses, and
+  Anthropic Messages for requests, responses, and streaming (SSE), so a client of
+  any dialect can reach a provider of any dialect. Point Claude Code's
+  `ANTHROPIC_BASE_URL` here.
 - **Resilient dispatcher**: rotates keys on auth/balance errors, rotates proxies
   on network/timeout errors, disables resources past dynamic thresholds, and
   retries — all without dropping a streaming connection before first byte.
@@ -101,7 +104,7 @@ voidswitch/
 ├── models/      SQLAlchemy 2.0 async models + Pydantic v2 schemas
 ├── services/
 │   ├── network.py      pooled httpx clients with proxy/SOCKS/local-IP routing
-│   ├── transform.py    OpenAI ⇄ Anthropic translation (incl. streaming)
+│   ├── transform.py    OpenAI ⇄ Anthropic ⇄ Responses translation (incl. streaming)
 │   ├── selector.py     weighted-least-used provider/key/route selection
 │   ├── dispatcher.py   the failover engine
 │   ├── keymgmt.py      shared upstream-key lifecycle (add/edit/balance/cleanup)

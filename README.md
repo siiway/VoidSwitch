@@ -1,10 +1,10 @@
 # ⚡ VoidSwitch
 
 A production-grade, multi-provider **LLM API reverse proxy** with resilient key &
-proxy failover. It accepts both **OpenAI-style** (`/v1/chat/completions`) and
-**Anthropic-style** (`/v1/messages`) traffic, translates between the two on the
-fly, and forwards to any configured upstream over optional HTTP/SOCKS proxies or
-specific local source IPs.
+proxy failover. It accepts **OpenAI-style** (`/v1/chat/completions`), **OpenAI
+Responses** (`/v1/responses`), and **Anthropic-style** (`/v1/messages`) traffic,
+translates between them on the fly, and forwards to any configured upstream over
+optional HTTP/SOCKS proxies or specific local source IPs.
 
 Point an OpenAI SDK, an Anthropic SDK, or **Claude Code** at one endpoint and let
 VoidSwitch handle provider selection, key rotation, proxy failover, and quotas.

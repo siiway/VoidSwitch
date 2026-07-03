@@ -38,6 +38,7 @@ class BaseProvider:
 
     chat_suffix: str = "/chat/completions"
     messages_suffix: str = "/v1/messages"
+    responses_suffix: str = "/responses"
     models_suffix: str = "/models"
     balance_suffix: str | None = None
     anthropic_version: str = "2023-06-01"
@@ -55,6 +56,8 @@ class BaseProvider:
         """The endpoint to POST a completion request to (depends on style)."""
         if self.style is ApiStyle.ANTHROPIC:
             return self.base_url + self.messages_suffix
+        if self.style is ApiStyle.OPENAI_RESPONSES:
+            return self.base_url + self.responses_suffix
         return self.base_url + self.chat_suffix
 
     @property

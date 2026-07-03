@@ -1,8 +1,9 @@
 """Public gateway endpoints — the OpenAI- and Anthropic-style inbound APIs.
 
-Point an OpenAI client at ``/v1/chat/completions`` or Claude Code / an Anthropic
-client at ``/v1/messages`` (set ANTHROPIC_BASE_URL to this server). Inbound and
-upstream styles are translated transparently by the dispatcher.
+Point an OpenAI client at ``/v1/chat/completions`` (Chat Completions) or
+``/v1/responses`` (the Responses API), or Claude Code / an Anthropic client at
+``/v1/messages`` (set ANTHROPIC_BASE_URL to this server). Inbound and upstream
+styles are translated transparently by the dispatcher.
 """
 
 from __future__ import annotations
@@ -231,6 +232,16 @@ async def messages(
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
 ) -> Response:
     return await _handle(request, session, authorization, x_api_key, ApiStyle.ANTHROPIC)
+
+
+@router.post("/v1/responses")
+async def responses(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+) -> Response:
+    return await _handle(request, session, authorization, x_api_key, ApiStyle.OPENAI_RESPONSES)
 
 
 @router.get("/v1/models")

@@ -1,12 +1,16 @@
-"""Bidirectional translation between OpenAI Chat Completions and Anthropic Messages.
+"""Bidirectional translation between the gateway's three API dialects.
 
-The gateway accepts either inbound style and can forward to a provider speaking
-either style, so we need all four conversions plus their streaming variants:
+The gateway speaks three styles — OpenAI **Chat Completions**, Anthropic
+**Messages**, and OpenAI **Responses** — on both the inbound and the upstream
+side. OpenAI Chat Completions is used as the *canonical hub*: every pair of
+styles is converted by pivoting through it, so this module only defines the
+direct conversions to/from that hub:
 
-    inbound openai  -> upstream anthropic : request + response + stream
-    inbound anthropic -> upstream openai  : request + response + stream
+    openai <-> anthropic : request + response + stream
+    openai <-> responses : request + response + stream
 
-Passthrough (matching styles) never touches this module.
+The dispatcher composes these (e.g. anthropic->responses = anthropic->openai then
+openai->responses). Passthrough (matching styles) never touches this module.
 
 Only the widely-used surface is translated faithfully: text, multi-part content,
 tool/function calling, stop reasons, and token usage. Unknown fields are dropped
@@ -825,3 +829,855 @@ def _safe_json(value: Any) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _openai_text(content: Any) -> str:
+    """Flatten OpenAI message content (str or parts list) to plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+        )
+    return str(content)
+
+
+# =========================================================================== #
+# OpenAI Chat Completions  <->  OpenAI Responses
+#
+# Responses request shape:  {model, instructions, input:[items], max_output_tokens,
+#   temperature, top_p, stream, tools:[{type:"function", name, ...}], tool_choice}
+#   where an ``input`` item is one of:
+#     {type:"message", role, content:[{type:"input_text"|"output_text", text}|
+#                                      {type:"input_image", image_url}]}
+#     {type:"function_call", call_id, name, arguments}
+#     {type:"function_call_output", call_id, output}
+# Responses response shape: {id, object:"response", status, output:[items], usage:
+#   {input_tokens, output_tokens, total_tokens}} with a reasoning/message/function_call
+#   item list mirroring the input items.
+# =========================================================================== #
+
+_OPENAI_FINISH_TO_RESP_STATUS = {
+    "length": "incomplete",
+    "content_filter": "incomplete",
+}
+
+
+# --------------------------------------------------------------------------- #
+# Request: OpenAI -> Responses
+# --------------------------------------------------------------------------- #
+
+
+def _openai_content_to_responses(content: Any, *, assistant: bool) -> list[dict[str, Any]]:
+    text_type = "output_text" if assistant else "input_text"
+    if content is None:
+        return []
+    if isinstance(content, str):
+        return [{"type": text_type, "text": content}] if content else []
+    parts: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        ptype = part.get("type")
+        if ptype == "text":
+            parts.append({"type": text_type, "text": part.get("text", "")})
+        elif ptype == "image_url":
+            url = (part.get("image_url") or {}).get("url", "")
+            if url:
+                parts.append({"type": "input_image", "image_url": url})
+    return parts
+
+
+def openai_request_to_responses(payload: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"model": payload.get("model")}
+    instructions: list[str] = []
+    input_items: list[dict[str, Any]] = []
+
+    for msg in payload.get("messages", []):
+        role = msg.get("role")
+        content = msg.get("content")
+        if role in ("system", "developer"):
+            text = _openai_text(content)
+            if text:
+                instructions.append(text)
+            continue
+        if role == "tool":
+            input_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg.get("tool_call_id", ""),
+                    "output": _stringify(content),
+                }
+            )
+            continue
+        if role == "assistant":
+            text = _openai_text(content)
+            if text:
+                input_items.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                )
+            for call in msg.get("tool_calls") or []:
+                fn = call.get("function", {})
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call.get("id", _gen_id("call")),
+                        "name": fn.get("name", ""),
+                        "arguments": fn.get("arguments") or "{}",
+                    }
+                )
+            continue
+        # user (or any other) role.
+        input_items.append(
+            {
+                "type": "message",
+                "role": role,
+                "content": _openai_content_to_responses(content, assistant=False),
+            }
+        )
+
+    if instructions:
+        out["instructions"] = "\n\n".join(instructions)
+    out["input"] = input_items
+
+    max_out = payload.get("max_output_tokens") or payload.get("max_tokens") or payload.get(
+        "max_completion_tokens"
+    )
+    if max_out:
+        out["max_output_tokens"] = max_out
+    for key in ("temperature", "top_p"):
+        if payload.get(key) is not None:
+            out[key] = payload[key]
+    if payload.get("stream"):
+        out["stream"] = True
+    if payload.get("tools"):
+        out["tools"] = [_openai_tool_to_responses(t) for t in payload["tools"]]
+    tool_choice = payload.get("tool_choice")
+    if tool_choice is not None:
+        out["tool_choice"] = _openai_tool_choice_to_responses(tool_choice)
+    return out
+
+
+def _openai_tool_to_responses(tool: dict[str, Any]) -> dict[str, Any]:
+    fn = tool.get("function", tool)
+    return {
+        "type": "function",
+        "name": fn.get("name", ""),
+        "description": fn.get("description", ""),
+        "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+    }
+
+
+def _openai_tool_choice_to_responses(choice: Any) -> Any:
+    if isinstance(choice, str):
+        # "auto" / "none" / "required" carry over verbatim.
+        return choice
+    if isinstance(choice, dict) and choice.get("type") == "function":
+        return {"type": "function", "name": choice.get("function", {}).get("name", "")}
+    return "auto"
+
+
+# --------------------------------------------------------------------------- #
+# Request: Responses -> OpenAI
+# --------------------------------------------------------------------------- #
+
+
+def _responses_content_to_openai(content: Any) -> Any:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    parts: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        ptype = part.get("type")
+        if ptype in ("input_text", "output_text", "text"):
+            parts.append({"type": "text", "text": part.get("text", "")})
+        elif ptype == "input_image":
+            url = part.get("image_url")
+            if isinstance(url, dict):
+                url = url.get("url", "")
+            if url:
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+    return _collapse_openai_content(parts)
+
+
+def responses_request_to_openai(payload: dict[str, Any]) -> dict[str, Any]:
+    messages: list[dict[str, Any]] = []
+    instructions = payload.get("instructions")
+    if isinstance(instructions, str) and instructions:
+        messages.append({"role": "system", "content": instructions})
+
+    raw_input = payload.get("input")
+    if isinstance(raw_input, str):
+        messages.append({"role": "user", "content": raw_input})
+    elif isinstance(raw_input, list):
+        for item in raw_input:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type", "message")
+            if itype == "message":
+                messages.append(
+                    {
+                        "role": item.get("role", "user"),
+                        "content": _responses_content_to_openai(item.get("content")),
+                    }
+                )
+            elif itype == "function_call":
+                call = {
+                    "id": item.get("call_id") or item.get("id", _gen_id("call")),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("arguments") or "{}",
+                    },
+                }
+                # Fold consecutive function calls into one assistant turn.
+                if messages and messages[-1].get("role") == "assistant" and messages[-1].get(
+                    "tool_calls"
+                ):
+                    messages[-1]["tool_calls"].append(call)
+                else:
+                    messages.append(
+                        {"role": "assistant", "content": None, "tool_calls": [call]}
+                    )
+            elif itype == "function_call_output":
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item.get("call_id", ""),
+                        "content": _stringify(item.get("output")),
+                    }
+                )
+
+    out: dict[str, Any] = {"model": payload.get("model"), "messages": messages}
+    if payload.get("max_output_tokens"):
+        out["max_tokens"] = payload["max_output_tokens"]
+    for key in ("temperature", "top_p"):
+        if payload.get(key) is not None:
+            out[key] = payload[key]
+    if payload.get("stream"):
+        out["stream"] = True
+    if payload.get("tools"):
+        tools = [
+            _responses_tool_to_openai(t)
+            for t in payload["tools"]
+            if isinstance(t, dict) and t.get("type") == "function"
+        ]
+        if tools:
+            out["tools"] = tools
+    tool_choice = payload.get("tool_choice")
+    if tool_choice is not None:
+        out["tool_choice"] = _responses_tool_choice_to_openai(tool_choice)
+    return out
+
+
+def _responses_tool_to_openai(tool: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.get("name", ""),
+            "description": tool.get("description", ""),
+            "parameters": tool.get("parameters", {"type": "object", "properties": {}}),
+        },
+    }
+
+
+def _responses_tool_choice_to_openai(choice: Any) -> Any:
+    if isinstance(choice, str):
+        return choice
+    if isinstance(choice, dict) and choice.get("type") == "function":
+        return {"type": "function", "function": {"name": choice.get("name", "")}}
+    return "auto"
+
+
+# --------------------------------------------------------------------------- #
+# Non-streaming responses
+# --------------------------------------------------------------------------- #
+
+
+def openai_response_to_responses(resp: dict[str, Any], *, model: str) -> dict[str, Any]:
+    choice = (resp.get("choices") or [{}])[0]
+    message = choice.get("message", {})
+    output: list[dict[str, Any]] = []
+
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning:
+        output.append(
+            {
+                "type": "reasoning",
+                "id": _gen_id("rs"),
+                "summary": [{"type": "summary_text", "text": reasoning}],
+            }
+        )
+    text = _openai_text(message.get("content"))
+    if text:
+        output.append(
+            {
+                "type": "message",
+                "id": _gen_id("msg"),
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
+            }
+        )
+    for call in message.get("tool_calls") or []:
+        fn = call.get("function", {})
+        output.append(
+            {
+                "type": "function_call",
+                "id": _gen_id("fc"),
+                "call_id": call.get("id", _gen_id("call")),
+                "name": fn.get("name", ""),
+                "arguments": fn.get("arguments") or "{}",
+                "status": "completed",
+            }
+        )
+
+    usage = resp.get("usage", {})
+    prompt = usage.get("prompt_tokens", 0)
+    completion = usage.get("completion_tokens", 0)
+    finish = choice.get("finish_reason") or "stop"
+    status = _OPENAI_FINISH_TO_RESP_STATUS.get(finish, "completed")
+    out: dict[str, Any] = {
+        "id": resp.get("id", _gen_id("resp")),
+        "object": "response",
+        "created_at": resp.get("created", int(time.time())),
+        "model": resp.get("model", model),
+        "status": status,
+        "output": output,
+        "output_text": text,
+        "usage": {
+            "input_tokens": prompt,
+            "output_tokens": completion,
+            "total_tokens": prompt + completion,
+        },
+    }
+    if status == "incomplete":
+        reason = "max_output_tokens" if finish == "length" else "content_filter"
+        out["incomplete_details"] = {"reason": reason}
+    return out
+
+
+def responses_response_to_openai(resp: dict[str, Any], *, model: str) -> dict[str, Any]:
+    content_text = ""
+    reasoning_text = ""
+    tool_calls: list[dict[str, Any]] = []
+    for item in resp.get("output", []):
+        if not isinstance(item, dict):
+            continue
+        itype = item.get("type")
+        if itype == "message":
+            for part in item.get("content", []):
+                if isinstance(part, dict) and part.get("type") in ("output_text", "text"):
+                    content_text += part.get("text", "")
+        elif itype == "reasoning":
+            for part in item.get("summary", []):
+                if isinstance(part, dict):
+                    reasoning_text += part.get("text", "")
+        elif itype == "function_call":
+            tool_calls.append(
+                {
+                    "id": item.get("call_id") or item.get("id", _gen_id("call")),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("arguments") or "{}",
+                    },
+                }
+            )
+    if not content_text and isinstance(resp.get("output_text"), str):
+        content_text = resp["output_text"]
+
+    message: dict[str, Any] = {"role": "assistant", "content": content_text or None}
+    if reasoning_text:
+        message["reasoning_content"] = reasoning_text
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+
+    finish = "tool_calls" if tool_calls else "stop"
+    if resp.get("status") == "incomplete":
+        reason = (resp.get("incomplete_details") or {}).get("reason")
+        finish = "length" if reason == "max_output_tokens" else "content_filter"
+
+    usage = resp.get("usage", {})
+    prompt = usage.get("input_tokens", 0)
+    completion = usage.get("output_tokens", 0)
+    return {
+        "id": resp.get("id", _gen_id("chatcmpl")),
+        "object": "chat.completion",
+        "created": int(resp.get("created_at") or time.time()),
+        "model": resp.get("model", model),
+        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+        "usage": {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Streaming: OpenAI upstream -> Responses client
+# --------------------------------------------------------------------------- #
+
+
+async def openai_stream_to_responses(
+    stream: AsyncIterator[bytes], *, model: str
+) -> AsyncIterator[bytes]:
+    """Translate an OpenAI chat.completion.chunk SSE stream into Responses events."""
+    resp_id = _gen_id("resp")
+    created = int(time.time())
+    seq = 0
+
+    def _next_seq() -> int:
+        nonlocal seq
+        n = seq
+        seq += 1
+        return n
+
+    def _base_response(status: str, output: list[dict[str, Any]], usage: dict[str, int] | None):
+        obj: dict[str, Any] = {
+            "id": resp_id,
+            "object": "response",
+            "created_at": created,
+            "model": model,
+            "status": status,
+            "output": output,
+        }
+        if usage is not None:
+            obj["usage"] = usage
+        return obj
+
+    yield _sse(
+        "response.created",
+        {
+            "type": "response.created",
+            "sequence_number": _next_seq(),
+            "response": _base_response("in_progress", [], None),
+        },
+    )
+
+    output_index = 0
+    text_item_id: str | None = None
+    text_buffer = ""
+    # openai tool index -> {output_index, item_id, name, call_id, args}
+    tools: dict[int, dict[str, Any]] = {}
+    finish_reason = "stop"
+    usage_out = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    final_output: list[dict[str, Any]] = []
+
+    def _open_text() -> list[bytes]:
+        nonlocal text_item_id, output_index
+        text_item_id = _gen_id("msg")
+        events = [
+            _sse(
+                "response.output_item.added",
+                {
+                    "type": "response.output_item.added",
+                    "sequence_number": _next_seq(),
+                    "output_index": output_index,
+                    "item": {
+                        "id": text_item_id,
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": [],
+                    },
+                },
+            ),
+            _sse(
+                "response.content_part.added",
+                {
+                    "type": "response.content_part.added",
+                    "sequence_number": _next_seq(),
+                    "item_id": text_item_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "part": {"type": "output_text", "text": "", "annotations": []},
+                },
+            ),
+        ]
+        return events
+
+    def _close_text() -> list[bytes]:
+        nonlocal output_index
+        assert text_item_id is not None
+        item = {
+            "id": text_item_id,
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text_buffer, "annotations": []}],
+        }
+        final_output.append(item)
+        events = [
+            _sse(
+                "response.output_text.done",
+                {
+                    "type": "response.output_text.done",
+                    "sequence_number": _next_seq(),
+                    "item_id": text_item_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "text": text_buffer,
+                },
+            ),
+            _sse(
+                "response.content_part.done",
+                {
+                    "type": "response.content_part.done",
+                    "sequence_number": _next_seq(),
+                    "item_id": text_item_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "part": {"type": "output_text", "text": text_buffer, "annotations": []},
+                },
+            ),
+            _sse(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "sequence_number": _next_seq(),
+                    "output_index": output_index,
+                    "item": item,
+                },
+            ),
+        ]
+        output_index += 1
+        return events
+
+    async for _event, data in iter_sse(stream):
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if chunk.get("usage"):
+            prompt = chunk["usage"].get("prompt_tokens", 0)
+            completion = chunk["usage"].get("completion_tokens", 0)
+            usage_out = {
+                "input_tokens": prompt,
+                "output_tokens": completion,
+                "total_tokens": prompt + completion,
+            }
+        choice = (chunk.get("choices") or [{}])[0]
+        delta = choice.get("delta", {})
+
+        text_delta = delta.get("content")
+        if text_delta:
+            if text_item_id is None:
+                for ev in _open_text():
+                    yield ev
+            text_buffer += text_delta
+            yield _sse(
+                "response.output_text.delta",
+                {
+                    "type": "response.output_text.delta",
+                    "sequence_number": _next_seq(),
+                    "item_id": text_item_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "delta": text_delta,
+                },
+            )
+
+        for call in delta.get("tool_calls") or []:
+            # Close any open text block before the first tool call.
+            if text_item_id is not None and not tools:
+                for ev in _close_text():
+                    yield ev
+                text_item_id = None
+            oai_idx = call.get("index", 0)
+            fn = call.get("function", {})
+            if oai_idx not in tools:
+                item_id = _gen_id("fc")
+                tools[oai_idx] = {
+                    "output_index": output_index,
+                    "item_id": item_id,
+                    "call_id": call.get("id", _gen_id("call")),
+                    "name": fn.get("name", ""),
+                    "args": "",
+                }
+                yield _sse(
+                    "response.output_item.added",
+                    {
+                        "type": "response.output_item.added",
+                        "sequence_number": _next_seq(),
+                        "output_index": output_index,
+                        "item": {
+                            "id": item_id,
+                            "type": "function_call",
+                            "status": "in_progress",
+                            "call_id": tools[oai_idx]["call_id"],
+                            "name": tools[oai_idx]["name"],
+                            "arguments": "",
+                        },
+                    },
+                )
+                output_index += 1
+            entry = tools[oai_idx]
+            if fn.get("name") and not entry["name"]:
+                entry["name"] = fn["name"]
+            args_delta = fn.get("arguments")
+            if args_delta:
+                entry["args"] += args_delta
+                yield _sse(
+                    "response.function_call_arguments.delta",
+                    {
+                        "type": "response.function_call_arguments.delta",
+                        "sequence_number": _next_seq(),
+                        "item_id": entry["item_id"],
+                        "output_index": entry["output_index"],
+                        "delta": args_delta,
+                    },
+                )
+
+        if choice.get("finish_reason"):
+            finish_reason = choice["finish_reason"]
+
+    # Seal any still-open text block.
+    if text_item_id is not None:
+        for ev in _close_text():
+            yield ev
+
+    # Finalise tool-call items in order.
+    for oai_idx in sorted(tools):
+        entry = tools[oai_idx]
+        item = {
+            "id": entry["item_id"],
+            "type": "function_call",
+            "status": "completed",
+            "call_id": entry["call_id"],
+            "name": entry["name"],
+            "arguments": entry["args"] or "{}",
+        }
+        final_output.append(item)
+        yield _sse(
+            "response.function_call_arguments.done",
+            {
+                "type": "response.function_call_arguments.done",
+                "sequence_number": _next_seq(),
+                "item_id": entry["item_id"],
+                "output_index": entry["output_index"],
+                "arguments": entry["args"] or "{}",
+            },
+        )
+        yield _sse(
+            "response.output_item.done",
+            {
+                "type": "response.output_item.done",
+                "sequence_number": _next_seq(),
+                "output_index": entry["output_index"],
+                "item": item,
+            },
+        )
+
+    status = "incomplete" if finish_reason in ("length", "content_filter") else "completed"
+    completed_event = "response.incomplete" if status == "incomplete" else "response.completed"
+    response_obj = _base_response(status, final_output, usage_out)
+    if status == "incomplete":
+        response_obj["incomplete_details"] = {
+            "reason": "max_output_tokens" if finish_reason == "length" else "content_filter"
+        }
+    yield _sse(
+        completed_event,
+        {
+            "type": completed_event,
+            "sequence_number": _next_seq(),
+            "response": response_obj,
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Streaming: Responses upstream -> OpenAI client
+# --------------------------------------------------------------------------- #
+
+
+async def responses_stream_to_openai(
+    stream: AsyncIterator[bytes], *, model: str
+) -> AsyncIterator[bytes]:
+    """Translate a Responses SSE event stream into OpenAI chat.completion.chunk SSE."""
+    completion_id = _gen_id("chatcmpl")
+    created = int(time.time())
+    base = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+    }
+    role_sent = False
+    # Responses output_index of a function_call -> OpenAI tool_calls array index.
+    tool_index: dict[int, int] = {}
+    next_tool = 0
+    finish_reason = "stop"
+    saw_tool = False
+    usage_chunk: dict[str, Any] | None = None
+
+    def _emit_role() -> bytes:
+        return _data(
+            {
+                **base,
+                "choices": [
+                    {"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}
+                ],
+            }
+        )
+
+    async for event, data in iter_sse(stream):
+        if not data or data == "[DONE]":
+            continue
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        etype = event or payload.get("type")
+
+        if etype in ("response.created", "response.in_progress"):
+            if not role_sent:
+                role_sent = True
+                yield _emit_role()
+            continue
+
+        if etype == "response.output_item.added":
+            item = payload.get("item", {})
+            if item.get("type") == "function_call":
+                if not role_sent:
+                    role_sent = True
+                    yield _emit_role()
+                saw_tool = True
+                out_idx = payload.get("output_index", 0)
+                tool_index[out_idx] = next_tool
+                yield _data(
+                    {
+                        **base,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": next_tool,
+                                            "id": item.get("call_id", ""),
+                                            "type": "function",
+                                            "function": {
+                                                "name": item.get("name", ""),
+                                                "arguments": "",
+                                            },
+                                        }
+                                    ]
+                                },
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                )
+                next_tool += 1
+            continue
+
+        if etype in ("response.output_text.delta", "response.refusal.delta"):
+            if not role_sent:
+                role_sent = True
+                yield _emit_role()
+            text = payload.get("delta", "")
+            if isinstance(text, dict):
+                text = text.get("text", "")
+            if text:
+                yield _data(
+                    {
+                        **base,
+                        "choices": [
+                            {"index": 0, "delta": {"content": text}, "finish_reason": None}
+                        ],
+                    }
+                )
+            continue
+
+        if etype in (
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_text.delta",
+        ):
+            if not role_sent:
+                role_sent = True
+                yield _emit_role()
+            text = payload.get("delta", "")
+            if isinstance(text, dict):
+                text = text.get("text", "")
+            if text:
+                yield _data(
+                    {
+                        **base,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"reasoning_content": text},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                )
+            continue
+
+        if etype == "response.function_call_arguments.delta":
+            out_idx = payload.get("output_index", 0)
+            tidx = tool_index.get(out_idx, 0)
+            args = payload.get("delta", "")
+            if args:
+                yield _data(
+                    {
+                        **base,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [
+                                        {"index": tidx, "function": {"arguments": args}}
+                                    ]
+                                },
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                )
+            continue
+
+        if etype in ("response.completed", "response.incomplete", "response.failed"):
+            resp = payload.get("response", {})
+            usage = resp.get("usage") or {}
+            prompt = usage.get("input_tokens", 0)
+            completion = usage.get("output_tokens", 0)
+            usage_chunk = {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": usage.get("total_tokens", prompt + completion),
+            }
+            if resp.get("status") == "incomplete":
+                reason = (resp.get("incomplete_details") or {}).get("reason")
+                finish_reason = "length" if reason == "max_output_tokens" else "content_filter"
+            elif saw_tool:
+                finish_reason = "tool_calls"
+            else:
+                finish_reason = "stop"
+            break
+
+    if not role_sent:
+        yield _emit_role()
+    if saw_tool and finish_reason == "stop":
+        finish_reason = "tool_calls"
+    final_chunk: dict[str, Any] = {
+        **base,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+    }
+    if usage_chunk is not None:
+        final_chunk["usage"] = usage_chunk
+    yield _data(final_chunk)
+    yield b"data: [DONE]\n\n"

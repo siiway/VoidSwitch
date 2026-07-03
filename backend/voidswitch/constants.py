@@ -45,8 +45,9 @@ class ProxyStatus(StrEnum):
 
 
 class ApiStyle(StrEnum):
-    OPENAI = "openai"
-    ANTHROPIC = "anthropic"
+    OPENAI = "openai"  # OpenAI Chat Completions (/v1/chat/completions)
+    ANTHROPIC = "anthropic"  # Anthropic Messages (/v1/messages)
+    OPENAI_RESPONSES = "openai-responses"  # OpenAI Responses API (/v1/responses)
 
 
 # Inbound header an in-the-know client (the OpenCode plugin) sets so the gateway

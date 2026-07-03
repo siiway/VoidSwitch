@@ -301,6 +301,238 @@ async def test_anthropic_stream_thinking_becomes_reasoning_content():
 
 
 # --------------------------------------------------------------------------- #
+# Transform — OpenAI Responses <-> OpenAI Chat Completions
+# --------------------------------------------------------------------------- #
+
+
+async def test_openai_request_to_responses():
+    payload = {
+        "model": "gpt-5",
+        "messages": [
+            {"role": "system", "content": "be brief"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ],
+        "max_tokens": 128,
+        "temperature": 0.5,
+        "stream": True,
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "w",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        "tool_choice": "auto",
+    }
+    out = transform.openai_request_to_responses(payload)
+    assert out["instructions"] == "be brief"
+    assert out["max_output_tokens"] == 128
+    assert out["temperature"] == 0.5
+    assert out["stream"] is True
+    # system stripped from input; user + assistant become message items.
+    roles = [i.get("role") for i in out["input"]]
+    assert roles == ["user", "assistant"]
+    assert out["input"][0]["content"][0] == {"type": "input_text", "text": "hi"}
+    assert out["input"][1]["content"][0] == {"type": "output_text", "text": "hello"}
+    assert out["tools"][0] == {
+        "type": "function",
+        "name": "get_weather",
+        "description": "w",
+        "parameters": {"type": "object", "properties": {}},
+    }
+    assert out["tool_choice"] == "auto"
+
+
+async def test_openai_request_to_responses_tool_call_roundtrip():
+    payload = {
+        "model": "gpt-5",
+        "messages": [
+            {"role": "user", "content": "weather?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"q":"x"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
+        ],
+    }
+    out = transform.openai_request_to_responses(payload)
+    types = [i["type"] for i in out["input"]]
+    assert types == ["message", "function_call", "function_call_output"]
+    assert out["input"][1]["call_id"] == "call_1"
+    assert out["input"][1]["arguments"] == '{"q":"x"}'
+    assert out["input"][2]["output"] == "sunny"
+
+
+async def test_responses_request_to_openai():
+    payload = {
+        "model": "gpt-5",
+        "instructions": "be brief",
+        "input": [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            {"type": "function_call", "call_id": "c1", "name": "f", "arguments": '{"a":1}'},
+            {"type": "function_call_output", "call_id": "c1", "output": "ok"},
+        ],
+        "max_output_tokens": 64,
+        "tools": [{"type": "function", "name": "f", "parameters": {"type": "object"}}],
+        "tool_choice": "required",
+    }
+    out = transform.responses_request_to_openai(payload)
+    assert out["messages"][0] == {"role": "system", "content": "be brief"}
+    assert out["messages"][1] == {"role": "user", "content": "hi"}
+    assert out["messages"][2]["tool_calls"][0]["function"]["name"] == "f"
+    assert out["messages"][3] == {"role": "tool", "tool_call_id": "c1", "content": "ok"}
+    assert out["max_tokens"] == 64
+    assert out["tools"][0]["function"]["name"] == "f"
+    assert out["tool_choice"] == "required"
+
+
+async def test_responses_request_string_input():
+    out = transform.responses_request_to_openai({"model": "gpt-5", "input": "hello"})
+    assert out["messages"] == [{"role": "user", "content": "hello"}]
+
+
+async def test_openai_response_to_responses_with_tool_and_reasoning():
+    resp = {
+        "id": "chatcmpl_1",
+        "model": "gpt-5",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "the answer",
+                    "reasoning_content": "thinking",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "f", "arguments": '{"a":1}'},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 4},
+    }
+    out = transform.openai_response_to_responses(resp, model="x")
+    assert out["object"] == "response"
+    assert out["status"] == "completed"
+    types = [i["type"] for i in out["output"]]
+    assert types == ["reasoning", "message", "function_call"]
+    assert out["output_text"] == "the answer"
+    assert out["usage"] == {"input_tokens": 2, "output_tokens": 4, "total_tokens": 6}
+
+
+async def test_responses_response_to_openai():
+    resp = {
+        "id": "resp_1",
+        "model": "gpt-5",
+        "status": "completed",
+        "output": [
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "think"}]},
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hi"}],
+            },
+            {"type": "function_call", "call_id": "c1", "name": "f", "arguments": '{"a":1}'},
+        ],
+        "usage": {"input_tokens": 5, "output_tokens": 3, "total_tokens": 8},
+    }
+    out = transform.responses_response_to_openai(resp, model="x")
+    msg = out["choices"][0]["message"]
+    assert msg["content"] == "hi"
+    assert msg["reasoning_content"] == "think"
+    assert msg["tool_calls"][0]["function"]["name"] == "f"
+    assert out["choices"][0]["finish_reason"] == "tool_calls"
+    assert out["usage"] == {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+
+
+async def test_openai_stream_to_responses():
+    chunks = [
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n',
+        'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],'
+        '"usage":{"prompt_tokens":3,"completion_tokens":1}}\n\n',
+        "data: [DONE]\n\n",
+    ]
+    out = await _collect(transform.openai_stream_to_responses(_byte_iter(chunks), model="gpt-5"))
+    assert "event: response.created" in out
+    assert "response.output_text.delta" in out
+    assert "event: response.completed" in out
+    assert '"input_tokens": 3' in out
+
+
+async def test_openai_stream_to_responses_tool_call():
+    chunks = [
+        'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+        '"type":"function","function":{"name":"f","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,'
+        '"function":{"arguments":"{\\"a\\":1}"}}]}}]}\n\n',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+        "data: [DONE]\n\n",
+    ]
+    out = await _collect(transform.openai_stream_to_responses(_byte_iter(chunks), model="gpt-5"))
+    assert "response.output_item.added" in out
+    assert "function_call" in out
+    assert "response.function_call_arguments.delta" in out
+    assert "response.function_call_arguments.done" in out
+
+
+async def test_responses_stream_to_openai():
+    events = [
+        'event: response.created\ndata: {"type":"response.created","response":{"id":"r1"}}\n\n',
+        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta",'
+        '"delta":"Hi"}\n\n',
+        'event: response.completed\ndata: {"type":"response.completed","response":'
+        '{"status":"completed","usage":{"input_tokens":3,"output_tokens":1}}}\n\n',
+    ]
+    out = await _collect(transform.responses_stream_to_openai(_byte_iter(events), model="gpt-4o"))
+    assert '"role": "assistant"' in out
+    assert '"content": "Hi"' in out
+    assert '"finish_reason": "stop"' in out
+    assert '"prompt_tokens": 3' in out
+    assert "data: [DONE]" in out
+
+
+async def test_responses_stream_to_openai_tool_call():
+    events = [
+        'event: response.created\ndata: {"type":"response.created","response":{"id":"r1"}}\n\n',
+        'event: response.output_item.added\ndata: {"type":"response.output_item.added",'
+        '"output_index":0,"item":{"type":"function_call","call_id":"c1","name":"f"}}\n\n',
+        'event: response.function_call_arguments.delta\ndata:'
+        ' {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\\"a\\":1}"}\n\n',
+        'event: response.completed\ndata: {"type":"response.completed","response":'
+        '{"status":"completed","usage":{"input_tokens":2,"output_tokens":2}}}\n\n',
+    ]
+    out = await _collect(transform.responses_stream_to_openai(_byte_iter(events), model="gpt-4o"))
+    assert "tool_calls" in out
+    assert '"name": "f"' in out
+    assert '"finish_reason": "tool_calls"' in out
+
+
+async def test_openai_responses_adapter_urls_and_style():
+    provider = Provider(name="oair", type="openai-resp", base_url="https://api.openai.com/v1")
+    adapter = get_adapter(provider)
+    assert adapter.style is ApiStyle.OPENAI_RESPONSES
+    assert adapter.upstream_url == "https://api.openai.com/v1/responses"
+    headers = adapter.headers("sk-test")
+    assert headers["Authorization"] == "Bearer sk-test"
+
+
+# --------------------------------------------------------------------------- #
 # Providers
 # --------------------------------------------------------------------------- #
 

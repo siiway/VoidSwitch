@@ -218,6 +218,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "version": __version__,
             "endpoints": {
                 "openai": "/v1/chat/completions",
+                "openai_responses": "/v1/responses",
                 "anthropic": "/v1/messages",
                 "models": "/v1/models",
                 "swagger": "/swagger",
