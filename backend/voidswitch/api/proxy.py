@@ -186,7 +186,7 @@ async def _handle(
         passthrough_headers=passthrough,
         session_id=request.headers.get(SESSION_HEADER),
     )
-    result = await dispatch(req)
+    result = await dispatch(req, session=session)
 
     if result.is_stream and result.stream is not None:
         return StreamingResponse(
@@ -268,6 +268,37 @@ async def list_models(
     seen: set[str] = set()
     data: list[dict[str, object]] = []
     allowed = token.allowed_models or []
+
+    def _push_model(model_id: str, provider_name: str) -> None:
+        nonlocal data, seen, allowed, entries, group_ids, is_mod
+        entry = entries.get(model_id)
+        if entry is not None and not entry.enabled:
+            return
+        if not role_groups.model_allowed_for_groups(entry, group_ids, is_mod=is_mod):
+            return
+        public_id = entry.mapped_id if entry is not None and entry.mapped_id else model_id
+        if public_id in seen:
+            return
+        if allowed and not any(
+            p == "*" or p == public_id or fnmatch(public_id, p) for p in allowed
+        ):
+            return
+        seen.add(public_id)
+        item: dict[str, object] = {
+            "id": public_id,
+            "object": "model",
+            "created": 0,
+            "owned_by": provider_name,
+        }
+        if entry is not None:
+            if entry.display_name:
+                item["display_name"] = entry.display_name
+            if entry.description:
+                item["description"] = entry.description
+            if entry.opencode_config:
+                item["opencode"] = entry.opencode_config
+        data.append(item)
+
     for provider in providers:
         # Raw upstream ids hidden behind alias routes must not be advertised;
         # only the alias (listed below via model_routes) is callable.
@@ -275,36 +306,7 @@ async def list_models(
         for model in provider.models or []:
             if model == "*" or model in hidden:
                 continue
-            entry = entries.get(model)
-            if entry is not None and not entry.enabled:
-                continue
-            if not role_groups.model_allowed_for_groups(entry, group_ids, is_mod=is_mod):
-                continue
-            # Advertise (and accept) the public alias when one is set; the raw
-            # upstream id is hidden so it never leaks and can't be called directly.
-            public_id = entry.mapped_id if entry is not None and entry.mapped_id else model
-            if public_id in seen:
-                continue
-            if allowed and not any(
-                p == "*" or p == public_id or fnmatch(public_id, p) for p in allowed
-            ):
-                continue
-            seen.add(public_id)
-            item: dict[str, object] = {
-                "id": public_id,
-                "object": "model",
-                "created": 0,
-                "owned_by": provider.name,
-            }
-            if entry is not None:
-                if entry.display_name:
-                    item["display_name"] = entry.display_name
-                if entry.description:
-                    item["description"] = entry.description
-                if entry.opencode_config:
-                    # OpenCode plugin deep-merges this into the model block it builds.
-                    item["opencode"] = entry.opencode_config
-            data.append(item)
+            _push_model(model, provider.name)
         # Also advertise alias-route models. Each alias gets a ModelEntry row
         # during sync, looked up by its alias name so mapped_id / description /
         # opencode_config still apply.
@@ -314,36 +316,7 @@ async def list_models(
             alias = route.get("alias")
             if not isinstance(alias, str) or not alias:
                 continue
-            entry = entries.get(alias)
-            if entry is not None and not entry.enabled:
-                continue
-            if not role_groups.model_allowed_for_groups(entry, group_ids, is_mod=is_mod):
-                continue
-            # Skip if the alias's public id is already listed (e.g. alias also
-            # appears as a raw model name on another provider, or the mapped_id
-            # collides).
-            public_id = entry.mapped_id if entry is not None and entry.mapped_id else alias
-            if public_id in seen:
-                continue
-            if allowed and not any(
-                p == "*" or p == public_id or fnmatch(public_id, p) for p in allowed
-            ):
-                continue
-            seen.add(public_id)
-            item: dict[str, object] = {
-                "id": public_id,
-                "object": "model",
-                "created": 0,
-                "owned_by": provider.name,
-            }
-            if entry is not None:
-                if entry.display_name:
-                    item["display_name"] = entry.display_name
-                if entry.description:
-                    item["description"] = entry.description
-                if entry.opencode_config:
-                    item["opencode"] = entry.opencode_config
-            data.append(item)
+            _push_model(alias, provider.name)
     return JSONResponse({"object": "list", "data": data})
 
 
