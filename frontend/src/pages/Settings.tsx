@@ -132,8 +132,8 @@ export function Settings() {
     setValues((v) => ({ ...v, [key]: value }));
   }
 
-  // proxy_switching_enabled defaults to true when not yet loaded from the backend.
-  // undefined → true (enabled), false → false, true → true.
+  // Default-on: treat an unset value (undefined, before settings load) as
+  // enabled, matching the backend default. Only an explicit `false` turns it off.
   const proxySwitching = values.proxy_switching_enabled !== false;
 
   async function save() {

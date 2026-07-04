@@ -14,7 +14,6 @@ import base64
 import datetime as dt
 import hashlib
 import secrets
-import time
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
@@ -30,6 +29,8 @@ from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger
 from voidswitch.core.security import (
+    create_oauth_state,
+    decode_oauth_state,
     decode_session_token,
     hash_token,
 )
@@ -54,6 +55,10 @@ LOCAL_ASSIGNABLE_ROLES = {Role.ADMIN.value, Role.MEMBER.value}
 # Comparable rank used when reconciling a freshly-resolved role with the one
 # already stored, so a login never silently demotes a privileged account and a
 # local admin override survives even when Prism still reports "member".
+# CO_OWNER and OWNER deliberately share rank 3: they wield identical powers and
+# stay only visually distinct. Because "manage a resource" is gated on acting from
+# a *strictly higher* rank, same-rank peers cannot act on one another's resources
+# — so an owner can't manage a co-owner's (and vice-versa). This is intentional.
 _ROLE_RANK = {
     Role.MEMBER.value: 1,
     Role.ADMIN.value: 2,
@@ -100,37 +105,14 @@ def audit_scope_for(user: User) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# PKCE + transient OAuth state (single-node in-memory, TTL'd)
+# PKCE + transient OAuth state (stateless: the verifier rides a signed ``state``)
 # --------------------------------------------------------------------------- #
-
-
-@dataclass(slots=True)
-class _PendingLogin:
-    verifier: str
-    created: float
-
-
-class _StateStore:
-    def __init__(self, ttl_seconds: int = 600) -> None:
-        self._store: dict[str, _PendingLogin] = {}
-        self._ttl = ttl_seconds
-
-    def put(self, state: str, verifier: str) -> None:
-        self._gc()
-        self._store[state] = _PendingLogin(verifier=verifier, created=time.time())
-
-    def pop(self, state: str) -> str | None:
-        self._gc()
-        entry = self._store.pop(state, None)
-        return entry.verifier if entry else None
-
-    def _gc(self) -> None:
-        cutoff = time.time() - self._ttl
-        for key in [k for k, v in self._store.items() if v.created < cutoff]:
-            self._store.pop(key, None)
-
-
-_state_store = _StateStore(ttl_seconds=1800)
+#
+# The PKCE verifier is carried inside a short-lived, signed ``state`` JWT rather
+# than a random handle into a server-side dict. This makes the login handshake
+# stateless — it works unchanged across multiple uvicorn workers and survives a
+# restart, so the callback never fails with "Unknown or expired login state"
+# just because it hit a different worker than the one that began the login.
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -141,10 +123,9 @@ def _pkce_pair() -> tuple[str, str]:
 
 
 def build_authorize_url(settings: Settings) -> tuple[str, str]:
-    """Return ``(authorize_url, state)`` and stash the PKCE verifier."""
+    """Return ``(authorize_url, state)`` with the PKCE verifier signed into state."""
     verifier, challenge = _pkce_pair()
-    state = secrets.token_urlsafe(24)
-    _state_store.put(state, verifier)
+    state = create_oauth_state(secret=settings.server.secret_key, verifier=verifier)
     params = {
         "response_type": "code",
         "client_id": settings.prism.client_id,
@@ -184,10 +165,13 @@ class PrismIdentity:
 
 
 async def exchange_code(settings: Settings, code: str, state: str) -> PrismIdentity:
-    verifier = _state_store.pop(state)
-    if verifier is None:
-        log.warning("state_not_found", state_hint=state[:8] if state else "")
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown or expired login state.")
+    try:
+        verifier = decode_oauth_state(state, secret=settings.server.secret_key)
+    except jwt.PyJWTError as exc:
+        log.warning("state_invalid", error=str(exc), state_hint=state[:8] if state else "")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Unknown or expired login state."
+        ) from exc
 
     data = {
         "grant_type": "authorization_code",

@@ -35,6 +35,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { isRequestLog } from "../api/types";
 import type {
   AuditFilterOptions,
   AuditLog,
@@ -244,10 +245,17 @@ function RequestLogs({
     setRevealMode(false);
     setDetailMode(mode);
     try {
-      const d = await api.get<RequestLogDetail>(`/api/admin/logs/requests/${r.id}`);
-      setDetailLog(d);
-    } catch (e) {
-      setDetailLog(r as unknown as RequestLogDetail);
+      const d = await api.get<unknown>(`/api/admin/logs/requests/${r.id}`);
+      // Validate the shape at the boundary rather than trusting a blind cast, so
+      // an API change surfaces as a controlled fallback instead of a broken
+      // object rendered downstream.
+      if (!isRequestLog(d)) throw new Error("unexpected log-detail shape");
+      setDetailLog(d as RequestLogDetail);
+    } catch {
+      // Fallback to the row we already have. RequestLogDetail only adds optional
+      // fields on top of RequestLog, so the row is a valid (if sparse) detail —
+      // no unsafe cast needed.
+      setDetailLog({ ...r });
     } finally {
       setDetailLoading(false);
     }

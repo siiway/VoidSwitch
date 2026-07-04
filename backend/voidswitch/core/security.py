@@ -77,6 +77,51 @@ def decode_session_token(token: str, *, secret: str) -> dict[str, object]:
     )
 
 
+# The OAuth ``state`` parameter is a short-lived, signed JWT that *carries* the
+# PKCE verifier instead of a random handle into a server-side store. This keeps
+# the login handshake completely stateless: it works across multiple uvicorn
+# workers and survives a process restart (no more "Unknown or expired login
+# state" when the callback lands on a different worker than the one that started
+# the login).
+_OAUTH_STATE_TYPE = "oauth_state"
+
+
+def create_oauth_state(*, secret: str, verifier: str, ttl_minutes: int = 30) -> str:
+    """Mint a signed OAuth ``state`` that embeds the PKCE code verifier."""
+    now = dt.datetime.now(dt.UTC)
+    payload: dict[str, object] = {
+        "typ": _OAUTH_STATE_TYPE,
+        "vfr": verifier,
+        # A nonce keeps two logins started in the same second distinguishable.
+        "nonce": secrets.token_urlsafe(9),
+        "iat": int(now.timestamp()),
+        "exp": int((now + dt.timedelta(minutes=ttl_minutes)).timestamp()),
+        "iss": "voidswitch",
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def decode_oauth_state(state: str, *, secret: str) -> str:
+    """Recover the PKCE verifier from a signed OAuth ``state``.
+
+    Raises ``jwt.PyJWTError`` when the state is missing, tampered with, expired,
+    or not an OAuth-state token.
+    """
+    claims = jwt.decode(
+        state,
+        secret,
+        algorithms=["HS256"],
+        issuer="voidswitch",
+        options={"require": ["exp", "iat"]},
+    )
+    if claims.get("typ") != _OAUTH_STATE_TYPE:
+        raise jwt.InvalidTokenError("not an OAuth state token")
+    verifier = claims.get("vfr")
+    if not isinstance(verifier, str) or not verifier:
+        raise jwt.InvalidTokenError("OAuth state missing PKCE verifier")
+    return verifier
+
+
 def _fernet(secret: str) -> Fernet:
     digest = hashlib.sha256(secret.encode("utf-8")).digest()
     return Fernet(base64.urlsafe_b64encode(digest))

@@ -313,6 +313,19 @@ export interface RequestLogDetail extends RequestLog {
   debug_attempts?: RequestLogAttempt[] | null;
 }
 
+// Minimal runtime shape check for a request-log payload. Catches API drift at
+// the boundary instead of trusting a blind `as` cast: the extra RequestLogDetail
+// fields are all optional, so a valid RequestLog *is* a valid RequestLogDetail.
+export function isRequestLog(value: unknown): value is RequestLog {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === "number" &&
+    typeof v.success === "boolean" &&
+    typeof v.total_tokens === "number"
+  );
+}
+
 export interface Page<T> {
   items: T[];
   total: number;

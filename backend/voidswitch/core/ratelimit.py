@@ -1,14 +1,23 @@
 """In-process, per-subject sliding-window rate limiting.
 
-Single-node only (state lives in this process, like the gateway's RPM limiter).
-Two shared limiters cover the two configurable abuse limits:
+.. important::
+   **Single-node only.** All counters live in this process. Run VoidSwitch as a
+   single uvicorn worker (the default; see ``voidswitch/__main__.py``). Under
+   multiple workers each process keeps its own counters, so every limiter here —
+   and the per-token RPM guard that shares :data:`gateway_rpm_limiter` — becomes
+   *per-worker* and the effective limit is multiplied by the worker count. A
+   cross-process limit needs a shared backend (e.g. Redis); that is intentionally
+   out of scope for the single-node deployment this project targets.
+
+Three shared limiters cover the configurable abuse/quota limits:
 
 * :data:`operation_limiter` — mutating dashboard/management actions, keyed per
   signed-in user.
 * :data:`call_limiter` — the OpenAI/Anthropic gateway endpoints, keyed per
   Void-Token owner.
+* :data:`gateway_rpm_limiter` — the per-Void-Token ``rpm_limit`` on the gateway.
 
-Both are enforced for *everyone* (owners included); each subject is counted
+All are enforced for *everyone* (owners included); each subject is counted
 independently. A ``max_requests`` of 0 (or a non-positive window) disables the
 limiter.
 """
@@ -48,3 +57,5 @@ class SlidingWindowLimiter:
 # Process-wide singletons shared by the request guards.
 operation_limiter = SlidingWindowLimiter()
 call_limiter = SlidingWindowLimiter()
+# Per-Void-Token RPM guard on the public gateway (60s sliding window).
+gateway_rpm_limiter = SlidingWindowLimiter()

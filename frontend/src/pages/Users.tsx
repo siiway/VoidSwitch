@@ -18,6 +18,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { OWNER_ROLES } from "../auth/constants";
 import type { Role, User } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
@@ -31,7 +32,8 @@ import {
 } from "../components/ui";
 
 const ASSIGNABLE_ROLES: Role[] = ["admin", "member"];
-const OWNER_TIER: Role[] = ["owner", "co-owner"];
+// Owner tier reused from the shared role constants (see src/auth/constants.ts).
+const OWNER_TIER = OWNER_ROLES;
 
 export function Users() {
   const { t } = useTranslation();
@@ -99,7 +101,7 @@ export function Users() {
                   {u.email ?? "—"}
                 </TableCell>
                 <TableCell>
-                  {isOwner && !OWNER_TIER.includes(u.role) && u.id !== me?.id ? (
+                  {isOwner && !OWNER_TIER.has(u.role) && u.id !== me?.id ? (
                     <Dropdown
                       value={u.role}
                       selectedOptions={[u.role]}
@@ -117,7 +119,7 @@ export function Users() {
                   ) : (
                     <Badge
                       appearance="tint"
-                      color={OWNER_TIER.includes(u.role) ? "brand" : undefined}
+                      color={OWNER_TIER.has(u.role) ? "brand" : undefined}
                     >
                       {u.role}
                     </Badge>
@@ -165,7 +167,7 @@ export function Users() {
                         u.id === me?.id ||
                         !isOwner ||
                         // Same-tier peers (owner/co-owner) can't disable each other.
-                        (u.enabled && OWNER_TIER.includes(u.role))
+                        (u.enabled && OWNER_TIER.has(u.role))
                       }
                       onClick={() => toggle(u)}
                       aria-label={

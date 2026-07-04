@@ -70,6 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     location.assign("/login");
   }
 
+  // Derived from the shared role tiers (auth/constants.ts) so these checks can't
+  // drift from the backend's OWNER_ROLES / STAFF_ROLES definitions.
   const isOwner = checkOwner(user?.role);
   const isStaff = checkStaff(user?.role);
 

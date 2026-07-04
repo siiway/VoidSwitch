@@ -10,24 +10,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from voidswitch import __version__
-from voidswitch.api import announcements as announcements_api
-from voidswitch.api import auth as auth_api
-from voidswitch.api import docs_site, provider_api
-from voidswitch.api import install as install_api
-from voidswitch.api import me as me_api
-from voidswitch.api import models as models_api
-from voidswitch.api import proxy as proxy_api
-from voidswitch.api import usage as usage_api
-from voidswitch.api.admin import keys as keys_api
-from voidswitch.api.admin import logs as logs_api
-from voidswitch.api.admin import providers as providers_api
-from voidswitch.api.admin import proxies as proxies_api
-from voidswitch.api.admin import role_groups as role_groups_api
-from voidswitch.api.admin import settings as settings_api
-from voidswitch.api.admin import stats as stats_api
-from voidswitch.api.admin import system as system_api
-from voidswitch.api.admin import tokens as tokens_api
-from voidswitch.api.admin import users as users_api
+from voidswitch.api import (
+    announcements as announcements_api,
+    auth as auth_api,
+    docs_site,
+    install as install_api,
+    me as me_api,
+    models as models_api,
+    provider_api,
+    proxy as proxy_api,
+    usage as usage_api,
+)
+from voidswitch.api.admin import (
+    keys as keys_api,
+    logs as logs_api,
+    providers as providers_api,
+    proxies as proxies_api,
+    role_groups as role_groups_api,
+    settings as settings_api,
+    stats as stats_api,
+    system as system_api,
+    tokens as tokens_api,
+    users as users_api,
+)
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import RequestSessionMiddleware, init_database
 from voidswitch.core.logging import configure_logging, get_logger

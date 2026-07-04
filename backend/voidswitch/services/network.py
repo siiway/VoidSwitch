@@ -133,8 +133,12 @@ async def probe_route(
     loop = asyncio.get_event_loop()
     start = loop.time()
     try:
+        # Reuse the shared pool's keep-alive client for this (route, timeout)
+        # profile instead of building — and tearing down — a fresh client (and TLS
+        # session) on every probe. Health checks fire on a periodic loop, so this
+        # keeps their connections warm alongside the gateway's own traffic.
         client = await get_pool().get(
-            route, connect_timeout=timeout_seconds, read_timeout=timeout_seconds,
+            route, connect_timeout=timeout_seconds, read_timeout=timeout_seconds
         )
         resp = await client.get(url, headers=headers or {})
         latency = (loop.time() - start) * 1000.0

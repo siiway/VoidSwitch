@@ -102,24 +102,44 @@ const EMPTY: FormState = {
 
 // Model routes use one line per route: `alias => upstream @ pool`
 // (`=> upstream` and `@ pool` are both optional).
+//
+// Parsing is done left-to-right and anchored on the ` => ` arrow first: the
+// alias is everything before the *first* arrow, and ` @ pool` is only looked for
+// in the remainder (the upstream side). This keeps an alias that itself contains
+// ` @ ` from being mis-split as a pool separator. When there is no arrow the line
+// is the short `alias` or `alias @ pool` form, where ` @ ` still delimits the
+// pool (an alias containing ` @ ` is inherently ambiguous in that shorthand).
 function parseRoutes(text: string): ModelRoute[] {
   return text
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean)
-    .map((line) => {
-      // Format: `alias => upstream @ pool` where `=> upstream` and `@ pool`
-      // are both optional. Use a single regex to avoid parsing issues when
-      // the alias text happens to contain " @ " or " => ".
-      const m = line.match(
-        /^(.+?)(?:\s*=>\s*(.+?))?(?:\s*@\s*(.+))?$/,
-      );
-      if (!m) return { alias: line, upstream: "", pool: "" };
-      return {
-        alias: m[1].trim(),
-        upstream: (m[2] ?? "").trim(),
-        pool: (m[3] ?? "").trim(),
-      };
+    .map((line): ModelRoute => {
+      const arrow = line.indexOf(" => ");
+      if (arrow >= 0) {
+        const alias = line.slice(0, arrow).trim();
+        // Everything after the arrow is `upstream[ @ pool]`.
+        const rest = line.slice(arrow + 4);
+        const at = rest.lastIndexOf(" @ ");
+        if (at >= 0) {
+          return {
+            alias,
+            upstream: rest.slice(0, at).trim(),
+            pool: rest.slice(at + 3).trim(),
+          };
+        }
+        return { alias, upstream: rest.trim(), pool: "" };
+      }
+      // No arrow: `alias` or `alias @ pool`.
+      const at = line.lastIndexOf(" @ ");
+      if (at >= 0) {
+        return {
+          alias: line.slice(0, at).trim(),
+          upstream: "",
+          pool: line.slice(at + 3).trim(),
+        };
+      }
+      return { alias: line, upstream: "", pool: "" };
     })
     .filter((r) => r.alias);
 }

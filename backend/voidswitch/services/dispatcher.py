@@ -1114,18 +1114,55 @@ def _sniff_usage(block: str, usage: dict[str, int]) -> None:
     usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
 
+# How hard we try to persist end-of-stream usage before giving up. The stream
+# has already been delivered to the client by this point, so a transient DB blip
+# must not lose the usage/quota accounting silently.
+_STREAM_USAGE_PERSIST_ATTEMPTS = 3
+_STREAM_USAGE_RETRY_BASE_DELAY = 0.5  # seconds; exponential, capped at 5s
+
+
 async def _persist_stream_usage(log_id: int, token_id: int | None, usage: dict[str, int]) -> None:
+    """Write final stream token usage back to the log row + token quota.
+
+    Retries a few times on transient database errors — the stream is already
+    delivered, so this write happening late is fine but losing it is not. If
+    every attempt fails, log at ``error`` with the full usage payload so the loss
+    is at least traceable (and recoverable) instead of silently swallowed.
+    """
     db = get_database()
-    try:
-        async with db.session() as session:
-            row = await session.get(RequestLog, log_id)
-            if row is not None:
-                row.prompt_tokens = usage["prompt_tokens"]
-                row.completion_tokens = usage["completion_tokens"]
-                row.total_tokens = usage["total_tokens"]
-            await _bump_token_usage(session, token_id, usage["total_tokens"])
-    except Exception as exc:
-        log.warning("stream_usage_persist_failed", error=str(exc), log_id=log_id)
+    last_exc: Exception | None = None
+    for attempt in range(1, _STREAM_USAGE_PERSIST_ATTEMPTS + 1):
+        try:
+            async with db.session() as session:
+                row = await session.get(RequestLog, log_id)
+                if row is not None:
+                    row.prompt_tokens = usage["prompt_tokens"]
+                    row.completion_tokens = usage["completion_tokens"]
+                    row.total_tokens = usage["total_tokens"]
+                await _bump_token_usage(session, token_id, usage["total_tokens"])
+            return
+        except Exception as exc:
+            last_exc = exc
+            log.warning(
+                "stream_usage_persist_retry",
+                attempt=attempt,
+                max_attempts=_STREAM_USAGE_PERSIST_ATTEMPTS,
+                error=str(exc),
+                log_id=log_id,
+            )
+            if attempt < _STREAM_USAGE_PERSIST_ATTEMPTS:
+                delay = min(_STREAM_USAGE_RETRY_BASE_DELAY * 2 ** (attempt - 1), 5.0)
+                await asyncio.sleep(delay)
+    # Exhausted every retry — surface the loss with the numbers needed to reconcile.
+    log.error(
+        "stream_usage_persist_failed",
+        error=str(last_exc),
+        log_id=log_id,
+        token_id=token_id,
+        prompt_tokens=usage["prompt_tokens"],
+        completion_tokens=usage["completion_tokens"],
+        total_tokens=usage["total_tokens"],
+    )
 
 
 def _extract_usage(body: Any, upstream: ApiStyle) -> dict[str, int]:

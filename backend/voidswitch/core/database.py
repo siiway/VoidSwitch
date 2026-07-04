@@ -85,10 +85,19 @@ class Database:
 # entry is applied with ``ALTER TABLE ... ADD COLUMN`` only when absent — idempotent
 # and safe to run on every boot. SQLite/Postgres both accept this form.
 #
-# LIMITATION: This mechanism supports additive changes only (new columns).
-# Column renames, type changes, or deletions require a separate migration
-# strategy (e.g. Alembic) and are not handled here. Attempting such changes
-# without a proper migration will break the database.
+# LIMITATION — additive only. This lightweight mechanism handles exactly one kind
+# of schema change: adding a new, nullable-or-defaulted column. It deliberately
+# does NOT (and cannot safely) handle:
+#   * renaming a column        — would silently orphan the old data;
+#   * changing a column's type — SQLite can't ALTER a type in place;
+#   * dropping a column        — data loss, and SQLite lacks DROP COLUMN pre-3.35;
+#   * adding constraints / indexes / non-defaulted NOT NULL columns.
+# For any of those, add a real migration step instead of an ``_ADDED_COLUMNS``
+# entry. The intended path is to introduce Alembic (the SQLAlchemy migration tool)
+# and express the change as a versioned revision — at which point this in-boot
+# helper should be frozen (kept only to bootstrap pre-Alembic databases) and no
+# new entries added. Never repurpose an existing entry to alter a column: append
+# only, and only for additive columns.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("providers", "drop_opencode_identity_block", "BOOLEAN NOT NULL DEFAULT 0"),
     ("providers", "proxy_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
@@ -157,8 +166,7 @@ def _backfill_provider_uuids(conn: Any) -> None:
     """
     import uuid as uuid_lib
 
-    from sqlalchemy import inspect as sa_inspect
-    from sqlalchemy import text
+    from sqlalchemy import inspect as sa_inspect, text
 
     inspector = sa_inspect(conn)
     if "providers" not in set(inspector.get_table_names()):

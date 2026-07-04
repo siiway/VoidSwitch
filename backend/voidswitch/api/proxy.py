@@ -8,8 +8,6 @@ styles are translated transparently by the dispatcher.
 
 from __future__ import annotations
 
-import time
-from collections import defaultdict, deque
 from fnmatch import fnmatch
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -34,24 +32,22 @@ from voidswitch.services.dispatcher import DispatchRequest, dispatch
 router = APIRouter(tags=["gateway"])
 log = get_logger("gateway")
 
-# Lightweight in-process RPM limiter (sliding 60s window per token).
-_rpm_window: dict[int, deque[float]] = defaultdict(deque)
-
 
 def _check_rpm(token: VoidToken) -> None:
+    """Enforce a Void-Token's per-minute request cap (sliding 60s window).
+
+    Backed by the shared, single-node :data:`ratelimit.gateway_rpm_limiter` — see
+    that module's note on the multi-worker caveat (counters are per-process).
+    """
     if token.rpm_limit <= 0:
         return
-    now = time.time()
-    window = _rpm_window[token.id]
-    cutoff = now - 60.0
-    while window and window[0] < cutoff:
-        window.popleft()
-    if len(window) >= token.rpm_limit:
+    if not ratelimit.gateway_rpm_limiter.allow(
+        f"rpm:{token.id}", window_seconds=60.0, max_requests=token.rpm_limit
+    ):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"Rate limit exceeded ({token.rpm_limit} req/min).",
         )
-    window.append(now)
 
 
 def _check_call_rate_limit(user_id: int) -> None:
