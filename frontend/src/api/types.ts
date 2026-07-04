@@ -365,6 +365,35 @@ export interface UsageAnalytics {
   by_model: UsageGroupRow[];
 }
 
+export interface HeatmapDay {
+  date: string; // YYYY-MM-DD (UTC)
+  tokens: number;
+  requests: number;
+}
+
+export interface HeatmapStats {
+  cumulative_tokens: number;
+  peak_tokens: number;
+  longest_task_seconds: number;
+  current_streak: number;
+  longest_streak: number;
+  active_days: number;
+}
+
+export interface Heatmap {
+  scope: "self" | "site" | "user";
+  retention_days: number;
+  window_days: number;
+  stats: HeatmapStats;
+  days: HeatmapDay[];
+  label?: string | null;
+}
+
+export interface HeatmapBundle {
+  personal: Heatmap;
+  site?: Heatmap | null;
+}
+
 export interface AdapterMeta {
   type: string;
   style: string;

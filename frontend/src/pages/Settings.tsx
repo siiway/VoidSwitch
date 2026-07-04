@@ -77,6 +77,7 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
       "audit_log_retention_days",
       "request_log_retention_days",
       "debug_log_retention_days",
+      "heatmap_retention_days",
     ],
   },
   {
@@ -212,6 +213,7 @@ export function Settings() {
       audit_log_retention_days: t("settings.auditLogRetentionDays" as TK),
       request_log_retention_days: t("settings.requestLogRetentionDays" as TK),
       debug_log_retention_days: t("settings.debugLogRetentionDays" as TK),
+      heatmap_retention_days: t("settings.heatmapRetentionDays" as TK),
       log_cleanup_enabled: t("settings.logCleanupEnabled" as TK),
       log_cleanup_interval_seconds: t("settings.logCleanupInterval" as TK),
       logs_page_size: t("settings.logsPageSize" as TK),

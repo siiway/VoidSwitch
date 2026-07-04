@@ -134,6 +134,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("request_logs", "resp_body", "JSON"),
     ("request_logs", "upstream_url", "VARCHAR(1024)"),
     ("request_logs", "proxy_url", "VARCHAR(512)"),
+    ("request_logs", "session_id", "VARCHAR(255)"),
     ("void_tokens", "debug_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
     ("models", "mapped_id", "VARCHAR(255)"),
     ("models", "display_name", "VARCHAR(255)"),

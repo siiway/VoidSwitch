@@ -21,6 +21,10 @@ router = APIRouter(prefix="/api/admin/settings", tags=["admin:settings"])
 # still change settings back.
 MIN_OPERATION_RATE_PER_MINUTE = 20
 
+# The heatmap rollups (and their statistics) must be retainable for at least a
+# year, so any non-"keep forever" retention window is required to be >= this.
+MIN_HEATMAP_RETENTION_DAYS = 365
+
 
 def _to_int(value: object, default: int = 0) -> int:
     if isinstance(value, bool):
@@ -52,6 +56,17 @@ def _validate_operation_rate_limit(effective: dict[str, object]) -> None:
         )
 
 
+def _validate_heatmap_retention(effective: dict[str, object]) -> None:
+    days = _to_int(effective.get("heatmap_retention_days"), MIN_HEATMAP_RETENTION_DAYS)
+    # 0 = keep forever → always fine; otherwise it must cover at least a year.
+    if 0 < days < MIN_HEATMAP_RETENTION_DAYS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Heatmap retention is too short: it must be 0 (keep forever) or at "
+            f"least {MIN_HEATMAP_RETENTION_DAYS} days (got {days}).",
+        )
+
+
 @router.get("", response_model=SettingsOut)
 async def get_settings_values(
     session: AsyncSession = Depends(get_session),
@@ -73,6 +88,7 @@ async def update_settings_values(
     # Guard against a self-inflicted lockout: validate the *effective* operation
     # rate limit (existing values overlaid with this update) before persisting.
     _validate_operation_rate_limit({**old_values, **body.values})
+    _validate_heatmap_retention({**old_values, **body.values})
     values = await settings_store.update(session, body.values)
     # Only record the settings that actually changed.
     changes = {}

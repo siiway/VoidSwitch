@@ -26,7 +26,7 @@ from voidswitch.core.audit import (
 )
 from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger
-from voidswitch.models.db import AuditLog, RequestLog
+from voidswitch.models.db import AuditLog, RequestLog, SessionSpan, UsageDaily
 from voidswitch.services import settings_store
 
 log = get_logger("tasks.log_cleanup")
@@ -46,8 +46,15 @@ async def cleanup_logs() -> dict[str, int]:
     audit_days = settings_store.get_int("audit_log_retention_days", 0)
     request_days = settings_store.get_int("request_log_retention_days", 0)
     debug_days = settings_store.get_int("debug_log_retention_days", 0)
-    empty = {"deleted_request_logs": 0, "deleted_audit_logs": 0, "stripped_debug_logs": 0}
-    if audit_days <= 0 and request_days <= 0 and debug_days <= 0:
+    heatmap_days = settings_store.get_int("heatmap_retention_days", 0)
+    empty = {
+        "deleted_request_logs": 0,
+        "deleted_audit_logs": 0,
+        "stripped_debug_logs": 0,
+        "deleted_heatmap_days": 0,
+        "deleted_session_spans": 0,
+    }
+    if audit_days <= 0 and request_days <= 0 and debug_days <= 0 and heatmap_days <= 0:
         return empty  # nothing to do — retention disabled for all
 
     now = dt.datetime.now(dt.UTC)
@@ -55,6 +62,8 @@ async def cleanup_logs() -> dict[str, int]:
         deleted_requests = 0
         deleted_audits = 0
         stripped_debug = 0
+        deleted_heatmap = 0
+        deleted_spans = 0
 
         if request_days > 0:
             cutoff = now - dt.timedelta(days=request_days)
@@ -88,12 +97,33 @@ async def cleanup_logs() -> dict[str, int]:
                     )
                 )
 
-        if deleted_requests or deleted_audits or stripped_debug:
+        if heatmap_days > 0:
+            cutoff = now - dt.timedelta(days=heatmap_days)
+            cutoff_day = cutoff.strftime("%Y-%m-%d")
+            deleted_heatmap = int(
+                (
+                    await session.execute(
+                        select(func.count(UsageDaily.id)).where(UsageDaily.day < cutoff_day)
+                    )
+                ).scalar_one()
+                or 0
+            )
+            if deleted_heatmap:
+                await session.execute(delete(UsageDaily).where(UsageDaily.day < cutoff_day))
+            deleted_spans = await _count_older(
+                session, SessionSpan, SessionSpan.last_at, cutoff
+            )
+            if deleted_spans:
+                await session.execute(delete(SessionSpan).where(SessionSpan.last_at < cutoff))
+
+        if deleted_requests or deleted_audits or stripped_debug or deleted_heatmap or deleted_spans:
             log.info(
                 "log_cleanup",
                 deleted_requests=deleted_requests,
                 deleted_audits=deleted_audits,
                 stripped_debug=stripped_debug,
+                deleted_heatmap_days=deleted_heatmap,
+                deleted_session_spans=deleted_spans,
             )
             await record_audit(
                 session,
@@ -105,9 +135,12 @@ async def cleanup_logs() -> dict[str, int]:
                     "deleted_request_logs": deleted_requests,
                     "deleted_audit_logs": deleted_audits,
                     "stripped_debug_logs": stripped_debug,
+                    "deleted_heatmap_days": deleted_heatmap,
+                    "deleted_session_spans": deleted_spans,
                     "audit_log_retention_days": audit_days,
                     "request_log_retention_days": request_days,
                     "debug_log_retention_days": debug_days,
+                    "heatmap_retention_days": heatmap_days,
                 },
                 scope=AuditScope.SYSTEM.value,
             )
@@ -116,6 +149,8 @@ async def cleanup_logs() -> dict[str, int]:
             "deleted_request_logs": deleted_requests,
             "deleted_audit_logs": deleted_audits,
             "stripped_debug_logs": stripped_debug,
+            "deleted_heatmap_days": deleted_heatmap,
+            "deleted_session_spans": deleted_spans,
         }
 
 

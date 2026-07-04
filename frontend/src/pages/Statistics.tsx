@@ -1,5 +1,13 @@
 import {
+  Button,
   Card,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Link,
   Switch,
   Tab,
   TabList,
@@ -17,6 +25,7 @@ import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
+  Heatmap as HeatmapData,
   UsageAnalytics,
   UsageBucket,
   UsageGroupRow,
@@ -28,6 +37,7 @@ import {
   PageHeader,
   useAsync,
 } from "../components/ui";
+import { Heatmap } from "../components/Heatmap";
 
 type Granularity = "daily" | "weekly" | "monthly" | "yearly";
 
@@ -269,11 +279,15 @@ function Breakdown({
   keyHeader,
   rows,
   t,
+  onLabelClick,
 }: {
   title: string;
   keyHeader: string;
   rows: UsageGroupRow[];
   t: (key: string) => string;
+  // When provided, each row's label becomes a clickable link (used to open a
+  // user's activity heatmap from the "By user" breakdown).
+  onLabelClick?: (row: UsageGroupRow) => void;
 }) {
   const [chart, setChart] = useState(false);
 
@@ -318,7 +332,13 @@ function Breakdown({
             {rows.map((r) => (
               <TableRow key={r.key || r.label}>
                 <TableCell>
-                  {r.label}
+                  {onLabelClick && r.key ? (
+                    <Link as="button" onClick={() => onLabelClick(r)}>
+                      {r.label}
+                    </Link>
+                  ) : (
+                    r.label
+                  )}
                   {r.sublabel ? (
                     <Text
                       size={100}
@@ -352,11 +372,61 @@ function Breakdown({
   );
 }
 
+// Staff-only popup: a specific user's activity heatmap, opened by clicking a
+// username in the "By user" breakdown.
+function UserHeatmapDialog({
+  sub,
+  label,
+  onClose,
+}: {
+  sub: string;
+  label: string;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
+  const hm = useAsync<HeatmapData>(() =>
+    api.get(`/api/usage/heatmap/user?sub=${encodeURIComponent(sub)}`),
+  );
+  return (
+    <Dialog
+      open
+      onOpenChange={(_, d) => {
+        if (!d.open) onClose();
+      }}
+      modalType="non-modal"
+    >
+      <DialogSurface style={{ maxWidth: 940, width: "100%" }}>
+        <DialogBody>
+          <DialogTitle>
+            {t("heatmap.userDialogTitle" as TK).replace("{name}", label)}
+          </DialogTitle>
+          <DialogContent>
+            {hm.loading ? (
+              <Loading />
+            ) : hm.error ? (
+              <ErrorText error={hm.error} />
+            ) : hm.data ? (
+              <Heatmap data={hm.data} />
+            ) : null}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={onClose}>{t("common.close" as TK)}</Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
 export function Statistics() {
   const { t } = useTranslation();
   type TK = keyof Translations;
   const { isStaff } = useAuth();
   const [gran, setGran] = useState<Granularity>("daily");
+  const [heatmapUser, setHeatmapUser] = useState<{ sub: string; label: string } | null>(
+    null,
+  );
   const stats = useAsync<UsageAnalytics>(() => api.get("/api/usage"));
 
   const granularities: { value: Granularity; label: string }[] = [
@@ -429,6 +499,9 @@ export function Statistics() {
               keyHeader={t("stats.userCol" as TK)}
               rows={stats.data.by_user}
               t={t as any}
+              onLabelClick={(row) =>
+                setHeatmapUser({ sub: row.key, label: row.label })
+              }
             />
           ) : null}
           <Breakdown
@@ -444,6 +517,14 @@ export function Statistics() {
             t={t as any}
           />
         </>
+      ) : null}
+
+      {heatmapUser ? (
+        <UserHeatmapDialog
+          sub={heatmapUser.sub}
+          label={heatmapUser.label}
+          onClose={() => setHeatmapUser(null)}
+        />
       ) : null}
     </div>
   );

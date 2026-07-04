@@ -2,7 +2,7 @@ import { Badge, Card, Text, tokens } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { Stats, SystemInfo } from "../api/types";
+import type { HeatmapBundle, Stats, SystemInfo } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
   ErrorText,
@@ -12,8 +12,29 @@ import {
   useAsync,
 } from "../components/ui";
 import { AnnouncementsPanel } from "../components/Announcements";
+import { Heatmap } from "../components/Heatmap";
 
 type TK = keyof Translations;
+
+// The activity heatmap(s), pinned to the bottom of the home page. Members see
+// their own; staff additionally see the site-wide roll-up.
+function HeatmapSection() {
+  const { t } = useTranslation();
+  const bundle = useAsync<HeatmapBundle>(() => api.get("/api/usage/heatmap"));
+
+  if (bundle.loading) return <Loading />;
+  if (bundle.error) return <ErrorText error={bundle.error} />;
+  if (!bundle.data) return null;
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      {bundle.data.site ? (
+        <Heatmap data={bundle.data.site} title={t("heatmap.siteTitle" as TK)} />
+      ) : null}
+      <Heatmap data={bundle.data.personal} title={t("heatmap.personalTitle" as TK)} />
+    </div>
+  );
+}
 
 interface MyUsage {
   requests: number;
@@ -70,6 +91,7 @@ function MemberDashboard() {
           <Stat label={t("dashboard.myApiKeys" as TK)} value={usage.data.token_count} />
         </div>
       ) : null}
+      <HeatmapSection />
     </div>
   );
 }
@@ -178,6 +200,7 @@ function StaffDashboard() {
           VoidSwitch v{system.data.version}
         </Text>
       ) : null}
+      <HeatmapSection />
     </div>
   );
 }

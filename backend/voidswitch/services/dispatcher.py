@@ -36,7 +36,7 @@ from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger, redact_headers
 from voidswitch.core.security import decrypt_secret
 from voidswitch.models.db import ApiKey, Provider, Proxy, RequestLog
-from voidswitch.services import oauth_tokens, settings_store, transform
+from voidswitch.services import oauth_tokens, settings_store, transform, usage_rollup
 from voidswitch.services.network import Route, get_pool
 from voidswitch.services.providers.base import BaseProvider, ErrorClass
 from voidswitch.services.providers.registry import get_adapter
@@ -935,6 +935,7 @@ async def _finalise_success(
         log_row = RequestLog(
             token_id=req.token_id,
             user_sub=req.user_sub,
+            session_id=_session_key(req),
             provider_id=provider.id,
             provider_name=provider.name,
             key_id=key.id,
@@ -1139,6 +1140,15 @@ async def _persist_stream_usage(log_id: int, token_id: int | None, usage: dict[s
                     row.prompt_tokens = usage["prompt_tokens"]
                     row.completion_tokens = usage["completion_tokens"]
                     row.total_tokens = usage["total_tokens"]
+                    # Fold this (now token-complete) streamed request into the
+                    # heatmap rollups exactly once, at the point tokens are known.
+                    await usage_rollup.record_usage(
+                        session,
+                        user_sub=row.user_sub,
+                        session_key=row.session_id,
+                        tokens=usage["total_tokens"],
+                        ts=row.ts,
+                    )
                 await _bump_token_usage(session, token_id, usage["total_tokens"])
             return
         except Exception as exc:
@@ -1252,10 +1262,12 @@ async def _log_request(
         and (resp_headers is not None or resp_body is not None)
     )
     store_resp = debug or error_capture
+    session_key = _session_key(req)
     session.add(
         RequestLog(
             token_id=req.token_id,
             user_sub=req.user_sub,
+            session_id=session_key,
             provider_id=provider.id if provider else None,
             provider_name=provider.name if provider else None,
             key_id=key.id if key else None,
@@ -1285,6 +1297,15 @@ async def _log_request(
             upstream_url=upstream_url,
             proxy_url=proxy.url if proxy and debug else None,
         )
+    )
+    # Fold every non-streamed request (success or failure) into the heatmap
+    # rollups. Streamed successes are recorded separately in _persist_stream_usage
+    # once their final token count is known, so they are not double-counted here.
+    await usage_rollup.record_usage(
+        session,
+        user_sub=req.user_sub,
+        session_key=session_key,
+        tokens=usage["total_tokens"],
     )
 
 

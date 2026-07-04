@@ -447,6 +447,12 @@ class RequestLog(Base):
     ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
     token_id: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     user_sub: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
+    # Stable identifier of the conversation/session behind the request (see
+    # ``services.dispatcher._session_key``): a client-supplied session id, an
+    # Anthropic ``metadata.user_id``, or a hash of the conversation prefix, always
+    # namespaced by the calling token. Used to reconstruct per-session task spans
+    # (the "longest task duration" statistic).
+    session_id: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
     provider_id: Mapped[int | None] = mapped_column(Integer, default=None)
     provider_name: Mapped[str | None] = mapped_column(String(120), default=None)
     key_id: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -489,3 +495,54 @@ class RequestLog(Base):
     debug_attempts: Mapped[list[Any] | None] = mapped_column(JSON, default=None)
     upstream_url: Mapped[str | None] = mapped_column(String(1024), default=None)
     proxy_url: Mapped[str | None] = mapped_column(String(512), default=None)
+
+
+class UsageDaily(Base):
+    """Per-user, per-day usage rollup that backs the activity heatmap.
+
+    Incrementally upserted as requests complete (see ``services.usage_rollup``),
+    independently of ``request_logs`` — so the heatmap, cumulative/peak token
+    counts, and streaks survive request-log pruning and can be retained on their
+    own, longer schedule (``heatmap_retention_days``, minimum one year). ``day``
+    is the UTC calendar day (``YYYY-MM-DD``); ``user_sub`` is ``""`` for the rare
+    request with no associated user. Site-wide figures are the sum across users.
+    """
+
+    __tablename__ = "usage_daily"
+    __table_args__ = (
+        UniqueConstraint("user_sub", "day", name="uq_usage_daily_user_day"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_sub: Mapped[str] = mapped_column(String(255), default="", index=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD (UTC)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    requests: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class SessionSpan(Base):
+    """The time span of one conversation/session, keyed by its session id.
+
+    Upserted as requests complete: ``started_at`` is pinned to the first request
+    of the session and ``last_at`` advances to the latest. The "longest task
+    duration" statistic is ``max(last_at - started_at)`` over these rows (all
+    sessions for a user, or every session for the site). Retained on the same
+    ``heatmap_retention_days`` schedule as the daily rollup.
+    """
+
+    __tablename__ = "session_spans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    user_sub: Mapped[str] = mapped_column(String(255), default="", index=True)
+    started_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+    requests: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )

@@ -611,6 +611,52 @@ class UsageAnalyticsOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Activity heatmap
+# --------------------------------------------------------------------------- #
+
+
+class HeatmapDay(BaseModel):
+    """Token/request usage for a single UTC calendar day."""
+
+    date: str  # YYYY-MM-DD
+    tokens: int = 0
+    requests: int = 0
+
+
+class HeatmapStats(BaseModel):
+    """Headline figures derived from the daily rollups + session spans."""
+
+    cumulative_tokens: int = 0
+    peak_tokens: int = 0
+    # Longest single session/task span, in whole seconds (via session ids).
+    longest_task_seconds: int = 0
+    current_streak: int = 0
+    longest_streak: int = 0
+    active_days: int = 0
+
+
+class HeatmapOut(BaseModel):
+    # "self" (own traffic), "site" (platform-wide), or "user" (a specific user).
+    scope: str
+    # The retention window in days (0 = keep forever) and the number of days the
+    # returned grid spans back from today.
+    retention_days: int
+    window_days: int
+    stats: HeatmapStats
+    # Sparse — only days with activity are returned; the client fills the grid.
+    days: list[HeatmapDay]
+    # Present only for scope="user": a display label for the subject.
+    label: str | None = None
+
+
+class HeatmapBundleOut(BaseModel):
+    """The homepage payload: the caller's own heatmap, plus the site-wide one for staff."""
+
+    personal: HeatmapOut
+    site: HeatmapOut | None = None
+
+
+# --------------------------------------------------------------------------- #
 # Announcements
 # --------------------------------------------------------------------------- #
 

@@ -139,6 +139,11 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "audit_log_retention_days": 0,
     "request_log_retention_days": 0,
     "debug_log_retention_days": 0,
+    # How long to keep the daily usage rollups and session spans that back the
+    # activity heatmap and its statistics. Independent of request-log retention so
+    # the heatmap survives request-log pruning. 0 = keep forever; any positive
+    # value must be at least one year (365 days) — enforced on save.
+    "heatmap_retention_days": 365,
     "log_cleanup_enabled": True,
     "log_cleanup_interval_seconds": 86400,
     "opencode_default_model": "claude-opus-4-8",

@@ -561,3 +561,191 @@ async def test_log_cleanup_deletes_only_old_rows(db, seeded):
             session,
             {"request_log_retention_days": 0, "audit_log_retention_days": 0},
         )
+
+
+# --------------------------------------------------------------------------- #
+# Activity heatmap
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_heatmap(db) -> None:
+    """Seed daily rollups + a session span for two users across recent days."""
+    import datetime as dt
+
+    from voidswitch.models.db import SessionSpan, UsageDaily, User
+
+    today = dt.datetime.now(dt.UTC).date()
+
+    def day(offset: int) -> str:
+        return (today - dt.timedelta(days=offset)).strftime("%Y-%m-%d")
+
+    async with db.session() as session:
+        session.add(User(sub="user-2", username="bob", email="b@example.com", role="member"))
+        # alice: today + yesterday (a 2-day streak), peak 100.
+        session.add(UsageDaily(user_sub="user-1", day=day(0), tokens=100, requests=4))
+        session.add(UsageDaily(user_sub="user-1", day=day(1), tokens=50, requests=2))
+        # bob: today only, 30 tokens.
+        session.add(UsageDaily(user_sub="user-2", day=day(0), tokens=30, requests=1))
+        # A ~1h session span for alice → longest task duration.
+        now = dt.datetime.now(dt.UTC)
+        session.add(
+            SessionSpan(
+                session_key="t1:sid:s1",
+                user_sub="user-1",
+                started_at=now - dt.timedelta(hours=1),
+                last_at=now,
+                requests=4,
+            )
+        )
+
+
+async def test_heatmap_bundle_staff_sees_site_and_personal(client, db, seeded):
+    await _seed_heatmap(db)
+    resp = await client.get("/api/usage/heatmap", headers=_session_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+
+    personal = body["personal"]
+    assert personal["scope"] == "self"
+    assert personal["stats"]["cumulative_tokens"] == 150
+    assert personal["stats"]["peak_tokens"] == 100
+    assert personal["stats"]["current_streak"] == 2
+    assert personal["stats"]["longest_streak"] == 2
+    # ~1h task span, allow a little slack around the boundary.
+    assert 3500 <= personal["stats"]["longest_task_seconds"] <= 3700
+    assert personal["retention_days"] == 365
+
+    site = body["site"]
+    assert site is not None
+    assert site["scope"] == "site"
+    # Site cumulative is alice (150) + bob (30).
+    assert site["stats"]["cumulative_tokens"] == 180
+
+
+async def test_heatmap_bundle_member_has_no_site(client, db, seeded):
+    await _seed_heatmap(db)
+    resp = await client.get(
+        "/api/usage/heatmap",
+        headers=_session_headers(sub="user-2", role="member", name="bob"),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["site"] is None
+    assert body["personal"]["stats"]["cumulative_tokens"] == 30
+
+
+async def test_heatmap_for_user_is_staff_only(client, db, seeded):
+    await _seed_heatmap(db)
+    # Staff can inspect a specific user's heatmap (powers the stats popup).
+    resp = await client.get(
+        "/api/usage/heatmap/user", params={"sub": "user-1"}, headers=_session_headers()
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["scope"] == "user"
+    assert body["label"] == "alice#1"
+    assert body["stats"]["cumulative_tokens"] == 150
+
+    # Members may not view arbitrary users.
+    denied = await client.get(
+        "/api/usage/heatmap/user",
+        params={"sub": "user-1"},
+        headers=_session_headers(sub="user-2", role="member", name="bob"),
+    )
+    assert denied.status_code == 403
+
+
+async def test_heatmap_retention_validation(client, seeded):
+    """A non-zero heatmap retention below one year is rejected; 0/>=365 accepted."""
+    too_short = await client.put(
+        "/api/admin/settings",
+        json={"values": {"heatmap_retention_days": 30}},
+        headers=_session_headers(),
+    )
+    assert too_short.status_code == 400
+
+    ok = await client.put(
+        "/api/admin/settings",
+        json={"values": {"heatmap_retention_days": 400}},
+        headers=_session_headers(),
+    )
+    assert ok.status_code == 200
+
+
+async def test_usage_rollup_records_daily_and_span(db, seeded):
+    """record_usage upserts the daily rollup and the session span idempotently."""
+    import datetime as dt
+
+    from sqlalchemy import select
+    from voidswitch.models.db import SessionSpan, UsageDaily
+    from voidswitch.services import usage_rollup
+
+    t0 = dt.datetime.now(dt.UTC)
+    async with db.session() as session:
+        await usage_rollup.record_usage(
+            session, user_sub="user-1", session_key="t1:sid:x", tokens=10, ts=t0
+        )
+        await usage_rollup.record_usage(
+            session,
+            user_sub="user-1",
+            session_key="t1:sid:x",
+            tokens=5,
+            ts=t0 + dt.timedelta(minutes=30),
+        )
+
+    async with db.session() as session:
+        daily = (
+            await session.execute(select(UsageDaily).where(UsageDaily.user_sub == "user-1"))
+        ).scalars().all()
+        assert len(daily) == 1
+        assert daily[0].tokens == 15
+        assert daily[0].requests == 2
+
+        span = (
+            await session.execute(select(SessionSpan).where(SessionSpan.session_key == "t1:sid:x"))
+        ).scalar_one()
+        assert span.requests == 2
+        assert (span.last_at - span.started_at) >= dt.timedelta(minutes=29)
+
+
+async def test_log_cleanup_prunes_heatmap_rollups(db, seeded):
+    """Heatmap rollups older than heatmap_retention_days are pruned on cleanup."""
+    import datetime as dt
+
+    from sqlalchemy import func, select
+    from voidswitch.models.db import SessionSpan, UsageDaily
+    from voidswitch.services import settings_store
+    from voidswitch.tasks.log_cleanup import run_log_cleanup
+
+    today = dt.datetime.now(dt.UTC)
+    old_day = (today - dt.timedelta(days=400)).strftime("%Y-%m-%d")
+    fresh_day = today.strftime("%Y-%m-%d")
+    async with db.session() as session:
+        session.add(UsageDaily(user_sub="user-1", day=old_day, tokens=1, requests=1))
+        session.add(UsageDaily(user_sub="user-1", day=fresh_day, tokens=1, requests=1))
+        session.add(
+            SessionSpan(
+                session_key="old",
+                user_sub="user-1",
+                started_at=today - dt.timedelta(days=400),
+                last_at=today - dt.timedelta(days=400),
+            )
+        )
+        session.add(
+            SessionSpan(
+                session_key="fresh", user_sub="user-1", started_at=today, last_at=today
+            )
+        )
+        await settings_store.update(session, {"heatmap_retention_days": 365})
+
+    await run_log_cleanup()
+
+    async with db.session() as session:
+        days = (await session.execute(select(func.count(UsageDaily.id)))).scalar_one()
+        spans = (await session.execute(select(func.count(SessionSpan.id)))).scalar_one()
+        assert days == 1
+        assert spans == 1
+
+    # Reset cache so other tests see defaults again.
+    async with db.session() as session:
+        await settings_store.update(session, {"heatmap_retention_days": 365})
