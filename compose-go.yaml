@@ -1,0 +1,83 @@
+# VoidSwitch — gateway + dashboard on one origin (Go backend).
+#
+#   docker compose -f compose-go.yaml up -d        # build + start
+#   docker compose -f compose-go.yaml logs -f      # follow logs
+#
+# This runs the **Go** rewrite (backend-go/) instead of the Python gateway. It is
+# self-contained on the default compose network and uses its own image / volume /
+# published port, so it can run alongside the Python `compose.yaml` for a side-by-
+# side comparison.
+#
+# The `dashboard` (nginx) is the single front door and reverse-proxies /api to the
+# `voidswitch` service (the name nginx expects — keep it). Configuration comes from
+# the same VOIDSWITCH_* env vars; copy .env.example to .env. See
+# backend-go/config.example.yaml for the full set.
+services:
+  voidswitch:
+    container_name: voidswitch-go
+    build:
+      # backend-go/Dockerfile is a self-contained Go build (its context is the
+      # backend-go/ dir). NB: unlike the Python image it does NOT bundle the
+      # OpenCode plugin source or the built docs, so /install and /docs may be
+      # unavailable from this image.
+      context: ./backend-go
+      dockerfile: Dockerfile
+      args:
+        # Proxy for build-time downloads (go mod download). Blank = direct.
+        HTTP_PROXY: "${HTTP_PROXY:-}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-}"
+        NO_PROXY: "${NO_PROXY:-}"
+        http_proxy: "${http_proxy:-}"
+        https_proxy: "${https_proxy:-}"
+        no_proxy: "${no_proxy:-}"
+    image: voidswitch-go:latest
+    restart: unless-stopped
+    # Internal only — the dashboard service is the front door and proxies to this
+    # over the compose network. Add a `ports:` mapping here only for debugging.
+    expose:
+      - "8080"
+    environment:
+      VOIDSWITCH_SERVER__BASE_URL: "${VOIDSWITCH_BASE_URL:-http://localhost:8080}"
+      VOIDSWITCH_SERVER__FRONTEND_URL: "${VOIDSWITCH_FRONTEND_URL:-${VOIDSWITCH_BASE_URL:-http://localhost:8080}}"
+      FORWARDED_ALLOW_IPS: "*"
+      VOIDSWITCH_SERVER__SECRET_KEY: "${VOIDSWITCH_SECRET_KEY:-}"
+      VOIDSWITCH_PRISM__ISSUER: "${VOIDSWITCH_PRISM_ISSUER:-https://prism.siiway.org}"
+      VOIDSWITCH_PRISM__CLIENT_ID: "${VOIDSWITCH_PRISM_CLIENT_ID:-}"
+      VOIDSWITCH_PRISM__CLIENT_SECRET: "${VOIDSWITCH_PRISM_CLIENT_SECRET:-}"
+      # The Go backend accepts a plain SQLite file path (it strips a leading
+      # sqlite+aiosqlite:// prefix if present). Image WORKDIR is /data.
+      VOIDSWITCH_DATABASE__URL: "${VOIDSWITCH_DATABASE_URL:-/data/voidswitch.db}"
+      # Prism team whose owners/admins are recognised as VoidSwitch staff.
+      VOIDSWITCH_ADMIN__MAIN_TEAM_ID: "${VOIDSWITCH_MAIN_TEAM_ID:-63d4761c78c2dec09a002233e1b7c06c}"
+    volumes:
+      - voidswitch-go-data:/data
+    healthcheck:
+      # The Go runtime image is alpine with wget available.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  dashboard:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: "${HTTP_PROXY:-}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-}"
+        NO_PROXY: "${NO_PROXY:-}"
+        http_proxy: "${http_proxy:-}"
+        https_proxy: "${https_proxy:-}"
+        no_proxy: "${no_proxy:-}"
+    image: voidswitch-dashboard:latest
+    restart: unless-stopped
+    # Distinct default port so it doesn't clash with the Python stack (7292).
+    ports:
+      - "${VOIDSWITCH_GO_PORT:-7392}:80"
+    depends_on:
+      voidswitch:
+        condition: service_healthy
+
+volumes:
+  voidswitch-go-data:
