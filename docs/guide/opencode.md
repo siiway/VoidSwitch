@@ -35,6 +35,37 @@ curl -fsSL "https://voidswitch.siiway.org/install?token=vs-your-token" | bash
 2. 使用 `/connect` 并选择 **VoidSwitch**。
 3. 粘贴 [Void-Token](/guide/api-keys)（`vs-…`）。
 
+## 手动安装（不用脚本）
+
+无法运行安装脚本时，可以在 [**我的令牌**](/guide/api-keys) 页面的 OpenCode 连接指南中展开
+**手动设置**，其中提供：
+
+1. 一份完整的 `opencode.json`（已注册 VoidSwitch 供应商并列出全部可用模型），直接粘贴到
+   `~/.config/opencode/opencode.json`。
+2. **手动安装插件**指南 —— 这一步让手动配置的用户也能获得完整的插件功能
+   （effort、fast mode、adaptive thinking、1M context）。它与一行脚本做的事一样，从网关**实时获取**
+   插件源码（`/opencode/voidswitch.ts`，始终与当前服务器一致），保存到 OpenCode 配置目录：
+
+::: code-group
+
+```bash [macOS / Linux]
+mkdir -p ~/.config/opencode
+curl -fsSL https://voidswitch.siiway.org/opencode/voidswitch.ts -o ~/.config/opencode/voidswitch.plugin.ts
+echo "plugin: $HOME/.config/opencode/voidswitch.plugin.ts"
+```
+
+```powershell [Windows]
+New-Item -ItemType Directory -Force -Path "$HOME\.config\opencode" | Out-Null
+Invoke-WebRequest -UseBasicParsing -Uri "https://voidswitch.siiway.org/opencode/voidswitch.ts" -OutFile "$HOME\.config\opencode\voidswitch.plugin.ts"
+Write-Host "plugin: $HOME\.config\opencode\voidswitch.plugin.ts"
+```
+
+:::
+
+命令会打印插件的绝对路径。把它加入到 `opencode.json` 顶层的 `plugin` 数组，例如
+`"plugin": ["/home/you/.config/opencode/voidswitch.plugin.ts"]`，再重启 `opencode` 即可加载。
+（插件文件与配置放在同一目录 `~/.config/opencode/`，与安装脚本写入的位置一致。）
+
 ## 刷新模型列表
 
 插件读取平台模型目录。供应商新服务的模型会自动出现。在目录中**注册**它们（同步步骤）是

@@ -763,6 +763,11 @@ const en = {
       "2. Run <code>/connect</code>; <strong>VoidSwitch</strong> appears in the provider list — select it.",
     manualStep3:
       "3. Paste a <code>vs-…</code> token at the <em>API key</em> prompt, then pick a model.",
+    pluginTitle: "Install the plugin manually (full features)",
+    pluginIntro:
+      "The config above registers the provider and models, but the deep VoidSwitch features — reasoning <strong>effort</strong>, fast mode, adaptive thinking, and 1M context — live in the plugin. Install the very same plugin the one-line installer uses; it's fetched live from this gateway, so it always matches this server. Run the block for your OS:",
+    pluginNote:
+      "Each command prints the plugin's absolute path. Add it to a top-level <code>plugin</code> array in the <code>opencode.json</code> above — e.g. <code>\"plugin\": [\"/home/you/.config/opencode/voidswitch.plugin.ts\"]</code> — then restart <code>opencode</code> to load it.",
     createToken: "Create token",
     newTokenName: "New token name",
     name: "Name",

@@ -54,6 +54,19 @@ export OPENAI_API_KEY=vs-...`;
 const CLAUDE_SNIPPET = `export ANTHROPIC_BASE_URL=${API_BASE}
 export ANTHROPIC_AUTH_TOKEN=vs-...`;
 
+// Manual OpenCode plugin install — mirrors what the one-line installer does:
+// fetch the plugin source live from the gateway (always current) and drop it in
+// the OpenCode config dir. Same canonical path the installer uses on every OS
+// (`~/.config/opencode`), so the printed path can be pasted into the config's
+// `plugin` array to unlock the deep VoidSwitch features.
+const PLUGIN_INSTALL_BASH = `mkdir -p ~/.config/opencode
+curl -fsSL ${API_BASE}/opencode/voidswitch.ts -o ~/.config/opencode/voidswitch.plugin.ts
+echo "plugin: $HOME/.config/opencode/voidswitch.plugin.ts"`;
+
+const PLUGIN_INSTALL_PS = `New-Item -ItemType Directory -Force -Path "$HOME\\.config\\opencode" | Out-Null
+Invoke-WebRequest -UseBasicParsing -Uri "${API_BASE}/opencode/voidswitch.ts" -OutFile "$HOME\\.config\\opencode\\voidswitch.plugin.ts"
+Write-Host "plugin: $HOME\\.config\\opencode\\voidswitch.plugin.ts"`;
+
 /** A monospace code block with a one-click copy button. */
 function CodeBlock({ code }: { code: string }) {
   const { t } = useTranslation();
@@ -375,6 +388,47 @@ export function MyToken() {
                     />
                   </Text>
                 </div>
+
+                <Divider />
+
+                {/* Manual plugin install — gives no-script users the full plugin
+                    surface (effort, fast mode, thinking, 1M) by fetching the
+                    plugin source live from the gateway, just like the installer. */}
+                <Text size={200} weight="semibold" block>
+                  {t("myToken.pluginTitle" as TK)}
+                </Text>
+                <Text
+                  size={200}
+                  block
+                  style={{ color: tokens.colorNeutralForeground3 }}
+                >
+                  <Trans
+                    i18nKey="myToken.pluginIntro"
+                    components={{ code: <code />, strong: <strong /> }}
+                  />
+                </Text>
+                <div>
+                  <Text size={200} weight="semibold" block style={{ marginBottom: 4 }}>
+                    {t("myToken.macosLinux" as TK)}
+                  </Text>
+                  <CodeBlock code={PLUGIN_INSTALL_BASH} />
+                </div>
+                <div>
+                  <Text size={200} weight="semibold" block style={{ marginBottom: 4 }}>
+                    {t("myToken.windowsPs" as TK)}
+                  </Text>
+                  <CodeBlock code={PLUGIN_INSTALL_PS} />
+                </div>
+                <Text
+                  size={200}
+                  block
+                  style={{ color: tokens.colorNeutralForeground3 }}
+                >
+                  <Trans
+                    i18nKey="myToken.pluginNote"
+                    components={{ code: <code />, strong: <strong /> }}
+                  />
+                </Text>
               </div>
             </details>
           </div>
