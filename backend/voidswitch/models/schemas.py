@@ -466,6 +466,22 @@ class AuditFilterOptions(BaseModel):
     actors: list[AuditActor] = Field(default_factory=list)
 
 
+class TokenRef(BaseModel):
+    """A distinct Void-Token present in the request log (for the filter dropdown)."""
+
+    id: int
+    name: str
+
+
+class RequestFilterOptions(BaseModel):
+    """Distinct values present in the request log, used to drive the UI filters."""
+
+    models: list[str] = Field(default_factory=list)
+    providers: list[str] = Field(default_factory=list)
+    users: list[AuditActor] = Field(default_factory=list)
+    tokens: list[TokenRef] = Field(default_factory=list)
+
+
 class RequestLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

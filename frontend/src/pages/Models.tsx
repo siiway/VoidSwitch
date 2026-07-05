@@ -605,25 +605,28 @@ export function Models() {
           <Option value="available">{t("common.enabled" as TK)}</Option>
           <Option value="hidden">{t("models.unavailableHidden" as TK)}</Option>
         </Dropdown>
-        <Dropdown
-          aria-label={t("models.filterGroup" as TK)}
-          style={{ minWidth: 150 }}
-          selectedOptions={[filterGroup]}
-          value={
-            filterGroup === "all"
-              ? t("models.filterAllGroups" as TK)
-              : filterGroup === "unassigned"
-                ? t("models.filterUnassigned" as TK)
-                : (roleGroups.data ?? []).find((g) => String(g.id) === filterGroup)?.name ?? filterGroup
-          }
-          onOptionSelect={(_, d) => setFilterGroup(d.optionValue ?? "all")}
-        >
-          <Option value="all">{t("models.filterAllGroups" as TK)}</Option>
-          <Option value="unassigned">{t("models.filterUnassigned" as TK)}</Option>
-          {(roleGroups.data ?? []).filter((g) => !g.builtin).map((g) => (
-            <Option key={g.id} value={String(g.id)}>{g.name}</Option>
-          ))}
-        </Dropdown>
+        {/* Role-group access is a staff concept; members don't see (or fetch) it. */}
+        {isStaff && (
+          <Dropdown
+            aria-label={t("models.filterGroup" as TK)}
+            style={{ minWidth: 150 }}
+            selectedOptions={[filterGroup]}
+            value={
+              filterGroup === "all"
+                ? t("models.filterAllGroups" as TK)
+                : filterGroup === "unassigned"
+                  ? t("models.filterUnassigned" as TK)
+                  : (roleGroups.data ?? []).find((g) => String(g.id) === filterGroup)?.name ?? filterGroup
+            }
+            onOptionSelect={(_, d) => setFilterGroup(d.optionValue ?? "all")}
+          >
+            <Option value="all">{t("models.filterAllGroups" as TK)}</Option>
+            <Option value="unassigned">{t("models.filterUnassigned" as TK)}</Option>
+            {(roleGroups.data ?? []).filter((g) => !g.builtin).map((g) => (
+              <Option key={g.id} value={String(g.id)}>{g.name}</Option>
+            ))}
+          </Dropdown>
+        )}
       </div>
 
       {catalog.loading ? (

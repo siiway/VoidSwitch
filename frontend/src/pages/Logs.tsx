@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Combobox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -28,7 +29,6 @@ import {
   DismissRegular,
   EyeRegular,
   InfoRegular,
-  SearchRegular,
 } from "@fluentui/react-icons";
 import { makeStyles } from "@fluentui/react-components";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -40,6 +40,7 @@ import type {
   AuditFilterOptions,
   AuditLog,
   Page,
+  RequestFilterOptions,
   RequestLog,
   RequestLogAttempt,
   RequestLogDetail,
@@ -143,6 +144,105 @@ function useIdJump(dataDep: unknown) {
   return { highlightId, containerRef, markJump };
 }
 
+const useFilterStyles = makeStyles({
+  // A table value that fills the matching filter when clicked. Looks like plain
+  // text until hovered, so the tables stay readable but every cell is actionable.
+  clickable: {
+    background: "none",
+    border: "none",
+    padding: 0,
+    margin: 0,
+    font: "inherit",
+    color: "inherit",
+    textAlign: "left",
+    cursor: "pointer",
+    ":hover": { textDecoration: "underline" },
+  },
+});
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * A "type to search, then pick" filter — the same interaction as the model
+ * picker above the chat. Reflects an externally-set value (e.g. filled by
+ * clicking a table cell) and clears when emptied.
+ */
+function SearchSelect({
+  value,
+  options,
+  onChange,
+  placeholder,
+  ariaLabel,
+  minWidth = 170,
+}: {
+  value: string;
+  options: SelectOption[];
+  onChange: (value: string) => void;
+  placeholder: string;
+  ariaLabel: string;
+  minWidth?: number;
+}) {
+  const selectedLabel = options.find((o) => o.value === value)?.label ?? value ?? "";
+  const [text, setText] = useState(selectedLabel);
+  const [typing, setTyping] = useState(false);
+
+  // Keep the input in sync when the selection changes from outside (a table-cell
+  // click that fills this filter, or a global "clear filters" reset).
+  useEffect(() => {
+    setText(selectedLabel);
+    setTyping(false);
+  }, [selectedLabel]);
+
+  const q = text.trim().toLowerCase();
+  const filtered =
+    typing && q
+      ? options.filter(
+          (o) =>
+            o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
+        )
+      : options;
+
+  return (
+    <Combobox
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      style={{ minWidth }}
+      freeform
+      clearable
+      value={text}
+      selectedOptions={value ? [value] : []}
+      onOptionSelect={(_, d) => {
+        const v = d.optionValue ?? "";
+        onChange(v);
+        setTyping(false);
+        setText(v ? options.find((o) => o.value === v)?.label ?? "" : "");
+      }}
+      onChange={(e) => {
+        setText(e.target.value);
+        setTyping(true);
+      }}
+      onOpenChange={(_, d) => {
+        // On close, commit an emptied box as "no filter"; otherwise discard a
+        // half-typed query and restore the current selection's label.
+        if (!d.open) {
+          if (!text.trim()) onChange("");
+          else setText(selectedLabel);
+          setTyping(false);
+        }
+      }}
+    >
+      {filtered.map((o) => (
+        <Option key={o.value} value={o.value} text={o.label}>
+          {o.label}
+        </Option>
+      ))}
+    </Combobox>
+  );
+}
+
 export function Logs() {
   const { t } = useTranslation();
   type TK = keyof Translations;
@@ -187,6 +287,29 @@ export function Logs() {
   );
 }
 
+interface RequestFilters {
+  model: string;
+  user_sub: string;
+  token_id: string;
+  provider: string;
+  status: string;
+}
+
+const EMPTY_REQUEST_FILTERS: RequestFilters = {
+  model: "",
+  user_sub: "",
+  token_id: "",
+  provider: "",
+  status: "",
+};
+
+// A lone 1-5 digit means "the whole class": expand it to e.g. "4xx" on blur so
+// the filter matches every 4xx status. Anything else is left as typed.
+function normalizeStatus(value: string): string {
+  const s = value.trim();
+  return /^[1-5]$/.test(s) ? `${s}xx` : s;
+}
+
 function RequestLogs({
   refreshKey,
   pageSize,
@@ -198,24 +321,58 @@ function RequestLogs({
   type TK = keyof Translations;
   const { isOwner } = useAuth();
   const hl = useHighlightStyles();
+  const cellStyles = useFilterStyles();
   const notify = useNotify();
   const [offset, setOffset] = useState(0);
-  const [q, setQ] = useState("");
+  const [filters, setFilters] = useState<RequestFilters>(EMPTY_REQUEST_FILTERS);
   const [goToId, setGoToId] = useState("");
   const [detailLog, setDetailLog] = useState<RequestLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailMode, setDetailMode] = useState<"info" | "debug">("info");
   const [revealMode, setRevealMode] = useState(false);
+
+  const options = useAsync<RequestFilterOptions>(
+    () => api.get("/api/admin/logs/requests/filters"),
+    [refreshKey],
+  );
+
+  const queryParams = {
+    model: filters.model || undefined,
+    user_sub: filters.user_sub || undefined,
+    token_id: filters.token_id || undefined,
+    provider: filters.provider || undefined,
+    status_code: filters.status || undefined,
+  };
+
   const logs = useAsync<Page<RequestLog>>(
     () =>
       api.get("/api/admin/logs/requests", {
         limit: pageSize,
         offset,
-        q: q || undefined,
+        ...queryParams,
       }),
-    [offset, refreshKey, pageSize, q],
+    [
+      offset,
+      refreshKey,
+      pageSize,
+      filters.model,
+      filters.user_sub,
+      filters.token_id,
+      filters.provider,
+      filters.status,
+    ],
   );
   const { highlightId, containerRef, markJump } = useIdJump(logs.data);
+
+  function setFilter<K extends keyof RequestFilters>(
+    key: K,
+    value: RequestFilters[K],
+  ) {
+    setOffset(0);
+    setFilters((f) => ({ ...f, [key]: value }));
+  }
+
+  const hasFilters = Object.values(filters).some((v) => v !== "");
 
   async function jumpToId() {
     const id = Number(goToId.trim());
@@ -223,7 +380,7 @@ function RequestLogs({
     try {
       const r = await api.get<{ offset: number; found: boolean }>(
         "/api/admin/logs/requests/locate",
-        { id, q: q || undefined },
+        { id, ...queryParams },
       );
       if (!r.found) {
         notify(tr("logs.jumpNotFound" as TK), `#${id}`, "warning");
@@ -277,16 +434,55 @@ function RequestLogs({
           alignItems: "flex-end",
         }}
       >
+        <SearchSelect
+          ariaLabel={tr("logs.model" as TK)}
+          placeholder={tr("logs.filterModel" as TK)}
+          value={filters.model}
+          options={(options.data?.models ?? []).map((m) => ({ value: m, label: m }))}
+          onChange={(v) => setFilter("model", v)}
+        />
+        <SearchSelect
+          ariaLabel={tr("logs.user" as TK)}
+          placeholder={tr("logs.filterUser" as TK)}
+          value={filters.user_sub}
+          options={(options.data?.users ?? []).map((u) => ({
+            value: u.sub,
+            label: u.name,
+          }))}
+          onChange={(v) => setFilter("user_sub", v)}
+        />
+        <SearchSelect
+          ariaLabel={tr("logs.token" as TK)}
+          placeholder={tr("logs.filterToken" as TK)}
+          value={filters.token_id}
+          options={(options.data?.tokens ?? []).map((tk) => ({
+            value: String(tk.id),
+            label: tk.name,
+          }))}
+          onChange={(v) => setFilter("token_id", v)}
+        />
+        <Dropdown
+          aria-label={tr("logs.provider" as TK)}
+          placeholder={tr("logs.filterProvider" as TK)}
+          style={{ minWidth: 150 }}
+          clearable
+          selectedOptions={filters.provider ? [filters.provider] : []}
+          value={filters.provider}
+          onOptionSelect={(_, d) => setFilter("provider", d.optionValue ?? "")}
+        >
+          {(options.data?.providers ?? []).map((p) => (
+            <Option key={p} value={p} text={p}>
+              {p}
+            </Option>
+          ))}
+        </Dropdown>
         <Input
-          contentBefore={<SearchRegular />}
-          aria-label={tr("logs.filterSearch" as TK)}
-          placeholder={tr("logs.requestSearch" as TK)}
-          value={q}
-          style={{ minWidth: 220 }}
-          onChange={(_, d) => {
-            setOffset(0);
-            setQ(d.value);
-          }}
+          aria-label={tr("logs.status" as TK)}
+          placeholder={tr("logs.filterStatus" as TK)}
+          value={filters.status}
+          style={{ minWidth: 96, maxWidth: 120 }}
+          onChange={(_, d) => setFilter("status", d.value)}
+          onBlur={() => setFilter("status", normalizeStatus(filters.status))}
         />
         <Input
           aria-label={tr("logs.goToId" as TK)}
@@ -309,13 +505,13 @@ function RequestLogs({
             {tr("logs.jump" as TK)}
           </Button>
         </Tooltip>
-        {q ? (
+        {hasFilters ? (
           <Button
             appearance="subtle"
             icon={<DismissRegular />}
             onClick={() => {
               setOffset(0);
-              setQ("");
+              setFilters(EMPTY_REQUEST_FILTERS);
             }}
           >
             {tr("logs.clearFilters" as TK)}
@@ -355,18 +551,68 @@ function RequestLogs({
               <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                 {formatDate(r.ts)}
               </TableCell>
-              <TableCell>{r.user_name ?? r.user_sub ?? "—"}</TableCell>
-              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
-                {r.token_name ?? (r.token_id != null ? `#${r.token_id}` : "—")}
-              </TableCell>
-              <TableCell>{r.model ?? "—"}</TableCell>
               <TableCell>
-                <Badge
-                  color={r.success ? "success" : "danger"}
-                  appearance="filled"
+                {r.user_sub ? (
+                  <button
+                    type="button"
+                    className={cellStyles.clickable}
+                    title={tr("logs.clickToFilter" as TK)}
+                    onClick={() => setFilter("user_sub", r.user_sub ?? "")}
+                  >
+                    {r.user_name ?? r.user_sub}
+                  </button>
+                ) : (
+                  "—"
+                )}
+              </TableCell>
+              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                {r.token_id != null ? (
+                  <button
+                    type="button"
+                    className={cellStyles.clickable}
+                    title={tr("logs.clickToFilter" as TK)}
+                    onClick={() => setFilter("token_id", String(r.token_id))}
+                  >
+                    {r.token_name ?? `#${r.token_id}`}
+                  </button>
+                ) : (
+                  "—"
+                )}
+              </TableCell>
+              <TableCell>
+                {r.model ? (
+                  <button
+                    type="button"
+                    className={cellStyles.clickable}
+                    title={tr("logs.clickToFilter" as TK)}
+                    onClick={() => setFilter("model", r.model ?? "")}
+                  >
+                    {r.model}
+                  </button>
+                ) : (
+                  "—"
+                )}
+              </TableCell>
+              <TableCell>
+                <button
+                  type="button"
+                  className={cellStyles.clickable}
+                  title={tr("logs.clickToFilter" as TK)}
+                  onClick={() =>
+                    setFilter(
+                      "status",
+                      r.status_code != null ? String(r.status_code) : "",
+                    )
+                  }
                 >
-                  {r.status_code ?? "ERR"}
-                </Badge>
+                  <Badge
+                    color={r.success ? "success" : "danger"}
+                    appearance="filled"
+                    style={{ cursor: "pointer" }}
+                  >
+                    {r.status_code ?? "ERR"}
+                  </Badge>
+                </button>
               </TableCell>
               <TableCell>{r.total_tokens}</TableCell>
               <TableCell>{r.attempts}</TableCell>
@@ -659,7 +905,8 @@ interface AuditFilters {
   action: string;
   target_type: string;
   actor_sub: string;
-  q: string;
+  ip: string;
+  user_agent: string;
 }
 
 const EMPTY_FILTERS: AuditFilters = {
@@ -667,7 +914,8 @@ const EMPTY_FILTERS: AuditFilters = {
   action: "",
   target_type: "",
   actor_sub: "",
-  q: "",
+  ip: "",
+  user_agent: "",
 };
 
 function AuditLogs({
@@ -683,6 +931,7 @@ function AuditLogs({
   const confirm = useConfirm();
   const notify = useNotify();
   const hl = useHighlightStyles();
+  const cellStyles = useFilterStyles();
   const [offset, setOffset] = useState(0);
   const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [goToId, setGoToId] = useState("");
@@ -706,7 +955,8 @@ function AuditLogs({
         action: filters.action || undefined,
         target_type: filters.target_type || undefined,
         actor_sub: filters.actor_sub || undefined,
-        q: filters.q || undefined,
+        ip: filters.ip || undefined,
+        user_agent: filters.user_agent || undefined,
       }),
     [
       offset,
@@ -714,7 +964,8 @@ function AuditLogs({
       filters.action,
       filters.target_type,
       filters.actor_sub,
-      filters.q,
+      filters.ip,
+      filters.user_agent,
       refreshKey,
       pageSize,
     ],
@@ -733,7 +984,8 @@ function AuditLogs({
           action: filters.action || undefined,
           target_type: filters.target_type || undefined,
           actor_sub: filters.actor_sub || undefined,
-          q: filters.q || undefined,
+          ip: filters.ip || undefined,
+          user_agent: filters.user_agent || undefined,
         },
       );
       if (!r.found) {
@@ -761,8 +1013,6 @@ function AuditLogs({
 
   const hasFilters = Object.values(filters).some((v) => v !== "");
   const opts = options.data;
-  const actorLabel = (sub: string) =>
-    opts?.actors.find((a) => a.sub === sub)?.name ?? sub;
   const scopeLabel = (s: string) =>
     s === "admin"
       ? ta("common.admin" as TK)
@@ -854,26 +1104,29 @@ function AuditLogs({
             </Option>
           ))}
         </Dropdown>
-        <Dropdown
-          aria-label={ta("logs.user" as TK)}
-          placeholder={ta("logs.filterUser" as TK)}
-          style={{ minWidth: 170 }}
-          selectedOptions={filters.actor_sub ? [filters.actor_sub] : []}
-          value={filters.actor_sub ? actorLabel(filters.actor_sub) : ""}
-          onOptionSelect={(_, d) => setFilter("actor_sub", d.optionValue ?? "")}
-        >
-          {(opts?.actors ?? []).map((a) => (
-            <Option key={a.sub} value={a.sub} text={a.name}>
-              {a.name}
-            </Option>
-          ))}
-        </Dropdown>
+        <SearchSelect
+          ariaLabel={ta("logs.actor" as TK)}
+          placeholder={ta("logs.filterActor" as TK)}
+          value={filters.actor_sub}
+          options={(opts?.actors ?? []).map((a) => ({
+            value: a.sub,
+            label: a.name,
+          }))}
+          onChange={(v) => setFilter("actor_sub", v)}
+        />
         <Input
-          aria-label={ta("logs.filterSearch" as TK)}
-          placeholder={ta("logs.filterSearch" as TK)}
-          value={filters.q}
-          style={{ minWidth: 160 }}
-          onChange={(_, d) => setFilter("q", d.value)}
+          aria-label={ta("logs.ip" as TK)}
+          placeholder={ta("logs.filterIp" as TK)}
+          value={filters.ip}
+          style={{ minWidth: 130 }}
+          onChange={(_, d) => setFilter("ip", d.value)}
+        />
+        <Input
+          aria-label={ta("logs.userAgent" as TK)}
+          placeholder={ta("logs.filterUa" as TK)}
+          value={filters.user_agent}
+          style={{ minWidth: 150 }}
+          onChange={(_, d) => setFilter("user_agent", d.value)}
         />
         <Input
           aria-label={ta("logs.goToId" as TK)}
@@ -945,37 +1198,95 @@ function AuditLogs({
                   <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                     {formatDate(a.ts)}
                   </TableCell>
-                  <TableCell>{a.actor_name ?? a.actor_sub ?? "—"}</TableCell>
                   <TableCell>
-                    <Badge
-                      appearance="tint"
-                      color={
-                        a.scope === "admin"
-                          ? "brand"
-                          : a.scope === "system"
-                            ? "warning"
-                            : "informative"
-                      }
-                    >
-                      {scopeLabel(a.scope)}
-                    </Badge>
+                    {a.actor_sub ? (
+                      <button
+                        type="button"
+                        className={cellStyles.clickable}
+                        title={ta("logs.clickToFilter" as TK)}
+                        onClick={() => setFilter("actor_sub", a.actor_sub ?? "")}
+                      >
+                        {a.actor_name ?? a.actor_sub}
+                      </button>
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
-                  <TableCell>{a.action}</TableCell>
                   <TableCell>
-                    {a.target_type
-                      ? `${a.target_type}#${a.target_id ?? ""}`
-                      : "—"}
+                    <button
+                      type="button"
+                      className={cellStyles.clickable}
+                      title={ta("logs.clickToFilter" as TK)}
+                      onClick={() => setFilter("scope", a.scope)}
+                    >
+                      <Badge
+                        appearance="tint"
+                        style={{ cursor: "pointer" }}
+                        color={
+                          a.scope === "admin"
+                            ? "brand"
+                            : a.scope === "system"
+                              ? "warning"
+                              : "informative"
+                        }
+                      >
+                        {scopeLabel(a.scope)}
+                      </Badge>
+                    </button>
+                  </TableCell>
+                  <TableCell>
+                    <button
+                      type="button"
+                      className={cellStyles.clickable}
+                      title={ta("logs.clickToFilter" as TK)}
+                      onClick={() => setFilter("action", a.action)}
+                    >
+                      {a.action}
+                    </button>
+                  </TableCell>
+                  <TableCell>
+                    {a.target_type ? (
+                      <button
+                        type="button"
+                        className={cellStyles.clickable}
+                        title={ta("logs.clickToFilter" as TK)}
+                        onClick={() => setFilter("target_type", a.target_type ?? "")}
+                      >
+                        {`${a.target_type}#${a.target_id ?? ""}`}
+                      </button>
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
                   <TableCell style={{ maxWidth: 280 }}>
                     <DetailCell detail={a.detail} />
                   </TableCell>
-                  <TableCell>{a.ip ?? "—"}</TableCell>
+                  <TableCell>
+                    {a.ip ? (
+                      <button
+                        type="button"
+                        className={cellStyles.clickable}
+                        title={ta("logs.clickToFilter" as TK)}
+                        onClick={() => setFilter("ip", a.ip ?? "")}
+                      >
+                        {a.ip}
+                      </button>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
                   <TableCell>
                     {a.user_agent ? (
                       <Tooltip content={a.user_agent} relationship="label" positioning="above">
-                        <Text size={200} style={{ color: tokens.colorNeutralForeground3, cursor: "default" }}>
+                        <button
+                          type="button"
+                          className={cellStyles.clickable}
+                          title={ta("logs.clickToFilter" as TK)}
+                          onClick={() => setFilter("user_agent", a.user_agent ?? "")}
+                          style={{ color: tokens.colorNeutralForeground3 }}
+                        >
                           {a.user_agent.length > 20 ? `${a.user_agent.slice(0, 20)}…` : a.user_agent}
-                        </Text>
+                        </button>
                       </Tooltip>
                     ) : "—"}
                   </TableCell>

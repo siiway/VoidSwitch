@@ -749,3 +749,80 @@ async def test_log_cleanup_prunes_heatmap_rollups(db, seeded):
     # Reset cache so other tests see defaults again.
     async with db.session() as session:
         await settings_store.update(session, {"heatmap_retention_days": 365})
+
+
+# --------------------------------------------------------------------------- #
+# Log filters: request status class / exact / provider / model, and audit
+# ip / user-agent substring + glob matching.
+# --------------------------------------------------------------------------- #
+
+
+async def test_request_log_filters_and_options(client, db, seeded):
+    from voidswitch.models.db import RequestLog
+
+    async with db.session() as session:
+        session.add(
+            RequestLog(
+                user_sub="user-1", token_id=1, model="gpt-4o",
+                provider_name="openai", status_code=200, success=True,
+            )
+        )
+        session.add(
+            RequestLog(
+                user_sub="user-1", token_id=1, model="deepseek-chat",
+                provider_name="deepseek", status_code=404, success=False,
+            )
+        )
+        session.add(
+            RequestLog(
+                user_sub="user-1", token_id=1, model="deepseek-chat",
+                provider_name="deepseek", status_code=429, success=False,
+            )
+        )
+
+    async def items(**params):
+        r = await client.get(
+            "/api/admin/logs/requests", headers=_session_headers(), params=params
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["items"]
+
+    # A status *class* matches the whole range.
+    assert {i["status_code"] for i in await items(status_code="4xx")} == {404, 429}
+    # An exact status matches just that code.
+    assert {i["status_code"] for i in await items(status_code="404")} == {404}
+    # Provider + model are exact filters.
+    only_openai = await items(provider="openai")
+    assert all(i["provider_name"] == "openai" for i in only_openai)
+    assert len(only_openai) == 1
+    assert all(i["model"] == "deepseek-chat" for i in await items(model="deepseek-chat"))
+
+    # The filter-options endpoint lists the distinct values present.
+    r = await client.get("/api/admin/logs/requests/filters", headers=_session_headers())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {"gpt-4o", "deepseek-chat"} <= set(body["models"])
+    assert {"openai", "deepseek"} <= set(body["providers"])
+    assert any(a["sub"] == "user-1" for a in body["users"])
+
+
+async def test_audit_ip_ua_substring_and_glob(client, db, seeded):
+    from voidswitch.models.db import AuditLog
+
+    async with db.session() as session:
+        session.add(
+            AuditLog(action="x.a", scope="admin", ip="10.0.0.1", user_agent="Mozilla/5.0 Chrome")
+        )
+        session.add(
+            AuditLog(action="x.b", scope="admin", ip="192.168.1.5", user_agent="curl/8.0")
+        )
+
+    # Glob on IP (prefix).
+    by_ip = await _audit_items(client, ip="10.0.*")
+    assert by_ip and all(i["ip"].startswith("10.0.") for i in by_ip)
+    # Plain substring on UA.
+    by_ua = await _audit_items(client, user_agent="Chrome")
+    assert by_ua and all("Chrome" in i["user_agent"] for i in by_ua)
+    # Glob on UA.
+    curl = await _audit_items(client, user_agent="curl/*")
+    assert curl and all(i["user_agent"].startswith("curl/") for i in curl)

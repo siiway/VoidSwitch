@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.core.audit import AuditAction, record_audit
@@ -26,11 +28,58 @@ from voidswitch.models.schemas import (
     AuditFilterOptions,
     AuditLogOut,
     Page,
+    RequestFilterOptions,
     RequestLogDetail,
     RequestLogOut,
+    TokenRef,
 )
 
 router = APIRouter(prefix="/api/admin/logs", tags=["admin:logs"])
+
+
+def _text_match(column: Any, q: str) -> ColumnElement:
+    """Case-insensitive filter for a free-text field.
+
+    Plain input is a substring match (``%q%``). When the query contains glob
+    wildcards it is treated as an ``fnmatch``-style pattern: ``*`` matches any run
+    of characters and ``?`` matches a single one. The LIKE metacharacters (``%``,
+    ``_``) and the escape char are escaped first so only ``*`` / ``?`` are special.
+    """
+    if "*" in q or "?" in q:
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = escaped.replace("*", "%").replace("?", "_")
+        return column.ilike(pattern, escape="\\")
+    return column.ilike(f"%{q}%")
+
+
+def _audit_filters(
+    *,
+    action: str | None,
+    scope: str | None,
+    actor_sub: str | None,
+    target_type: str | None,
+    ip: str | None,
+    user_agent: str | None,
+) -> list[ColumnElement]:
+    """Shared WHERE clauses for the audit list and locate endpoints.
+
+    Exact-match on the enumerable columns (populated from the filter-options
+    dropdowns), substring/glob match on the free-text IP and user-agent.
+    """
+    clauses: list[ColumnElement] = []
+    if action:
+        clauses.append(AuditLog.action == action)
+    if scope:
+        clauses.append(AuditLog.scope == scope)
+    if actor_sub:
+        clauses.append(AuditLog.actor_sub == actor_sub)
+    if target_type:
+        clauses.append(AuditLog.target_type == target_type)
+    if ip:
+        clauses.append(_text_match(AuditLog.ip, ip))
+    if user_agent:
+        clauses.append(_text_match(AuditLog.user_agent, user_agent))
+    return clauses
 
 
 @router.get("/audit", response_model=Page[AuditLogOut])
@@ -41,25 +90,24 @@ async def audit_logs(
     scope: str | None = Query(default=None, description="Filter by scope, e.g. 'admin'."),
     actor_sub: str | None = Query(default=None, description="Filter by the actor's subject."),
     target_type: str | None = Query(default=None, description="Filter by target resource type."),
-    q: str | None = Query(default=None, description="Free-text match on the actor's name."),
+    ip: str | None = Query(default=None, description="Substring/glob match on the actor IP."),
+    user_agent: str | None = Query(
+        default=None, description="Substring/glob match on the user-agent."
+    ),
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
 ) -> Page[AuditLogOut]:
     stmt = select(AuditLog).order_by(AuditLog.id.desc())
     count_stmt = select(func.count(AuditLog.id))
 
-    filters = []
-    if action:
-        filters.append(AuditLog.action == action)
-    if scope:
-        filters.append(AuditLog.scope == scope)
-    if actor_sub:
-        filters.append(AuditLog.actor_sub == actor_sub)
-    if target_type:
-        filters.append(AuditLog.target_type == target_type)
-    if q:
-        filters.append(AuditLog.actor_name.ilike(f"%{q}%"))
-    for clause in filters:
+    for clause in _audit_filters(
+        action=action,
+        scope=scope,
+        actor_sub=actor_sub,
+        target_type=target_type,
+        ip=ip,
+        user_agent=user_agent,
+    ):
         stmt = stmt.where(clause)
         count_stmt = count_stmt.where(clause)
 
@@ -85,7 +133,8 @@ async def audit_locate(
     scope: str | None = Query(default=None),
     actor_sub: str | None = Query(default=None),
     target_type: str | None = Query(default=None),
-    q: str | None = Query(default=None),
+    ip: str | None = Query(default=None),
+    user_agent: str | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
 ) -> dict[str, object]:
@@ -95,17 +144,14 @@ async def audit_locate(
     matching rows with a larger id. Gap-safe (survives deletions) — used by the
     dashboard's "jump to id" so it lands on the right page regardless of order.
     """
-    filters = []
-    if action:
-        filters.append(AuditLog.action == action)
-    if scope:
-        filters.append(AuditLog.scope == scope)
-    if actor_sub:
-        filters.append(AuditLog.actor_sub == actor_sub)
-    if target_type:
-        filters.append(AuditLog.target_type == target_type)
-    if q:
-        filters.append(AuditLog.actor_name.ilike(f"%{q}%"))
+    filters = _audit_filters(
+        action=action,
+        scope=scope,
+        actor_sub=actor_sub,
+        target_type=target_type,
+        ip=ip,
+        user_agent=user_agent,
+    )
 
     exists_stmt = select(func.count(AuditLog.id)).where(AuditLog.id == id)
     before_stmt = select(func.count(AuditLog.id)).where(AuditLog.id > id)
@@ -205,9 +251,38 @@ async def reveal_audit_sensitive(
     return {"id": audit_id, "action": entry.action, "sensitive": payload}
 
 
-def _request_log_filters(user: User, success: bool | None, model: str | None, q: str | None):
-    """Shared WHERE clauses for the request-log list and locate endpoints."""
-    clauses = []
+def _status_clause(status_code: str) -> ColumnElement | None:
+    """Turn a status filter into a clause.
+
+    ``"404"`` → exactly 404; ``"4xx"`` (or a bare ``"4"`` the frontend expands to
+    ``4xx``) → the whole 400-499 class. Anything else is ignored.
+    """
+    s = status_code.strip().lower()
+    cls = re.fullmatch(r"([1-5])xx", s)
+    if cls:
+        n = int(cls.group(1))
+        return (RequestLog.status_code >= n * 100) & (RequestLog.status_code < (n + 1) * 100)
+    if s.isdigit():
+        return RequestLog.status_code == int(s)
+    return None
+
+
+def _request_log_filters(
+    user: User,
+    *,
+    success: bool | None = None,
+    model: str | None = None,
+    user_sub: str | None = None,
+    token_id: int | None = None,
+    provider: str | None = None,
+    status_code: str | None = None,
+) -> list[ColumnElement]:
+    """Shared WHERE clauses for the request-log list and locate endpoints.
+
+    Model / user / token / provider are exact matches (chosen from the filter
+    dropdowns); ``status_code`` accepts an exact code or an ``Nxx`` class.
+    """
+    clauses: list[ColumnElement] = []
     if not is_staff(user):
         # Members may browse the request log, but only their own traffic.
         clauses.append(RequestLog.user_sub == user.sub)
@@ -215,14 +290,16 @@ def _request_log_filters(user: User, success: bool | None, model: str | None, q:
         clauses.append(RequestLog.success.is_(success))
     if model:
         clauses.append(RequestLog.model == model)
-    if q:
-        like = f"%{q}%"
-        clauses.append(
-            RequestLog.model.ilike(like)
-            | RequestLog.user_sub.ilike(like)
-            | RequestLog.provider_name.ilike(like)
-            | RequestLog.error.ilike(like)
-        )
+    if user_sub:
+        clauses.append(RequestLog.user_sub == user_sub)
+    if token_id is not None:
+        clauses.append(RequestLog.token_id == token_id)
+    if provider:
+        clauses.append(RequestLog.provider_name == provider)
+    if status_code:
+        clause = _status_clause(status_code)
+        if clause is not None:
+            clauses.append(clause)
     return clauses
 
 
@@ -232,13 +309,26 @@ async def request_logs(
     offset: int = Query(default=0, ge=0),
     success: bool | None = None,
     model: str | None = None,
-    q: str | None = Query(default=None, description="Free-text match on model/user/provider."),
+    user_sub: str | None = Query(default=None, description="Filter by exact caller subject."),
+    token_id: int | None = Query(default=None, description="Filter by exact Void-Token id."),
+    provider: str | None = Query(default=None, description="Filter by exact provider name."),
+    status_code: str | None = Query(
+        default=None, description="Exact status code (e.g. 404) or a class (e.g. 4xx)."
+    ),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> Page[RequestLogOut]:
     stmt = select(RequestLog).order_by(RequestLog.id.desc())
     count_stmt = select(func.count(RequestLog.id))
-    for clause in _request_log_filters(user, success, model, q):
+    for clause in _request_log_filters(
+        user,
+        success=success,
+        model=model,
+        user_sub=user_sub,
+        token_id=token_id,
+        provider=provider,
+        status_code=status_code,
+    ):
         stmt = stmt.where(clause)
         count_stmt = count_stmt.where(clause)
     total = (await session.execute(count_stmt)).scalar_one()
@@ -284,12 +374,23 @@ async def request_locate(
     id: int = Query(..., ge=1, description="Request log id to locate."),
     success: bool | None = None,
     model: str | None = None,
-    q: str | None = Query(default=None),
+    user_sub: str | None = Query(default=None),
+    token_id: int | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    status_code: str | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> dict[str, object]:
     """Zero-based offset of request log ``id`` under the given filters (id desc)."""
-    clauses = _request_log_filters(user, success, model, q)
+    clauses = _request_log_filters(
+        user,
+        success=success,
+        model=model,
+        user_sub=user_sub,
+        token_id=token_id,
+        provider=provider,
+        status_code=status_code,
+    )
     exists_stmt = select(func.count(RequestLog.id)).where(RequestLog.id == id)
     before_stmt = select(func.count(RequestLog.id)).where(RequestLog.id > id)
     for clause in clauses:
@@ -298,6 +399,72 @@ async def request_locate(
     found = (await session.execute(exists_stmt)).scalar_one() > 0
     offset = int((await session.execute(before_stmt)).scalar_one())
     return {"id": id, "offset": offset, "found": found}
+
+
+@router.get("/requests/filters", response_model=RequestFilterOptions)
+async def request_filter_options(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> RequestFilterOptions:
+    """Distinct values present in the request log, to drive the UI filters.
+
+    Scoped to the caller's own traffic for members (mirroring the log list), so a
+    member never learns which models/tokens/users exist beyond their own.
+    """
+    scope: list[ColumnElement] = []
+    if not is_staff(user):
+        scope.append(RequestLog.user_sub == user.sub)
+
+    def _distinct(column: Any):
+        stmt = select(column).where(column.is_not(None)).distinct()
+        for clause in scope:
+            stmt = stmt.where(clause)
+        return stmt
+
+    models = sorted(
+        {m for m in (await session.execute(_distinct(RequestLog.model))).scalars().all() if m}
+    )
+    providers = sorted(
+        {
+            p
+            for p in (await session.execute(_distinct(RequestLog.provider_name))).scalars().all()
+            if p
+        }
+    )
+    subs = {
+        s for s in (await session.execute(_distinct(RequestLog.user_sub))).scalars().all() if s
+    }
+    token_ids = {
+        tid
+        for tid in (await session.execute(_distinct(RequestLog.token_id))).scalars().all()
+        if tid is not None
+    }
+
+    # Resolve human-friendly labels; fall back to the raw id for deleted rows.
+    users: list[AuditActor] = []
+    if subs:
+        resolved: dict[str, str] = {}
+        for u in (await session.execute(select(User).where(User.sub.in_(subs)))).scalars().all():
+            label = u.username or u.name or u.email or u.sub
+            resolved[u.sub] = f"{label}#{u.id}"
+        users = [AuditActor(sub=s, name=resolved.get(s, s)) for s in subs]
+        users.sort(key=lambda a: a.name.lower())
+
+    tokens: list[TokenRef] = []
+    if token_ids:
+        resolved_tokens: dict[int, str] = {}
+        for tid, tname in (
+            await session.execute(
+                select(VoidToken.id, VoidToken.name).where(VoidToken.id.in_(token_ids))
+            )
+        ).all():
+            resolved_tokens[tid] = tname
+        tokens = [TokenRef(id=tid, name=resolved_tokens.get(tid, f"#{tid}")) for tid in token_ids]
+        tokens.sort(key=lambda tk: tk.name.lower())
+
+    return RequestFilterOptions(
+        models=models, providers=providers, users=users, tokens=tokens
+    )
 
 
 def _redact_key_preview(preview: str | None) -> str | None:

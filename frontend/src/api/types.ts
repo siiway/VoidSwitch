@@ -249,6 +249,18 @@ export interface AuditFilterOptions {
   actors: AuditActor[];
 }
 
+export interface TokenRef {
+  id: number;
+  name: string;
+}
+
+export interface RequestFilterOptions {
+  models: string[];
+  providers: string[];
+  users: AuditActor[];
+  tokens: TokenRef[];
+}
+
 export interface RequestLog {
   id: number;
   ts: string;
