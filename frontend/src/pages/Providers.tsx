@@ -29,7 +29,9 @@ import {
   ArrowLeftRegular,
   ArrowRightRegular,
   ArrowSwapRegular,
+  CheckmarkCircleFilled,
   DeleteRegular,
+  DismissCircleFilled,
   EditRegular,
   KeyRegular,
   ShieldKeyholeRegular,
@@ -507,40 +509,56 @@ export function Providers() {
                       }
                       relationship="label"
                     >
-                      <button
-                        type="button"
+                      <Button
+                        size="small"
+                        appearance="subtle"
                         onClick={() => toggleEnabled(p)}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          padding: 0,
-                          cursor: "pointer",
-                        }}
                         aria-label={
                           p.enabled
                             ? t("providers.clickToDisable" as TK)
                             : t("providers.clickToEnable" as TK)
                         }
-                      >
-                        <Badge
-                          color={p.enabled ? "success" : "subtle"}
-                          appearance="filled"
-                        >
-                          {p.enabled
-                            ? t("providers.enabled" as TK)
-                            : t("providers.disabled" as TK)}
-                        </Badge>
-                      </button>
+                        icon={
+                          p.enabled ? (
+                            <CheckmarkCircleFilled
+                              style={{ color: tokens.colorPaletteGreenForeground1 }}
+                            />
+                          ) : (
+                            <DismissCircleFilled
+                              style={{ color: tokens.colorPaletteRedForeground1 }}
+                            />
+                          )
+                        }
+                      />
                     </Tooltip>
                   ) : (
-                    <Badge
-                      color={p.enabled ? "success" : "subtle"}
-                      appearance="filled"
+                    <Tooltip
+                      content={
+                        p.enabled
+                          ? t("providers.enabled" as TK)
+                          : t("providers.disabled" as TK)
+                      }
+                      relationship="label"
                     >
-                      {p.enabled
-                        ? t("providers.enabled" as TK)
-                        : t("providers.disabled" as TK)}
-                    </Badge>
+                      <span
+                        style={{ display: "inline-flex" }}
+                        aria-label={
+                          p.enabled
+                            ? t("providers.enabled" as TK)
+                            : t("providers.disabled" as TK)
+                        }
+                      >
+                        {p.enabled ? (
+                          <CheckmarkCircleFilled
+                            style={{ color: tokens.colorPaletteGreenForeground1 }}
+                          />
+                        ) : (
+                          <DismissCircleFilled
+                            style={{ color: tokens.colorPaletteRedForeground1 }}
+                          />
+                        )}
+                      </span>
+                    </Tooltip>
                   )}
                 </TableCell>
                 <TableCell>

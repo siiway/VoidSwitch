@@ -32,10 +32,12 @@ import {
   ArrowSyncRegular,
   ArrowUploadRegular,
   ArrowDownloadRegular,
+  CheckmarkCircleRegular,
   DeleteRegular,
   EditRegular,
   EyeRegular,
   PersonRegular,
+  ProhibitedRegular,
   ReOrderDotsVerticalRegular,
 } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
@@ -1035,41 +1037,63 @@ export function ProviderKeys() {
                 </TableCell>
                 <TableCell>
                   {isOwner && (
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<EyeRegular />}
-                      disabled={revealBusy}
-                      onClick={() => reveal(k)}
-                    >
-                      {t("common.reveal" as TK)}
-                    </Button>
+                    <Tooltip content={t("common.reveal" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<EyeRegular />}
+                        disabled={revealBusy}
+                        onClick={() => reveal(k)}
+                        aria-label={t("common.reveal" as TK)}
+                      />
+                    </Tooltip>
                   )}
                   {canManage(k) ? (
                     <>
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<EditRegular />}
-                        onClick={() => openEdit(k)}
+                      <Tooltip content={t("common.edit" as TK)} relationship="label">
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<EditRegular />}
+                          onClick={() => openEdit(k)}
+                          aria-label={t("common.edit" as TK)}
+                        />
+                      </Tooltip>
+                      <Tooltip
+                        content={
+                          k.status === "active"
+                            ? t("common.disable" as TK)
+                            : t("common.enable" as TK)
+                        }
+                        relationship="label"
                       >
-                        {t("common.edit" as TK)}
-                      </Button>
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        onClick={() => toggle(k)}
-                      >
-                        {k.status === "active"
-                          ? t("common.disable" as TK)
-                          : t("common.enable" as TK)}
-                      </Button>
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<DeleteRegular />}
-                        onClick={() => remove(k)}
-                      />
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={
+                            k.status === "active" ? (
+                              <ProhibitedRegular />
+                            ) : (
+                              <CheckmarkCircleRegular />
+                            )
+                          }
+                          onClick={() => toggle(k)}
+                          aria-label={
+                            k.status === "active"
+                              ? t("common.disable" as TK)
+                              : t("common.enable" as TK)
+                          }
+                        />
+                      </Tooltip>
+                      <Tooltip content={t("common.delete" as TK)} relationship="label">
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          icon={<DeleteRegular />}
+                          onClick={() => remove(k)}
+                          aria-label={t("common.delete" as TK)}
+                        />
+                      </Tooltip>
                     </>
                   ) : (
                     !isOwner && (
