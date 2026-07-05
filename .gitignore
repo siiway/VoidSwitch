@@ -14,3 +14,6 @@ dist/
 .DS_Store
 backend/config.yaml
 .env
+.direnv/
+result
+.omo/
