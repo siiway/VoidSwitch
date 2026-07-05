@@ -5,19 +5,19 @@ VoidSwitch as a first-class provider and reproduces the **full Claude Code reque
 surface** end-to-end — so OpenCode driving a VoidSwitch `claude-code` upstream
 behaves like the real CLI, **efforts and all**.
 
-| Capability | How it reaches the wire |
-| --- | --- |
-| **Auth** | Paste a `vs-…` token (stored by OpenCode, sent as `x-api-key`) |
-| **Models** | Pulled live from `GET <gateway>/v1/models` |
-| **Effort** | `output_config.effort` ∈ `low · medium · high · xhigh · max` |
-| **ultracode** | Picker variant → `xhigh` effort |
-| **Fast mode** (`/fast`) | Top-level `speed: "fast"` |
-| **Adaptive thinking** | `thinking: { type: "adaptive" }` on 4.6+ models |
-| **Surfaced thinking** | `thinking.display: "summarized"` on Opus 4.7/4.8 |
-| **Task budgets** | `output_config.task_budget` — cumulative agentic loop budget |
-| **Context management** | `context_management` — server-side long-session editing |
-| **1M context** | `context-1m-2025-08-07` — auto-enabled on large prompts |
-| **Betas** | `effort-`, `fast-mode-`, `interleaved-thinking-`, `task-budgets-`, `context-management-`, `context-1m-` unioned onto the request |
+| Capability              | How it reaches the wire                                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| **Auth**                | Paste a `vs-…` token (stored by OpenCode, sent as `x-api-key`)                                                                   |
+| **Models**              | Pulled live from `GET <gateway>/v1/models`                                                                                       |
+| **Effort**              | `output_config.effort` ∈ `low · medium · high · xhigh · max`                                                                     |
+| **ultracode**           | Picker variant → `xhigh` effort                                                                                                  |
+| **Fast mode** (`/fast`) | Top-level `speed: "fast"`                                                                                                        |
+| **Adaptive thinking**   | `thinking: { type: "adaptive" }` on 4.6+ models                                                                                  |
+| **Surfaced thinking**   | `thinking.display: "summarized"` on Opus 4.7/4.8                                                                                 |
+| **Task budgets**        | `output_config.task_budget` — cumulative agentic loop budget                                                                     |
+| **Context management**  | `context_management` — server-side long-session editing                                                                          |
+| **1M context**          | `context-1m-2025-08-07` — auto-enabled on large prompts                                                                          |
+| **Betas**               | `effort-`, `fast-mode-`, `interleaved-thinking-`, `task-budgets-`, `context-management-`, `context-1m-` unioned onto the request |
 
 Every wire detail (the `output_config.effort` enum, the top-level `speed` field,
 the beta tokens, the per-model effort gating) is taken verbatim from the Claude
@@ -64,6 +64,48 @@ For local development against a checkout, point at the directory instead:
 { "plugin": [["./opencode-plugin", { "url": "http://localhost:8080" }]] }
 ```
 
+### Nix Flakes
+
+The repository provides a `opencode-voidswitch` package via its flake. Add it as
+an input in your flake and reference the store path:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    voidswitch.url = "github:siiway/voidswitch";
+  };
+
+  outputs = { self, nixpkgs, voidswitch, ... }: {
+    # Refer to the plugin directory:
+    #   voidswitch.packages.${system}.opencode-voidswitch
+  };
+}
+```
+
+In `opencode.json`, point to the Nix store path:
+
+```jsonc
+{
+  "plugin": [
+    ["/nix/store/...-opencode-voidswitch-0.1.0", { "url": "https://your-voidswitch-host" }]
+  ]
+}
+```
+
+Or resolve the path dynamically at build time:
+
+```jsonc
+{
+  "plugin": [
+    ["${voidswitch.packages.${system}.opencode-voidswitch}", { "url": "https://your-voidswitch-host" }]
+  ]
+}
+```
+
+> The package ships only TypeScript source — no build step.
+> `@opencode-ai/plugin` is a peer dependency resolved by OpenCode at runtime.
+
 Then authenticate once:
 
 ```
@@ -75,16 +117,16 @@ The gateway URL may also come from `$VOIDSWITCH_URL` (default
 
 ## Plugin options
 
-| Option | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `url` | string | `$VOIDSWITCH_URL` / `http://localhost:8080` | Gateway base URL |
-| `effort` | `low\|medium\|high\|xhigh\|max\|ultracode\|default` | `default` | Effort used when no picker variant is chosen (`default` = let the model decide) |
-| `thinking` | boolean | `true` | Enable adaptive extended thinking on 4.6+ models |
-| `thinkingDisplay` | `summarized\|omitted` | `summarized` | Surface thinking text on Opus 4.7/4.8 |
-| `fast` | boolean | `false` | Force fast mode on every request |
-| `context1m` | `boolean\|"auto"` | `auto` | 1M context: `true` always, `false` never, `auto` = enable on large prompts (~150k tokens) |
-| `contextManagement` | boolean | `false` | Server-side context management (auto-clears old thinking blocks for long sessions) |
-| `taskBudget` | number | — | Cumulative agentic token budget for the loop (min 20000) |
+| Option              | Type                                                | Default                                     | Meaning                                                                                   |
+| ------------------- | --------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `url`               | string                                              | `$VOIDSWITCH_URL` / `http://localhost:8080` | Gateway base URL                                                                          |
+| `effort`            | `low\|medium\|high\|xhigh\|max\|ultracode\|default` | `default`                                   | Effort used when no picker variant is chosen (`default` = let the model decide)           |
+| `thinking`          | boolean                                             | `true`                                      | Enable adaptive extended thinking on 4.6+ models                                          |
+| `thinkingDisplay`   | `summarized\|omitted`                               | `summarized`                                | Surface thinking text on Opus 4.7/4.8                                                     |
+| `fast`              | boolean                                             | `false`                                     | Force fast mode on every request                                                          |
+| `context1m`         | `boolean\|"auto"`                                   | `auto`                                      | 1M context: `true` always, `false` never, `auto` = enable on large prompts (~150k tokens) |
+| `contextManagement` | boolean                                             | `false`                                     | Server-side context management (auto-clears old thinking blocks for long sessions)        |
+| `taskBudget`        | number                                              | —                                           | Cumulative agentic token budget for the loop (min 20000)                                  |
 
 ## Choosing effort per request
 
@@ -148,14 +190,14 @@ applied to DeepSeek.)
 The plugin also registers Claude Code-style slash commands that set the effort/mode
 for the rest of the session:
 
-| Command | Effect |
-| --- | --- |
-| `/effort high` (or `low\|medium\|xhigh\|max\|ultracode\|auto`) | Sets the session effort |
-| `/effort xhigh <prompt>` | Sets effort **and** runs the prompt in one shot |
-| `/effort auto` | Clears the override (model decides) |
-| `/fast` · `/fast off` | Turns fast mode on / off for the session |
-| `/ultracode` | xhigh effort for the session |
-| `/sync-models` | Refresh the platform's available-model list from the gateway (then reopen the model picker) |
+| Command                                                        | Effect                                                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `/effort high` (or `low\|medium\|xhigh\|max\|ultracode\|auto`) | Sets the session effort                                                                     |
+| `/effort xhigh <prompt>`                                       | Sets effort **and** runs the prompt in one shot                                             |
+| `/effort auto`                                                 | Clears the override (model decides)                                                         |
+| `/fast` · `/fast off`                                          | Turns fast mode on / off for the session                                                    |
+| `/ultracode`                                                   | xhigh effort for the session                                                                |
+| `/sync-models`                                                 | Refresh the platform's available-model list from the gateway (then reopen the model picker) |
 
 Precedence: a per-turn model-variant pick (e.g. `…:low`) overrides the session
 command, which overrides the `effort` plugin option.
