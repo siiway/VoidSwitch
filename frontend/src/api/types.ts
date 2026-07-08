@@ -416,8 +416,26 @@ export interface AdapterMeta {
 
 export interface SystemInfo {
   version: string;
+  commit?: string | null;
   adapters: AdapterMeta[];
   tasks: TaskStatus[];
+}
+
+export interface AuthConfig {
+  configured: boolean;
+  dev_mode: boolean;
+  issuer: string;
+  version: string;
+  commit?: string | null;
+}
+
+export interface LoginTokenStatus {
+  enabled: boolean;
+  prefix?: string | null;
+}
+
+export interface LoginTokenWithSecret extends LoginTokenStatus {
+  token: string;
 }
 
 export interface TaskStatus {

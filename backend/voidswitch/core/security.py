@@ -15,6 +15,9 @@ VOID_TOKEN_PREFIX = "vs-"
 # Per-provider key-management API credential. A distinct prefix keeps it visually
 # separable from client-facing Void-Tokens (``vs-…``).
 PROVIDER_KEY_API_PREFIX = "vsk-"
+# Emergency dashboard login credential. Staff users can keep one as a fallback
+# when Prism/OAuth is temporarily unreachable.
+LOGIN_TOKEN_PREFIX = "vsl-"
 
 
 def generate_void_token() -> str:
@@ -25,6 +28,11 @@ def generate_void_token() -> str:
 def generate_provider_api_token() -> str:
     """A high-entropy per-provider key-management token (``vsk-…``)."""
     return f"{PROVIDER_KEY_API_PREFIX}{secrets.token_urlsafe(32)}"
+
+
+def generate_login_token() -> str:
+    """A high-entropy dashboard login token (``vsl-…``), shown only once."""
+    return f"{LOGIN_TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
 
 
 def hash_token(token: str) -> str:

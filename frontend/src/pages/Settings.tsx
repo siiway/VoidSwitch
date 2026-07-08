@@ -12,6 +12,7 @@ import { BroomRegular } from "@fluentui/react-icons";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
+import type { LoginTokenStatus, LoginTokenWithSecret } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import type { Translations } from "../i18n/locales/en";
 import {
@@ -121,9 +122,14 @@ export function Settings() {
   const loaded = useAsync<SettingsResponse>(() =>
     api.get("/api/admin/settings"),
   );
+  const loginToken = useAsync<LoginTokenStatus>(() =>
+    api.get("/api/me/login-token"),
+  );
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
   const [cleaning, setCleaning] = useState(false);
+  const [rotatingLoginToken, setRotatingLoginToken] = useState(false);
+  const [newLoginToken, setNewLoginToken] = useState<string | null>(null);
 
   useEffect(() => {
     if (loaded.data) setValues(loaded.data.values);
@@ -184,6 +190,32 @@ export function Settings() {
       );
     } finally {
       setCleaning(false);
+    }
+  }
+
+  async function rotateLoginToken() {
+    const ok = await confirm({
+      title: t("settings.loginTokenRotateTitle" as TK),
+      message: t("settings.loginTokenRotateMsg" as TK),
+      confirmLabel: t("settings.loginTokenRotate" as TK),
+    });
+    if (!ok) return;
+    setRotatingLoginToken(true);
+    try {
+      const r = await api.post<LoginTokenWithSecret>(
+        "/api/me/login-token/rotate",
+      );
+      setNewLoginToken(r.token);
+      loginToken.reload();
+      notify(t("settings.loginTokenRotated" as TK), undefined, "success");
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setRotatingLoginToken(false);
     }
   }
 
@@ -381,6 +413,53 @@ export function Settings() {
           maxWidth: 560,
         }}
       >
+        <Card
+          style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}
+        >
+          <Text weight="semibold" size={400}>
+            {t("settings.sectionPersonal" as TK)}
+          </Text>
+          {loginToken.loading ? (
+            <Loading />
+          ) : loginToken.error ? (
+            <ErrorText error={loginToken.error} />
+          ) : (
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <div>
+                  <Text block>{t("settings.loginToken" as TK)}</Text>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                    {loginToken.data?.enabled
+                      ? t("settings.loginTokenEnabled" as TK).replace(
+                          "{prefix}",
+                          loginToken.data.prefix ?? "",
+                        )
+                      : t("settings.loginTokenDisabled" as TK)}
+                  </Text>
+                </div>
+                <Button disabled={rotatingLoginToken} onClick={rotateLoginToken}>
+                  {t("settings.loginTokenRotate" as TK)}
+                </Button>
+              </div>
+              {newLoginToken ? (
+                <Field label={t("settings.loginTokenNew" as TK)}>
+                  <Input readOnly value={newLoginToken} />
+                </Field>
+              ) : null}
+              <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                {t("settings.loginTokenHint" as TK)}
+              </Text>
+            </>
+          )}
+        </Card>
         {sections.map((section) => {
           const fields = section.keys
             .map((k) => renderField(k))

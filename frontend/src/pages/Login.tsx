@@ -1,6 +1,8 @@
 import {
   Button,
   Divider,
+  Field,
+  Input,
   Spinner,
   Text,
   Tooltip,
@@ -15,24 +17,21 @@ import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { AuthShell } from "../components/AuthShell";
 import { ErrorText } from "../components/ui";
+import type { AuthConfig } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 
 type TK = keyof Translations;
 
-interface AuthConfig {
-  configured: boolean;
-  dev_mode: boolean;
-  issuer: string;
-}
-
 export function Login() {
   const { t } = useTranslation();
-  const { user, loading, login, devLogin } = useAuth();
+  const { user, loading, login, tokenLogin, devLogin } = useAuth();
   const { scheme, toggle } = useTheme();
   const navigate = useNavigate();
   const [config, setConfig] = useState<AuthConfig | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tokenOpen, setTokenOpen] = useState(false);
+  const [loginToken, setLoginToken] = useState("");
 
   useEffect(() => {
     if (!loading && user) navigate("/", { replace: true });
@@ -57,6 +56,23 @@ export function Login() {
       setBusy(false);
     }
   }
+
+  async function handleTokenLogin() {
+    setBusy(true);
+    setError(null);
+    try {
+      await tokenLogin(loginToken);
+      navigate("/", { replace: true });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const version = config
+    ? `VoidSwitch v${config.version}${config.commit ? ` (${config.commit})` : ""}`
+    : "VoidSwitch";
 
   return (
     <AuthShell hideBrand>
@@ -124,9 +140,44 @@ export function Login() {
               </Text>
             </>
           ) : null}
+          {tokenOpen ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <Divider>{t("login.tokenDivider" as TK)}</Divider>
+              <Field label={t("login.tokenLabel" as TK)}>
+                <Input
+                  type="password"
+                  value={loginToken}
+                  disabled={busy}
+                  onChange={(_, d) => setLoginToken(d.value)}
+                />
+              </Field>
+              <Button
+                appearance="outline"
+                disabled={busy || !loginToken.trim()}
+                onClick={handleTokenLogin}
+              >
+                {t("login.tokenSubmit" as TK)}
+              </Button>
+            </div>
+          ) : null}
           {error ? <ErrorText error={error} /> : null}
         </>
       )}
+      <div style={{ textAlign: "center", display: "grid", gap: 4 }}>
+        {!tokenOpen ? (
+          <Button
+            appearance="transparent"
+            size="small"
+            onClick={() => setTokenOpen(true)}
+            style={{ color: tokens.colorNeutralForeground3 }}
+          >
+            {t("login.useToken" as TK)}
+          </Button>
+        ) : null}
+        <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+          {version}
+        </Text>
+      </div>
     </AuthShell>
   );
 }

@@ -96,6 +96,10 @@ const zh: Translations = {
     tryAgain: "重试",
     completing: "正在完成登录…",
     toggleTheme: "切换主题",
+    useToken: "使用登录 token",
+    tokenDivider: "紧急登录",
+    tokenLabel: "登录 token",
+    tokenSubmit: "使用 token 登录",
   },
   dashboard: {
     title: "仪表盘",
@@ -341,6 +345,8 @@ const zh: Translations = {
     noDescription: "无描述",
     editModel: "编辑模型",
     editSelected: "编辑已选（{count}）",
+    selectFiltered: "选择当前筛选结果（{count}）",
+    clearSelection: "清除选择（{count}）",
     modelId: "模型 ID",
     displayName: "显示名称",
     displayNameHint:
@@ -561,6 +567,18 @@ const zh: Translations = {
     sectionLogs: "日志与保留",
     sectionOpencode: "OpenCode 默认值",
     sectionOther: "其他",
+    sectionPersonal: "个人设置",
+    loginToken: "紧急登录 token",
+    loginTokenEnabled: "已启用 · {prefix}",
+    loginTokenDisabled: "尚未生成",
+    loginTokenRotate: "生成 / 轮换",
+    loginTokenRotateTitle: "轮换登录 token",
+    loginTokenRotateMsg:
+      "当前登录 token 将立即失效。新的 token 只显示一次。",
+    loginTokenRotated: "登录 token 已轮换",
+    loginTokenNew: "新的登录 token",
+    loginTokenHint:
+      "仅在 Prism/OAuth 不可用时使用。仅 owner、co-owner 和 admin 账号可用。",
     readOnlyNote: "只读——仅 owner / co-owner 可修改这些系统设置。",
     cleanNow: "立即清理",
     cleaning: "清理中…",

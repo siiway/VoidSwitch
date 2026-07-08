@@ -43,6 +43,19 @@ class SessionOut(BaseModel):
     user: UserOut
 
 
+class LoginTokenIn(BaseModel):
+    token: str
+
+
+class LoginTokenStatus(BaseModel):
+    enabled: bool
+    prefix: str | None = None
+
+
+class LoginTokenWithSecret(LoginTokenStatus):
+    token: str
+
+
 # --------------------------------------------------------------------------- #
 # Providers
 # --------------------------------------------------------------------------- #

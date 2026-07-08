@@ -73,6 +73,8 @@ class User(Base, TimestampMixin):
     # an owner disables the account). A session JWT carries the epoch it was
     # minted at; a mismatch is rejected, forcing a fresh login.
     session_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    login_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    login_token_prefix: Mapped[str | None] = mapped_column(String(32), default=None)
     # Set when an owner disables the account: the user's Void-Tokens are turned
     # off and this flag remembers to turn them back on at the user's next login
     # (after the account is re-enabled), so re-enabling forces a role re-eval.

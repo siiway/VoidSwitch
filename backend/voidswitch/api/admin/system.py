@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 
 from voidswitch import __version__
 from voidswitch.core.auth import require_staff
+from voidswitch.core.version import commit_id
 from voidswitch.models.db import User
 from voidswitch.services.providers.registry import adapter_catalog
 
@@ -20,6 +21,7 @@ async def system_info(
     manager = getattr(request.app.state, "task_manager", None)
     return {
         "version": __version__,
+        "commit": commit_id(),
         "adapters": adapter_catalog(),
         "tasks": manager.status() if manager is not None else [],
     }

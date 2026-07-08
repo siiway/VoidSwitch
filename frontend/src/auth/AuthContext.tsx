@@ -22,6 +22,7 @@ interface AuthState {
   isStaff: boolean;
   isOwner: boolean;
   login: () => void;
+  tokenLogin: (token: string) => Promise<void>;
   devLogin: () => Promise<void>;
   logout: () => void;
   reload: () => Promise<void>;
@@ -64,6 +65,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(session.user);
   }
 
+  async function tokenLogin(token: string) {
+    const session = await api.post<SessionOut>("/api/auth/token-login", { token });
+    setToken(session.access_token);
+    armAnnouncementsPopup();
+    setUser(session.user);
+  }
+
   function logout() {
     clearToken();
     setUser(null);
@@ -77,7 +85,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, isStaff, isOwner, login, devLogin, logout, reload }}
+      value={{
+        user,
+        loading,
+        isStaff,
+        isOwner,
+        login,
+        tokenLogin,
+        devLogin,
+        logout,
+        reload,
+      }}
     >
       {children}
     </AuthContext.Provider>

@@ -311,6 +311,23 @@ export function Models() {
     });
   }
 
+  function toggleFilteredSelection() {
+    const ids = filtered.map((m) => m.model_id);
+    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }
+
+  const filteredSelectedCount = filtered.filter((m) => selected.has(m.model_id)).length;
+  const filteredAllSelected = filtered.length > 0 && filteredSelectedCount === filtered.length;
+  const filteredSomeSelected = filteredSelectedCount > 0 && !filteredAllSelected;
+
   async function sync() {
     setSyncing(true);
     try {
@@ -542,6 +559,17 @@ export function Models() {
       />
 
       <div className={styles.toolbar}>
+        {isStaff ? (
+          <Checkbox
+            checked={filteredSomeSelected ? "mixed" : filteredAllSelected}
+            disabled={filtered.length === 0}
+            onChange={toggleFilteredSelection}
+            label={t("models.selectFiltered" as TK).replace(
+              "{count}",
+              String(filtered.length),
+            )}
+          />
+        ) : null}
         <Dropdown
           aria-label={t("models.searchField" as TK)}
           style={{ minWidth: 130 }}
@@ -573,6 +601,14 @@ export function Models() {
             .replace("{filtered}", String(filtered.length))
             .replace("{total}", String(items.length))}
         </Text>
+        {isStaff && selected.size > 0 ? (
+          <Button size="small" appearance="subtle" onClick={() => setSelected(new Set())}>
+            {t("models.clearSelection" as TK).replace(
+              "{count}",
+              String(selected.size),
+            )}
+          </Button>
+        ) : null}
       </div>
 
       <div className={styles.toolbar}>

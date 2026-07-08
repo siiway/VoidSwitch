@@ -2,25 +2,41 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voidswitch import __version__
 from voidswitch.core import auth
 from voidswitch.core.audit import AuditAction, AuditScope, record_audit
 from voidswitch.core.auth import actor_display_name
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger
-from voidswitch.core.security import create_session_token
+from voidswitch.core.security import create_session_token, hash_token
+from voidswitch.core.version import commit_id
 from voidswitch.models.db import User
-from voidswitch.models.schemas import LoginStart, SessionOut, UserOut
+from voidswitch.models.schemas import LoginStart, LoginTokenIn, SessionOut, UserOut
 from voidswitch.services import settings_store
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 log = get_logger("api.auth")
+
+
+def _session_out(user: User, settings: Settings) -> SessionOut:
+    ttl = settings.server.session_ttl_minutes
+    token = create_session_token(
+        secret=settings.server.secret_key,
+        subject=user.sub,
+        extra={"role": user.role, "name": user.name, "epoch": user.session_epoch},
+        ttl_minutes=ttl,
+    )
+    return SessionOut(access_token=token, expires_in=ttl * 60, user=UserOut.model_validate(user))
 
 
 @router.get("/config")
@@ -28,6 +44,8 @@ async def auth_config(settings: Settings = Depends(get_settings)) -> dict[str, o
     configured = bool(settings.prism.client_id and "your-prism" not in settings.prism.client_id)
     return {
         "configured": configured,
+        "version": __version__,
+        "commit": commit_id(),
         "dev_mode": settings.server.dev_mode,
         "issuer": settings.prism.issuer,
         "login_url": f"{settings.server.base_url.rstrip('/')}/api/auth/login?redirect=1",
@@ -75,14 +93,34 @@ async def dev_login(
         ip=request.client.host if request.client else None,
         scope=AuditScope.SELF.value,
     )
-    ttl = settings.server.session_ttl_minutes
-    token = create_session_token(
-        secret=settings.server.secret_key,
-        subject=user.sub,
-        extra={"role": user.role, "name": user.name, "epoch": user.session_epoch},
-        ttl_minutes=ttl,
+    return _session_out(user, settings)
+
+
+@router.post("/token-login", response_model=SessionOut)
+async def token_login(
+    body: LoginTokenIn,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> SessionOut:
+    raw = body.token.strip()
+    if not raw:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid login token.")
+    user = (
+        await session.execute(select(User).where(User.login_token_hash == hash_token(raw)))
+    ).scalar_one_or_none()
+    if user is None or not user.enabled or not auth.is_staff(user):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid login token.")
+    user.last_login_at = dt.datetime.now(dt.UTC)
+    await record_audit(
+        session,
+        action=AuditAction.AUTH_TOKEN_LOGIN,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        ip=request.client.host if request.client else None,
+        scope=AuditScope.SELF.value,
     )
-    return SessionOut(access_token=token, expires_in=ttl * 60, user=UserOut.model_validate(user))
+    return _session_out(user, settings)
 
 
 @router.get("/login", response_model=None)
@@ -128,18 +166,25 @@ async def callback(
         return RedirectResponse(f"{target}#{params}", status_code=302)
     except Exception as exc:
         detail = getattr(exc, "detail", "") or str(exc) or repr(exc)
-        log.warning("oauth_callback_failed", type=type(exc).__name__, error=detail, detail=detail)
+        request_url = None
+        if isinstance(exc, httpx.HTTPError) and exc.request is not None:
+            request_url = str(exc.request.url)
+        log.warning(
+            "oauth_callback_failed",
+            type=type(exc).__name__,
+            error=detail,
+            detail=detail,
+            cause=repr(exc.__cause__) if exc.__cause__ else None,
+            request_url=request_url,
+            exc_info=True,
+        )
         params = urlencode({"error": "login_failed"})
         return RedirectResponse(f"{target}#{params}", status_code=302)
 
-    ttl = settings.server.session_ttl_minutes
-    token = create_session_token(
-        secret=settings.server.secret_key,
-        subject=user.sub,
-        extra={"role": user.role, "name": user.name, "epoch": user.session_epoch},
-        ttl_minutes=ttl,
+    session_out = _session_out(user, settings)
+    params = urlencode(
+        {"access_token": session_out.access_token, "expires_in": session_out.expires_in}
     )
-    params = urlencode({"access_token": token, "expires_in": ttl * 60})
     return RedirectResponse(f"{target}#{params}", status_code=302)
 
 

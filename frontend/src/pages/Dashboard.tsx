@@ -198,6 +198,7 @@ function StaffDashboard() {
       {system.data ? (
         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           VoidSwitch v{system.data.version}
+          {system.data.commit ? ` (${system.data.commit})` : ""}
         </Text>
       ) : null}
       <HeatmapSection />

@@ -94,6 +94,10 @@ const en = {
     tryAgain: "Try again",
     completing: "Completing sign-in…",
     toggleTheme: "Toggle theme",
+    useToken: "Use login token",
+    tokenDivider: "Emergency login",
+    tokenLabel: "Login token",
+    tokenSubmit: "Sign in with token",
   },
   dashboard: {
     title: "Dashboard",
@@ -347,6 +351,8 @@ const en = {
     noDescription: "No description",
     editModel: "Edit model",
     editSelected: "Edit selected ({count})",
+    selectFiltered: "Select filtered ({count})",
+    clearSelection: "Clear selection ({count})",
     modelId: "Model id",
     displayName: "Display name",
     displayNameHint:
@@ -579,6 +585,18 @@ const en = {
     sectionLogs: "Logs & retention",
     sectionOpencode: "OpenCode defaults",
     sectionOther: "Other",
+    sectionPersonal: "Personal settings",
+    loginToken: "Emergency login token",
+    loginTokenEnabled: "Enabled · {prefix}",
+    loginTokenDisabled: "Not generated",
+    loginTokenRotate: "Generate / rotate",
+    loginTokenRotateTitle: "Rotate login token",
+    loginTokenRotateMsg:
+      "The current login token stops working immediately. The new token is shown only once.",
+    loginTokenRotated: "Login token rotated",
+    loginTokenNew: "New login token",
+    loginTokenHint:
+      "Use this only when Prism/OAuth is unavailable. It is limited to owner, co-owner, and admin accounts.",
     readOnlyNote: "Read-only — only an owner / co-owner can change these settings.",
     cleanNow: "Clean now",
     cleaning: "Cleaning…",

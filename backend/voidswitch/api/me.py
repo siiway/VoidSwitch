@@ -7,16 +7,19 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.core.audit import AuditAction, AuditScope, record_audit
-from voidswitch.core.auth import actor_display_name, get_current_user
+from voidswitch.core.auth import actor_display_name, get_current_user, is_staff
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_session
 from voidswitch.core.security import (
+    generate_login_token,
     generate_void_token,
     hash_token,
     token_fingerprint,
 )
 from voidswitch.models.db import RequestLog, User, VoidToken
 from voidswitch.models.schemas import (
+    LoginTokenStatus,
+    LoginTokenWithSecret,
     UserOut,
     VoidTokenCreate,
     VoidTokenOut,
@@ -27,9 +30,48 @@ from voidswitch.models.schemas import (
 router = APIRouter(prefix="/api/me", tags=["me"])
 
 
+def _require_login_token_user(user: User) -> None:
+    if not is_staff(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Login tokens are only available to staff.")
+
+
 @router.get("", response_model=UserOut)
 async def my_profile(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@router.get("/login-token", response_model=LoginTokenStatus)
+async def my_login_token(user: User = Depends(get_current_user)) -> LoginTokenStatus:
+    _require_login_token_user(user)
+    return LoginTokenStatus(
+        enabled=bool(user.login_token_hash),
+        prefix=user.login_token_prefix,
+    )
+
+
+@router.post("/login-token/rotate", response_model=LoginTokenWithSecret)
+async def rotate_my_login_token(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> LoginTokenWithSecret:
+    _require_login_token_user(user)
+    secret = generate_login_token()
+    user.login_token_hash = hash_token(secret)
+    user.login_token_prefix = token_fingerprint(secret)
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.ME_LOGIN_TOKEN_ROTATE,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="user",
+        target_id=user.id,
+        detail={"prefix": user.login_token_prefix},
+        ip=request.client.host if request.client else None,
+        scope=AuditScope.SELF.value,
+    )
+    return LoginTokenWithSecret(enabled=True, prefix=user.login_token_prefix, token=secret)
 
 
 @router.get("/tokens", response_model=list[VoidTokenOut])

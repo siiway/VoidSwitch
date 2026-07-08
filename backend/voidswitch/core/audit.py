@@ -57,12 +57,14 @@ class AuditAction(StrEnum):
     AUTH_LOGIN = "auth.login"
     AUTH_LOGOUT = "auth.logout"
     AUTH_DEV_LOGIN = "auth.dev_login"
+    AUTH_TOKEN_LOGIN = "auth.token_login"
 
     # A user's own Void-Tokens (scope: self)
     ME_TOKEN_CREATE = "me.token.create"
     ME_TOKEN_UPDATE = "me.token.update"
     ME_TOKEN_ROTATE = "me.token.rotate"
     ME_TOKEN_DELETE = "me.token.delete"
+    ME_LOGIN_TOKEN_ROTATE = "me.login_token.rotate"
 
     # Void-Tokens managed by an owner for any user
     TOKEN_CREATE = "token.create"
