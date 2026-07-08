@@ -35,7 +35,9 @@ from voidswitch.core.security import (
     hash_token,
 )
 from voidswitch.models.db import User, VoidToken
-from voidswitch.services.network import Route, get_pool
+from voidswitch.services import settings_store
+from voidswitch.services.network import get_pool
+from voidswitch.services.selector import static_routes
 
 log = get_logger("auth")
 
@@ -164,6 +166,11 @@ class PrismIdentity:
     teams: list[dict[str, Any]] = field(default_factory=list)
 
 
+async def _oauth_client() -> httpx.AsyncClient:
+    route, _ = static_routes(settings_store.get_str("static_proxy_url", ""))[0]
+    return await get_pool().get(route, connect_timeout=15.0, read_timeout=30.0)
+
+
 async def exchange_code(settings: Settings, code: str, state: str) -> PrismIdentity:
     try:
         verifier = decode_oauth_state(state, secret=settings.server.secret_key)
@@ -183,7 +190,7 @@ async def exchange_code(settings: Settings, code: str, state: str) -> PrismIdent
     if settings.prism.client_secret:
         data["client_secret"] = settings.prism.client_secret
 
-    client = await get_pool().get(Route(), connect_timeout=15.0, read_timeout=30.0)
+    client = await _oauth_client()
     resp = await client.post(
         settings.prism.token_url,
         data=data,
@@ -212,7 +219,7 @@ async def _fetch_teams(settings: Settings, access_token: str | None) -> list[dic
         return []
     url = f"{settings.prism.issuer.rstrip('/')}/api/oauth/me/teams"
     try:
-        client = await get_pool().get(Route(), connect_timeout=15.0, read_timeout=30.0)
+        client = await _oauth_client()
         resp = await client.get(url, headers={"Authorization": f"Bearer {access_token}"})
     except httpx.HTTPError as exc:
         log.debug("teams_fetch_failed", error=str(exc))
@@ -264,7 +271,7 @@ async def _fetch_userinfo(
     info: dict[str, Any] = {}
     if access_token:
         try:
-            client = await get_pool().get(Route(), connect_timeout=15.0, read_timeout=30.0)
+            client = await _oauth_client()
             resp = await client.get(
                 settings.prism.userinfo_url,
                 headers={"Authorization": f"Bearer {access_token}"},
@@ -463,7 +470,6 @@ def _enforce_operation_rate_limit(request: Request, user: User) -> None:
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return
     from voidswitch.core import ratelimit
-    from voidswitch.services import settings_store
 
     window = settings_store.get_int("operation_rate_limit_window_seconds", 10)
     max_requests = settings_store.get_int("operation_rate_limit_max_requests", 0)
