@@ -452,14 +452,33 @@ async def request_filter_options(
 
     tokens: list[TokenRef] = []
     if token_ids:
-        resolved_tokens: dict[int, str] = {}
-        for tid, tname in (
+        resolved_tokens: dict[int, tuple[str, str | None, str | None]] = {}
+        for tid, tname, usub, username, name, email, uid in (
             await session.execute(
-                select(VoidToken.id, VoidToken.name).where(VoidToken.id.in_(token_ids))
+                select(
+                    VoidToken.id,
+                    VoidToken.name,
+                    User.sub,
+                    User.username,
+                    User.name,
+                    User.email,
+                    User.id,
+                )
+                .join(User, User.id == VoidToken.user_id)
+                .where(VoidToken.id.in_(token_ids))
             )
         ).all():
-            resolved_tokens[tid] = tname
-        tokens = [TokenRef(id=tid, name=resolved_tokens.get(tid, f"#{tid}")) for tid in token_ids]
+            label = username or name or email or usub
+            resolved_tokens[tid] = (tname, usub, f"{label}#{uid}")
+        tokens = [
+            TokenRef(
+                id=tid,
+                name=resolved_tokens.get(tid, (f"#{tid}", None, None))[0],
+                user_sub=resolved_tokens.get(tid, (f"#{tid}", None, None))[1],
+                user_name=resolved_tokens.get(tid, (f"#{tid}", None, None))[2],
+            )
+            for tid in token_ids
+        ]
         tokens.sort(key=lambda tk: tk.name.lower())
 
     return RequestFilterOptions(

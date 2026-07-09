@@ -40,15 +40,18 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger
 from voidswitch.core.security import decrypt_secret, encrypt_secret
-from voidswitch.models.db import ApiKey
+from voidswitch.models.db import ApiKey, RequestLog
+from voidswitch.services import settings_store
 from voidswitch.services.network import Route, get_pool
 
 log = get_logger("oauth")
 
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+TOKEN_HOST_MODEL = "<cc-token>"
 # Subscription (Pro/Max) login uses the claude.ai authorize host. The manual
 # redirect lands on a Claude-hosted page that prints ``code#state`` to copy.
 AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
@@ -285,7 +288,11 @@ async def _exchange_code(
 
 
 async def _select_routes(session: AsyncSession | None) -> list[Route]:
-    """Outbound routes for OAuth calls: the configured proxies, else direct."""
+    """Outbound routes for OAuth calls, matching normal upstream egress settings."""
+    from voidswitch.services.selector import static_routes
+
+    if not settings_store.get_bool("proxy_switching_enabled", True):
+        return [route for route, _ in static_routes(settings_store.get_str("static_proxy_url", ""))]
     if session is None:
         return [Route()]
     # Imported lazily to avoid any import cycle through the selector.
@@ -320,7 +327,9 @@ async def _post_token(
     """
     last_status: int | None = None
     last_reason = "no outbound route available"
+    attempt_count = 0
     for route in routes or [Route()]:
+        attempt_count += 1
         label = route.proxy_url or "direct"
         try:
             client = await get_pool().get(route, connect_timeout=15.0, read_timeout=30.0)
@@ -328,8 +337,24 @@ async def _post_token(
         except httpx.HTTPError as exc:
             last_status, last_reason = None, type(exc).__name__
             log.warning("oauth_token_network_error", op=what, route=label, error=str(exc))
+            await _log_token_request(
+                op=what,
+                route=route,
+                status_code=None,
+                success=False,
+                attempts=attempt_count,
+                error=f"{type(exc).__name__}: {exc}",
+            )
             continue
         if resp.status_code == 200:
+            await _log_token_request(
+                op=what,
+                route=route,
+                status_code=resp.status_code,
+                success=True,
+                attempts=attempt_count,
+                error=None,
+            )
             return resp.json()
         last_status, last_reason = resp.status_code, _short_reason(resp)
         log.warning(
@@ -339,6 +364,14 @@ async def _post_token(
             status=resp.status_code,
             body=resp.text[:300],
         )
+        await _log_token_request(
+            op=what,
+            route=route,
+            status_code=resp.status_code,
+            success=False,
+            attempts=attempt_count,
+            error=f"HTTP {resp.status_code}: {last_reason}",
+        )
         if resp.status_code in (403, 408, 425, 429) or resp.status_code >= 500:
             continue  # block / transient — try the next egress IP
         raise LoginError(f"Claude rejected the {what} (HTTP {resp.status_code}: {last_reason}).")
@@ -347,6 +380,39 @@ async def _post_token(
         f"Could not reach Claude's token endpoint via any route (last: {detail}). "
         "Check the provider's proxies and retry."
     )
+
+
+async def _log_token_request(
+    *,
+    op: str,
+    route: Route,
+    status_code: int | None,
+    success: bool,
+    attempts: int,
+    error: str | None,
+) -> None:
+    model = f"<cc-{op}-token>"
+    try:
+        async with get_database().session() as session:
+            session.add(
+                RequestLog(
+                    model=model,
+                    upstream_model=TOKEN_HOST_MODEL,
+                    upstream_url=TOKEN_URL,
+                    proxy_url=route.proxy_url,
+                    req_method="POST",
+                    status_code=status_code,
+                    success=success,
+                    stream=False,
+                    attempts=attempts,
+                    error=error,
+                    user_agent=OAUTH_USER_AGENT,
+                    client_type="claude-code-oauth",
+                    is_opencode=True,
+                )
+            )
+    except Exception as exc:  # pragma: no cover - logging must not break OAuth
+        log.warning("oauth_token_request_log_failed", op=op, error=str(exc))
 
 
 def parse_bundle(plaintext: str) -> dict[str, Any] | None:

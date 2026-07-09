@@ -484,6 +484,8 @@ class TokenRef(BaseModel):
 
     id: int
     name: str
+    user_sub: str | None = None
+    user_name: str | None = None
 
 
 class RequestFilterOptions(BaseModel):

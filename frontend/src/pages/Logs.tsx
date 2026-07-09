@@ -29,6 +29,8 @@ import {
   DismissRegular,
   EyeRegular,
   InfoRegular,
+  LockClosedRegular,
+  PersonRegular,
 } from "@fluentui/react-icons";
 import { makeStyles } from "@fluentui/react-components";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -163,6 +165,7 @@ const useFilterStyles = makeStyles({
 interface SelectOption {
   value: string;
   label: string;
+  sublabel?: string | null;
 }
 
 /**
@@ -187,14 +190,16 @@ function SearchSelect({
 }) {
   const selectedLabel = options.find((o) => o.value === value)?.label ?? value ?? "";
   const [text, setText] = useState(selectedLabel);
+  const lastSelectedLabel = useRef(selectedLabel);
   const [typing, setTyping] = useState(false);
 
   // Keep the input in sync when the selection changes from outside (a table-cell
   // click that fills this filter, or a global "clear filters" reset).
   useEffect(() => {
-    setText(selectedLabel);
+    if (selectedLabel) lastSelectedLabel.current = selectedLabel;
+    setText(value ? selectedLabel || lastSelectedLabel.current : "");
     setTyping(false);
-  }, [selectedLabel]);
+  }, [selectedLabel, value]);
 
   const q = text.trim().toLowerCase();
   const filtered =
@@ -229,14 +234,21 @@ function SearchSelect({
         // half-typed query and restore the current selection's label.
         if (!d.open) {
           if (!text.trim()) onChange("");
-          else setText(selectedLabel);
+          else setText(selectedLabel || lastSelectedLabel.current);
           setTyping(false);
         }
       }}
     >
       {filtered.map((o) => (
         <Option key={o.value} value={o.value} text={o.label}>
-          {o.label}
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span>{o.label}</span>
+            {o.sublabel ? (
+              <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                {o.sublabel}
+              </Text>
+            ) : null}
+          </div>
         </Option>
       ))}
     </Combobox>
@@ -458,6 +470,7 @@ function RequestLogs({
           options={(options.data?.tokens ?? []).map((tk) => ({
             value: String(tk.id),
             label: tk.name,
+            sublabel: tk.user_name,
           }))}
           onChange={(v) => setFilter("token_id", v)}
         />
@@ -1016,11 +1029,13 @@ function AuditLogs({
   const scopeLabel = (s: string) =>
     s === "admin"
       ? ta("common.admin" as TK)
-      : s === "self"
-        ? ta("common.self" as TK)
+        : s === "self"
+          ? ta("common.self" as TK)
         : s === "system"
           ? ta("common.system" as TK)
           : s;
+  const scopeIcon = (s: string) =>
+    s === "admin" ? <LockClosedRegular /> : s === "self" ? <PersonRegular /> : null;
 
   async function reveal(a: AuditLog) {
     const ok = await confirm({
@@ -1219,19 +1234,11 @@ function AuditLogs({
                       title={ta("logs.clickToFilter" as TK)}
                       onClick={() => setFilter("scope", a.scope)}
                     >
-                      <Badge
-                        appearance="tint"
-                        style={{ cursor: "pointer" }}
-                        color={
-                          a.scope === "admin"
-                            ? "brand"
-                            : a.scope === "system"
-                              ? "warning"
-                              : "informative"
-                        }
-                      >
-                        {scopeLabel(a.scope)}
-                      </Badge>
+                      <Tooltip content={scopeLabel(a.scope)} relationship="label">
+                        {scopeIcon(a.scope) ?? (
+                          <Badge appearance="tint">{scopeLabel(a.scope)}</Badge>
+                        )}
+                      </Tooltip>
                     </button>
                   </TableCell>
                   <TableCell>
@@ -1385,4 +1392,3 @@ function DetailCell({ detail }: { detail: Record<string, unknown> }) {
     </Tooltip>
   );
 }
-

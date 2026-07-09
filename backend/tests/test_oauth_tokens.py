@@ -19,8 +19,8 @@ from voidswitch.core.security import (
     encrypt_secret,
     hash_token,
 )
-from voidswitch.models.db import ApiKey, Provider, Proxy, User
-from voidswitch.services import oauth_tokens
+from voidswitch.models.db import ApiKey, Provider, Proxy, RequestLog, User
+from voidswitch.services import oauth_tokens, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
 pytestmark = pytest.mark.asyncio
@@ -100,6 +100,47 @@ async def test_near_expiry_triggers_refresh(db):
         bundle = json.loads(decrypt_secret(key.key_ciphertext, secret=secret_key))
     assert bundle["access_token"] == "new-access"
     assert bundle["refresh_token"] == "refresh-2"
+
+
+async def test_refresh_uses_static_proxy_and_records_request_log(db):
+    secret_key = get_settings().server.secret_key
+    key_id = await _make_key(
+        db,
+        {
+            "access_token": "old-access",
+            "refresh_token": "refresh-1",
+            "expires_at": time.time() + 10,
+        },
+    )
+    async with db.session() as session:
+        await settings_store.update(
+            session,
+            {"proxy_switching_enabled": False, "static_proxy_url": "http://static.local:8080"},
+        )
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(oauth_tokens.TOKEN_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"access_token": "new-access", "refresh_token": "refresh-2", "expires_in": 3600},
+            )
+        )
+        async with db.session() as session:
+            key = await session.get(ApiKey, key_id)
+            token = await oauth_tokens.resolve_access_token(session, key, secret_key=secret_key)
+    assert token == "new-access"
+
+    async with db.session() as session:
+        row = (
+            await session.execute(
+                select(RequestLog).where(RequestLog.model == "<cc-refresh-token>")
+            )
+        ).scalar_one()
+    assert row.success is True
+    assert row.status_code == 200
+    assert row.proxy_url == "http://static.local:8080"
+    assert row.token_id is None
+    assert row.user_sub is None
 
 
 async def test_valid_token_not_refreshed(db):

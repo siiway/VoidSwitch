@@ -252,6 +252,8 @@ export interface AuditFilterOptions {
 export interface TokenRef {
   id: number;
   name: string;
+  user_sub?: string | null;
+  user_name?: string | null;
 }
 
 export interface RequestFilterOptions {
