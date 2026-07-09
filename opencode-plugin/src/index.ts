@@ -27,7 +27,7 @@
  *   - betas: effort-2025-11-24, fast-mode-2026-02-01, interleaved-thinking-2025-05-14
  */
 
-import type { Hooks, Plugin, PluginInput, PluginOptions } from "@opencode-ai/plugin"
+import type { AuthOAuthResult, Hooks, Plugin, PluginInput, PluginOptions } from "@opencode-ai/plugin"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -667,6 +667,60 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
     }
   }
 
+  const authSideEffectResult = (instructions: string): AuthOAuthResult => ({
+    url: "",
+    instructions,
+    method: "auto" as const,
+    async callback() {
+      // Side-effect auth actions do not issue credentials; keep the historical
+      // runtime shape while localising the mismatch with OpenCode's oauth type.
+      return { type: "success" as const } as any
+    },
+  })
+
+  async function configureBaseUrl(inputs?: Record<string, string>) {
+    const rawUrl = sanitizeInput(inputs?.url ?? "").trim()
+    if (rawUrl) {
+      const normalised = rawUrl.replace(/\/+$/, "")
+      persistBaseUrl(normalised)
+      opt.url = normalised
+      gateway = normalised
+      gatewayV1 = `${gateway}/v1`
+      return authSideEffectResult(`Base URL set to ${gateway}. Restart OpenCode for the change to take full effect.`)
+    }
+    persistBaseUrl(undefined)
+    opt.url = undefined
+    gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
+    gatewayV1 = `${gateway}/v1`
+    return authSideEffectResult(`Base URL reset to default: ${gateway}`)
+  }
+
+  async function syncModelsToConfig() {
+    const lines = ["Syncing models from gateway..."]
+    const { note, defaults } = await syncModels()
+    lines.push(note)
+    if (!note.includes("couldn't") && !note.includes("not authenticated")) {
+      try {
+        const infos = await fetchModels(lastToken ?? loadAuthToken())
+        persistModels(infos)
+        lines.push(`${infos.length} models written to config.`)
+        const { createInterface } = await import("node:readline/promises")
+        const { stdin, stdout } = await import("node:process")
+        const rl = createInterface({ input: stdin, output: stdout })
+        try {
+          const defNotes = await persistDefaultModels(defaults, rl)
+          lines.push(...defNotes)
+        } finally {
+          rl.close()
+        }
+        lines.push("Reopen the model picker to see changes.")
+      } catch (e) {
+        lines.push(`model persist failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    return authSideEffectResult(lines.join("\n"))
+  }
+
   return {
     // Register the provider so it exists even before models are fetched. Anthropic
     // dialect is required for the effort/speed/thinking fields to be meaningful.
@@ -919,68 +973,21 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         { type: "api", label: "Paste a VoidSwitch token (vs-…)" },
         {
           type: "oauth" as const,
-          label: "Configure VoidSwitch (Base URL / Sync Models)",
-          async authorize() {
-            const { createInterface } = await import("node:readline/promises")
-            const { stdin, stdout } = await import("node:process")
-            const rl = createInterface({ input: stdin, output: stdout })
-            try {
-              console.log("\n═══ VoidSwitch Configuration ═══")
-              console.log("1. Switch Gateway Base URL")
-              console.log("2. Sync Models from Gateway")
-              const action = sanitizeInput(await rl.question("\nChoose an option (1-2, Enter to cancel): ")).trim()
-              if (action === "1") {
-                const current = loadPersistedBaseUrl() ?? gateway
-                console.log(`Current base URL: ${current}`)
-                const url = sanitizeInput(await rl.question("New Base URL (blank to reset to default): ")).trim()
-                if (url) {
-                  const normalised = url.replace(/\/+$/, "")
-                  persistBaseUrl(normalised)
-                  opt.url = normalised
-                  gateway = normalised
-                  gatewayV1 = `${gateway}/v1`
-                  console.log(`\nBase URL set to ${gateway}.`)
-                  console.log("Restart OpenCode for the change to take full effect.")
-                } else {
-                  persistBaseUrl(undefined)
-                  opt.url = undefined
-                  gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
-                  gatewayV1 = `${gateway}/v1`
-                  console.log(`\nBase URL reset to default: ${gateway}`)
-                }
-              } else if (action === "2") {
-                console.log("\nSyncing models from gateway...")
-                const { note, defaults } = await syncModels()
-                console.log(note)
-                if (!note.includes("couldn't") && !note.includes("not authenticated")) {
-                  try {
-                    const infos = await fetchModels(lastToken ?? loadAuthToken())
-                    persistModels(infos)
-                    console.log(`${infos.length} models written to config.`)
-                    // Sync the top-level `model` / `small_model` selectors from
-                    // the gateway's recommended defaults. A selector that is set
-                    // locally to a *different* value prompts for overwrite
-                    // confirmation on this same readline interface.
-                    const defNotes = await persistDefaultModels(defaults, rl)
-                    for (const n of defNotes) console.log(n)
-                    console.log("Reopen the model picker to see changes.")
-                  } catch (e) {
-                    console.error("[VoidSwitch] model persist failed:", e)
-                  }
-                }
-              }
-            } finally {
-              rl.close()
-            }
-            return {
-              url: "",
-              instructions: "",
-              method: "auto" as const,
-              async callback() {
-                return { type: "success" as const }
-              },
-            }
-          },
+          label: "Set VoidSwitch Gateway Base URL",
+          prompts: [
+            {
+              type: "text" as const,
+              key: "url",
+              message: "Base URL (blank resets to default)",
+              placeholder: loadPersistedBaseUrl() ?? gateway,
+            },
+          ],
+          authorize: configureBaseUrl,
+        },
+        {
+          type: "oauth" as const,
+          label: "Sync VoidSwitch Models from Gateway",
+          authorize: syncModelsToConfig,
         },
       ],
     },
