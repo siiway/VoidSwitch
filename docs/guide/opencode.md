@@ -66,10 +66,35 @@ Write-Host "plugin: $HOME\.config\opencode\voidswitch.plugin.ts"
 `"plugin": ["/home/you/.config/opencode/voidswitch.plugin.ts"]`，再重启 `opencode` 即可加载。
 （插件文件与配置放在同一目录 `~/.config/opencode/`，与安装脚本写入的位置一致。）
 
+### Nix 安装
+
+如果你用 Nix 管理 OpenCode 配置，可以把插件文件声明到用户配置目录，再在 `opencode.json` 中引用该路径。
+下面示例使用 Home Manager 写入与安装脚本相同的位置：
+
+```nix
+{ config, pkgs, ... }:
+
+{
+  xdg.configFile."opencode/voidswitch.plugin.ts".source = pkgs.fetchurl {
+    url = "https://voidswitch.siiway.org/opencode/voidswitch.ts";
+    sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  };
+
+  xdg.configFile."opencode/opencode.json".text = ''
+    {
+      "plugin": ["${config.xdg.configHome}/opencode/voidswitch.plugin.ts"]
+    }
+  '';
+}
+```
+
+首次写入时先用临时 hash 构建一次，让 Nix 输出实际 hash 后替换 `sha256`。如果你已经有
+`opencode.json`，只需要把插件路径合并到顶层 `plugin` 数组中。
+
 ## 刷新模型列表
 
 插件读取平台模型目录。供应商新服务的模型会自动出现。在目录中**注册**它们（同步步骤）是
-仅限管理人员的操作：管理人员运行 OpenCode `/sync-models` 命令或使用**模型**页面。
+仅限管理人员的操作：管理人员可以在 OpenCode 中通过 VoidSwitch provider 的登录/刷新流程更新配置，或使用**模型**页面。
 成员无需同步。
 
 ## 安装程序的来源

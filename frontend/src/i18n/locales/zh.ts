@@ -780,9 +780,9 @@ const zh: Translations = {
       "3. 在 <em>API key</em> 处粘贴 <code>vs-…</code> 令牌，然后选择模型。",
     pluginTitle: "手动安装插件（完整功能）",
     pluginIntro:
-      "上面的配置只注册了供应商与模型；VoidSwitch 的深度功能——推理<strong>强度</strong>、快速模式、自适应思考、1M 上下文——由插件提供。下面安装的正是一行脚本所用的同一个插件，它从本网关实时获取，始终与本服务器保持一致。运行与你操作系统对应的命令：",
+      "上面的配置只注册了供应商与模型；VoidSwitch 的深度功能——推理<strong>强度</strong>、快速模式、自适应思考、1M 上下文——由插件提供。",
     pluginNote:
-      "每条命令都会打印插件的绝对路径。把它加入到前面 <code>opencode.json</code> 顶层的 <code>plugin</code> 数组，例如 <code>\"plugin\": [\"/home/you/.config/opencode/voidswitch.plugin.ts\"]</code>，然后重启 <code>opencode</code> 即可加载。",
+      "手动安装插件的 macOS / Linux、Windows 和 Nix 示例见 <docs>OpenCode 插件指南</docs>。",
     createToken: "生成令牌",
     newTokenName: "新令牌名称",
     name: "名称",

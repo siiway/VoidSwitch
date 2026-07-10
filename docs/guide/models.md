@@ -28,7 +28,7 @@
 
 - **模型**页面上的刷新/同步操作，
 - `POST /v1/models/sync`，或
-- OpenCode `/sync-models` 命令（使用管理人员的令牌）。
+- 在 OpenCode 中使用 VoidSwitch provider 的登录/刷新流程，让插件从网关读取最新模型配置。
 
 成员无需同步 — 已服务的模型已出现在列表和 `/v1/models` 中。
 

@@ -152,11 +152,13 @@ const SECTIONS: NavSection[] = [
   },
 ];
 
-// Build the docs URL with the session token so the (private) docs site can
-// authenticate a full-page navigation; it exchanges the token for a cookie.
 function docsHref(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
+function docsBridgeHref(path: string): string {
   const token = getToken();
-  const base = `${API_BASE}${path}`;
+  const base = docsHref(path);
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
@@ -462,7 +464,21 @@ export function Layout() {
                           target="_blank"
                           rel="noopener noreferrer"
                           className={styles.item}
-                          onClick={handleNavClick}
+                          onClick={(ev) => {
+                            handleNavClick();
+                            if (
+                              ev.defaultPrevented ||
+                              ev.button !== 0 ||
+                              ev.metaKey ||
+                              ev.ctrlKey ||
+                              ev.shiftKey ||
+                              ev.altKey
+                            ) {
+                              return;
+                            }
+                            ev.preventDefault();
+                            window.open(docsBridgeHref(item.to), "_blank", "noopener,noreferrer");
+                          }}
                         >
                           <span className={styles.itemIcon}>{item.icon}</span>
                           <span style={{ flex: 1 }}>{item.label}</span>
