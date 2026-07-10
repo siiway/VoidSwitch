@@ -433,6 +433,39 @@ class VoidTokenWithSecret(VoidTokenOut):
     token: str
 
 
+class KeyRevealRequest(BaseModel):
+    key: str
+    scope: str = "all"  # provider | token | all
+
+
+class KeyRevealProviderMatch(BaseModel):
+    provider_id: int
+    provider_name: str
+    key_id: int
+    position: int
+    preview: str
+    comment: str | None = None
+    pool: str = ""
+    added_by_name: str | None = None
+
+
+class KeyRevealTokenMatch(BaseModel):
+    token_id: int
+    name: str
+    owner_id: int
+    owner_name: str | None = None
+    total_requests: int
+    total_tokens: int
+    enabled: bool
+    created_at: dt.datetime
+    deleted: bool = False
+
+
+class KeyRevealResult(BaseModel):
+    provider_matches: list[KeyRevealProviderMatch] = Field(default_factory=list)
+    token_matches: list[KeyRevealTokenMatch] = Field(default_factory=list)
+
+
 # --------------------------------------------------------------------------- #
 # Settings & logs
 # --------------------------------------------------------------------------- #

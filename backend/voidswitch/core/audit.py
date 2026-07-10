@@ -88,6 +88,7 @@ class AuditAction(StrEnum):
     KEY_CLEANUP = "key.cleanup"
     KEY_REORDER = "key.reorder"
     KEY_REVEAL = "key.reveal"
+    KEY_SEARCH_REVEAL = "key.search_reveal"
     KEY_OAUTH_START = "key.oauth_start"
     KEY_OAUTH_ADD = "key.oauth_add"
 

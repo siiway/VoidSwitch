@@ -33,6 +33,7 @@ import {
   DeleteRegular,
   DismissCircleFilled,
   EditRegular,
+  EyeRegular,
   KeyRegular,
   ShieldKeyholeRegular,
 } from "@fluentui/react-icons";
@@ -62,6 +63,7 @@ import {
   useNotify,
 } from "../components/ui";
 import { PasswordInput } from "../components/PasswordInput";
+import { KeyRevealDialog } from "../components/KeyRevealDialog";
 
 type TK = keyof Translations;
 
@@ -185,6 +187,7 @@ export function Providers() {
   const [keyApi, setKeyApi] = useState<ProviderKeyApi | null>(null);
   const [keyApiToken, setKeyApiToken] = useState("");
   const [keyApiBusy, setKeyApiBusy] = useState(false);
+  const [revealOpen, setRevealOpen] = useState(false);
 
   const phKeys = [
     ...new Set(
@@ -456,15 +459,28 @@ export function Providers() {
         subtitle={t("providers.subtitle" as TK)}
         onRefresh={providers.reload}
         action={
-          <Button
-            appearance="primary"
-            icon={<AddRegular />}
-            onClick={openCreate}
-          >
-            {t("providers.add" as TK)}
-          </Button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {isOwner ? (
+              <Tooltip content={t("reveal.title" as TK)} relationship="label">
+                <Button
+                  appearance="subtle"
+                  icon={<EyeRegular />}
+                  onClick={() => setRevealOpen(true)}
+                  aria-label={t("reveal.title" as TK)}
+                />
+              </Tooltip>
+            ) : null}
+            <Button
+              appearance="primary"
+              icon={<AddRegular />}
+              onClick={openCreate}
+            >
+              {t("providers.add" as TK)}
+            </Button>
+          </div>
         }
       />
+      <KeyRevealDialog open={revealOpen} defaultScope="provider" onClose={() => setRevealOpen(false)} />
 
       {providers.loading ? (
         <Loading />

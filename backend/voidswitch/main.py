@@ -26,6 +26,7 @@ from voidswitch.api.admin import (
     logs as logs_api,
     providers as providers_api,
     proxies as proxies_api,
+    reveal as reveal_api,
     role_groups as role_groups_api,
     settings as settings_api,
     stats as stats_api,
@@ -178,6 +179,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(tokens_api.router)
     app.include_router(settings_api.router)
     app.include_router(logs_api.router)
+    app.include_router(reveal_api.router)
     app.include_router(users_api.router)
     app.include_router(role_groups_api.router)
     app.include_router(stats_api.router)

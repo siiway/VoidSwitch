@@ -26,6 +26,7 @@ import {
   CopyRegular,
   DeleteRegular,
   EditRegular,
+  EyeRegular,
   KeyRegular,
   ProhibitedRegular,
 } from "@fluentui/react-icons";
@@ -33,6 +34,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import type { VoidToken, VoidTokenWithSecret } from "../api/types";
 import {
   DataTable,
@@ -45,12 +47,14 @@ import {
   useNotify,
 } from "../components/ui";
 import { EmptyState } from "../components/EmptyState";
+import { KeyRevealDialog } from "../components/KeyRevealDialog";
 
 export function Tokens() {
   const { t: tr } = useTranslation();
   type TK = keyof Translations;
   const notify = useNotify();
   const confirm = useConfirm();
+  const { isOwner } = useAuth();
   const list = useAsync<VoidToken[]>(() => api.get("/api/admin/tokens"));
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("default");
@@ -59,6 +63,7 @@ export function Tokens() {
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [editing, setEditing] = useState<VoidToken | null>(null);
   const [editName, setEditName] = useState("");
+  const [revealOpen, setRevealOpen] = useState(false);
 
   async function create() {
     const allowed_models = allowed
@@ -127,15 +132,28 @@ export function Tokens() {
         subtitle={tr("tokens.subtitle" as TK)}
         onRefresh={list.reload}
         action={
-          <Button
-            appearance="primary"
-            icon={<AddRegular />}
-            onClick={() => setCreating(true)}
-          >
-            {tr("tokens.mint" as TK)}
-          </Button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {isOwner ? (
+              <Tooltip content={tr("reveal.title" as TK)} relationship="label">
+                <Button
+                  appearance="subtle"
+                  icon={<EyeRegular />}
+                  onClick={() => setRevealOpen(true)}
+                  aria-label={tr("reveal.title" as TK)}
+                />
+              </Tooltip>
+            ) : null}
+            <Button
+              appearance="primary"
+              icon={<AddRegular />}
+              onClick={() => setCreating(true)}
+            >
+              {tr("tokens.mint" as TK)}
+            </Button>
+          </div>
         }
       />
+      <KeyRevealDialog open={revealOpen} defaultScope="token" onClose={() => setRevealOpen(false)} />
 
       {list.loading ? (
         <Loading />

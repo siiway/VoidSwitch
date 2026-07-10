@@ -35,6 +35,7 @@ import {
 import { makeStyles } from "@fluentui/react-components";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { isRequestLog } from "../api/types";
@@ -259,7 +260,9 @@ export function Logs() {
   const { t } = useTranslation();
   type TK = keyof Translations;
   const { isStaff } = useAuth();
-  const [tab, setTab] = useState<"requests" | "audit">("requests");
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") === "audit" ? "audit" : "requests";
+  const [tab, setTab] = useState<"requests" | "audit">(initialTab);
   const [refreshKey, setRefreshKey] = useState(0);
   const config = useAsync<{ logs_page_size?: number }>(() =>
     api.get("/api/auth/config"),
@@ -335,8 +338,16 @@ function RequestLogs({
   const hl = useHighlightStyles();
   const cellStyles = useFilterStyles();
   const notify = useNotify();
+  const [searchParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
-  const [filters, setFilters] = useState<RequestFilters>(EMPTY_REQUEST_FILTERS);
+  const [filters, setFilters] = useState<RequestFilters>({
+    ...EMPTY_REQUEST_FILTERS,
+    model: searchParams.get("model") || "",
+    user_sub: searchParams.get("user_sub") || "",
+    token_id: searchParams.get("token_id") || "",
+    provider: searchParams.get("provider") || "",
+    status: searchParams.get("status_code") || "",
+  });
   const [goToId, setGoToId] = useState("");
   const [detailLog, setDetailLog] = useState<RequestLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -959,8 +970,17 @@ function AuditLogs({
   const notify = useNotify();
   const hl = useHighlightStyles();
   const cellStyles = useFilterStyles();
+  const [searchParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
-  const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useState<AuditFilters>({
+    ...EMPTY_FILTERS,
+    scope: searchParams.get("scope") || "",
+    action: searchParams.get("action") || "",
+    target_type: searchParams.get("target_type") || "",
+    actor_sub: searchParams.get("actor_sub") || "",
+    ip: searchParams.get("ip") || "",
+    user_agent: searchParams.get("user_agent") || "",
+  });
   const [goToId, setGoToId] = useState("");
   const [revealed, setRevealed] = useState<{
     action: string;
