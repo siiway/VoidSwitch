@@ -112,6 +112,7 @@ async def token_login(
     if user is None or not user.enabled or not auth.is_staff(user):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid login token.")
     user.last_login_at = dt.datetime.now(dt.UTC)
+    await auth.restore_auto_disabled_tokens(session, user)
     await record_audit(
         session,
         action=AuditAction.AUTH_TOKEN_LOGIN,

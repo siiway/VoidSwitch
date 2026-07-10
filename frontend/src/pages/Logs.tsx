@@ -580,14 +580,21 @@ function RequestLogs({
               </TableCell>
               <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                 {r.token_id != null ? (
-                  <button
-                    type="button"
-                    className={cellStyles.clickable}
-                    title={tr("logs.clickToFilter" as TK)}
-                    onClick={() => setFilter("token_id", String(r.token_id))}
-                  >
-                    {r.token_name ?? `#${r.token_id}`}
-                  </button>
+                  <div>
+                    <button
+                      type="button"
+                      className={cellStyles.clickable}
+                      title={tr("logs.clickToFilter" as TK)}
+                      onClick={() => setFilter("token_id", String(r.token_id))}
+                    >
+                      {r.token_name ?? `#${r.token_id}`}
+                    </button>
+                    {r.token_owner_name ? (
+                      <Text size={100} block style={{ color: tokens.colorNeutralForeground3 }}>
+                        {r.token_owner_name}
+                      </Text>
+                    ) : null}
+                  </div>
                 ) : (
                   "—"
                 )}
@@ -691,7 +698,14 @@ function RequestLogs({
                     <DetailRow label={tr("logs.time" as TK)} value={formatDate(detailLog.ts)} />
                     <DetailRow label={tr("logs.status" as TK)} value={detailLog.success ? `${detailLog.status_code} OK` : `${detailLog.status_code ?? "ERR"}`} />
                     <DetailRow label={tr("logs.user" as TK)} value={detailLog.user_name ?? detailLog.user_sub ?? "—"} />
-                    <DetailRow label={tr("logs.token" as TK)} value={detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")} />
+                    <DetailRow
+                      label={tr("logs.token" as TK)}
+                      value={
+                        detailLog.token_owner_name
+                          ? `${detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")} (${detailLog.token_owner_name})`
+                          : detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")
+                      }
+                    />
                     <DetailRow label={tr("logs.model" as TK)} value={detailLog.model ?? "—"} />
                     {detailLog.upstream_model &&
                     detailLog.upstream_model !== detailLog.model ? (

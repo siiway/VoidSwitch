@@ -423,6 +423,9 @@ class VoidTokenOut(BaseModel):
     expires_at: dt.datetime | None = None
     created_at: dt.datetime
     debug_enabled: bool = False
+    auto_disabled: bool = False
+    deleted: bool = False
+    deleted_at: dt.datetime | None = None
 
 
 class VoidTokenWithSecret(VoidTokenOut):
@@ -507,6 +510,7 @@ class RequestLogOut(BaseModel):
     user_name: str | None = None
     token_id: int | None = None
     token_name: str | None = None
+    token_owner_name: str | None = None
     provider_name: str | None = None
     model: str | None = None
     upstream_model: str | None = None
@@ -544,6 +548,7 @@ class RequestLogDetail(BaseModel):
     user_name: str | None = None
     token_id: int | None = None
     token_name: str | None = None
+    token_owner_name: str | None = None
     provider_name: str | None = None
     key_id: int | None = None
     key_preview: str | None = None

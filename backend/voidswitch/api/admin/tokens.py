@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +30,7 @@ async def list_tokens(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_owner),
 ) -> list[VoidToken]:
-    stmt = select(VoidToken).order_by(VoidToken.id)
+    stmt = select(VoidToken).where(VoidToken.deleted.is_(False)).order_by(VoidToken.id)
     if user_id is not None:
         stmt = stmt.where(VoidToken.user_id == user_id)
     rows = (await session.execute(stmt)).scalars().all()
@@ -85,11 +87,13 @@ async def update_token(
     actor: User = Depends(require_owner),
 ) -> VoidToken:
     token = await session.get(VoidToken, token_id)
-    if token is None:
+    if token is None or token.deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found.")
     changes = body.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(token, field, value)
+    if "enabled" in changes:
+        token.auto_disabled = False
     await session.flush()
     await record_audit(
         session,
@@ -117,7 +121,7 @@ async def delete_token(
     actor: User = Depends(require_owner),
 ) -> None:
     token = await session.get(VoidToken, token_id)
-    if token is None:
+    if token is None or token.deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found.")
     await record_audit(
         session,
@@ -129,4 +133,7 @@ async def delete_token(
         detail={"name": token.name, "user_id": token.user_id, "prefix": token.token_prefix},
         ip=request.client.host if request.client else None,
     )
-    await session.delete(token)
+    token.enabled = False
+    token.auto_disabled = False
+    token.deleted = True
+    token.deleted_at = dt.datetime.now(dt.UTC)

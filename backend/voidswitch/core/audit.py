@@ -58,6 +58,7 @@ class AuditAction(StrEnum):
     AUTH_LOGOUT = "auth.logout"
     AUTH_DEV_LOGIN = "auth.dev_login"
     AUTH_TOKEN_LOGIN = "auth.token_login"
+    AUTH_FORCE_LOGOUT = "auth.force_logout"
 
     # A user's own Void-Tokens (scope: self)
     ME_TOKEN_CREATE = "me.token.create"

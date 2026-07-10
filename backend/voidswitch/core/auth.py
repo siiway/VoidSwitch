@@ -364,13 +364,22 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
     # If the account was disabled and later re-enabled by an owner, its
     # Void-Tokens were parked off; bring them back now that the user has proven
     # they can still log in (forcing a fresh role/group evaluation).
-    if user.enabled and user.void_tokens_admin_disabled:
-        for token in user.tokens:
-            token.enabled = True
-        user.void_tokens_admin_disabled = False
-        await session.flush()
+    await restore_auto_disabled_tokens(session, user)
 
     return user
+
+
+async def restore_auto_disabled_tokens(session: AsyncSession, user: User) -> None:
+    """Re-enable only Void-Tokens parked by forced logout / user disable."""
+    if not user.enabled or not user.void_tokens_admin_disabled:
+        return
+    has_token_marks = any(token.auto_disabled for token in user.tokens)
+    for token in user.tokens:
+        if not token.deleted and (token.auto_disabled or not has_token_marks):
+            token.enabled = True
+            token.auto_disabled = False
+    user.void_tokens_admin_disabled = False
+    await session.flush()
 
 
 def _merge_role(existing: str, resolved: Role) -> str:

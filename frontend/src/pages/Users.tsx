@@ -13,6 +13,7 @@ import {
 } from "@fluentui/react-components";
 import {
   CheckmarkCircleRegular,
+  SignOutRegular,
   ProhibitedRegular,
 } from "@fluentui/react-icons";
 import { useTranslation } from "react-i18next";
@@ -34,6 +35,7 @@ import {
 const ASSIGNABLE_ROLES: Role[] = ["admin", "member"];
 // Owner tier reused from the shared role constants (see src/auth/constants.ts).
 const OWNER_TIER = OWNER_ROLES;
+const ROLE_RANK: Record<Role, number> = { member: 1, admin: 2, "co-owner": 3, owner: 3 };
 
 export function Users() {
   const { t } = useTranslation();
@@ -60,6 +62,20 @@ export function Users() {
     try {
       await api.patch(`/api/admin/users/${u.id}`, { enabled: !u.enabled });
       users.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
+  }
+
+  async function forceLogout(u: User) {
+    try {
+      await api.post(`/api/admin/users/${u.id}/force-logout`);
+      users.reload();
+      notify(t("users.forceLogoutDone" as TK), `${u.username ?? u.sub}#${u.id}`, "success");
     } catch (e) {
       notify(
         t("common.updateFailed" as TK),
@@ -149,6 +165,20 @@ export function Users() {
                   {formatDate(u.last_login_at)}
                 </TableCell>
                 <TableCell>
+                  <Tooltip content={t("users.forceLogout" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<SignOutRegular />}
+                      disabled={
+                        u.id === me?.id ||
+                        !me ||
+                        ROLE_RANK[me.role] <= ROLE_RANK[u.role]
+                      }
+                      onClick={() => forceLogout(u)}
+                      aria-label={t("users.forceLogout" as TK)}
+                    />
+                  </Tooltip>
                   <Tooltip
                     content={
                       u.enabled

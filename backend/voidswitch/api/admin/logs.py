@@ -337,14 +337,25 @@ async def request_logs(
     # Resolve human-friendly caller + token labels in two batched queries.
     token_ids = {r.token_id for r in rows if r.token_id is not None}
     subs = {r.user_sub for r in rows if r.user_sub}
-    token_names: dict[int, str] = {}
+    token_names: dict[int, tuple[str, str | None]] = {}
     if token_ids:
-        for tid, tname in (
+        for tid, tname, usub, username, name, email, uid in (
             await session.execute(
-                select(VoidToken.id, VoidToken.name).where(VoidToken.id.in_(token_ids))
+                select(
+                    VoidToken.id,
+                    VoidToken.name,
+                    User.sub,
+                    User.username,
+                    User.name,
+                    User.email,
+                    User.id,
+                )
+                .join(User, User.id == VoidToken.user_id)
+                .where(VoidToken.id.in_(token_ids))
             )
         ).all():
-            token_names[tid] = tname
+            label = username or name or email or usub
+            token_names[tid] = (f"{tname}#{tid}", f"{label}#{uid}")
     user_names: dict[str, str | None] = {}
     if subs:
         for u in (
@@ -357,7 +368,10 @@ async def request_logs(
     for r in rows:
         out = RequestLogOut.model_validate(r)
         if r.token_id is not None:
-            out.token_name = token_names.get(r.token_id)
+            token_ref = token_names.get(r.token_id)
+            if token_ref:
+                out.token_name = token_ref[0]
+                out.token_owner_name = token_ref[1]
         if r.user_sub:
             out.user_name = user_names.get(r.user_sub)
         items.append(out)
@@ -473,7 +487,11 @@ async def request_filter_options(
         tokens = [
             TokenRef(
                 id=tid,
-                name=resolved_tokens.get(tid, (f"#{tid}", None, None))[0],
+                name=(
+                    f"{resolved_tokens[tid][0]}#{tid}"
+                    if tid in resolved_tokens
+                    else f"#{tid}"
+                ),
                 user_sub=resolved_tokens.get(tid, (f"#{tid}", None, None))[1],
                 user_name=resolved_tokens.get(tid, (f"#{tid}", None, None))[2],
             )
@@ -523,7 +541,10 @@ async def request_log_detail(
     if row.token_id is not None:
         tok = await session.get(VoidToken, row.token_id)
         if tok:
-            detail.token_name = tok.name
+            detail.token_name = f"{tok.name}#{tok.id}"
+            if tok.user:
+                label = tok.user.username or tok.user.name or tok.user.email or tok.user.sub
+                detail.token_owner_name = f"{label}#{tok.user.id}"
     if row.user_sub:
         u = (
             await session.execute(select(User).where(User.sub == row.user_sub))

@@ -119,6 +119,9 @@ export interface VoidToken {
   name: string;
   token_prefix: string;
   enabled: boolean;
+  auto_disabled?: boolean;
+  deleted?: boolean;
+  deleted_at?: string | null;
   allowed_models: string[];
   rpm_limit: number;
   daily_quota: number;
@@ -270,6 +273,7 @@ export interface RequestLog {
   user_name?: string | null;
   token_id?: number | null;
   token_name?: string | null;
+  token_owner_name?: string | null;
   provider_name?: string | null;
   model?: string | null;
   upstream_model?: string | null;

@@ -97,6 +97,9 @@ class VoidToken(Base, TimestampMixin):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     token_prefix: Mapped[str] = mapped_column(String(32), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # Empty list means "all models permitted".
     allowed_models: Mapped[list[str]] = mapped_column(JSON, default=list)
     rpm_limit: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unlimited

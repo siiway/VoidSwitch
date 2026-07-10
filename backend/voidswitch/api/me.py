@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,7 +84,9 @@ async def my_tokens(
     rows = (
         (
             await session.execute(
-                select(VoidToken).where(VoidToken.user_id == user.id).order_by(VoidToken.id)
+                select(VoidToken)
+                .where(VoidToken.user_id == user.id, VoidToken.deleted.is_(False))
+                .order_by(VoidToken.id)
             )
         )
         .scalars()
@@ -141,10 +145,13 @@ async def update_my_token(
     session: AsyncSession = Depends(get_session),
 ) -> VoidToken:
     token = await session.get(VoidToken, token_id)
-    if token is None or token.user_id != user.id:
+    if token is None or token.user_id != user.id or token.deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found.")
-    for field, value in body.model_dump(exclude_unset=True).items():
+    changes = body.model_dump(exclude_unset=True)
+    for field, value in changes.items():
         setattr(token, field, value)
+    if "enabled" in changes:
+        token.auto_disabled = False
     await session.flush()
     await record_audit(
         session,
@@ -169,7 +176,7 @@ async def rotate_my_token(
     settings: Settings = Depends(get_settings),
 ) -> VoidTokenWithSecret:
     token = await session.get(VoidToken, token_id)
-    if token is None or token.user_id != user.id:
+    if token is None or token.user_id != user.id or token.deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found.")
     secret = generate_void_token()
     token.token_hash = hash_token(secret)
@@ -199,7 +206,7 @@ async def delete_my_token(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     token = await session.get(VoidToken, token_id)
-    if token is None or token.user_id != user.id:
+    if token is None or token.user_id != user.id or token.deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found.")
     await record_audit(
         session,
@@ -212,7 +219,10 @@ async def delete_my_token(
         ip=request.client.host if request.client else None,
         scope=AuditScope.SELF.value,
     )
-    await session.delete(token)
+    token.enabled = False
+    token.auto_disabled = False
+    token.deleted = True
+    token.deleted_at = dt.datetime.now(dt.UTC)
 
 
 @router.get("/usage")
@@ -229,7 +239,11 @@ async def my_usage(
         )
     ).one()
     token_count = (
-        await session.execute(select(func.count(VoidToken.id)).where(VoidToken.user_id == user.id))
+        await session.execute(
+            select(func.count(VoidToken.id)).where(
+                VoidToken.user_id == user.id, VoidToken.deleted.is_(False)
+            )
+        )
     ).scalar_one()
     return {
         "requests": int(totals[0] or 0),

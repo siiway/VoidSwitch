@@ -507,6 +507,7 @@ const zh: Translations = {
     allowedModelsHint: "允许的模型（留空 = 全部；每行一个）",
     debugEnable: "为此令牌启用调试日志",
     debugDisable: "禁用此令牌的调试日志",
+    renameTitle: "重命名令牌",
   },
   users: {
     title: "用户",
@@ -519,6 +520,8 @@ const zh: Translations = {
     lastLogin: "上次登录",
     actions: "操作",
     roleUpdated: "角色已更新",
+    forceLogout: "强制登出",
+    forceLogoutDone: "用户已登出",
   },
   settings: {
     title: "设置",

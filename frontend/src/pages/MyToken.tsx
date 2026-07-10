@@ -1,6 +1,12 @@
 import {
   Button,
   Card,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   Divider,
   Field,
   Input,
@@ -19,9 +25,12 @@ import {
   AddRegular,
   ArrowSyncRegular,
   BugRegular,
+  CheckmarkCircleRegular,
   CheckmarkRegular,
   CopyRegular,
   DeleteRegular,
+  EditRegular,
+  ProhibitedRegular,
 } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
@@ -129,6 +138,8 @@ export function MyToken() {
   const [name, setName] = useState("default");
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [client, setClient] = useState("openai");
+  const [editing, setEditing] = useState<VoidToken | null>(null);
+  const [editName, setEditName] = useState("");
 
   // The manual (no-script) OpenCode config is only built once the user expands
   // that section, and the catalog + defaults are fetched fresh from the API each
@@ -223,6 +234,23 @@ export function MyToken() {
 
   async function toggleDebug(token: VoidToken) {
     await api.patch(`/api/me/tokens/${token.id}`, { debug_enabled: !token.debug_enabled });
+    tokensList.reload();
+  }
+
+  async function toggleEnabled(token: VoidToken) {
+    await api.patch(`/api/me/tokens/${token.id}`, { enabled: !token.enabled });
+    tokensList.reload();
+  }
+
+  function openEdit(token: VoidToken) {
+    setEditing(token);
+    setEditName(token.name);
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    await api.patch(`/api/me/tokens/${editing.id}`, { name: editName.trim() || "default" });
+    setEditing(null);
     tokensList.reload();
   }
 
@@ -492,6 +520,7 @@ export function MyToken() {
               <TableHeaderCell>{t("myToken.fingerprint" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("myToken.requests" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("myToken.tokens" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("tokens.status" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("myToken.lastUsed" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("myToken.actions" as TK)}</TableHeaderCell>
             </TableRow>
@@ -505,10 +534,31 @@ export function MyToken() {
                 </TableCell>
                 <TableCell>{token.total_requests}</TableCell>
                 <TableCell>{token.total_tokens}</TableCell>
+                <TableCell>
+                  {token.enabled ? t("common.enabled" as TK) : t("common.disabled" as TK)}
+                </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {formatDate(token.last_used_at)}
                 </TableCell>
                 <TableCell>
+                  <Tooltip content={t("common.edit" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<EditRegular />}
+                      onClick={() => openEdit(token)}
+                      aria-label={t("common.edit" as TK)}
+                    />
+                  </Tooltip>
+                  <Tooltip content={token.enabled ? t("common.disable" as TK) : t("common.enable" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={token.enabled ? <ProhibitedRegular /> : <CheckmarkCircleRegular />}
+                      onClick={() => toggleEnabled(token)}
+                      aria-label={token.enabled ? t("common.disable" as TK) : t("common.enable" as TK)}
+                    />
+                  </Tooltip>
                   <Tooltip content={t("myToken.rotate" as TK)} relationship="label">
                     <Button
                       size="small"
@@ -547,6 +597,26 @@ export function MyToken() {
       )}
 
       <SecretDialog secret={secret} onClose={() => setSecret(null)} />
+      <Dialog open={editing !== null} onOpenChange={(_, d) => !d.open && setEditing(null)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{t("tokens.renameTitle" as TK)}</DialogTitle>
+            <DialogContent>
+              <Field label={t("myToken.name" as TK)}>
+                <Input value={editName} onChange={(_, d) => setEditName(d.value)} />
+              </Field>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setEditing(null)}>
+                {t("common.cancel" as TK)}
+              </Button>
+              <Button appearance="primary" onClick={saveEdit}>
+                {t("common.save" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   );
 }

@@ -18,6 +18,7 @@ from voidswitch.core.auth import (
     actor_display_name,
     require_owner,
     require_staff,
+    role_rank,
 )
 from voidswitch.core.database import get_session
 from voidswitch.models.db import User
@@ -29,6 +30,18 @@ router = APIRouter(prefix="/api/admin/users", tags=["admin:users"])
 class UserUpdate(BaseModel):
     role: str | None = None
     enabled: bool | None = None
+
+
+def _auto_disable_tokens(target: User) -> int:
+    disabled = 0
+    for token in target.tokens:
+        if token.deleted or not token.enabled:
+            continue
+        token.enabled = False
+        token.auto_disabled = True
+        disabled += 1
+    target.void_tokens_admin_disabled = True
+    return disabled
 
 
 @router.get("", response_model=list[UserOut])
@@ -93,10 +106,7 @@ async def update_user(
             # tokens at the user's next successful login (after re-enabling the
             # account), which re-evaluates their role/groups.
             target.session_epoch = (target.session_epoch or 0) + 1
-            for token in target.tokens:
-                token.enabled = False
-            target.void_tokens_admin_disabled = True
-            changes["void_tokens_disabled"] = True
+            changes["void_tokens_disabled"] = _auto_disable_tokens(target)
         # Re-enabling does NOT immediately reactivate the Void-Tokens: they stay
         # off until the user logs in again, which forces a fresh role evaluation.
 
@@ -112,5 +122,39 @@ async def update_user(
             ip=request.client.host if request.client else None,
         )
 
+    await session.flush()
+    return target
+
+
+@router.post("/{user_id}/force-logout", response_model=UserOut)
+async def force_logout_user(
+    user_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    actor: User = Depends(require_staff),
+) -> User:
+    target = await session.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
+    if target.id == actor.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot force logout yourself.")
+    if role_rank(actor.role) <= role_rank(target.role):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "You can only force logout users below your role tier.",
+        )
+
+    target.session_epoch = (target.session_epoch or 0) + 1
+    disabled = _auto_disable_tokens(target)
+    await record_audit(
+        session,
+        action=AuditAction.AUTH_FORCE_LOGOUT,
+        actor_sub=actor.sub,
+        actor_name=actor_display_name(actor),
+        target_type="user",
+        target_id=target.id,
+        detail={"target_name": actor_display_name(target), "void_tokens_disabled": disabled},
+        ip=request.client.host if request.client else None,
+    )
     await session.flush()
     return target

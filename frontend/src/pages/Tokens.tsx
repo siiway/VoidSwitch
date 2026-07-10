@@ -19,7 +19,16 @@ import {
   Tooltip,
   tokens,
 } from "@fluentui/react-components";
-import { AddRegular, BugRegular, CopyRegular, DeleteRegular, KeyRegular } from "@fluentui/react-icons";
+import {
+  AddRegular,
+  BugRegular,
+  CheckmarkCircleRegular,
+  CopyRegular,
+  DeleteRegular,
+  EditRegular,
+  KeyRegular,
+  ProhibitedRegular,
+} from "@fluentui/react-icons";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
@@ -48,6 +57,8 @@ export function Tokens() {
   const [allowed, setAllowed] = useState("");
   const [userId, setUserId] = useState("");
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
+  const [editing, setEditing] = useState<VoidToken | null>(null);
+  const [editName, setEditName] = useState("");
 
   async function create() {
     const allowed_models = allowed
@@ -94,6 +105,18 @@ export function Tokens() {
     });
     if (!ok) return;
     await api.del(`/api/admin/tokens/${t.id}`);
+    list.reload();
+  }
+
+  function openEdit(t: VoidToken) {
+    setEditing(t);
+    setEditName(t.name);
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    await api.patch(`/api/admin/tokens/${editing.id}`, { name: editName.trim() || "default" });
+    setEditing(null);
     list.reload();
   }
 
@@ -180,15 +203,24 @@ export function Tokens() {
                   {formatDate(t.created_at)}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    onClick={() => toggle(t)}
-                  >
-                    {t.enabled
-                      ? tr("common.disable" as TK)
-                      : tr("common.enable" as TK)}
-                  </Button>
+                  <Tooltip content={tr("common.edit" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<EditRegular />}
+                      onClick={() => openEdit(t)}
+                      aria-label={tr("common.edit" as TK)}
+                    />
+                  </Tooltip>
+                  <Tooltip content={t.enabled ? tr("common.disable" as TK) : tr("common.enable" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={t.enabled ? <ProhibitedRegular /> : <CheckmarkCircleRegular />}
+                      onClick={() => toggle(t)}
+                      aria-label={t.enabled ? tr("common.disable" as TK) : tr("common.enable" as TK)}
+                    />
+                  </Tooltip>
                   <Tooltip
                     content={t.debug_enabled ? tr("tokens.debugDisable" as TK) : tr("tokens.debugEnable" as TK)}
                     relationship="label"
@@ -200,12 +232,15 @@ export function Tokens() {
                       onClick={() => toggleDebug(t)}
                     />
                   </Tooltip>
-                  <Button
-                    size="small"
-                    appearance="subtle"
-                    icon={<DeleteRegular />}
-                    onClick={() => remove(t)}
-                  />
+                  <Tooltip content={tr("common.delete" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<DeleteRegular />}
+                      onClick={() => remove(t)}
+                      aria-label={tr("common.delete" as TK)}
+                    />
+                  </Tooltip>
                 </TableCell>
               </TableRow>
             ))}
@@ -244,6 +279,27 @@ export function Tokens() {
               </Button>
               <Button appearance="primary" onClick={create}>
                 {tr("common.create" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={editing !== null} onOpenChange={(_, d) => !d.open && setEditing(null)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{tr("tokens.renameTitle" as TK)}</DialogTitle>
+            <DialogContent>
+              <Field label={tr("tokens.name" as TK)}>
+                <Input value={editName} onChange={(_, d) => setEditName(d.value)} />
+              </Field>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setEditing(null)}>
+                {tr("common.cancel" as TK)}
+              </Button>
+              <Button appearance="primary" onClick={saveEdit}>
+                {tr("common.save" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

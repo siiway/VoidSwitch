@@ -522,6 +522,7 @@ const en = {
     allowedModelsHint: "Allowed models (blank = all; one per line)",
     debugEnable: "Enable debug logging for this token",
     debugDisable: "Disable debug logging for this token",
+    renameTitle: "Rename token",
   },
   users: {
     title: "Users",
@@ -534,6 +535,8 @@ const en = {
     lastLogin: "Last login",
     actions: "Actions",
     roleUpdated: "Role updated",
+    forceLogout: "Force logout",
+    forceLogoutDone: "User signed out",
   },
   settings: {
     title: "Settings",
