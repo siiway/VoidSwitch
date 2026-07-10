@@ -18,6 +18,7 @@ from voidswitch.models.schemas import (
     KeyRevealResult,
     KeyRevealTokenMatch,
 )
+from voidswitch.services import oauth_tokens
 
 router = APIRouter(prefix="/api/admin/reveal", tags=["admin:reveal"])
 
@@ -29,6 +30,17 @@ def _owner_label(user: User | None) -> str | None:
         return None
     label = user.username or user.name or user.email or user.sub
     return f"{label}#{user.id}" if label else f"#{user.id}"
+
+
+def _provider_key_matches(provider: Provider, plaintext: str, raw: str) -> bool:
+    if plaintext == raw:
+        return True
+    if provider.type != "claude-code":
+        return False
+    bundle = oauth_tokens.parse_bundle(plaintext)
+    if bundle is None:
+        return False
+    return raw in {str(bundle.get("access_token") or ""), str(bundle.get("refresh_token") or "")}
 
 
 @router.post("/key", response_model=KeyRevealResult)
@@ -66,7 +78,7 @@ async def reveal_key_search(
                 )
             except Exception:
                 continue
-            if plaintext == raw:
+            if _provider_key_matches(provider, plaintext, raw):
                 provider_matches.append(
                     KeyRevealProviderMatch(
                         provider_id=provider.id,

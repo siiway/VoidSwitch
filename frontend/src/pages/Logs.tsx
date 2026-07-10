@@ -273,6 +273,11 @@ export function Logs() {
     if (!isStaff && tab === "audit") setTab("requests");
   }, [isStaff, tab]);
 
+  useEffect(() => {
+    const next = searchParams.get("tab") === "audit" ? "audit" : "requests";
+    if (next !== tab) setTab(next);
+  }, [searchParams, tab]);
+
   return (
     <div>
       <PageHeader
@@ -318,6 +323,17 @@ const EMPTY_REQUEST_FILTERS: RequestFilters = {
   status: "",
 };
 
+function requestFiltersFromParams(params: URLSearchParams): RequestFilters {
+  return {
+    ...EMPTY_REQUEST_FILTERS,
+    model: params.get("model") || "",
+    user_sub: params.get("user_sub") || "",
+    token_id: params.get("token_id") || "",
+    provider: params.get("provider") || "",
+    status: params.get("status_code") || "",
+  };
+}
+
 // A lone 1-5 digit means "the whole class": expand it to e.g. "4xx" on blur so
 // the filter matches every 4xx status. Anything else is left as typed.
 function normalizeStatus(value: string): string {
@@ -340,19 +356,19 @@ function RequestLogs({
   const notify = useNotify();
   const [searchParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
-  const [filters, setFilters] = useState<RequestFilters>({
-    ...EMPTY_REQUEST_FILTERS,
-    model: searchParams.get("model") || "",
-    user_sub: searchParams.get("user_sub") || "",
-    token_id: searchParams.get("token_id") || "",
-    provider: searchParams.get("provider") || "",
-    status: searchParams.get("status_code") || "",
-  });
+  const [filters, setFilters] = useState<RequestFilters>(() =>
+    requestFiltersFromParams(searchParams),
+  );
   const [goToId, setGoToId] = useState("");
   const [detailLog, setDetailLog] = useState<RequestLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailMode, setDetailMode] = useState<"info" | "debug">("info");
   const [revealMode, setRevealMode] = useState(false);
+
+  useEffect(() => {
+    setFilters(requestFiltersFromParams(searchParams));
+    setOffset(0);
+  }, [searchParams]);
 
   const options = useAsync<RequestFilterOptions>(
     () => api.get("/api/admin/logs/requests/filters"),
@@ -956,6 +972,18 @@ const EMPTY_FILTERS: AuditFilters = {
   user_agent: "",
 };
 
+function auditFiltersFromParams(params: URLSearchParams): AuditFilters {
+  return {
+    ...EMPTY_FILTERS,
+    scope: params.get("scope") || "",
+    action: params.get("action") || "",
+    target_type: params.get("target_type") || "",
+    actor_sub: params.get("actor_sub") || "",
+    ip: params.get("ip") || "",
+    user_agent: params.get("user_agent") || "",
+  };
+}
+
 function AuditLogs({
   refreshKey,
   pageSize,
@@ -972,21 +1000,20 @@ function AuditLogs({
   const cellStyles = useFilterStyles();
   const [searchParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
-  const [filters, setFilters] = useState<AuditFilters>({
-    ...EMPTY_FILTERS,
-    scope: searchParams.get("scope") || "",
-    action: searchParams.get("action") || "",
-    target_type: searchParams.get("target_type") || "",
-    actor_sub: searchParams.get("actor_sub") || "",
-    ip: searchParams.get("ip") || "",
-    user_agent: searchParams.get("user_agent") || "",
-  });
+  const [filters, setFilters] = useState<AuditFilters>(() =>
+    auditFiltersFromParams(searchParams),
+  );
   const [goToId, setGoToId] = useState("");
   const [revealed, setRevealed] = useState<{
     action: string;
     sensitive: unknown;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setFilters(auditFiltersFromParams(searchParams));
+    setOffset(0);
+  }, [searchParams]);
 
   const options = useAsync<AuditFilterOptions>(
     () => api.get("/api/admin/logs/audit/filters"),

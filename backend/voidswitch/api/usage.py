@@ -174,7 +174,11 @@ async def usage_analytics(
     by_token = [
         UsageGroupRow(
             key=str(r[0]) if r[0] is not None else "",
-            label=token_names.get(r[0], f"#{r[0]}") if r[0] is not None else "(none)",
+            label=(
+                f"{token_names[r[0]]}#{r[0]}"
+                if r[0] is not None and r[0] in token_names
+                else f"#{r[0]}" if r[0] is not None else "(none)"
+            ),
             sublabel=(
                 user_by_id.get(token_owners.get(r[0]))
                 if r[0] is not None and token_owners.get(r[0]) is not None

@@ -49,7 +49,9 @@ async def stats(
         session,
         select(func.count(Proxy.id)).where(Proxy.status == ProxyStatus.ACTIVE.value),
     )
-    tokens = await _count(session, select(func.count(VoidToken.id)))
+    tokens = await _count(
+        session, select(func.count(VoidToken.id)).where(VoidToken.deleted.is_(False))
+    )
 
     requests_24h = await _count(
         session, select(func.count(RequestLog.id)).where(RequestLog.ts >= since)
