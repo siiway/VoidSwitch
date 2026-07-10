@@ -15,6 +15,8 @@ All `ty check` unresolved-import diagnostics are pre-existing (no venv at system
 
 Frontend `npm run lint` is `tsc --noEmit`; also run `npm run build` for anything non-trivial. Backend: `uv run pytest` from `backend/`.
 
+Use `bun` / `bunx` for frontend package and script operations where possible. Do not run commands that regenerate `package-lock.json`; this repo uses `bun.lock`, and mixing npm and Bun lockfiles creates noisy conflicts.
+
 ## Documentation
 
 There is a private, auth-gated VitePress **usage** site in `docs/` (served by the
