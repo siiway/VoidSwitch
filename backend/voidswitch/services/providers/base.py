@@ -18,7 +18,9 @@ import httpx
 from voidswitch.constants import ApiStyle
 
 if TYPE_CHECKING:
-    from voidswitch.models.db import Provider
+    from voidswitch.models.db import ApiKey, Provider
+
+from voidswitch.core.security import decrypt_secret
 
 
 class ErrorClass(StrEnum):
@@ -42,6 +44,7 @@ class BaseProvider:
     models_suffix: str = "/models"
     balance_suffix: str | None = None
     anthropic_version: str = "2023-06-01"
+    refresh_on_invalid_key: bool = False
 
     def __init__(self, record: Provider) -> None:
         self.record = record
@@ -103,6 +106,25 @@ class BaseProvider:
         requirements (e.g. the Claude Code identity system prompt for OAuth).
         """
         return body
+
+    def build_request(
+        self,
+        api_key: str,
+        body: dict[str, Any],
+        extra_headers: dict[str, str] | None = None,
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        return self.upstream_url, self.headers(api_key, extra_headers), self.prepare_body(body)
+
+    # -- Credentials ------------------------------------------------------ #
+    async def resolve_credential(
+        self,
+        session: Any,
+        key: ApiKey,
+        secret_key: str,
+        *,
+        force_refresh: bool = False,
+    ) -> str:
+        return decrypt_secret(key.key_ciphertext, secret=secret_key)
 
     # -- Error classification --------------------------------------------- #
     def classify(self, status_code: int, body: Any) -> ErrorClass:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import socket
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -51,7 +52,7 @@ async def test_session_jwt_roundtrip():
     assert claims["role"] == "owner"
 
 
-def test_fetch_models_url_rejects_unsafe_targets(monkeypatch):
+async def test_fetch_models_url_rejects_unsafe_targets(monkeypatch):
     def fake_getaddrinfo(host, *args, **kwargs):
         mapping = {
             "api.example.com": "93.184.216.34",
@@ -819,15 +820,21 @@ async def test_session_key_precedence():
     from voidswitch.constants import ApiStyle
     from voidswitch.services.dispatcher import DispatchRequest, _session_key
 
-    def _req(**kw) -> DispatchRequest:
-        base = {
+    def _req(
+        *,
+        payload: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        token_id: int = 5,
+    ) -> DispatchRequest:
+        base: dict[str, Any] = {
             "inbound_style": ApiStyle.OPENAI,
             "model": "m",
-            "payload": {},
+            "payload": payload or {},
             "stream": False,
-            "token_id": 5,
+            "token_id": token_id,
         }
-        base.update(kw)
+        if session_id is not None:
+            base["session_id"] = session_id
         return DispatchRequest(**base)
 
     # 1. An explicit client session id wins outright.
@@ -960,7 +967,7 @@ async def test_openai_compatible_presets():
 
 
 async def test_claude_code_oauth_headers_and_identity():
-    from voidswitch.services.providers.anthropic import (
+    from voidswitch.services.providers.claude_code import (
         CLAUDE_CODE_IDENTITY,
         ClaudeCodeProvider,
     )
@@ -1003,7 +1010,7 @@ async def test_claude_code_caps_cache_control_at_four():
     # A client (via ANTHROPIC_BASE_URL) already using its full 4-breakpoint budget;
     # prepending our cached identity must not push the request to 5 (Anthropic:
     # "A maximum of 4 blocks with cache_control may be provided. Found 5.").
-    from voidswitch.services.providers.anthropic import CLAUDE_CODE_IDENTITY
+    from voidswitch.services.providers.claude_code import CLAUDE_CODE_IDENTITY
 
     provider = Provider(name="cc", type="claude-code", base_url="https://api.anthropic.com")
     adapter = get_adapter(provider)
@@ -1051,7 +1058,7 @@ async def test_claude_code_strips_opencode_identity_line():
     # "You are OpenCode, the best coding agent on the planet." — a competing agent
     # identity a real Claude Code request never carries. Only that one line is
     # excised; the rest of OpenCode's prompt (the bulk of the block) survives.
-    from voidswitch.services.providers.anthropic import CLAUDE_CODE_IDENTITY
+    from voidswitch.services.providers.claude_code import CLAUDE_CODE_IDENTITY
 
     provider = Provider(name="cc", type="claude-code", base_url="https://api.anthropic.com")
     adapter = get_adapter(provider)
@@ -1074,7 +1081,7 @@ async def test_claude_code_strips_opencode_identity_line():
 
 async def test_claude_code_strips_opencode_identity_as_string():
     # The same when the inbound system prompt is a bare string, not a block list.
-    from voidswitch.services.providers.anthropic import CLAUDE_CODE_IDENTITY
+    from voidswitch.services.providers.claude_code import CLAUDE_CODE_IDENTITY
 
     provider = Provider(name="cc", type="claude-code", base_url="https://api.anthropic.com")
     out = get_adapter(provider).prepare_body(
@@ -1091,7 +1098,7 @@ async def test_claude_code_scrubs_all_opencode_fingerprints():
     # itself again in the feedback/docs URLs, the "ask about OpenCode" guidance and
     # the skills footer. Every fingerprint must be gone (else Anthropic sees the
     # request isn't the real Claude Code CLI), not just line 1.
-    from voidswitch.services.providers.anthropic import CLAUDE_CODE_IDENTITY
+    from voidswitch.services.providers.claude_code import CLAUDE_CODE_IDENTITY
 
     provider = Provider(name="cc", type="claude-code", base_url="https://api.anthropic.com")
     adapter = get_adapter(provider)
@@ -1158,7 +1165,7 @@ async def test_claude_code_drop_block_config_removes_whole_block():
     # With the provider opt-in, the entire identity-bearing block is dropped, so the
     # request carries only the injected Claude Code identity — none of the caller's
     # system prompt reaches Anthropic.
-    from voidswitch.services.providers.anthropic import CLAUDE_CODE_IDENTITY
+    from voidswitch.services.providers.claude_code import CLAUDE_CODE_IDENTITY
 
     provider = Provider(
         name="cc",
@@ -1180,7 +1187,7 @@ async def test_claude_code_drop_block_config_removes_whole_block():
 async def test_claude_code_drop_block_defaults_off_scrubs_in_place():
     # Default (flag unset) keeps the scrub-in-place behaviour: the caller's prompt is
     # preserved with fingerprints rewritten, not discarded.
-    from voidswitch.services.providers.anthropic import CLAUDE_CODE_IDENTITY
+    from voidswitch.services.providers.claude_code import CLAUDE_CODE_IDENTITY
 
     provider = Provider(name="cc", type="claude-code", base_url="https://api.anthropic.com")
     out = get_adapter(provider).prepare_body(

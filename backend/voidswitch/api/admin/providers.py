@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
+import socket
+from urllib.parse import urljoin, urlparse
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -54,6 +58,45 @@ def _validate_key_select_mode(mode: str | None) -> None:
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             f"key_select_mode must be one of {sorted(_KEY_SELECT_MODES)}.",
         )
+
+
+def _is_public_address(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_global
+    except ValueError:
+        pass
+
+    try:
+        addresses = {
+            ipaddress.ip_address(item[4][0])
+            for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        }
+    except socket.gaierror as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Could not resolve provider host.",
+        ) from exc
+    return bool(addresses) and all(address.is_global for address in addresses)
+
+
+def _fetch_models_url(base_url: str, path: str) -> str:
+    base = base_url.rstrip("/") + "/"
+    raw_path = path.strip()
+    if raw_path.startswith(("http://", "https://")):
+        url = raw_path
+    else:
+        url = urljoin(base, raw_path.lstrip("/"))
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Provider URL must use HTTPS.")
+    if not parsed.hostname:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Provider URL must include a host.")
+    if not _is_public_address(parsed.hostname):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Provider host must resolve to public IPs.",
+        )
+    return url
 
 
 def _to_out(
@@ -457,21 +500,7 @@ async def fetch_provider_models(
 
     Avoids CORS when the admin dashboard tries to call the provider API directly.
     """
-    base = body.base_url.rstrip("/")
-    path = body.path.strip()
-    if path.startswith("http://") or path.startswith("https://"):
-        url = path
-    elif "/.." in path or path.startswith(".."):
-        parts = base.split("/")
-        for seg in path.split("/"):
-            if seg == "..":
-                if len(parts) > 3:
-                    parts.pop()
-            else:
-                parts.append(seg)
-        url = "/".join(parts)
-    else:
-        url = f"{base}/{path.lstrip('/')}"
+    url = _fetch_models_url(body.base_url, body.path)
     method = body.method.upper()
     if method not in ("GET", "POST"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "method must be GET or POST")
@@ -482,13 +511,13 @@ async def fetch_provider_models(
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=5.0),
-            follow_redirects=True,
+            follow_redirects=False,
         ) as client:
-            kw = {"headers": {"Authorization": f"Bearer {body.token}"}}
+            headers = {"Authorization": f"Bearer {body.token}"}
             if method == "GET":
-                r = await client.get(url, **kw)
+                r = await client.get(url, headers=headers)
             else:
-                r = await client.post(url, **kw)
+                r = await client.post(url, headers=headers)
     except httpx.TimeoutException as exc:
         log.error("fetch_models_timeout", url=url, error=str(exc))
         raise HTTPException(

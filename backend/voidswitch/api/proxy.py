@@ -276,7 +276,8 @@ async def list_models(
         if public_id in seen:
             return
         if allowed and not any(
-            p == "*" or p == public_id or fnmatch(public_id, p) for p in allowed
+            pattern == "*" or pattern == public_id or fnmatch(public_id, pattern)
+            for pattern in (str(p) for p in allowed)
         ):
             return
         seen.add(public_id)

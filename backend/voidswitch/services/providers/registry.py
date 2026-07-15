@@ -4,38 +4,37 @@ from __future__ import annotations
 
 from voidswitch.models.db import Provider
 
-from .anthropic import AnthropicProvider, ClaudeCodeProvider
+from .anthropic import AnthropicProvider
 from .base import BaseProvider
+from .cerebras import CerebrasProvider
+from .claude_code import ClaudeCodeProvider
+from .cloudflare import CloudflareProvider
+from .deepinfra import DeepInfraProvider
 from .deepseek import DeepSeekProvider
-from .openai import (
-    CerebrasProvider,
-    CloudflareProvider,
-    DeepInfraProvider,
-    FireworksProvider,
-    GeminiProvider,
-    GenericOpenAIProvider,
-    GitHubModelsProvider,
-    GroqProvider,
-    HyperbolicProvider,
-    MiMoProvider,
-    MiniMaxProvider,
-    MistralProvider,
-    MoonshotProvider,
-    NebiusProvider,
-    NovitaProvider,
-    NvidiaProvider,
-    OpenAIProvider,
-    OpenAIResponsesProvider,
-    OpenRouterProvider,
-    PerplexityProvider,
-    QwenProvider,
-    SambaNovaProvider,
-    SiliconFlowProvider,
-    TogetherProvider,
-    VolcengineProvider,
-    XAIProvider,
-    ZhipuProvider,
-)
+from .fireworks import FireworksProvider
+from .gemini import GeminiProvider
+from .generic import GenericOpenAIProvider
+from .github_models import GitHubModelsProvider
+from .groq import GroqProvider
+from .hyperbolic import HyperbolicProvider
+from .mimo import MiMoProvider
+from .minimax import MiniMaxProvider
+from .mistral import MistralProvider
+from .moonshot import MoonshotProvider
+from .nebius import NebiusProvider
+from .novita import NovitaProvider
+from .nvidia import NvidiaProvider
+from .openai import OpenAIProvider
+from .openai_responses import OpenAIResponsesProvider
+from .openrouter import OpenRouterProvider
+from .perplexity import PerplexityProvider
+from .qwen import QwenProvider
+from .sambanova import SambaNovaProvider
+from .siliconflow import SiliconFlowProvider
+from .together import TogetherProvider
+from .volcengine import VolcengineProvider
+from .xai import XAIProvider
+from .zhipu import ZhipuProvider
 
 _ADAPTERS: dict[str, type[BaseProvider]] = {
     cls.type: cls

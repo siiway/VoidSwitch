@@ -34,9 +34,8 @@ from voidswitch.constants import ApiStyle, KeyStatus, ProxyStatus
 from voidswitch.core.config import get_settings
 from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger, redact_headers
-from voidswitch.core.security import decrypt_secret
 from voidswitch.models.db import ApiKey, Provider, Proxy, RequestLog
-from voidswitch.services import oauth_tokens, settings_store, transform, usage_rollup
+from voidswitch.services import settings_store, transform, usage_rollup
 from voidswitch.services.network import Route, get_pool
 from voidswitch.services.providers.base import BaseProvider, ErrorClass
 from voidswitch.services.providers.registry import get_adapter
@@ -457,22 +456,26 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         timeout_override = provider.timeout_seconds or 0
         read_timeout = float(timeout_override) if timeout_override else request_timeout
 
-        is_oauth = provider.type == "claude-code"
         secret_key = settings.server.secret_key
 
         for key in keys:
             if attempts >= max_retries:
                 break
             try:
-                plaintext = await _resolve_token(session, provider, key, secret_key)
+                plaintext = await _resolve_token(session, adapter, key, secret_key)
             except Exception as exc:
                 _disable_key(key, KeyStatus.INVALID, f"token resolve failed: {exc}")
                 last_error = "token resolve failed"
                 last_status = 401
                 await session.flush()
                 continue  # next key
-            body = _prepare_body(req, adapter, upstream_style, upstream_model)
-            headers = adapter.headers(plaintext, req.passthrough_headers or None)
+            url, headers, body = _prepare_body(
+                req,
+                adapter,
+                upstream_style,
+                upstream_model,
+                plaintext,
+            )
 
             oauth_refreshed = False
             route_attempts = 0
@@ -486,7 +489,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     pool=pool,
                     adapter=adapter,
                     route=route,
-                    url=adapter.upstream_url,
+                    url=url,
                     headers=headers,
                     body=body,
                     stream=req.stream,
@@ -549,14 +552,22 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     # Claude Code OAuth: a 401 usually means the access token
                     # expired — force-refresh and retry this key once before
                     # giving up on it (mirrors the CLI's 401 behaviour).
-                    if err_class is ErrorClass.KEY_INVALID and is_oauth and not oauth_refreshed:
+                    if (
+                        err_class is ErrorClass.KEY_INVALID
+                        and adapter.refresh_on_invalid_key
+                        and not oauth_refreshed
+                    ):
                         oauth_refreshed = True
                         try:
                             plaintext = await _resolve_token(
-                                session, provider, key, secret_key, force_refresh=True
+                                session, adapter, key, secret_key, force_refresh=True
                             )
-                            headers = adapter.headers(
-                                plaintext, req.passthrough_headers or None
+                            url, headers, body = _prepare_body(
+                                req,
+                                adapter,
+                                upstream_style,
+                                upstream_model,
+                                plaintext,
                             )
                             route_attempts = 0
                             continue  # retry same key with the refreshed token
@@ -606,7 +617,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     success=False,
                     attempts=attempts,
                     error=f"client error {outcome.status_code}",
-                    upstream_url=adapter.upstream_url,
+                    upstream_url=outcome.url,
                     req_method=outcome.req_method,
                     req_headers=outcome.req_headers,
                     resp_headers=outcome.resp_headers,
@@ -664,19 +675,18 @@ def _route_start(seed: int, n: int) -> int:
 
 async def _resolve_token(
     session: Any,
-    provider: Provider,
+    adapter: BaseProvider,
     key: ApiKey,
     secret_key: str,
     *,
     force_refresh: bool = False,
 ) -> str:
-    """Resolve the credential to send: a refreshed OAuth token for claude-code,
-    or the decrypted static key for everything else."""
-    if provider.type == "claude-code":
-        return await oauth_tokens.resolve_access_token(
-            session, key, secret_key=secret_key, force_refresh=force_refresh
-        )
-    return decrypt_secret(key.key_ciphertext, secret=secret_key)
+    return await adapter.resolve_credential(
+        session,
+        key,
+        secret_key,
+        force_refresh=force_refresh,
+    )
 
 
 def _prepare_body(
@@ -684,7 +694,8 @@ def _prepare_body(
     adapter: BaseProvider,
     upstream_style: ApiStyle,
     upstream_model: str,
-) -> dict:
+    plaintext: str,
+) -> tuple[str, dict[str, str], dict[str, Any]]:
     body = _translate_request(req.inbound_style, upstream_style, req.payload)
     body = dict(body)
     body["model"] = upstream_model
@@ -694,8 +705,7 @@ def _prepare_body(
             body.setdefault("stream_options", {"include_usage": True})
     else:
         body.pop("stream", None)
-    # Provider-specific final mutation (e.g. Claude Code identity injection).
-    return adapter.prepare_body(body)
+    return adapter.build_request(plaintext, body, req.passthrough_headers or None)
 
 
 # --------------------------------------------------------------------------- #
@@ -957,7 +967,7 @@ async def _finalise_success(
             req_headers=outcome.req_headers if debug else None,
             resp_headers=outcome.resp_headers if debug else None,
             debug_attempts=debug_attempts if debug else None,
-            upstream_url=adapter.upstream_url if debug else None,
+            upstream_url=outcome.url if debug else None,
             proxy_url=proxy.url if proxy and debug else None,
         )
         session.add(log_row)
@@ -1010,7 +1020,7 @@ async def _finalise_success(
         attempts=attempts,
         error=None,
         usage=usage,
-        upstream_url=adapter.upstream_url,
+        upstream_url=outcome.url,
         req_method=outcome.req_method,
         req_headers=outcome.req_headers,
         resp_headers=outcome.resp_headers,

@@ -64,8 +64,9 @@ def test_effective_team_role_and_rank():
 
 def test_resolve_main_team_role():
     teams = [{"id": "main", "role": "admin"}]
-    assert role_groups.resolve_main_team_role("main", teams) is not None
-    assert role_groups.resolve_main_team_role("main", teams).value == "admin"
+    role = role_groups.resolve_main_team_role("main", teams)
+    assert role is not None
+    assert role.value == "admin"
     assert role_groups.resolve_main_team_role("other", teams) is None
     assert role_groups.resolve_main_team_role("", teams) is None
 
