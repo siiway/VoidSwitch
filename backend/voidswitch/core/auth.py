@@ -245,8 +245,6 @@ async def _fetch_teams(settings: Settings, access_token: str | None) -> list[dic
 def _decode_id_token(settings: Settings, id_token: str | None) -> dict[str, Any]:
     if not id_token:
         return {}
-    # Best-effort signature verification via JWKS; fall back to unverified claims
-    # (we already trust the response, delivered over TLS from the token endpoint).
     try:
         jwk_client = jwt.PyJWKClient(settings.prism.jwks_url)
         signing_key = jwk_client.get_signing_key_from_jwt(id_token)
@@ -258,11 +256,8 @@ def _decode_id_token(settings: Settings, id_token: str | None) -> dict[str, Any]
             options={"verify_aud": True},
         )
     except Exception as exc:
-        log.debug("id_token_verify_skipped", error=str(exc))
-        try:
-            return jwt.decode(id_token, options={"verify_signature": False})
-        except jwt.PyJWTError:
-            return {}
+        log.debug("id_token_verify_failed", error=str(exc))
+        return {}
 
 
 async def _fetch_userinfo(

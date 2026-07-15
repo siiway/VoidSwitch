@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import socket
 
 import pytest
+from fastapi import HTTPException
+from voidswitch.api.admin.providers import _fetch_models_url
 from voidswitch.constants import DEFAULT_SETTINGS, ApiStyle
 from voidswitch.core.security import (
     create_session_token,
@@ -46,6 +49,29 @@ async def test_session_jwt_roundtrip():
     claims = decode_session_token(token, secret="s")
     assert claims["sub"] == "user-1"
     assert claims["role"] == "owner"
+
+
+def test_fetch_models_url_rejects_unsafe_targets(monkeypatch):
+    def fake_getaddrinfo(host, *args, **kwargs):
+        mapping = {
+            "api.example.com": "93.184.216.34",
+            "localhost": "127.0.0.1",
+            "internal.example.com": "10.0.0.5",
+        }
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (mapping[host], 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    assert (
+        _fetch_models_url("https://api.example.com/v1", "/models")
+        == "https://api.example.com/v1/models"
+    )
+    with pytest.raises(HTTPException):
+        _fetch_models_url("http://api.example.com", "/models")
+    with pytest.raises(HTTPException):
+        _fetch_models_url("https://api.example.com", "https://localhost/models")
+    with pytest.raises(HTTPException):
+        _fetch_models_url("https://internal.example.com", "/models")
 
 
 # --------------------------------------------------------------------------- #
