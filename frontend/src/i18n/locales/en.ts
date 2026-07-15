@@ -323,6 +323,19 @@ const en = {
     accountId: "Account ID",
     apiToken: "API token",
     addToPool: "Add",
+    importTitle: "Import auth files (sub2api / CLIProxyAPI)",
+    importHint:
+      "Import credentials exported from sub2api or CLIProxyAPI (cpa). Upload the auth JSON file(s) and/or paste their content. Both single auth files and full exports are accepted; every credential type is imported.",
+    importChooseFiles: "Choose files",
+    importFilesSelected: "{{count}} file(s) selected",
+    importPasteLabel: "Or paste content (optional)",
+    importPastePlaceholder: "Paste the auth JSON here…",
+    importButton: "Import",
+    importing: "Importing…",
+    importDone: "Import complete",
+    importFailed: "Import failed",
+    importSummary:
+      "{{imported}} imported, {{duplicates}} duplicate(s), {{unusable}} skipped",
   },
   models: {
     title: "Models",

@@ -45,7 +45,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { ApiKey, Provider } from "../api/types";
+import type { ApiKey, AuthImportResult, Provider } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
   DataTable,
@@ -143,6 +143,11 @@ export function ProviderKeys() {
   const [claudeRefreshToken, setClaudeRefreshToken] = useState("");
   const [claudeExpiresAt, setClaudeExpiresAt] = useState("");
   const [claudeComment, setClaudeComment] = useState("");
+
+  // Import from sub2api / CLIProxyAPI auth files (file upload + paste).
+  const [importFiles, setImportFiles] = useState<File[]>([]);
+  const [importPaste, setImportPaste] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
 
   // Reveal-key dialog state (owner-only).
   const [revealed, setRevealed] = useState<{
@@ -324,6 +329,44 @@ export function ProviderKeys() {
       notify(t("providerKeys.addFailed" as TK), e instanceof Error ? e.message : String(e), "error");
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function runImport() {
+    const sources: string[] = [];
+    for (const file of importFiles) {
+      const text = (await file.text()).trim();
+      if (text) sources.push(text);
+    }
+    const pasted = importPaste.trim();
+    if (pasted) sources.push(pasted);
+    if (!sources.length) return;
+    setImportBusy(true);
+    try {
+      const res = await api.post<AuthImportResult>(
+        `/api/admin/providers/${providerId}/keys/import`,
+        { sources, pool: pool.trim(), note: null },
+      );
+      notify(
+        t("providerKeys.importDone" as TK),
+        t("providerKeys.importSummary" as TK, {
+          imported: res.imported,
+          duplicates: res.duplicates,
+          unusable: res.unusable,
+        }),
+        "success",
+      );
+      setImportFiles([]);
+      setImportPaste("");
+      keys.reload();
+    } catch (e) {
+      notify(
+        t("providerKeys.importFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setImportBusy(false);
     }
   }
 
@@ -716,6 +759,62 @@ export function ProviderKeys() {
                 }}
               >
                 {t("providerKeys.addToPool" as TK)}
+              </Button>
+            </div>
+          </div>
+        </details>
+      )}
+
+      {/* Import auth files exported from sub2api / CLIProxyAPI */}
+      {isClaudeCode && (
+        <details style={{ marginBottom: 8 }}>
+          <summary style={{ cursor: "pointer", fontSize: tokens.fontSizeBase200, color: tokens.colorNeutralForeground2 }}>
+            {t("providerKeys.importTitle" as TK)}
+          </summary>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8, paddingBottom: 8, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
+            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+              {t("providerKeys.importHint" as TK)}
+            </Text>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <input
+                id="auth-import-file"
+                type="file"
+                multiple
+                accept=".json,.jsonl,application/json"
+                style={{ display: "none" }}
+                onChange={(e) => setImportFiles(Array.from(e.target.files ?? []))}
+              />
+              <Button
+                appearance="secondary"
+                size="small"
+                icon={<ArrowUploadRegular />}
+                onClick={() => document.getElementById("auth-import-file")?.click()}
+              >
+                {t("providerKeys.importChooseFiles" as TK)}
+              </Button>
+              {importFiles.length > 0 && (
+                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                  {t("providerKeys.importFilesSelected" as TK, { count: importFiles.length })}
+                </Text>
+              )}
+            </div>
+            <Field label={t("providerKeys.importPasteLabel" as TK)}>
+              <Textarea
+                value={importPaste}
+                onChange={(_, d) => setImportPaste(d.value)}
+                placeholder={t("providerKeys.importPastePlaceholder" as TK)}
+                resize="vertical"
+                rows={4}
+              />
+            </Field>
+            <div>
+              <Button
+                appearance="primary"
+                size="small"
+                disabled={importBusy || (importFiles.length === 0 && !importPaste.trim())}
+                onClick={runImport}
+              >
+                {importBusy ? t("providerKeys.importing" as TK) : t("providerKeys.importButton" as TK)}
               </Button>
             </div>
           </div>

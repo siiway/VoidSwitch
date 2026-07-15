@@ -25,6 +25,35 @@
 对于 `claude-code` 供应商，你可以通过**订阅 OAuth** 添加密钥：启动登录、授权，
 然后将回调码粘贴回来。VoidSwitch 将生成的凭证包存储为密钥并自动刷新。
 
+## 导入 sub2api / CLIProxyAPI 的 Auth 文件
+
+对于 `claude-code` 供应商，你可以直接导入从
+[sub2api](https://github.com/Wei-Shaw/sub2api) 或
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)（cpa）导出的 Auth 凭证，
+无需手动逐条整理 access_token / refresh_token。
+
+在密钥页面展开**导入 Auth 文件**，然后：
+
+1. **选择文件**上传一个或多个 `.json` / `.jsonl` 文件，或直接把内容**粘贴**到文本框。
+   两种方式可以同时使用，会一并导入。
+2. 可选地填写**池**标签，导入的密钥会归入该池。
+3. 点击**导入**。完成后会提示导入数量、重复数量与跳过数量。
+
+支持的格式：
+
+- **CLIProxyAPI（cpa）** — `auths/` 目录下的单个账号 JSON、多个账号组成的 JSON 数组，
+  或每行一个 JSON 的 JSONL。OAuth 账号会被还原为凭证包（含过期时间自动刷新），
+  API Key 账号则作为静态密钥导入。
+- **sub2api** — 后台**导出**得到的数据文件（包含 `accounts` 数组），或单个账号对象。
+  请使用**导出**接口获取的文件：普通接口返回的凭证是脱敏的，无法导入。
+
+注意事项：
+
+- VoidSwitch 只能自动刷新 **Claude 的 OAuth 凭证**；其他平台的 OAuth 会作为静态令牌导入，
+  过期后需要重新导入。
+- 导入会按密钥指纹**自动去重**，重复的凭证会被跳过而不会重复添加。
+- 无法识别或缺少可用凭证的条目会被计入**跳过**数量。
+
 ## 显示密钥（仅限所有者）
 
 所有者可以在确认后查看存储密钥的明文。每次显示都会记录在[审计记录](/admin/audit)中。

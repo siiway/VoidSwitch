@@ -96,6 +96,22 @@ export interface ApiKey {
   added_by_name?: string | null;
 }
 
+export interface AuthImportSkipped {
+  source: string;
+  platform: string;
+  reason: string;
+}
+
+export interface AuthImportResult {
+  imported: number;
+  duplicates: number;
+  unusable: number;
+  by_platform: Record<string, number>;
+  by_source: Record<string, number>;
+  skipped: AuthImportSkipped[];
+  keys: ApiKey[];
+}
+
 export interface Proxy {
   id: number;
   url: string;

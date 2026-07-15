@@ -34,10 +34,12 @@ from voidswitch.models.schemas import (
     ApiKeyOut,
     ApiKeyReorder,
     ApiKeyUpdate,
+    AuthImportRequest,
+    AuthImportResult,
     ClaudeOAuthComplete,
     ClaudeOAuthStart,
 )
-from voidswitch.services import keymgmt, oauth_tokens
+from voidswitch.services import auth_import, keymgmt, oauth_tokens
 
 router = APIRouter(prefix="/api/admin/providers/{provider_id}/keys", tags=["admin:keys"])
 
@@ -91,6 +93,42 @@ async def add_keys(
     return await keymgmt.add_keys(
         session, provider, body, actor=_actor(user, request), settings=settings
     )
+
+
+@router.post("/import", response_model=AuthImportResult, status_code=status.HTTP_201_CREATED)
+async def import_auth_files(
+    provider_id: int,
+    body: AuthImportRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+    settings: Settings = Depends(get_settings),
+) -> AuthImportResult:
+    """Import credentials from sub2api / CLIProxyAPI (cpa) auth files.
+
+    Accepts the raw text of one or more auth files (uploaded or pasted), parses
+    every account they carry, and stores each as a key on this provider. OAuth
+    accounts become credential bundles; api-key/cookie accounts store their raw
+    secret. Only Claude OAuth bundles are auto-refreshed by VoidSwitch.
+    """
+    provider = await _get_provider(session, provider_id)
+    if not body.sources or not any(s.strip() for s in body.sources):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No auth file content provided.")
+    result = await auth_import.import_credentials(
+        session,
+        provider,
+        sources=body.sources,
+        pool=body.pool,
+        note=body.note,
+        actor=_actor(user, request),
+        settings=settings,
+    )
+    if result.imported == 0 and result.duplicates == 0 and result.unusable == 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "No credentials were found in the provided files.",
+        )
+    return result
 
 
 @router.post("/refresh-balance", response_model=list[ApiKeyOut])

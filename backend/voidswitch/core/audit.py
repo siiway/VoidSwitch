@@ -83,6 +83,7 @@ class AuditAction(StrEnum):
 
     # Upstream API keys
     KEY_ADD = "key.add"
+    KEY_IMPORT = "key.import"
     KEY_UPDATE = "key.update"
     KEY_DELETE = "key.delete"
     KEY_CLEANUP = "key.cleanup"

@@ -322,6 +322,43 @@ class ApiKeyCleanupResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Importing auth files from external tools (sub2api / CLIProxyAPI)
+# --------------------------------------------------------------------------- #
+
+
+class AuthImportRequest(BaseModel):
+    """Raw contents of one or more external auth files to import.
+
+    Each entry is the text of a file the operator uploaded or pasted: a single
+    CLIProxyAPI (cpa) per-account JSON, a JSON array or JSONL of them, or a
+    sub2api data export (``{"accounts": [...]}``). The server auto-detects the
+    shape, normalises every credential into a provider key, and de-duplicates.
+    """
+
+    sources: list[str]
+    pool: str = ""  # optional tag applied to every imported key
+    note: str | None = None  # optional note appended to every imported key
+
+
+class AuthImportSkipped(BaseModel):
+    """One account that could not be imported, with a human-readable reason."""
+
+    source: str  # "cpa" | "sub2api" | "unknown"
+    platform: str
+    reason: str
+
+
+class AuthImportResult(BaseModel):
+    imported: int
+    duplicates: int  # skipped because an identical secret already existed
+    unusable: int  # entries that carried no importable credential
+    by_platform: dict[str, int] = Field(default_factory=dict)
+    by_source: dict[str, int] = Field(default_factory=dict)
+    skipped: list[AuthImportSkipped] = Field(default_factory=list)
+    keys: list[ApiKeyOut] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
 # Claude Code subscription OAuth (claude-code provider keys)
 # --------------------------------------------------------------------------- #
 

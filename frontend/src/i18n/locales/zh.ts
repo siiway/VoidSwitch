@@ -317,6 +317,18 @@ const zh: Translations = {
     accountId: "账户 ID",
     apiToken: "API 令牌",
     addToPool: "添加",
+    importTitle: "导入 Auth 文件（sub2api / CLIProxyAPI）",
+    importHint:
+      "导入从 sub2api 或 CLIProxyAPI（cpa）导出的凭据。上传 auth JSON 文件，或直接粘贴其内容。既支持单个 auth 文件，也支持完整导出文件；所有凭据类型都会被导入。",
+    importChooseFiles: "选择文件",
+    importFilesSelected: "已选择 {{count}} 个文件",
+    importPasteLabel: "或粘贴内容（可选）",
+    importPastePlaceholder: "在此粘贴 auth JSON…",
+    importButton: "导入",
+    importing: "导入中…",
+    importDone: "导入完成",
+    importFailed: "导入失败",
+    importSummary: "已导入 {{imported}} 个，重复 {{duplicates}} 个，跳过 {{unusable}} 个",
   },
   models: {
     title: "模型",
