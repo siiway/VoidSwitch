@@ -10,9 +10,10 @@ import datetime as dt
 import os
 import random
 import time
+from dataclasses import dataclass
 from fnmatch import fnmatch
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import KeySelectMode, KeyStatus, ProxyMode, ProxyStatus
@@ -85,9 +86,12 @@ def _store_pin(provider_id: int, pool: str, session_key: str, key_id: int) -> No
 
 
 def reset_selection_state() -> None:
-    """Clear all round-robin cursors and session pins (used by tests)."""
+    """Clear all round-robin cursors, session pins, and the provider index (tests)."""
+    global _index_signature, _index_cache
     _rr_cursors.clear()
     _pins.clear()
+    _index_signature = None
+    _index_cache = None
 
 
 
@@ -158,14 +162,185 @@ def resolve_model(provider: Provider, model: str) -> tuple[str, str]:
     return model, ""
 
 
+# --------------------------------------------------------------------------- #
+# Provider→model index cache
+# --------------------------------------------------------------------------- #
+#
+# Resolving which providers serve an inbound model used to load *every* enabled
+# provider (plus their whole key list) on every request and filter in Python.
+# Instead we keep a process-local index built from a metadata-only query and
+# refresh it only when the provider set actually changes.
+#
+# The cache is keyed off a cheap signature — (count, max(updated_at)) over the
+# enabled providers. Any insert/enable-toggle/edit bumps max(updated_at) (the
+# TimestampMixin sets it on every write) and a delete changes the count, so the
+# signature is guaranteed to move whenever a relevant row does. The signature
+# query and the (rare) rebuild query never touch the key tables.
+
+# Characters that make a `models` pattern a glob rather than a literal.
+_GLOB_CHARS = ("*", "?", "[")
+
+
+def _is_glob(pattern: str) -> bool:
+    return any(ch in pattern for ch in _GLOB_CHARS)
+
+
+@dataclass(frozen=True)
+class _ProviderMeta:
+    id: int
+    priority: int
+    weight: int
+    route_aliases: frozenset[str]
+    routed_upstreams: frozenset[str]
+    literal_models: frozenset[str]
+    wildcards: tuple[str, ...]
+
+
+def _meta_serves(meta: _ProviderMeta, model: str) -> bool:
+    """Mirror of :func:`provider_serves_model` operating on precomputed metadata."""
+    if model in meta.route_aliases:
+        return True
+    if model in meta.routed_upstreams:
+        return False
+    if model in meta.literal_models:
+        return True
+    return any(pattern == "*" or fnmatch(model, pattern) for pattern in meta.wildcards)
+
+
+@dataclass(frozen=True)
+class _ProviderIndex:
+    metas: dict[int, _ProviderMeta]
+    # Inbound model → provider ids that serve it via an exact alias/literal.
+    exact: dict[str, list[int]]
+    # Providers carrying at least one glob pattern (fallback scan).
+    wildcard_ids: tuple[int, ...]
+
+    def candidate_ids(self, model: str) -> list[int]:
+        ids = list(self.exact.get(model, ()))
+        seen = set(ids)
+        for pid in self.wildcard_ids:
+            if pid in seen:
+                continue
+            meta = self.metas.get(pid)
+            if meta is not None and _meta_serves(meta, model):
+                ids.append(pid)
+                seen.add(pid)
+        if not ids:
+            return []
+        ids.sort(key=lambda pid: (self.metas[pid].priority, -self.metas[pid].weight, pid))
+        return ids
+
+
+# (count, max_updated_at_iso) signature of the enabled provider set, and the
+# index built for it. Both cleared by reset_selection_state().
+_index_signature: tuple[int, str] | None = None
+_index_cache: _ProviderIndex | None = None
+
+
+def _meta_from_row(
+    pid: int,
+    priority: int,
+    weight: int,
+    models: list | None,
+    model_routes: list | None,
+) -> _ProviderMeta:
+    route_aliases: set[str] = set()
+    routed_ups: set[str] = set()
+    for route in model_routes or []:
+        if not isinstance(route, dict):
+            continue
+        alias = route.get("alias")
+        if isinstance(alias, str) and alias:
+            route_aliases.add(alias)
+        upstream = route.get("upstream")
+        if isinstance(upstream, str) and upstream:
+            routed_ups.add(upstream)
+    literal: set[str] = set()
+    wildcards: list[str] = []
+    for pattern in models or []:
+        if not isinstance(pattern, str):
+            continue
+        if _is_glob(pattern):
+            wildcards.append(pattern)
+        else:
+            literal.add(pattern)
+    return _ProviderMeta(
+        id=pid,
+        priority=priority,
+        weight=weight,
+        route_aliases=frozenset(route_aliases),
+        routed_upstreams=frozenset(routed_ups),
+        literal_models=frozenset(literal),
+        wildcards=tuple(wildcards),
+    )
+
+
+def _build_index(rows) -> _ProviderIndex:
+    metas: dict[int, _ProviderMeta] = {}
+    exact: dict[str, list[int]] = {}
+    wildcard_ids: list[int] = []
+    for pid, priority, weight, models, model_routes in rows:
+        meta = _meta_from_row(pid, priority, weight, models, model_routes)
+        metas[pid] = meta
+        # Exact matches: every route alias, plus literal models the provider
+        # actually serves (a literal can be shadowed by a routed upstream).
+        exact_models = set(meta.route_aliases)
+        for m in meta.literal_models:
+            if _meta_serves(meta, m):
+                exact_models.add(m)
+        for m in exact_models:
+            exact.setdefault(m, []).append(pid)
+        if meta.wildcards:
+            wildcard_ids.append(pid)
+    return _ProviderIndex(metas=metas, exact=exact, wildcard_ids=tuple(wildcard_ids))
+
+
+async def _provider_signature(session: AsyncSession) -> tuple[int, str]:
+    row = (
+        await session.execute(
+            select(func.count(Provider.id), func.max(Provider.updated_at)).where(
+                Provider.enabled.is_(True)
+            )
+        )
+    ).one()
+    count = int(row[0] or 0)
+    max_updated = row[1]
+    return count, (max_updated.isoformat() if max_updated is not None else "")
+
+
+async def _get_index(session: AsyncSession) -> _ProviderIndex:
+    global _index_signature, _index_cache
+    signature = await _provider_signature(session)
+    if _index_cache is None or signature != _index_signature:
+        rows = (
+            await session.execute(
+                select(
+                    Provider.id,
+                    Provider.priority,
+                    Provider.weight,
+                    Provider.models,
+                    Provider.model_routes,
+                ).where(Provider.enabled.is_(True))
+            )
+        ).all()
+        _index_cache = _build_index(rows)
+        _index_signature = signature
+    return _index_cache
+
+
 async def select_providers(session: AsyncSession, model: str) -> list[Provider]:
     """Enabled providers that serve ``model``, best-priority first."""
+    index = await _get_index(session)
+    ordered_ids = index.candidate_ids(model)
+    if not ordered_ids:
+        return []
     rows = (
-        (await session.execute(select(Provider).where(Provider.enabled.is_(True)))).scalars().all()
+        (await session.execute(select(Provider).where(Provider.id.in_(ordered_ids))))
+        .scalars()
+        .all()
     )
-    matched = [p for p in rows if provider_serves_model(p, model)]
-    matched.sort(key=lambda p: (p.priority, -p.weight, p.id))
-    return matched
+    by_id = {p.id: p for p in rows}
+    return [by_id[pid] for pid in ordered_ids if pid in by_id]
 
 
 def _manual_order(candidates: list[ApiKey]) -> list[ApiKey]:

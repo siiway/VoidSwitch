@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, select, update
 
 from voidswitch.core.audit import (
     SYSTEM_ACTOR_NAME,
@@ -67,54 +67,27 @@ async def cleanup_logs() -> dict[str, int]:
 
         if request_days > 0:
             cutoff = now - dt.timedelta(days=request_days)
-            deleted_requests = await _count_older(session, RequestLog, RequestLog.ts, cutoff)
-            if deleted_requests:
-                await session.execute(delete(RequestLog).where(RequestLog.ts < cutoff))
+            deleted_requests = await _delete_batched(session, RequestLog, RequestLog.ts < cutoff)
 
         if audit_days > 0:
             cutoff = now - dt.timedelta(days=audit_days)
-            # Don't count/delete the cleanup entry we're about to write.
-            deleted_audits = await _count_older(session, AuditLog, AuditLog.ts, cutoff)
-            if deleted_audits:
-                await session.execute(delete(AuditLog).where(AuditLog.ts < cutoff))
+            # The cleanup entry we're about to write has ts=now, so it never
+            # falls inside this ts < cutoff window.
+            deleted_audits = await _delete_batched(session, AuditLog, AuditLog.ts < cutoff)
 
         if debug_days > 0:
             cutoff = now - dt.timedelta(days=debug_days)
-            stripped_debug = await _count_debug_older(session, cutoff)
-            if stripped_debug:
-                await session.execute(
-                    update(RequestLog)
-                    .where(RequestLog.ts < cutoff, RequestLog.debug.is_(True))
-                    .values(
-                        debug=False,
-                        req_headers=None,
-                        req_body=None,
-                        resp_headers=None,
-                        resp_body=None,
-                        debug_attempts=None,
-                        upstream_url=None,
-                        proxy_url=None,
-                    )
-                )
+            stripped_debug = await _strip_debug_batched(session, cutoff)
 
         if heatmap_days > 0:
             cutoff = now - dt.timedelta(days=heatmap_days)
             cutoff_day = cutoff.strftime("%Y-%m-%d")
-            deleted_heatmap = int(
-                (
-                    await session.execute(
-                        select(func.count(UsageDaily.id)).where(UsageDaily.day < cutoff_day)
-                    )
-                ).scalar_one()
-                or 0
+            deleted_heatmap = await _delete_batched(
+                session, UsageDaily, UsageDaily.day < cutoff_day
             )
-            if deleted_heatmap:
-                await session.execute(delete(UsageDaily).where(UsageDaily.day < cutoff_day))
-            deleted_spans = await _count_older(
-                session, SessionSpan, SessionSpan.last_at, cutoff
+            deleted_spans = await _delete_batched(
+                session, SessionSpan, SessionSpan.last_at < cutoff
             )
-            if deleted_spans:
-                await session.execute(delete(SessionSpan).where(SessionSpan.last_at < cutoff))
 
         if deleted_requests or deleted_audits or stripped_debug or deleted_heatmap or deleted_spans:
             log.info(
@@ -154,21 +127,61 @@ async def cleanup_logs() -> dict[str, int]:
         }
 
 
-async def _count_older(session, model, ts_column, cutoff: dt.datetime) -> int:
-    return int(
-        (await session.execute(select(func.count(model.id)).where(ts_column < cutoff))).scalar_one()
-        or 0
-    )
+# Rows removed per statement. Bounding each DELETE keeps the transaction/journal
+# small and avoids holding a long write lock (SQLite) or bloating a single
+# transaction (Postgres) when a retention window first activates on a large table.
+_CLEANUP_BATCH = 5000
 
 
-async def _count_debug_older(session, cutoff: dt.datetime) -> int:
-    return int(
-        (
-            await session.execute(
-                select(func.count(RequestLog.id)).where(
-                    RequestLog.ts < cutoff, RequestLog.debug.is_(True)
-                )
+async def _delete_batched(session, model, where_clause) -> int:
+    """Delete rows matching ``where_clause`` in bounded batches; return the total.
+
+    Uses ``DELETE ... WHERE id IN (SELECT id ... LIMIT n)`` and reads
+    ``rowcount`` instead of a separate ``COUNT(*)`` scan. Commits between batches
+    so a large purge never accumulates into one oversized transaction.
+    """
+    total = 0
+    while True:
+        subquery = select(model.id).where(where_clause).limit(_CLEANUP_BATCH)
+        result = await session.execute(delete(model).where(model.id.in_(subquery)))
+        removed = result.rowcount or 0
+        total += removed
+        if removed:
+            await session.commit()
+        if removed < _CLEANUP_BATCH:
+            return total
+
+
+async def _strip_debug_batched(session, cutoff: dt.datetime) -> int:
+    """Strip verbose debug fields off aged rows in bounded batches; return the total.
+
+    Self-terminating: each batch clears ``debug`` so those rows drop out of the
+    ``debug IS TRUE`` filter on the next pass.
+    """
+    total = 0
+    while True:
+        subquery = (
+            select(RequestLog.id)
+            .where(RequestLog.ts < cutoff, RequestLog.debug.is_(True))
+            .limit(_CLEANUP_BATCH)
+        )
+        result = await session.execute(
+            update(RequestLog)
+            .where(RequestLog.id.in_(subquery))
+            .values(
+                debug=False,
+                req_headers=None,
+                req_body=None,
+                resp_headers=None,
+                resp_body=None,
+                debug_attempts=None,
+                upstream_url=None,
+                proxy_url=None,
             )
-        ).scalar_one()
-        or 0
-    )
+        )
+        removed = result.rowcount or 0
+        total += removed
+        if removed:
+            await session.commit()
+        if removed < _CLEANUP_BATCH:
+            return total

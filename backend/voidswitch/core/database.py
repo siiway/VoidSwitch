@@ -56,6 +56,7 @@ class Database:
                 await conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
             await conn.run_sync(Base.metadata.create_all)
             await conn.run_sync(_add_missing_columns)
+            await conn.run_sync(_ensure_indexes)
             await conn.run_sync(_backfill_provider_uuids)
 
     @asynccontextmanager
@@ -161,6 +162,44 @@ def _add_missing_columns(conn: Any) -> None:
         existing = {c["name"] for c in inspector.get_columns(table)}
         if column not in existing:
             conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+# Composite indexes added after a table's first release. ``create_all`` with its
+# default ``checkfirst`` skips tables that already exist, so it never adds a new
+# index to a pre-existing table — these must be created explicitly. Each entry is
+# ``(index_name, table, "col_a, col_b")`` and is issued as ``CREATE INDEX IF NOT
+# EXISTS`` (supported by SQLite ≥3.8 and Postgres), making it idempotent and safe
+# on every boot.
+#
+# These back the admin log browser's hot query shape — ``WHERE <col> = ?
+# ORDER BY id DESC LIMIT/OFFSET`` and the keyset ``COUNT(*) WHERE id > ? AND ...``
+# — where a leading equality column plus the ``id`` tie-break lets the planner
+# satisfy both the filter and the ordering from one index (both engines can scan
+# an index in reverse for ``ORDER BY id DESC``). Kept here as the single source of
+# truth rather than as ``Index()`` entries on the models to avoid name drift.
+_ADDED_INDEXES: tuple[tuple[str, str, str], ...] = (
+    ("ix_request_logs_user_sub_id", "request_logs", "user_sub, id"),
+    ("ix_request_logs_model_id", "request_logs", "model, id"),
+    ("ix_request_logs_provider_name_id", "request_logs", "provider_name, id"),
+    ("ix_request_logs_token_id_id", "request_logs", "token_id, id"),
+    ("ix_request_logs_success_id", "request_logs", "success, id"),
+    ("ix_audit_logs_scope_id", "audit_logs", "scope, id"),
+    ("ix_audit_logs_action_id", "audit_logs", "action, id"),
+    ("ix_audit_logs_actor_sub_id", "audit_logs", "actor_sub, id"),
+)
+
+
+def _ensure_indexes(conn: Any) -> None:
+    from sqlalchemy import inspect as sa_inspect
+
+    inspector = sa_inspect(conn)
+    tables = set(inspector.get_table_names())
+    for name, table, columns in _ADDED_INDEXES:
+        if table not in tables:
+            continue  # create_all just made it; its own indexes come with it
+        conn.exec_driver_sql(
+            f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})"
+        )
 
 
 def _backfill_provider_uuids(conn: Any) -> None:
