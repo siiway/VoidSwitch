@@ -170,6 +170,7 @@ export function ProviderKeys() {
   const current = provider.data?.find((p) => p.id === providerId);
   const isClaudeCode = current?.type === "claude-code";
   const supportsBalance = current?.supports_balance ?? false;
+  const supportsImport = current?.supports_import ?? false;
   // Distinct pool tags present among this provider's keys (for the rescan picker).
   const pools = Array.from(
     new Set((keys.data ?? []).map((k) => k.pool ?? "")),
@@ -765,8 +766,8 @@ export function ProviderKeys() {
         </details>
       )}
 
-      {/* Import auth files exported from sub2api / CLIProxyAPI */}
-      {isClaudeCode && (
+      {/* Import auth files exported from sub2api / CLIProxyAPI / cpa */}
+      {supportsImport && (
         <details style={{ marginBottom: 8 }}>
           <summary style={{ cursor: "pointer", fontSize: tokens.fontSizeBase200, color: tokens.colorNeutralForeground2 }}>
             {t("providerKeys.importTitle" as TK)}

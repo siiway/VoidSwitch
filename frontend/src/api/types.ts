@@ -43,6 +43,7 @@ export interface Provider {
   key_count: number;
   active_key_count: number;
   supports_balance: boolean;
+  supports_import: boolean;
   added_by?: number | null;
   added_by_name?: string | null;
   key_api_enabled: boolean;
@@ -434,6 +435,7 @@ export interface AdapterMeta {
   default_base_url: string;
   default_models: string[];
   supports_balance: boolean;
+  supports_import: boolean;
 }
 
 export interface SystemInfo {

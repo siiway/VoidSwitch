@@ -15,6 +15,7 @@ from .fireworks import FireworksProvider
 from .gemini import GeminiProvider
 from .generic import GenericOpenAIProvider
 from .github_models import GitHubModelsProvider
+from .grok import GrokProvider
 from .groq import GroqProvider
 from .hyperbolic import HyperbolicProvider
 from .mimo import MiMoProvider
@@ -48,6 +49,7 @@ _ADAPTERS: dict[str, type[BaseProvider]] = {
         OpenRouterProvider,
         GroqProvider,
         XAIProvider,
+        GrokProvider,
         MoonshotProvider,
         MiMoProvider,
         NvidiaProvider,
@@ -96,6 +98,7 @@ def adapter_catalog() -> list[dict[str, object]]:
                 "default_base_url": cls.default_base_url,
                 "default_models": list(cls.default_models),
                 "supports_balance": cls.balance_suffix is not None,
+                "supports_import": cls.supports_import,
             }
         )
     return catalog

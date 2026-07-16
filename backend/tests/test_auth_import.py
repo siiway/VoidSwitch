@@ -151,6 +151,112 @@ def test_parse_sub2api_oauth_without_access_token_is_skipped():
     assert parsed.skipped[0].source == "sub2api"
 
 
+def test_parse_cpa_xai_extracts_raw_sso_token():
+    # cpa xai auth files carry a raw sso_token alongside an unrelated xAI OAuth
+    # pair. The grok console adapter needs the SSO token, so it wins.
+    blob = json.dumps(
+        {
+            "type": "xai",
+            "access_token": "acc-x",
+            "refresh_token": "ref-x",
+            "sso_token": "sso=JWT.VALUE.HERE",
+            "email": "grok@x.io",
+        }
+    )
+    parsed = auth_import.parse_source(blob)
+    assert not parsed.skipped
+    assert len(parsed.accounts) == 1
+    acc = parsed.accounts[0]
+    assert acc.platform == "grok"
+    assert acc.account_type == "sso"
+    assert not acc.is_bundle
+    # The leading "sso=" cookie prefix is normalised away.
+    assert acc.secret == "JWT.VALUE.HERE"
+    assert acc.label == "grok@x.io"
+
+
+def test_parse_cpa_grok_sso_only_camelcase():
+    blob = json.dumps({"type": "grok", "ssoToken": "RAWTOKEN"})
+    parsed = auth_import.parse_source(blob)
+    assert len(parsed.accounts) == 1
+    acc = parsed.accounts[0]
+    assert acc.platform == "grok"
+    assert acc.account_type == "sso"
+    assert acc.secret == "RAWTOKEN"
+
+
+def test_parse_sub2api_grok_sso_from_credentials():
+    blob = json.dumps(
+        {
+            "platform": "grok",
+            "type": "cookie",
+            "credentials": {"sso": "SSO123"},
+            "name": "grok-acct",
+        }
+    )
+    parsed = auth_import.parse_source(blob)
+    assert not parsed.skipped
+    assert len(parsed.accounts) == 1
+    acc = parsed.accounts[0]
+    assert acc.source == "sub2api"
+    assert acc.platform == "grok"
+    assert acc.account_type == "sso"
+    assert acc.secret == "SSO123"
+    assert acc.label == "grok-acct"
+
+
+def test_parse_sub2api_grok_oauth_refresh_only_becomes_bundle():
+    # sub2api's default grok export persists only an OAuth refresh_token (the raw
+    # SSO cookie is consumed server-side). The xai adapter refreshes it into an
+    # access token on demand, so it imports as an OAuth bundle (not skipped).
+    blob = json.dumps(
+        {
+            "platform": "grok",
+            "type": "oauth",
+            "credentials": {"refresh_token": "r-only", "expires_at": 1_700_000_000},
+            "name": "grok-rt",
+        }
+    )
+    parsed = auth_import.parse_source(blob)
+    assert not parsed.skipped
+    assert len(parsed.accounts) == 1
+    acc = parsed.accounts[0]
+    assert acc.source == "sub2api"
+    assert acc.platform == "grok"
+    assert acc.account_type == "oauth"
+    assert acc.is_bundle
+    assert acc.label == "grok-rt"
+    bundle = json.loads(acc.secret)
+    assert bundle["refresh_token"] == "r-only"
+    assert "access_token" not in bundle  # refresh-only until first use
+    assert bundle["expires_at"] == 1_700_000_000.0
+
+
+def test_parse_sub2api_grok_oauth_without_secret_is_skipped():
+    blob = json.dumps({"platform": "grok", "type": "oauth", "credentials": {}})
+    parsed = auth_import.parse_source(blob)
+    assert not parsed.accounts
+    assert len(parsed.skipped) == 1
+    assert parsed.skipped[0].platform == "grok"
+
+
+def test_parse_cpa_grok_refresh_only_becomes_bundle():
+    # A grok account with only a refresh token (no SSO cookie, no access token)
+    # imports as a refresh-only xAI OAuth bundle.
+    blob = json.dumps({"type": "xai", "refresh_token": "r-cpa", "email": "g@x.io"})
+    parsed = auth_import.parse_source(blob)
+    assert not parsed.skipped
+    assert len(parsed.accounts) == 1
+    acc = parsed.accounts[0]
+    assert acc.platform == "grok"
+    assert acc.account_type == "oauth"
+    assert acc.is_bundle
+    bundle = json.loads(acc.secret)
+    assert bundle["refresh_token"] == "r-cpa"
+    assert "access_token" not in bundle
+    assert acc.label == "g@x.io"
+
+
 def test_parse_jsonl_fallback():
     blob = "\n".join(
         [

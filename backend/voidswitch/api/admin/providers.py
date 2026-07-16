@@ -105,7 +105,9 @@ def _to_out(
     out = ProviderOut.model_validate(provider)
     out.key_count = len(provider.keys)
     out.active_key_count = sum(1 for k in provider.keys if k.status == KeyStatus.ACTIVE.value)
-    out.supports_balance = get_adapter(provider).balance_url is not None
+    adapter = get_adapter(provider)
+    out.supports_balance = adapter.balance_url is not None
+    out.supports_import = adapter.supports_import
     if redact:
         # Members may view providers (to add keys) but must not see potentially
         # secret config such as custom auth headers.

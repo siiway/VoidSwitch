@@ -27,10 +27,10 @@
 
 ## 导入 sub2api / CLIProxyAPI 的 Auth 文件
 
-对于 `claude-code` 供应商，你可以直接导入从
+对于 `claude-code`、`grok`、`xai` 等支持导入的供应商，你可以直接导入从
 [sub2api](https://github.com/Wei-Shaw/sub2api) 或
 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)（cpa）导出的 Auth 凭证，
-无需手动逐条整理 access_token / refresh_token。
+无需手动逐条整理 access_token / refresh_token。凭据导入面板会出现在这些供应商的密钥页面上。
 
 在密钥页面展开**导入 Auth 文件**，然后：
 
@@ -49,8 +49,16 @@
 
 注意事项：
 
-- VoidSwitch 只能自动刷新 **Claude 的 OAuth 凭证**；其他平台的 OAuth 会作为静态令牌导入，
-  过期后需要重新导入。
+- VoidSwitch 能自动刷新 **Claude** 和 **xAI（Grok）** 的 OAuth 凭证；其他平台的 OAuth 会作为
+  静态令牌导入，过期后需要重新导入。
+- **Grok（xAI）** — 一个 Grok 账号可能有两种可用凭证，导入时按以下优先级处理：
+  - 若账号包含**原始 SSO Token**（`sso_token` / `ssoToken` / `sso` 字段，可带或不带 `sso=`
+    前缀），会优先提取该 Token。请把这类凭证导入到 `grok` 供应商，因为 `console.x.ai`
+    适配器用的是 SSO Cookie。cpa 的 xai 账号通常直接包含该 Token。
+  - 若账号没有 SSO、只有 xAI 的 **OAuth 凭证**（`access_token` / `refresh_token`，例如
+    sub2api 仅导出 `refresh_token` 的 Grok 账号），会打包成 OAuth 凭证包导入。请把这类凭证
+    导入到 `xai` 供应商（官方 `api.x.ai`），它会在临近过期或收到 401 时自动刷新。
+  - 只有当账号既无 SSO，也无 access/refresh token 时，该条目才会被跳过。
 - 导入会按密钥指纹**自动去重**，重复的凭证会被跳过而不会重复添加。
 - 无法识别或缺少可用凭证的条目会被计入**跳过**数量。
 

@@ -32,6 +32,7 @@ _OPENCODE_SUBSTITUTIONS: tuple[tuple[str, str], ...] = (
 class ClaudeCodeProvider(AnthropicProvider):
     type = "claude-code"
     refresh_on_invalid_key = True
+    supports_import = True
 
     async def resolve_credential(
         self,

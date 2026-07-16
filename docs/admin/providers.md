@@ -19,6 +19,26 @@
 因此调用者无需更改任何内容。
 :::
 
+::: tip Grok（console.x.ai 免费模型）
+- **`xai`** 适配器对接官方 `api.x.ai` REST API，密钥可以是标准 API Key，
+  也可以是 xAI 的 **OAuth 凭证包**（含 `access_token` / `refresh_token`）。
+  凭证包会在临近过期、缺少 access token 或收到 401 时，自动用 `refresh_token`
+  向 `https://auth.x.ai/oauth2/token`（grok-cli 客户端）换取新的 access token，
+  并把轮换后的凭证包回写到密钥。因此从 sub2api 导入的、仅含 `refresh_token`
+  的 Grok 账号也能在 `xai` 供应商上直接使用。
+- **`grok`** 适配器对接 `console.x.ai` 网页后端（参考
+  [grok2api](https://github.com/jiujiu532/grok2api)），密钥填**SSO Token**——
+  即登录 console.x.ai 后浏览器 `sso` Cookie 的值（可带或不带 `sso=` 前缀）。
+  它复用 Responses API 转换，因此入站 OpenAI-chat / Anthropic 请求同样无需改动。
+
+暴露的模型名自带推理强度后缀，例如 `grok-4.3-console` / `-low` / `-medium` /
+`-high`、`grok-4.20-multi-agent-console` / `-low` / `-medium` / `-high` / `-xhigh`、
+`grok-4.20-0309-console`、`grok-build-console` 等，网关会自动映射到真实 console 模型
+并注入推理强度与联网搜索工具。若上游需要 `cf_clearance`，在**额外请求头**里以
+`Cookie: cf_clearance=...` 追加即可（会拼接到 SSO Cookie 之后，而非覆盖）。
+SSO Token 过期会被识别为密钥失效（401/403），匿名配额耗尽（429）会触发限流冷却。
+:::
+
 ## 关键设置
 
 - **优先级 / 权重** — 优先级越低越优先；权重在同等优先级的供应商之间分配负载。

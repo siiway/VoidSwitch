@@ -595,6 +595,104 @@ async def test_anthropic_adapter_headers():
     assert adapter.upstream_url == "https://api.anthropic.com/v1/messages"
 
 
+async def test_grok_adapter_headers_and_style():
+    provider = Provider(name="grok", type="grok")
+    adapter = get_adapter(provider)
+    assert adapter.style is ApiStyle.OPENAI_RESPONSES
+    assert adapter.upstream_url == "https://console.x.ai/v1/responses"
+    # The SSO token may carry a leading "sso=" prefix; it is stripped.
+    headers = adapter.headers("sso=TOKEN123")
+    assert headers["Authorization"] == "Bearer anonymous"
+    assert headers["Cookie"] == "sso=TOKEN123; sso-rw=TOKEN123"
+    assert headers["origin"] == "https://console.x.ai"
+
+
+async def test_grok_adapter_extra_cookie_is_appended():
+    provider = Provider(
+        name="grok",
+        type="grok",
+        extra_headers={"Cookie": "cf_clearance=abc"},
+    )
+    adapter = get_adapter(provider)
+    headers = adapter.headers("TOKEN123")
+    assert headers["Cookie"] == "sso=TOKEN123; sso-rw=TOKEN123; cf_clearance=abc"
+
+
+async def test_grok_adapter_prepare_body_reasoning_model():
+    provider = Provider(name="grok", type="grok")
+    adapter = get_adapter(provider)
+    body = adapter.prepare_body({"model": "grok-4.3-high", "input": []})
+    assert body["model"] == "grok-4.3"
+    assert body["store"] is False
+    assert body["include"] == ["reasoning.encrypted_content"]
+    assert body["reasoning"] == {"effort": "high"}
+    assert body["max_output_tokens"] == 1_000_000
+    # grok-4.3 is search-capable, so search tools are injected.
+    assert {t["type"] for t in body["tools"]} == {"web_search", "x_search"}
+    assert body["tool_choice"] == "auto"
+
+
+async def test_grok_adapter_prepare_body_non_reasoning_and_tokens():
+    provider = Provider(name="grok", type="grok")
+    adapter = get_adapter(provider)
+    body = adapter.prepare_body({"model": "grok-4.20-multi-agent-console", "input": []})
+    assert body["model"] == "grok-4.20-multi-agent-0309"
+    assert body["reasoning"] == {"effort": "low"}  # default effort
+    assert body["max_output_tokens"] == 2_000_000
+
+    plain = adapter.prepare_body({"model": "grok-4.20-0309-non-reasoning-console", "input": []})
+    assert plain["model"] == "grok-4.20-0309-non-reasoning"
+    assert "reasoning" not in plain
+
+
+async def test_grok_adapter_preserves_caller_tools():
+    provider = Provider(name="grok", type="grok")
+    adapter = get_adapter(provider)
+    caller_tools = [{"type": "function", "name": "get_weather", "parameters": {}}]
+    body = adapter.prepare_body(
+        {"model": "grok-4.3-console", "input": [], "tools": caller_tools}
+    )
+    assert body["tools"] == caller_tools
+
+
+async def test_grok_adapter_classify():
+    provider = Provider(name="grok", type="grok")
+    adapter = get_adapter(provider)
+    assert adapter.classify(401, {}) == ErrorClass.KEY_INVALID
+    assert adapter.classify(403, {}) == ErrorClass.KEY_INVALID
+    assert adapter.classify(429, {}) == ErrorClass.RATE_LIMITED
+    assert adapter.classify(200, {}) == ErrorClass.OK
+
+
+async def test_xai_adapter_refreshes_oauth_bundle_credential():
+    from voidswitch.services import xai_oauth
+
+    provider = Provider(name="xai", type="xai")
+    adapter = get_adapter(provider)
+    # The xai adapter opts into force-refresh on 401 and delegates credential
+    # resolution to the xAI OAuth helper (so OAuth bundles auto-refresh).
+    assert adapter.refresh_on_invalid_key is True
+
+    called: dict[str, object] = {}
+
+    async def fake_resolve(session, key, *, secret_key, force_refresh=False):
+        called["secret_key"] = secret_key
+        called["force_refresh"] = force_refresh
+        return "resolved-access-token"
+
+    original = xai_oauth.resolve_access_token
+    xai_oauth.resolve_access_token = fake_resolve  # type: ignore[assignment]
+    try:
+        token = await adapter.resolve_credential(
+            None, object(), "secret", force_refresh=True
+        )
+    finally:
+        xai_oauth.resolve_access_token = original  # type: ignore[assignment]
+
+    assert token == "resolved-access-token"
+    assert called == {"secret_key": "secret", "force_refresh": True}
+
+
 async def test_routes_for_provider_proxy_modes():
     from voidswitch.constants import ProxyMode
     from voidswitch.models.db import Proxy

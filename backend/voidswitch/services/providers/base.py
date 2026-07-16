@@ -45,6 +45,9 @@ class BaseProvider:
     balance_suffix: str | None = None
     anthropic_version: str = "2023-06-01"
     refresh_on_invalid_key: bool = False
+    # Whether the dashboard offers the cpa/sub2api credential-import panel for
+    # this provider type (e.g. Claude Code OAuth, Grok SSO, xAI OAuth bundles).
+    supports_import: bool = False
 
     def __init__(self, record: Provider) -> None:
         self.record = record

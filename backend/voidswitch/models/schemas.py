@@ -134,6 +134,9 @@ class ProviderOut(ProviderBase):
     # True when this provider's adapter can query a balance endpoint, so the
     # dashboard can surface a balance column and a "refresh balances" action.
     supports_balance: bool = False
+    # True when this provider's adapter accepts cpa/sub2api credential imports,
+    # so the dashboard can surface the import panel on its key-management page.
+    supports_import: bool = False
     added_by: int | None = None
     added_by_name: str | None = None
     # Per-provider key-management API state. The secret itself is never inlined

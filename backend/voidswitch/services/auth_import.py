@@ -17,8 +17,19 @@ Every parsed account becomes one provider key. OAuth accounts are stored as a
 Claude-style credential *bundle* (``{access_token, refresh_token, expires_at}``);
 api-key / cookie / static accounts store their raw secret verbatim.
 
-Only Claude OAuth bundles are auto-refreshed by VoidSwitch (see
-:mod:`voidswitch.services.oauth_tokens`). Other platforms' OAuth tokens are
+Grok (xAI) accounts are special. The console.x.ai ``grok`` adapter authenticates
+with the raw browser ``sso`` cookie token, so we extract that token
+(``sso_token`` / ``ssoToken`` / ``sso``) in preference to anything else — such a
+key belongs on a ``grok`` provider. When no SSO cookie is present we instead
+build an xAI OAuth bundle from whatever ``refresh_token`` / ``access_token`` the
+export carries (sub2api converts the SSO cookie into a refresh token
+server-side and exports only that); such a key belongs on an ``xai`` provider,
+which mints and auto-refreshes the access token via
+:mod:`voidswitch.services.xai_oauth`.
+
+Claude and xAI OAuth bundles are auto-refreshed by VoidSwitch (see
+:mod:`voidswitch.services.oauth_tokens` and
+:mod:`voidswitch.services.xai_oauth`). Other platforms' OAuth tokens are
 imported as-is and remain usable until they expire; refreshing them is the
 operator's responsibility.
 """
@@ -119,8 +130,16 @@ def _to_epoch_seconds(value: object) -> float | None:
     return None
 
 
-def _build_bundle(access: str, refresh: object, expires_at: float | None) -> str:
-    bundle: dict[str, object] = {"access_token": access}
+def _build_bundle(access: object, refresh: object, expires_at: float | None) -> str:
+    """Serialise an OAuth credential bundle.
+
+    Either half may be absent: a bundle with only a ``refresh_token`` (no access
+    token yet) is valid for platforms that mint the access token on demand
+    (see :mod:`voidswitch.services.xai_oauth`).
+    """
+    bundle: dict[str, object] = {}
+    if isinstance(access, str) and access:
+        bundle["access_token"] = access
     if isinstance(refresh, str) and refresh:
         bundle["refresh_token"] = refresh
     if expires_at is not None:
@@ -130,6 +149,53 @@ def _build_bundle(access: str, refresh: object, expires_at: float | None) -> str
 
 def _str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+# Field-name variants that carry a raw grok/xAI SSO cookie token across the
+# tools we ingest (cpa flattens them at the top level; sub2api nests them under
+# ``credentials``). The grok console adapter consumes this token directly.
+_SSO_FIELDS = ("sso_token", "ssoToken", "sso")
+
+
+def _normalize_sso(value: str) -> str:
+    """Strip an optional leading ``sso=`` cookie prefix from an SSO token.
+
+    Some exporters store the raw cookie pair (``sso=<jwt>``) rather than just the
+    value. The grok adapter also strips this defensively, but normalising at
+    import keeps the stored secret and its dedup hash canonical.
+    """
+    token = value.strip()
+    if token.startswith("sso="):
+        token = token[len("sso=") :].strip()
+    return token
+
+
+def _extract_sso(*containers: dict[Any, Any]) -> str | None:
+    """Return the first non-empty, normalised SSO token found in ``containers``."""
+    for container in containers:
+        for field_name in _SSO_FIELDS:
+            raw = _str(container.get(field_name))
+            if raw:
+                token = _normalize_sso(raw)
+                if token:
+                    return token
+    return None
+
+
+# Field-name variants that carry an xAI OAuth refresh token. sub2api converts an
+# SSO cookie to a refresh token server-side and exports only this, so a grok
+# account with no raw SSO cookie still yields a usable (auto-refreshed) bundle.
+_REFRESH_FIELDS = ("refresh_token", "refreshToken", "rt", "RT")
+
+
+def _extract_refresh(*containers: dict[Any, Any]) -> str | None:
+    """Return the first non-empty xAI refresh token found in ``containers``."""
+    for container in containers:
+        for field_name in _REFRESH_FIELDS:
+            raw = _str(container.get(field_name))
+            if raw:
+                return raw
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -147,6 +213,30 @@ def _parse_sub2api_account(acc: dict[Any, Any]) -> ParsedAccount | SkippedAccoun
         or _str(acc.get("email"))
         or _str(creds.get("email"))
     )
+
+    # Grok's console adapter authenticates with the raw SSO cookie token, not an
+    # xAI OAuth bundle. Prefer it whenever the export carries one (regardless of
+    # the account's declared ``type``).
+    if platform == "grok":
+        sso = _extract_sso(creds, acc)
+        if sso:
+            return ParsedAccount("sub2api", platform, "sso", sso, False, label)
+        # No raw SSO cookie — fall back to an xAI OAuth bundle. sub2api commonly
+        # exports only a refresh_token (the SSO cookie was consumed server-side);
+        # the xai adapter mints/refreshes the access token from it on demand.
+        refresh = _extract_refresh(creds, acc)
+        access = _str(creds.get("access_token"))
+        if refresh or access:
+            secret = _build_bundle(
+                access, refresh, _to_epoch_seconds(creds.get("expires_at"))
+            )
+            return ParsedAccount("sub2api", platform, "oauth", secret, True, label)
+        if atype == "oauth":
+            return SkippedAccount(
+                "sub2api",
+                platform,
+                "Grok account has no SSO cookie, access_token or refresh_token",
+            )
 
     if atype == "oauth":
         access = _str(creds.get("access_token"))
@@ -185,6 +275,27 @@ def _parse_sub2api_account(acc: dict[Any, Any]) -> ParsedAccount | SkippedAccoun
 def _parse_cpa_account(obj: dict[Any, Any]) -> ParsedAccount | SkippedAccount:
     platform = _canon_platform(_str(obj.get("type")))
     label = _str(obj.get("email")) or _str(obj.get("account")) or _str(obj.get("name"))
+
+    # Grok's console adapter uses the raw SSO cookie token. cpa xai auth files
+    # flatten it at the top level (often alongside an unrelated xAI OAuth
+    # access/refresh pair), so extract it before the generic OAuth handling.
+    if platform == "grok":
+        sso = _extract_sso(obj)
+        if sso:
+            return ParsedAccount("cpa", platform, "sso", sso, False, label)
+        # No raw SSO cookie — fall back to an xAI OAuth bundle. Handle the
+        # refresh-only case here (the generic branch below requires an
+        # access_token); an access+refresh pair falls through to it unchanged.
+        refresh = _extract_refresh(obj)
+        if refresh and not _str(obj.get("access_token")):
+            expiry = (
+                obj.get("expired")
+                or obj.get("expire")
+                or obj.get("expires")
+                or obj.get("expires_at")
+            )
+            secret = _build_bundle(None, refresh, _to_epoch_seconds(expiry))
+            return ParsedAccount("cpa", platform, "oauth", secret, True, label)
 
     access = _str(obj.get("access_token"))
     if access:
