@@ -63,6 +63,7 @@ export default defineConfig({
           items: [
             { text: "概览与角色", link: "/admin/overview" },
             { text: "供应商", link: "/admin/providers" },
+            { text: "供应商目录", link: "/admin/provider-catalog" },
             { text: "上游密钥", link: "/admin/keys" },
             { text: "代理", link: "/admin/proxies" },
             { text: "模型", link: "/admin/models" },
