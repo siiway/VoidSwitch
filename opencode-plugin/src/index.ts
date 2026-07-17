@@ -28,9 +28,9 @@
  */
 
 import type { AuthOAuthResult, Hooks, Plugin, PluginInput, PluginOptions } from "@opencode-ai/plugin"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 // --------------------------------------------------------------------------- //
 // Constants mirrored from the Claude Code CLI wire format
@@ -312,6 +312,97 @@ function takeHeader(h: Headers, name: string): string | undefined {
   const v = h.get(name)
   if (v !== null) h.delete(name)
   return v ?? undefined
+}
+
+// --------------------------------------------------------------------------- //
+// Request diagnostics
+// --------------------------------------------------------------------------- //
+
+/** Cap on how much of a response body we echo into a diagnostic string. */
+const DIAG_BODY_LIMIT = 800
+
+/**
+ * Build a compact, human-readable diagnostic string for a *failed* gateway
+ * response, so users can paste it verbatim when reporting an issue. Captures the
+ * things that actually pin down the failure:
+ *
+ *   • request  — the exact URL that was hit (method optional);
+ *   • status   — the HTTP status + reason phrase;
+ *   • cf-ray   — Cloudflare's ray id when the response passed through Cloudflare
+ *                (the single most useful token when CF, not the gateway, blocked
+ *                the request — e.g. a WAF 403); omitted when absent;
+ *   • response — a truncated copy of the body (often the JSON error the gateway
+ *                or an intermediary returned).
+ *
+ * A `clone()` is read so the caller's original response body stays intact for
+ * downstream consumers (OpenCode, `rewriteUpstreamError`, JSON parsing, …).
+ */
+async function describeHttpError(url: string, res: Response, method?: string): Promise<string> {
+  const parts: string[] = []
+  parts.push(`request: ${method ? method + " " : ""}${url}`)
+  parts.push(`status: ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`)
+  // Cloudflare edge identifier — present only when CF fronts the gateway. Invaluable
+  // for telling "CF blocked it" (e.g. a WAF 403) apart from a real gateway error.
+  const cfRay = res.headers.get("cf-ray")
+  if (cfRay) parts.push(`cf-ray: ${cfRay}`)
+  const cfCacheStatus = res.headers.get("cf-cache-status")
+  if (cfCacheStatus) parts.push(`cf-cache-status: ${cfCacheStatus}`)
+  let body = ""
+  try {
+    body = (await res.clone().text()).trim()
+  } catch {
+    // Body already consumed or not readable — the status + cf-ray still help.
+  }
+  if (body) {
+    parts.push(`response: ${body.length > DIAG_BODY_LIMIT ? body.slice(0, DIAG_BODY_LIMIT) + " …(truncated)" : body}`)
+  }
+  return parts.join("\n")
+}
+
+/** Diagnostic string for a request that never produced a response (network/DNS/TLS). */
+function describeFetchError(url: string, err: unknown, method?: string): string {
+  return [
+    `request: ${method ? method + " " : ""}${url}`,
+    `error: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`,
+  ].join("\n")
+}
+
+/** Max lines kept in voidswitch-error.log; older lines are dropped on write. */
+const LOG_MAX_LINES = 1000
+
+/** Error log lives next to opencode.json so it's easy to find alongside the config. */
+function errorLogPath(): string {
+  return join(dirname(opencodeConfigPath()), "voidswitch-error.log")
+}
+
+/**
+ * Append a timestamped, `[VoidSwitch]`-prefixed entry to voidswitch-error.log,
+ * then rotate the file down to its last LOG_MAX_LINES lines so it never grows
+ * unbounded. Logging must never throw — a failure here is swallowed.
+ */
+function logToFile(message: string): void {
+  try {
+    const path = errorLogPath()
+    appendFileSync(path, `[${new Date().toISOString()}] [VoidSwitch] ${message}\n`)
+    const lines = readFileSync(path, "utf8").split("\n")
+    // Drop the trailing empty element left by the final newline before counting.
+    if (lines[lines.length - 1] === "") lines.pop()
+    if (lines.length > LOG_MAX_LINES) {
+      writeFileSync(path, lines.slice(-LOG_MAX_LINES).join("\n") + "\n")
+    }
+  } catch {
+    // Never let logging break a request.
+  }
+}
+
+/**
+ * Record a diagnostic. Always writes to voidswitch-error.log; also mirrors it to
+ * the console when `toConsole` is true. `/v1/messages` request failures pass
+ * `false` (file only); the models fetch/sync paths pass `true` (both).
+ */
+function recordError(message: string, toConsole: boolean): void {
+  if (toConsole) console.error(`[VoidSwitch] ${message}`)
+  logToFile(message)
 }
 
 // --------------------------------------------------------------------------- //
@@ -604,11 +695,18 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
   let lastToken: string | undefined
 
   async function fetchModels(token: string | undefined): Promise<ModelInfo[]> {
+    const url = `${gatewayV1}/models`
     try {
-      const res = await fetch(`${gatewayV1}/models`, {
+      const res = await fetch(url, {
         headers: token ? { "x-api-key": token } : {},
       })
-      if (!res.ok) return FALLBACK_MODEL_INFOS
+      if (!res.ok) {
+        recordError(
+          `couldn't fetch models — falling back to the built-in list.\n${await describeHttpError(url, res, "GET")}`,
+          true,
+        )
+        return FALLBACK_MODEL_INFOS
+      }
       const json: any = await res.json()
       const infos: ModelInfo[] = (json?.data ?? [])
         .map((m: any): ModelInfo => ({
@@ -619,7 +717,11 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
         }))
         .filter((m: ModelInfo) => typeof m.id === "string" && m.id.length > 0)
       return infos.length ? infos : FALLBACK_MODEL_INFOS
-    } catch {
+    } catch (e) {
+      recordError(
+        `couldn't reach the gateway for models — falling back to the built-in list.\n${describeFetchError(url, e, "GET")}`,
+        true,
+      )
       return FALLBACK_MODEL_INFOS
     }
   }
@@ -644,14 +746,24 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       note,
       defaults: {},
     })
+    const url = `${gatewayV1}/models/sync`
     try {
-      const res = await fetch(`${gatewayV1}/models/sync`, {
+      const res = await fetch(url, {
         method: "POST",
         headers: token ? { "x-api-key": token } : {},
       })
-      if (res.status === 401)
-        return fail("couldn't refresh models — not authenticated. Run /connect and paste a vs-… token first.")
-      if (!res.ok) return fail(`couldn't refresh models (gateway returned ${res.status}).`)
+      if (res.status === 401) {
+        const detail = await describeHttpError(url, res, "POST")
+        recordError(`models sync failed (401 — not authenticated).\n${detail}`, true)
+        return fail(
+          "couldn't refresh models — not authenticated. Run /connect and paste a vs-… token first.\n" + detail,
+        )
+      }
+      if (!res.ok) {
+        const detail = await describeHttpError(url, res, "POST")
+        recordError(`models sync failed (gateway returned ${res.status}).\n${detail}`, true)
+        return fail(`couldn't refresh models (gateway returned ${res.status}).\n` + detail)
+      }
       const j: any = await res.json()
       const pick = (v: unknown): string | undefined =>
         typeof v === "string" && v ? v : undefined
@@ -662,8 +774,10 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
           smallModel: pick(j?.opencode_small_model),
         },
       }
-    } catch {
-      return fail("couldn't reach the VoidSwitch gateway to refresh models.")
+    } catch (e) {
+      const detail = describeFetchError(url, e, "POST")
+      recordError(`couldn't reach the gateway to refresh models.\n${detail}`, true)
+      return fail("couldn't reach the VoidSwitch gateway to refresh models.\n" + detail)
     }
   }
 
@@ -962,7 +1076,22 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
               }
             }
             const method = init?.method ?? (reqInput instanceof Request ? reqInput.method : "POST")
-            const res = await fetch(url, { ...init, method, headers, body: bodyText ?? init?.body })
+            let res: Response
+            try {
+              res = await fetch(url, { ...init, method, headers, body: bodyText ?? init?.body })
+            } catch (e) {
+              // Network/DNS/TLS fault — no response at all. Log the target URL so a
+              // failing request is traceable, then re-throw for OpenCode to surface.
+              // File only (voidswitch-error.log) — keep the console clean mid-stream.
+              recordError(`request errored.\n${describeFetchError(url, e, method)}`, false)
+              throw e
+            }
+            // Log the request URL, response body and cf-ray id on any failure, so a
+            // 403/blocked request (e.g. a Cloudflare WAF hit) is easy to diagnose.
+            // File only (voidswitch-error.log), per config.
+            if (!res.ok) {
+              recordError(`request failed.\n${await describeHttpError(url, res, method)}`, false)
+            }
             // Relabel "no upstream available" gateway errors so OpenCode shows
             // "Upstream Failed" rather than a generic "Bad Gateway".
             return rewriteUpstreamError(res)
