@@ -88,6 +88,20 @@ export function useAsync<T>(
   return { data, loading, refreshing, error, reload };
 }
 
+/**
+ * Debounce a fast-changing value (e.g. a text input) so downstream effects —
+ * like a `useAsync` fetch keyed on it — only fire once the value settles.
+ * Returns the latest value after `delay` ms of no further changes.
+ */
+export function useDebouncedValue<T>(value: T, delay = 350): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(handle);
+  }, [value, delay]);
+  return debounced;
+}
+
 // --- toasts ---------------------------------------------------------------- //
 
 type Intent = "success" | "error" | "warning" | "info";

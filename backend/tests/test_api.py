@@ -806,6 +806,44 @@ async def test_request_log_filters_and_options(client, db, seeded):
     assert any(a["sub"] == "user-1" for a in body["users"])
 
 
+async def test_request_log_time_range_filter(client, db, seeded):
+    import datetime as _dt
+
+    from voidswitch.models.db import RequestLog
+
+    base = _dt.datetime(2024, 1, 1, 12, 0, tzinfo=_dt.UTC)
+    async with db.session() as session:
+        for offset_h, model in ((-48, "old"), (-1, "recent"), (48, "future")):
+            session.add(
+                RequestLog(
+                    user_sub="user-1", token_id=1, model=model,
+                    provider_name="openai", status_code=200, success=True,
+                    ts=base + _dt.timedelta(hours=offset_h),
+                )
+            )
+
+    async def models(**params):
+        r = await client.get(
+            "/api/admin/logs/requests", headers=_session_headers(), params=params
+        )
+        assert r.status_code == 200, r.text
+        return {i["model"] for i in r.json()["items"]}
+
+    window = {"old", "recent", "future"}
+    # `start` excludes everything strictly before it (inclusive lower bound).
+    got = await models(start=(base - _dt.timedelta(hours=24)).isoformat())
+    assert "old" not in got and {"recent", "future"} <= got
+    # `end` excludes everything strictly after it (inclusive upper bound).
+    got = await models(end=(base + _dt.timedelta(hours=24)).isoformat())
+    assert "future" not in got and {"old", "recent"} <= got
+    # A bounded window keeps only the middle record.
+    got = await models(
+        start=(base - _dt.timedelta(hours=24)).isoformat(),
+        end=(base + _dt.timedelta(hours=24)).isoformat(),
+    )
+    assert got & window == {"recent"}
+
+
 async def test_audit_ip_ua_substring_and_glob(client, db, seeded):
     from voidswitch.models.db import AuditLog
 

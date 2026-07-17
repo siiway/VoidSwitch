@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 from typing import Any
@@ -60,11 +61,14 @@ def _audit_filters(
     target_type: str | None,
     ip: str | None,
     user_agent: str | None,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
 ) -> list[ColumnElement]:
     """Shared WHERE clauses for the audit list and locate endpoints.
 
     Exact-match on the enumerable columns (populated from the filter-options
-    dropdowns), substring/glob match on the free-text IP and user-agent.
+    dropdowns), substring/glob match on the free-text IP and user-agent, and an
+    inclusive ``start``/``end`` window on the indexed ``ts`` timestamp.
     """
     clauses: list[ColumnElement] = []
     if action:
@@ -79,6 +83,10 @@ def _audit_filters(
         clauses.append(_text_match(AuditLog.ip, ip))
     if user_agent:
         clauses.append(_text_match(AuditLog.user_agent, user_agent))
+    if start is not None:
+        clauses.append(AuditLog.ts >= start)
+    if end is not None:
+        clauses.append(AuditLog.ts <= end)
     return clauses
 
 
@@ -94,6 +102,12 @@ async def audit_logs(
     user_agent: str | None = Query(
         default=None, description="Substring/glob match on the user-agent."
     ),
+    start: dt.datetime | None = Query(
+        default=None, description="Only entries at or after this instant (ISO 8601)."
+    ),
+    end: dt.datetime | None = Query(
+        default=None, description="Only entries at or before this instant (ISO 8601)."
+    ),
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
 ) -> Page[AuditLogOut]:
@@ -107,6 +121,8 @@ async def audit_logs(
         target_type=target_type,
         ip=ip,
         user_agent=user_agent,
+        start=start,
+        end=end,
     ):
         stmt = stmt.where(clause)
         count_stmt = count_stmt.where(clause)
@@ -135,6 +151,8 @@ async def audit_locate(
     target_type: str | None = Query(default=None),
     ip: str | None = Query(default=None),
     user_agent: str | None = Query(default=None),
+    start: dt.datetime | None = Query(default=None),
+    end: dt.datetime | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
 ) -> dict[str, object]:
@@ -151,6 +169,8 @@ async def audit_locate(
         target_type=target_type,
         ip=ip,
         user_agent=user_agent,
+        start=start,
+        end=end,
     )
 
     exists_stmt = select(func.count(AuditLog.id)).where(AuditLog.id == id)
@@ -276,11 +296,14 @@ def _request_log_filters(
     token_id: int | None = None,
     provider: str | None = None,
     status_code: str | None = None,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
 ) -> list[ColumnElement]:
     """Shared WHERE clauses for the request-log list and locate endpoints.
 
     Model / user / token / provider are exact matches (chosen from the filter
-    dropdowns); ``status_code`` accepts an exact code or an ``Nxx`` class.
+    dropdowns); ``status_code`` accepts an exact code or an ``Nxx`` class;
+    ``start``/``end`` bound the indexed ``ts`` timestamp inclusively.
     """
     clauses: list[ColumnElement] = []
     if not is_staff(user):
@@ -300,6 +323,10 @@ def _request_log_filters(
         clause = _status_clause(status_code)
         if clause is not None:
             clauses.append(clause)
+    if start is not None:
+        clauses.append(RequestLog.ts >= start)
+    if end is not None:
+        clauses.append(RequestLog.ts <= end)
     return clauses
 
 
@@ -315,6 +342,12 @@ async def request_logs(
     status_code: str | None = Query(
         default=None, description="Exact status code (e.g. 404) or a class (e.g. 4xx)."
     ),
+    start: dt.datetime | None = Query(
+        default=None, description="Only entries at or after this instant (ISO 8601)."
+    ),
+    end: dt.datetime | None = Query(
+        default=None, description="Only entries at or before this instant (ISO 8601)."
+    ),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> Page[RequestLogOut]:
@@ -328,6 +361,8 @@ async def request_logs(
         token_id=token_id,
         provider=provider,
         status_code=status_code,
+        start=start,
+        end=end,
     ):
         stmt = stmt.where(clause)
         count_stmt = count_stmt.where(clause)
@@ -392,6 +427,8 @@ async def request_locate(
     token_id: int | None = Query(default=None),
     provider: str | None = Query(default=None),
     status_code: str | None = Query(default=None),
+    start: dt.datetime | None = Query(default=None),
+    end: dt.datetime | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> dict[str, object]:
@@ -404,6 +441,8 @@ async def request_locate(
         token_id=token_id,
         provider=provider,
         status_code=status_code,
+        start=start,
+        end=end,
     )
     exists_stmt = select(func.count(RequestLog.id)).where(RequestLog.id == id)
     before_stmt = select(func.count(RequestLog.id)).where(RequestLog.id > id)

@@ -58,6 +58,7 @@ import {
   formatDate,
   useAsync,
   useConfirm,
+  useDebouncedValue,
   useNotify,
 } from "../components/ui";
 
@@ -256,6 +257,174 @@ function SearchSelect({
   );
 }
 
+// --- time-range filter ----------------------------------------------------- //
+
+type TimeMode = "" | "1h" | "24h" | "7d" | "30d" | "custom";
+
+// Relative presets, in hours from "now". "custom" is handled separately.
+const TIME_PRESETS: { mode: Exclude<TimeMode, "" | "custom">; hours: number }[] = [
+  { mode: "1h", hours: 1 },
+  { mode: "24h", hours: 24 },
+  { mode: "7d", hours: 24 * 7 },
+  { mode: "30d", hours: 24 * 30 },
+];
+
+// A native <input type="datetime-local"> yields a tz-less local wall-clock
+// string ("2024-01-02T15:04"); turn it into an absolute ISO instant (UTC, with
+// a `Z`) so the backend receives an unambiguous point in time.
+function localInputToIso(value: string): string {
+  if (!value) return "";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+}
+
+// Inverse of the above: render an absolute ISO instant back into the
+// `datetime-local` field's expected local wall-clock format.
+function isoToLocalInput(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Time-range picker: a preset dropdown (Any / last hour / 24h / 7d / 30d /
+ * custom). Selecting "Custom" reveals two Fluent datetime-local inputs seeded
+ * with a default 24h window. Fully controlled via ``mode``/``start``/``end`` so
+ * a "clear filters" reset from the parent collapses it back to "Any time".
+ */
+function TimeRangeFilter({
+  mode,
+  start,
+  end,
+  onChange,
+}: {
+  mode: TimeMode;
+  start: string;
+  end: string;
+  onChange: (next: { timeMode: TimeMode; start: string; end: string }) => void;
+}) {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
+
+  const modeLabel = (m: TimeMode): string => {
+    switch (m) {
+      case "1h":
+        return t("logs.timeLastHour" as TK);
+      case "24h":
+        return t("logs.timeLast24h" as TK);
+      case "7d":
+        return t("logs.timeLast7d" as TK);
+      case "30d":
+        return t("logs.timeLast30d" as TK);
+      case "custom":
+        return t("logs.timeCustom" as TK);
+      default:
+        return t("logs.timeAny" as TK);
+    }
+  };
+
+  const selectMode = (m: TimeMode) => {
+    if (m === "custom") {
+      // Entering custom: if no explicit range exists yet, seed a sensible,
+      // editable default (the last 24h) so the filter takes effect immediately
+      // and it's obvious *something* happened — instead of showing two empty
+      // fields that quietly match everything. Any range already in place (e.g.
+      // carried over from a preset) is preserved untouched.
+      if (!start && !end) {
+        const now = Date.now();
+        onChange({
+          timeMode: "custom",
+          start: new Date(now - 24 * 3600 * 1000).toISOString(),
+          end: new Date(now).toISOString(),
+        });
+      } else {
+        onChange({ timeMode: "custom", start, end });
+      }
+    } else if (m === "") {
+      onChange({ timeMode: "", start: "", end: "" });
+    } else {
+      // Snapshot the preset to a concrete instant now, so paging/refresh keep a
+      // stable window instead of silently drifting with the clock.
+      const preset = TIME_PRESETS.find((p) => p.mode === m);
+      const hours = preset ? preset.hours : 0;
+      const startIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+      onChange({ timeMode: m, start: startIso, end: "" });
+    }
+  };
+
+  return (
+    <div
+      style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}
+    >
+      <Dropdown
+        aria-label={t("logs.filterTime" as TK)}
+        placeholder={t("logs.timeAny" as TK)}
+        style={{ minWidth: 150 }}
+        selectedOptions={[mode || "any"]}
+        value={modeLabel(mode)}
+        onOptionSelect={(_, d) => {
+          // Fluent v9 has a long-standing footgun where an <Option value="">
+          // (empty string) fails to register in the option collection, so
+          // selecting *any* option can silently no-op. Use a non-empty "any"
+          // sentinel for the "Any time" choice and map it back to "".
+          const picked = d.optionValue ?? "any";
+          selectMode((picked === "any" ? "" : picked) as TimeMode);
+        }}
+      >
+        <Option value="any" text={t("logs.timeAny" as TK)}>
+          {t("logs.timeAny" as TK)}
+        </Option>
+        <Option value="1h" text={t("logs.timeLastHour" as TK)}>
+          {t("logs.timeLastHour" as TK)}
+        </Option>
+        <Option value="24h" text={t("logs.timeLast24h" as TK)}>
+          {t("logs.timeLast24h" as TK)}
+        </Option>
+        <Option value="7d" text={t("logs.timeLast7d" as TK)}>
+          {t("logs.timeLast7d" as TK)}
+        </Option>
+        <Option value="30d" text={t("logs.timeLast30d" as TK)}>
+          {t("logs.timeLast30d" as TK)}
+        </Option>
+        <Option value="custom" text={t("logs.timeCustom" as TK)}>
+          {t("logs.timeCustom" as TK)}
+        </Option>
+      </Dropdown>
+      {mode === "custom" ? (
+        <>
+          <Input
+            type="datetime-local"
+            aria-label={t("logs.timeStart" as TK)}
+            style={{ minWidth: 200 }}
+            value={isoToLocalInput(start)}
+            input={{ max: isoToLocalInput(end) || undefined }}
+            onChange={(_, d) =>
+              onChange({ timeMode: "custom", start: localInputToIso(d.value), end })
+            }
+          />
+          <Text size={200} style={{ color: tokens.colorNeutralForeground3, paddingBottom: 6 }}>
+            –
+          </Text>
+          <Input
+            type="datetime-local"
+            aria-label={t("logs.timeEnd" as TK)}
+            style={{ minWidth: 200 }}
+            value={isoToLocalInput(end)}
+            input={{ min: isoToLocalInput(start) || undefined }}
+            onChange={(_, d) =>
+              onChange({ timeMode: "custom", start, end: localInputToIso(d.value) })
+            }
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function Logs() {
   const { t } = useTranslation();
   type TK = keyof Translations;
@@ -313,6 +482,11 @@ interface RequestFilters {
   token_id: string;
   provider: string;
   status: string;
+  // Time window. `timeMode` is UI-only (drives the preset dropdown); `start`/
+  // `end` are absolute ISO instants sent to the backend.
+  timeMode: TimeMode;
+  start: string;
+  end: string;
 }
 
 const EMPTY_REQUEST_FILTERS: RequestFilters = {
@@ -321,6 +495,9 @@ const EMPTY_REQUEST_FILTERS: RequestFilters = {
   token_id: "",
   provider: "",
   status: "",
+  timeMode: "",
+  start: "",
+  end: "",
 };
 
 function requestFiltersFromParams(params: URLSearchParams): RequestFilters {
@@ -375,12 +552,18 @@ function RequestLogs({
     [refreshKey],
   );
 
+  // Free-text status filters every keystroke; debounce so we fetch once the
+  // value settles instead of firing a request per character.
+  const debouncedStatus = useDebouncedValue(filters.status);
+
   const queryParams = {
     model: filters.model || undefined,
     user_sub: filters.user_sub || undefined,
     token_id: filters.token_id || undefined,
     provider: filters.provider || undefined,
-    status_code: filters.status || undefined,
+    status_code: debouncedStatus || undefined,
+    start: filters.start || undefined,
+    end: filters.end || undefined,
   };
 
   const logs = useAsync<Page<RequestLog>>(
@@ -398,7 +581,9 @@ function RequestLogs({
       filters.user_sub,
       filters.token_id,
       filters.provider,
-      filters.status,
+      debouncedStatus,
+      filters.start,
+      filters.end,
     ],
   );
   const { highlightId, containerRef, markJump } = useIdJump(logs.data);
@@ -473,6 +658,7 @@ function RequestLogs({
           alignItems: "flex-end",
         }}
       >
+        {/* Field filters + time window + clear, grouped on the left. */}
         <SearchSelect
           ariaLabel={tr("logs.model" as TK)}
           placeholder={tr("logs.filterModel" as TK)}
@@ -524,27 +710,15 @@ function RequestLogs({
           onChange={(_, d) => setFilter("status", d.value)}
           onBlur={() => setFilter("status", normalizeStatus(filters.status))}
         />
-        <Input
-          aria-label={tr("logs.goToId" as TK)}
-          placeholder={tr("logs.goToId" as TK)}
-          value={goToId}
-          type="number"
-          style={{ minWidth: 120 }}
-          onChange={(_, d) => setGoToId(d.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void jumpToId();
+        <TimeRangeFilter
+          mode={filters.timeMode}
+          start={filters.start}
+          end={filters.end}
+          onChange={(next) => {
+            setOffset(0);
+            setFilters((f) => ({ ...f, ...next }));
           }}
         />
-        <Tooltip content={tr("logs.jump" as TK)} relationship="label">
-          <Button
-            icon={<ArrowEnterRegular />}
-            disabled={!goToId.trim()}
-            onClick={() => void jumpToId()}
-            aria-label={tr("logs.jump" as TK)}
-          >
-            {tr("logs.jump" as TK)}
-          </Button>
-        </Tooltip>
         {hasFilters ? (
           <Button
             appearance="subtle"
@@ -557,6 +731,31 @@ function RequestLogs({
             {tr("logs.clearFilters" as TK)}
           </Button>
         ) : null}
+        {/* Flexible gap pushes the jump-to-id tool cluster to the far right. */}
+        <span style={{ flex: "1 1 auto", minWidth: 8 }} />
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "nowrap" }}>
+          <Input
+            aria-label={tr("logs.goToId" as TK)}
+            placeholder={tr("logs.goToId" as TK)}
+            value={goToId}
+            type="number"
+            style={{ minWidth: 120 }}
+            onChange={(_, d) => setGoToId(d.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void jumpToId();
+            }}
+          />
+          <Tooltip content={tr("logs.jump" as TK)} relationship="label">
+            <Button
+              icon={<ArrowEnterRegular />}
+              disabled={!goToId.trim()}
+              onClick={() => void jumpToId()}
+              aria-label={tr("logs.jump" as TK)}
+            >
+              {tr("logs.jump" as TK)}
+            </Button>
+          </Tooltip>
+        </div>
       </div>
       <div ref={containerRef}>
       <DataTable ariaLabel={tr("logs.requests" as TK)} minWidth={960}>
@@ -961,6 +1160,11 @@ interface AuditFilters {
   actor_sub: string;
   ip: string;
   user_agent: string;
+  // Time window. `timeMode` is UI-only (drives the preset dropdown); `start`/
+  // `end` are absolute ISO instants sent to the backend.
+  timeMode: TimeMode;
+  start: string;
+  end: string;
 }
 
 const EMPTY_FILTERS: AuditFilters = {
@@ -970,6 +1174,9 @@ const EMPTY_FILTERS: AuditFilters = {
   actor_sub: "",
   ip: "",
   user_agent: "",
+  timeMode: "",
+  start: "",
+  end: "",
 };
 
 function auditFiltersFromParams(params: URLSearchParams): AuditFilters {
@@ -1020,17 +1227,28 @@ function AuditLogs({
     [],
   );
 
+  // Free-text IP / user-agent filter every keystroke; debounce so we fetch once
+  // each value settles instead of firing a request per character.
+  const debouncedIp = useDebouncedValue(filters.ip);
+  const debouncedUa = useDebouncedValue(filters.user_agent);
+
+  const queryParams = {
+    scope: filters.scope || undefined,
+    action: filters.action || undefined,
+    target_type: filters.target_type || undefined,
+    actor_sub: filters.actor_sub || undefined,
+    ip: debouncedIp || undefined,
+    user_agent: debouncedUa || undefined,
+    start: filters.start || undefined,
+    end: filters.end || undefined,
+  };
+
   const logs = useAsync<Page<AuditLog>>(
     () =>
       api.get("/api/admin/logs/audit", {
         limit: pageSize,
         offset,
-        scope: filters.scope || undefined,
-        action: filters.action || undefined,
-        target_type: filters.target_type || undefined,
-        actor_sub: filters.actor_sub || undefined,
-        ip: filters.ip || undefined,
-        user_agent: filters.user_agent || undefined,
+        ...queryParams,
       }),
     [
       offset,
@@ -1038,8 +1256,10 @@ function AuditLogs({
       filters.action,
       filters.target_type,
       filters.actor_sub,
-      filters.ip,
-      filters.user_agent,
+      debouncedIp,
+      debouncedUa,
+      filters.start,
+      filters.end,
       refreshKey,
       pageSize,
     ],
@@ -1052,15 +1272,7 @@ function AuditLogs({
     try {
       const r = await api.get<{ offset: number; found: boolean }>(
         "/api/admin/logs/audit/locate",
-        {
-          id,
-          scope: filters.scope || undefined,
-          action: filters.action || undefined,
-          target_type: filters.target_type || undefined,
-          actor_sub: filters.actor_sub || undefined,
-          ip: filters.ip || undefined,
-          user_agent: filters.user_agent || undefined,
-        },
+        { id, ...queryParams },
       );
       if (!r.found) {
         notify(ta("logs.jumpNotFound" as TK), `#${id}`, "warning");
@@ -1204,27 +1416,15 @@ function AuditLogs({
           style={{ minWidth: 150 }}
           onChange={(_, d) => setFilter("user_agent", d.value)}
         />
-        <Input
-          aria-label={ta("logs.goToId" as TK)}
-          placeholder={ta("logs.goToId" as TK)}
-          value={goToId}
-          type="number"
-          style={{ minWidth: 120 }}
-          onChange={(_, d) => setGoToId(d.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void jumpToId();
+        <TimeRangeFilter
+          mode={filters.timeMode}
+          start={filters.start}
+          end={filters.end}
+          onChange={(next) => {
+            setOffset(0);
+            setFilters((f) => ({ ...f, ...next }));
           }}
         />
-        <Tooltip content={ta("logs.jump" as TK)} relationship="label">
-          <Button
-            icon={<ArrowEnterRegular />}
-            disabled={!goToId.trim()}
-            onClick={() => void jumpToId()}
-            aria-label={ta("logs.jump" as TK)}
-          >
-            {ta("logs.jump" as TK)}
-          </Button>
-        </Tooltip>
         {hasFilters ? (
           <Button
             appearance="subtle"
@@ -1237,6 +1437,31 @@ function AuditLogs({
             {ta("logs.clearFilters" as TK)}
           </Button>
         ) : null}
+        {/* Flexible gap pushes the jump-to-id tool cluster to the far right. */}
+        <span style={{ flex: "1 1 auto", minWidth: 8 }} />
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "nowrap" }}>
+          <Input
+            aria-label={ta("logs.goToId" as TK)}
+            placeholder={ta("logs.goToId" as TK)}
+            value={goToId}
+            type="number"
+            style={{ minWidth: 120 }}
+            onChange={(_, d) => setGoToId(d.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void jumpToId();
+            }}
+          />
+          <Tooltip content={ta("logs.jump" as TK)} relationship="label">
+            <Button
+              icon={<ArrowEnterRegular />}
+              disabled={!goToId.trim()}
+              onClick={() => void jumpToId()}
+              aria-label={ta("logs.jump" as TK)}
+            >
+              {ta("logs.jump" as TK)}
+            </Button>
+          </Tooltip>
+        </div>
       </div>
 
       {logs.loading ? (
