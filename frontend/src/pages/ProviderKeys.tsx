@@ -35,6 +35,7 @@ import {
   CheckmarkCircleRegular,
   DeleteRegular,
   EditRegular,
+  EyeOffRegular,
   EyeRegular,
   PersonRegular,
   ProhibitedRegular,
@@ -134,6 +135,27 @@ export function ProviderKeys() {
   const [editAccessToken, setEditAccessToken] = useState("");
   const [editRefreshToken, setEditRefreshToken] = useState("");
   const [editExpiresAt, setEditExpiresAt] = useState("");
+  // Cloudflare composite-key editing (account_id@api_token).
+  const [editIsCloudflare, setEditIsCloudflare] = useState(false);
+  const [editCfAccountId, setEditCfAccountId] = useState("");
+  const [editCfToken, setEditCfToken] = useState("");
+
+  // Reveal-inside-edit flow. The current secret is *never* fetched when the
+  // edit dialog opens (that would emit an audit record on every edit). Instead a
+  // field's plaintext is only pulled after the user clicks its reveal button and
+  // confirms the nested dialog. The full key is cached once, so revealing a
+  // second part of a multi-part key needs no further confirmation.
+  type RevealData = {
+    key: string;
+    is_bundle?: boolean;
+    access_token?: string;
+    refresh_token?: string;
+    expires_at?: number | null;
+  };
+  const [editRevealData, setEditRevealData] = useState<RevealData | null>(null);
+  const [revealShown, setRevealShown] = useState<Set<string>>(new Set());
+  const [revealConfirmField, setRevealConfirmField] = useState<string | null>(null);
+  const [revealFetching, setRevealFetching] = useState(false);
 
   // Add-key helpers.
   const [cfAccountId, setCfAccountId] = useState("");
@@ -397,36 +419,133 @@ export function ProviderKeys() {
     }
   }
 
-  async function openEdit(k: ApiKey) {
+  function openEdit(k: ApiKey) {
     setEditing(k);
     setEditSecret("");
     setEditNote(k.note ?? "");
     setEditPool(k.pool ?? "");
-    setEditIsBundle(false);
     setEditAccessToken("");
     setEditRefreshToken("");
     setEditExpiresAt("");
-    // For Claude Code providers, reveal the bundle so we can edit individual fields.
-    if (isClaudeCode && isOwner) {
-      try {
-        const r = await api.post<{
-          is_bundle: boolean;
-          access_token?: string;
-          refresh_token?: string;
-          expires_at?: number;
-        }>(
-          `/api/admin/providers/${providerId}/keys/${k.id}/reveal`,
-        );
-        if (r.is_bundle) {
-          setEditIsBundle(true);
-          setEditAccessToken(r.access_token ?? "");
-          setEditRefreshToken(r.refresh_token ?? "");
-          setEditExpiresAt(r.expires_at != null ? String(r.expires_at) : "");
-        }
-      } catch {
-        // Reveal failed (shouldn't happen for owners); user can still edit as raw.
-      }
+    setEditCfAccountId("");
+    setEditCfToken("");
+    // Reset the reveal flow — nothing is fetched until the user asks for it.
+    setEditRevealData(null);
+    setRevealShown(new Set());
+    setRevealConfirmField(null);
+    // Infer the key's shape from its (non-secret) preview / provider type so the
+    // right fields render *without* decrypting the stored secret. OAuth bundles
+    // carry an "oauth·" preview prefix; Cloudflare keys are always composite.
+    setEditIsBundle(k.key_preview.startsWith("oauth·"));
+    setEditIsCloudflare(current?.type === "cloudflare");
+  }
+
+  // Split a revealed Cloudflare composite key into its (account_id, api_token).
+  function splitCf(raw: string): [string, string] {
+    const at = raw.indexOf("@");
+    return at >= 0 ? [raw.slice(0, at), raw.slice(at + 1)] : ["", raw];
+  }
+
+  // Fill a single field's input from already-fetched reveal data and mark it as
+  // visible. Only the requested field is populated so revealing one part of a
+  // multi-part key doesn't expose the others.
+  function fillRevealField(field: string, data: RevealData) {
+    if (editIsCloudflare) {
+      const [acc, tok] = splitCf(data.key);
+      if (field === "cf_account_id") setEditCfAccountId(acc);
+      if (field === "cf_token") setEditCfToken(tok);
+    } else if (editIsBundle) {
+      if (field === "access_token") setEditAccessToken(data.access_token ?? "");
+      if (field === "refresh_token") setEditRefreshToken(data.refresh_token ?? "");
+    } else if (field === "key") {
+      setEditSecret(data.key);
     }
+    setRevealShown((s) => new Set(s).add(field));
+  }
+
+  // Reveal button handler: toggles off if shown; reveals from cache if the key
+  // was already fetched; otherwise opens the nested confirmation dialog.
+  function onRevealField(field: string) {
+    if (revealShown.has(field)) {
+      setRevealShown((s) => {
+        const next = new Set(s);
+        next.delete(field);
+        return next;
+      });
+      return;
+    }
+    if (editRevealData) {
+      fillRevealField(field, editRevealData);
+      return;
+    }
+    setRevealConfirmField(field);
+  }
+
+  async function confirmRevealField() {
+    if (!editing || !revealConfirmField) return;
+    setRevealFetching(true);
+    try {
+      const r = await api.post<RevealData>(
+        `/api/admin/providers/${providerId}/keys/${editing.id}/reveal`,
+      );
+      setEditRevealData(r);
+      // expires_at is not a secret; surface it once the bundle is unlocked.
+      if (r.expires_at != null) setEditExpiresAt(String(r.expires_at));
+      fillRevealField(revealConfirmField, r);
+    } catch (e) {
+      notify(
+        t("providerKeys.revealFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setRevealFetching(false);
+      setRevealConfirmField(null);
+    }
+  }
+
+  // Render a secret field with an integrated reveal (eye) button. Called as a
+  // plain function — not a nested component — so typing doesn't remount it and
+  // lose focus.
+  function renderRevealField(
+    field: string,
+    label: string,
+    value: string,
+    onChange: (v: string) => void,
+    opts?: { hint?: string; placeholder?: string },
+  ) {
+    const shown = revealShown.has(field);
+    const toggleLabel = shown
+      ? t("common.hidePassword" as TK)
+      : t("common.showPassword" as TK);
+    return (
+      <Field label={label} hint={opts?.hint}>
+        <Input
+          type={shown ? "text" : "password"}
+          value={value}
+          autoComplete="current-password"
+          placeholder={
+            opts?.placeholder ?? `Current: ${editing?.key_preview ?? ""}`
+          }
+          onChange={(_, d) => onChange(d.value)}
+          contentAfter={
+            isOwner ? (
+              <Tooltip content={toggleLabel} relationship="label">
+                <Button
+                  appearance="transparent"
+                  size="small"
+                  tabIndex={-1}
+                  disabled={revealFetching}
+                  icon={shown ? <EyeOffRegular /> : <EyeRegular />}
+                  aria-label={toggleLabel}
+                  onClick={() => onRevealField(field)}
+                />
+              </Tooltip>
+            ) : undefined
+          }
+        />
+      </Field>
+    );
   }
 
   async function saveEdit() {
@@ -445,7 +564,31 @@ export function ProviderKeys() {
           patch.refresh_token = editRefreshToken.trim();
         if (editExpiresAt.trim())
           patch.expires_at = Number(editExpiresAt.trim());
-      } else if (editSecret.trim()) {
+      } else if (editIsCloudflare) {
+        // Rebuild the account_id@api_token composite. A part left blank falls
+        // back to the revealed original, so editing just one part keeps the
+        // other. Only send it when something actually changed.
+        const acc =
+          editCfAccountId.trim() ||
+          (editRevealData ? splitCf(editRevealData.key)[0] : "");
+        const tok =
+          editCfToken.trim() ||
+          (editRevealData ? splitCf(editRevealData.key)[1] : "");
+        const composite = `${acc}@${tok}`;
+        if (
+          acc &&
+          tok &&
+          (editCfAccountId.trim() || editCfToken.trim()) &&
+          composite !== editRevealData?.key
+        ) {
+          patch.key = composite;
+        }
+      } else if (
+        editSecret.trim() &&
+        editSecret.trim() !== editRevealData?.key.trim()
+      ) {
+        // Only persist a genuinely new secret — not one that was merely revealed
+        // for viewing and left untouched.
         patch.key = editSecret.trim();
       }
       await api.patch(
@@ -1225,26 +1368,20 @@ export function ProviderKeys() {
             >
               {editIsBundle ? (
                 <>
-                  <Field
-                    label={t("providerKeys.accessToken" as TK)}
-                    hint={t("providerKeys.accessTokenHint" as TK)}
-                  >
-                    <PasswordInput
-                      value={editAccessToken}
-                      autoComplete="current-password"
-                      onChange={(_, d) => setEditAccessToken(d.value)}
-                    />
-                  </Field>
-                  <Field
-                    label={t("providerKeys.refreshToken" as TK)}
-                    hint={t("providerKeys.refreshTokenHint" as TK)}
-                  >
-                    <PasswordInput
-                      value={editRefreshToken}
-                      autoComplete="current-password"
-                      onChange={(_, d) => setEditRefreshToken(d.value)}
-                    />
-                  </Field>
+                  {renderRevealField(
+                    "access_token",
+                    t("providerKeys.accessToken" as TK),
+                    editAccessToken,
+                    setEditAccessToken,
+                    { hint: t("providerKeys.accessTokenHint" as TK) },
+                  )}
+                  {renderRevealField(
+                    "refresh_token",
+                    t("providerKeys.refreshToken" as TK),
+                    editRefreshToken,
+                    setEditRefreshToken,
+                    { hint: t("providerKeys.refreshTokenHint" as TK) },
+                  )}
                   <Field
                     label={t("providerKeys.expiresAt" as TK)}
                     hint={t("providerKeys.expiresAtEditHint" as TK)}
@@ -1256,18 +1393,30 @@ export function ProviderKeys() {
                     />
                   </Field>
                 </>
+              ) : editIsCloudflare ? (
+                <>
+                  {renderRevealField(
+                    "cf_account_id",
+                    t("providerKeys.accountId" as TK),
+                    editCfAccountId,
+                    setEditCfAccountId,
+                    { placeholder: t("providerKeys.editKeyHint" as TK) },
+                  )}
+                  {renderRevealField(
+                    "cf_token",
+                    t("providerKeys.apiToken" as TK),
+                    editCfToken,
+                    setEditCfToken,
+                  )}
+                </>
               ) : (
-                <Field
-                  label={t("providerKeys.editKeyField" as TK)}
-                  hint={t("providerKeys.editKeyHint" as TK)}
-                >
-                  <PasswordInput
-                    value={editSecret}
-                    autoComplete="current-password"
-                    placeholder={`Current: ${editing?.key_preview ?? ""}`}
-                    onChange={(_, d) => setEditSecret(d.value)}
-                  />
-                </Field>
+                renderRevealField(
+                  "key",
+                  t("providerKeys.editKeyField" as TK),
+                  editSecret,
+                  setEditSecret,
+                  { hint: t("providerKeys.editKeyHint" as TK) },
+                )
               )}
               <Field label={t("providerKeys.comment" as TK)}>
                 <Input
@@ -1298,6 +1447,43 @@ export function ProviderKeys() {
                 onClick={saveEdit}
               >
                 {t("common.save" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      {/* Nested confirmation for revealing a secret while editing. Stacks on top
+          of the edit dialog (which stays open) so the plaintext is only fetched
+          — and audited — after an explicit confirm. */}
+      <Dialog
+        open={revealConfirmField !== null}
+        onOpenChange={(_, d) => {
+          if (!d.open) setRevealConfirmField(null);
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{t("providerKeys.revealTitle" as TK)}</DialogTitle>
+            <DialogContent>
+              <Text size={300} block>
+                {t("providerKeys.revealMsg" as TK)}
+              </Text>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="subtle"
+                disabled={revealFetching}
+                onClick={() => setRevealConfirmField(null)}
+              >
+                {t("common.cancel" as TK)}
+              </Button>
+              <Button
+                appearance="primary"
+                disabled={revealFetching}
+                onClick={confirmRevealField}
+              >
+                {t("providerKeys.revealLabel" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
