@@ -114,6 +114,15 @@ const PROXY_SWITCHING_ONLY = new Set([
 // switching on the pool is used instead, so hide it.
 const PROXY_SWITCHING_OFF_ONLY = new Set(["static_proxy_url"]);
 
+// Fields that only make sense while their controlling toggle is on. When the
+// toggle is explicitly disabled the dependent input is hidden (it would have no
+// effect anyway). Keyed by the dependent field → the boolean key that gates it.
+const DEPENDENT_ON: Record<string, string> = {
+  balance_probe_interval_seconds: "balance_probe_enabled",
+  balance_rescan_interval_seconds: "balance_rescan_enabled",
+  log_cleanup_interval_seconds: "log_cleanup_enabled",
+};
+
 export function Settings() {
   const { t } = useTranslation();
   const notify = useNotify();
@@ -262,6 +271,9 @@ export function Settings() {
     // and the static-proxy URL that only applies when switching is off.
     if (!proxySwitching && PROXY_SWITCHING_ONLY.has(key)) return null;
     if (proxySwitching && PROXY_SWITCHING_OFF_ONLY.has(key)) return null;
+    // Hide inputs whose controlling toggle is switched off.
+    const gate = DEPENDENT_ON[key];
+    if (gate && values[gate] === false) return null;
     const value = values[key];
     const label = labels[key] ?? key;
 

@@ -11,8 +11,6 @@ import {
   Dropdown,
   Input,
   Option,
-  Tab,
-  TabList,
   TableBody,
   TableCell,
   TableHeader,
@@ -172,8 +170,13 @@ interface SelectOption {
 
 /**
  * A "type to search, then pick" filter — the same interaction as the model
- * picker above the chat. Reflects an externally-set value (e.g. filled by
- * clicking a table cell) and clears when emptied.
+ * picker above the chat. Selecting an option applies the filter immediately.
+ *
+ * The displayed text is derived directly from the committed ``value`` prop
+ * (so a table-cell click or a "clear filters" reset reflects instantly), and is
+ * only overridden by a local ``draft`` while the user is actively typing. This
+ * avoids the earlier race where selecting an option, then blurring, wiped the
+ * chosen value.
  */
 function SearchSelect({
   value,
@@ -191,19 +194,13 @@ function SearchSelect({
   minWidth?: number;
 }) {
   const selectedLabel = options.find((o) => o.value === value)?.label ?? value ?? "";
-  const [text, setText] = useState(selectedLabel);
-  const lastSelectedLabel = useRef(selectedLabel);
-  const [typing, setTyping] = useState(false);
+  // `null` = not typing (show the committed selection); a string = the in-progress
+  // query the user is typing.
+  const [draft, setDraft] = useState<string | null>(null);
+  const typing = draft !== null;
+  const display = typing ? draft : selectedLabel;
 
-  // Keep the input in sync when the selection changes from outside (a table-cell
-  // click that fills this filter, or a global "clear filters" reset).
-  useEffect(() => {
-    if (selectedLabel) lastSelectedLabel.current = selectedLabel;
-    setText(value ? selectedLabel || lastSelectedLabel.current : "");
-    setTyping(false);
-  }, [selectedLabel, value]);
-
-  const q = text.trim().toLowerCase();
+  const q = (draft ?? "").trim().toLowerCase();
   const filtered =
     typing && q
       ? options.filter(
@@ -219,26 +216,21 @@ function SearchSelect({
       style={{ minWidth }}
       freeform
       clearable
-      value={text}
+      value={display}
       selectedOptions={value ? [value] : []}
       onOptionSelect={(_, d) => {
-        const v = d.optionValue ?? "";
-        onChange(v);
-        setTyping(false);
-        setText(v ? options.find((o) => o.value === v)?.label ?? "" : "");
+        // Fires both when picking an option and when hitting the clear (×) icon
+        // (with `optionValue === undefined`). Either way apply immediately and
+        // drop back to reflecting the committed value.
+        onChange(d.optionValue ?? "");
+        setDraft(null);
       }}
-      onChange={(e) => {
-        setText(e.target.value);
-        setTyping(true);
-      }}
-      onOpenChange={(_, d) => {
-        // On close, commit an emptied box as "no filter"; otherwise discard a
-        // half-typed query and restore the current selection's label.
-        if (!d.open) {
-          if (!text.trim()) onChange("");
-          else setText(selectedLabel || lastSelectedLabel.current);
-          setTyping(false);
-        }
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        // A half-typed query that was never picked is discarded; an emptied box
+        // clears the filter.
+        if (typing && !draft?.trim()) onChange("");
+        setDraft(null);
       }}
     >
       {filtered.map((o) => (
@@ -429,23 +421,11 @@ export function Logs() {
   const { t } = useTranslation();
   type TK = keyof Translations;
   const { isStaff } = useAuth();
-  const [searchParams] = useSearchParams();
-  const initialTab = searchParams.get("tab") === "audit" ? "audit" : "requests";
-  const [tab, setTab] = useState<"requests" | "audit">(initialTab);
   const [refreshKey, setRefreshKey] = useState(0);
   const config = useAsync<{ logs_page_size?: number }>(() =>
     api.get("/api/auth/config"),
   );
   const pageSize = Math.max(1, config.data?.logs_page_size || DEFAULT_PAGE);
-
-  useEffect(() => {
-    if (!isStaff && tab === "audit") setTab("requests");
-  }, [isStaff, tab]);
-
-  useEffect(() => {
-    const next = searchParams.get("tab") === "audit" ? "audit" : "requests";
-    if (next !== tab) setTab(next);
-  }, [searchParams, tab]);
 
   return (
     <div>
@@ -458,19 +438,34 @@ export function Logs() {
         }
         onRefresh={() => setRefreshKey((k) => k + 1)}
       />
-      <TabList
-        selectedValue={tab}
-        onTabSelect={(_, d) => setTab(d.value as typeof tab)}
-      >
-        <Tab value="requests">{t("logs.requests" as TK)}</Tab>
-        {isStaff ? <Tab value="audit">{t("logs.audit" as TK)}</Tab> : null}
-      </TabList>
       <div style={{ marginTop: 16 }}>
-        {tab === "requests" ? (
-          <RequestLogs refreshKey={refreshKey} pageSize={pageSize} />
-        ) : (
-          <AuditLogs refreshKey={refreshKey} pageSize={pageSize} />
-        )}
+        <RequestLogs refreshKey={refreshKey} pageSize={pageSize} />
+      </div>
+    </div>
+  );
+}
+
+// The administrative audit trail lives on its own top-level route/tab (between
+// Logs and Settings) rather than as a sub-tab of Logs, so staff can deep-link to
+// it directly and it never gets bounced back to the request view.
+export function Audit() {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
+  const [refreshKey, setRefreshKey] = useState(0);
+  const config = useAsync<{ logs_page_size?: number }>(() =>
+    api.get("/api/auth/config"),
+  );
+  const pageSize = Math.max(1, config.data?.logs_page_size || DEFAULT_PAGE);
+
+  return (
+    <div>
+      <PageHeader
+        title={t("audit.title" as TK)}
+        subtitle={t("audit.subtitle" as TK)}
+        onRefresh={() => setRefreshKey((k) => k + 1)}
+      />
+      <div style={{ marginTop: 16 }}>
+        <AuditLogs refreshKey={refreshKey} pageSize={pageSize} />
       </div>
     </div>
   );
@@ -553,8 +548,8 @@ function RequestLogs({
   );
 
   // Free-text status filters every keystroke; debounce so we fetch once the
-  // value settles instead of firing a request per character.
-  const debouncedStatus = useDebouncedValue(filters.status);
+  // value settles (500ms of no typing) instead of firing a request per character.
+  const debouncedStatus = useDebouncedValue(filters.status, 500);
 
   const queryParams = {
     model: filters.model || undefined,
@@ -1228,9 +1223,9 @@ function AuditLogs({
   );
 
   // Free-text IP / user-agent filter every keystroke; debounce so we fetch once
-  // each value settles instead of firing a request per character.
-  const debouncedIp = useDebouncedValue(filters.ip);
-  const debouncedUa = useDebouncedValue(filters.user_agent);
+  // each value settles (500ms of no typing) instead of firing a request per character.
+  const debouncedIp = useDebouncedValue(filters.ip, 500);
+  const debouncedUa = useDebouncedValue(filters.user_agent, 500);
 
   const queryParams = {
     scope: filters.scope || undefined,

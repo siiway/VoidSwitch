@@ -13,7 +13,7 @@ import { Tokens } from "./pages/Tokens";
 import { Users } from "./pages/Users";
 import { RoleGroups } from "./pages/RoleGroups";
 import { SettingsPage } from "./pages/Settings";
-import { Logs } from "./pages/Logs";
+import { Audit, Logs } from "./pages/Logs";
 import { Statistics } from "./pages/Statistics";
 import { MyToken } from "./pages/MyToken";
 import { Chat } from "./pages/Chat";
@@ -138,6 +138,14 @@ export function App() {
           element={
             <Protected>
               <Logs />
+            </Protected>
+          }
+        />
+        <Route
+          path="/audit"
+          element={
+            <Protected staff>
+              <Audit />
             </Protected>
           }
         />

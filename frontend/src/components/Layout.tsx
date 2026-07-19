@@ -30,6 +30,7 @@ import {
   PeopleTeamRegular,
   PlugConnectedRegular,
   SettingsRegular,
+  ShieldTaskRegular,
   SignOutRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
@@ -124,6 +125,13 @@ const SECTIONS: NavSection[] = [
         labelKey: "nav.logs",
         icon: <DocumentBulletListRegular />,
         scope: "member",
+      },
+      {
+        to: "/audit",
+        label: "Audit",
+        labelKey: "nav.audit",
+        icon: <ShieldTaskRegular />,
+        scope: "staff",
       },
       {
         to: "/settings",

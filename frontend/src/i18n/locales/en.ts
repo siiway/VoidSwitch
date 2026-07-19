@@ -67,6 +67,7 @@ const en = {
     roleGroups: "Role Groups",
     statistics: "Statistics",
     logs: "Logs",
+    audit: "Audit",
     settings: "Settings",
     chat: "Chat",
     myApiKey: "My Tokens",
@@ -637,9 +638,13 @@ const en = {
     cleanedDetail:
       "{requests} request log(s) deleted, {audits} audit log(s) deleted, {debug} debug detail(s) stripped.",
   },
+  audit: {
+    title: "Audit",
+    subtitle: "Administrative audit trail",
+  },
   logs: {
     title: "Logs",
-    subtitleStaff: "Request traffic and administrative audit trail",
+    subtitleStaff: "Request traffic across the platform",
     subtitleMember: "Your request traffic",
     requests: "Requests",
     audit: "Audit",

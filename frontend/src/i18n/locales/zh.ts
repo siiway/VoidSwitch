@@ -69,6 +69,7 @@ const zh: Translations = {
     roleGroups: "身份组",
     statistics: "统计",
     logs: "日志",
+    audit: "审计",
     settings: "设置",
     chat: "聊天",
     myApiKey: "我的令牌",
@@ -617,9 +618,13 @@ const zh: Translations = {
     cleanedDetail:
       "已删除 {requests} 条请求日志、{audits} 条审计日志，剥离 {debug} 条调试详情。",
   },
+  audit: {
+    title: "审计",
+    subtitle: "管理操作审计记录",
+  },
   logs: {
     title: "日志",
-    subtitleStaff: "请求流量与管理审计记录",
+    subtitleStaff: "全平台请求流量",
     subtitleMember: "您的请求流量",
     requests: "请求",
     audit: "审计",
