@@ -516,6 +516,86 @@ async def test_usage_analytics_member_sees_only_self(client, db, seeded):
     assert {r["key"] for r in body["by_model"]} == {"gpt-4o"}
 
 
+async def _seed_internal_and_dated_logs(db) -> None:
+    """Seed an internal Claude-Code token-op row and a stale (old) request."""
+    import datetime as dt
+
+    from voidswitch.models.db import RequestLog
+
+    async with db.session() as session:
+        # Internal token exchange: no user, no token, synthetic model.
+        session.add(
+            RequestLog(
+                user_sub=None, token_id=None, model="<cc-exchange-token>",
+                success=True, prompt_tokens=0, completion_tokens=0, total_tokens=0,
+            )
+        )
+        # A real request from a year ago (outside a "recent" window).
+        session.add(
+            RequestLog(
+                user_sub="user-1", token_id=1, model="deepseek-chat",
+                success=True, prompt_tokens=1, completion_tokens=1, total_tokens=2,
+                ts=dt.datetime.now(dt.UTC) - dt.timedelta(days=365),
+            )
+        )
+
+
+async def test_usage_excludes_internal_model_and_relabels(client, db, seeded):
+    await _seed_request_logs(db)
+    await _seed_internal_and_dated_logs(db)
+    resp = await client.get("/api/usage", headers=_session_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    # The synthetic <cc-…-token> model is dropped from the model breakdown.
+    assert "<cc-exchange-token>" not in {r["label"] for r in body["by_model"]}
+    assert all(not r["key"].startswith("<cc-") for r in body["by_model"])
+    # The caller-less internal row is grouped under a single "<internal>" entry
+    # in both the user and token breakdowns.
+    internal_users = [r for r in body["by_user"] if r["key"] == ""]
+    internal_tokens = [r for r in body["by_token"] if r["key"] == ""]
+    assert internal_users and internal_users[0]["label"] == "<internal>"
+    assert internal_tokens and internal_tokens[0]["label"] == "<internal>"
+
+
+async def test_usage_time_window_scopes_totals(client, db, seeded):
+    await _seed_request_logs(db)
+    await _seed_internal_and_dated_logs(db)
+    import datetime as dt
+
+    # A tight window around "now" excludes the year-old request.
+    start = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat()
+    resp = await client.get(
+        "/api/usage",
+        params={"start": start},
+        headers=_session_headers(),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # 3 seeded "today" rows + 1 internal today row = 4; the year-old row excluded.
+    assert body["totals"]["requests"] == 4
+
+
+async def test_usage_mode_b_returns_windowed_series(client, db, seeded):
+    await _seed_request_logs(db)
+    import datetime as dt
+
+    start = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=6)).isoformat()
+    end = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
+    resp = await client.get(
+        "/api/usage",
+        params={"start": start, "end": end, "time_mode": "B"},
+        headers=_session_headers(),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # Mode B fills a single windowed series (hourly for a <2-day span) and leaves
+    # the trailing daily/weekly/... arrays empty.
+    assert body["windowed_granularity"] == "hour"
+    assert body["windowed_series"] is not None
+    assert sum(b["requests"] for b in body["windowed_series"]) == 3
+    assert body["daily"] == []
+
+
 # --------------------------------------------------------------------------- #
 # Log retention cleanup task
 # --------------------------------------------------------------------------- #

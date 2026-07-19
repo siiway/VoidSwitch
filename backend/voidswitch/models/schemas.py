@@ -710,10 +710,14 @@ class UsageAnalyticsOut(BaseModel):
     # "all" for staff (platform-wide) or "self" for a member (own traffic only).
     scope: str
     totals: UsageTotals
-    daily: list[UsageBucket]
-    weekly: list[UsageBucket]
-    monthly: list[UsageBucket]
-    yearly: list[UsageBucket]
+    daily: list[UsageBucket] = Field(default_factory=list)
+    weekly: list[UsageBucket] = Field(default_factory=list)
+    monthly: list[UsageBucket] = Field(default_factory=list)
+    yearly: list[UsageBucket] = Field(default_factory=list)
+    # Mode-B "over time" section: a single series at an auto-picked granularity
+    # for the selected window (null in modes A/C, which use daily..yearly above).
+    windowed_series: list[UsageBucket] | None = None
+    windowed_granularity: str | None = None
     by_user: list[UsageGroupRow]
     by_token: list[UsageGroupRow]
     by_model: list[UsageGroupRow]

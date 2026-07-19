@@ -1,8 +1,10 @@
 import {
   Button,
   Card,
+  Dropdown,
   Field,
   Input,
+  Option,
   SpinButton,
   Switch,
   Text,
@@ -23,6 +25,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
+import { useOverTimeMode, type OverTimeMode } from "../lib/prefs";
 
 type TK = keyof Translations;
 
@@ -128,6 +131,7 @@ export function Settings() {
   const notify = useNotify();
   const confirm = useConfirm();
   const { isOwner } = useAuth();
+  const [overTimeMode, setOverTimeMode] = useOverTimeMode();
   const loaded = useAsync<SettingsResponse>(() =>
     api.get("/api/admin/settings"),
   );
@@ -471,6 +475,34 @@ export function Settings() {
               </Text>
             </>
           )}
+          <Field
+            label={t("settings.statsOverTimeMode" as TK)}
+            hint={t("settings.statsOverTimeModeHint" as TK)}
+          >
+            <Dropdown
+              selectedOptions={[overTimeMode]}
+              value={
+                overTimeMode === "B"
+                  ? t("settings.statsModeB" as TK)
+                  : overTimeMode === "C"
+                    ? t("settings.statsModeC" as TK)
+                    : t("settings.statsModeA" as TK)
+              }
+              onOptionSelect={(_, d) =>
+                setOverTimeMode((d.optionValue as OverTimeMode) ?? "A")
+              }
+            >
+              <Option value="A" text={t("settings.statsModeA" as TK)}>
+                {t("settings.statsModeA" as TK)}
+              </Option>
+              <Option value="B" text={t("settings.statsModeB" as TK)}>
+                {t("settings.statsModeB" as TK)}
+              </Option>
+              <Option value="C" text={t("settings.statsModeC" as TK)}>
+                {t("settings.statsModeC" as TK)}
+              </Option>
+            </Dropdown>
+          </Field>
         </Card>
         {sections.map((section) => {
           const fields = section.keys

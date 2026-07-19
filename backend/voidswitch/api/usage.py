@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import ColumnElement, Row, Select, case, func, select
+from sqlalchemy import ColumnElement, Row, Select, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.core.auth import get_current_user, is_staff, require_staff
@@ -35,13 +35,55 @@ from voidswitch.services import settings_store
 router = APIRouter(prefix="/api/usage", tags=["usage"])
 
 # How many trailing buckets of each granularity to return.
-_LIMITS = {"day": 30, "week": 12, "month": 12, "year": 5}
+_LIMITS = {"hour": 48, "day": 30, "week": 12, "month": 12, "year": 5}
+
+# Safety cap on the bucket count when a bounded window is requested (modes B/C).
+_WINDOW_LIMIT = 1000
 
 # Per-dialect strftime/to_char templates for each granularity. SQLite stores the
 # %W week (Mon-based, 00-53); PostgreSQL uses the ISO week, close enough for a
 # rolling overview.
-_SQLITE_FMT = {"day": "%Y-%m-%d", "week": "%Y-W%W", "month": "%Y-%m", "year": "%Y"}
-_PG_FMT = {"day": "YYYY-MM-DD", "week": 'IYYY-"W"IW', "month": "YYYY-MM", "year": "YYYY"}
+_SQLITE_FMT = {
+    "hour": "%Y-%m-%d %H:00",
+    "day": "%Y-%m-%d",
+    "week": "%Y-W%W",
+    "month": "%Y-%m",
+    "year": "%Y",
+}
+_PG_FMT = {
+    "hour": 'YYYY-MM-DD HH24":00"',
+    "day": "YYYY-MM-DD",
+    "week": 'IYYY-"W"IW',
+    "month": "YYYY-MM",
+    "year": "YYYY",
+}
+
+
+def _apply_window(
+    stmt: Select, start: dt.datetime | None, end: dt.datetime | None
+) -> Select:
+    """Restrict a query to the ``[start, end)`` window on ``RequestLog.ts``."""
+    if start is not None:
+        stmt = stmt.where(RequestLog.ts >= start)
+    if end is not None:
+        stmt = stmt.where(RequestLog.ts < end)
+    return stmt
+
+
+def _auto_granularity(
+    start: dt.datetime | None, end: dt.datetime | None
+) -> str:
+    """Pick a sensible bucket size for a window (mode B / window-driven series)."""
+    if start is None or end is None:
+        return "year"  # "all" → a yearly overview
+    span = end - start
+    if span <= dt.timedelta(days=2):
+        return "hour"
+    if span <= dt.timedelta(days=95):
+        return "day"
+    if span <= dt.timedelta(days=1150):  # ~3 years
+        return "month"
+    return "year"
 
 
 def _period_expr(dialect: str, granularity: str) -> ColumnElement[str]:
@@ -78,23 +120,43 @@ def _totals_from_row(row: Sequence) -> dict:
     }
 
 
-async def _totals(session: AsyncSession, user: User) -> UsageTotals:
-    stmt = _scope(select(_COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS), user)
+async def _totals(
+    session: AsyncSession,
+    user: User,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
+) -> UsageTotals:
+    stmt = _apply_window(
+        _scope(select(_COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS), user),
+        start,
+        end,
+    )
     row = (await session.execute(stmt)).one()
     return UsageTotals(**_totals_from_row(row))
 
 
 async def _series(
-    session: AsyncSession, user: User, dialect: str, granularity: str
+    session: AsyncSession,
+    user: User,
+    dialect: str,
+    granularity: str,
+    *,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
 ) -> list[UsageBucket]:
     period = _period_expr(dialect, granularity).label("period")
-    stmt = _scope(
-        select(period, _COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS),
-        user,
+    stmt = _apply_window(
+        _scope(
+            select(period, _COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS),
+            user,
+        ),
+        start,
+        end,
     )
-    stmt = (
-        stmt.group_by(period).order_by(period.desc()).limit(_LIMITS[granularity])
-    )
+    # Without a window, return the trailing N buckets; with one, return every
+    # bucket that falls inside it (up to a safety cap).
+    limit = _WINDOW_LIMIT if (start is not None or end is not None) else _LIMITS[granularity]
+    stmt = stmt.group_by(period).order_by(period.desc()).limit(limit)
     rows = (await session.execute(stmt)).all()
     buckets = [
         UsageBucket(period=str(r[0]), **_totals_from_row(r[1:]))
@@ -106,32 +168,93 @@ async def _series(
 
 
 async def _group(
-    session: AsyncSession, user: User, column: Any, *, limit: int = 100
+    session: AsyncSession,
+    user: User,
+    column: Any,
+    *,
+    limit: int = 100,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
+    extra: ColumnElement[bool] | None = None,
 ) -> Sequence[Row[Any]]:
-    stmt = _scope(
-        select(column, _COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS),
-        user,
+    stmt = _apply_window(
+        _scope(
+            select(column, _COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS),
+            user,
+        ),
+        start,
+        end,
     )
+    if extra is not None:
+        stmt = stmt.where(extra)
     stmt = stmt.group_by(column).order_by(_COUNT.desc()).limit(limit)
     return (await session.execute(stmt)).all()
 
 
 @router.get("", response_model=UsageAnalyticsOut)
 async def usage_analytics(
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
+    time_mode: str = "A",
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> UsageAnalyticsOut:
+    """Usage analytics for the caller.
+
+    ``start``/``end`` scope the totals and the per-user/token/model breakdowns to
+    a window; they are omitted for the "all time" view. The "over time" series is
+    governed by ``time_mode`` (a per-user preference):
+      • ``A`` — trailing overview, unaffected by the window (default);
+      • ``B`` — a single series at an auto-picked granularity for the window;
+      • ``C`` — the daily/weekly/monthly/yearly tabs, clipped to the window.
+    """
     dialect = session.bind.dialect.name if session.bind is not None else "sqlite"
 
-    totals = await _totals(session, user)
-    daily = await _series(session, user, dialect, "day")
-    weekly = await _series(session, user, dialect, "week")
-    monthly = await _series(session, user, dialect, "month")
-    yearly = await _series(session, user, dialect, "year")
+    totals = await _totals(session, user, start, end)
 
-    user_rows = await _group(session, user, RequestLog.user_sub)
-    token_rows = await _group(session, user, RequestLog.token_id)
-    model_rows = await _group(session, user, RequestLog.model)
+    daily: list[UsageBucket] = []
+    weekly: list[UsageBucket] = []
+    monthly: list[UsageBucket] = []
+    yearly: list[UsageBucket] = []
+    windowed_series: list[UsageBucket] | None = None
+    windowed_granularity: str | None = None
+
+    mode = (time_mode or "A").upper()
+    if mode == "B":
+        windowed_granularity = _auto_granularity(start, end)
+        windowed_series = await _series(
+            session, user, dialect, windowed_granularity, start=start, end=end
+        )
+    elif mode == "C":
+        daily = await _series(session, user, dialect, "day", start=start, end=end)
+        weekly = await _series(session, user, dialect, "week", start=start, end=end)
+        monthly = await _series(session, user, dialect, "month", start=start, end=end)
+        yearly = await _series(session, user, dialect, "year", start=start, end=end)
+    else:  # "A" — trailing overview, independent of the page window.
+        daily = await _series(session, user, dialect, "day")
+        weekly = await _series(session, user, dialect, "week")
+        monthly = await _series(session, user, dialect, "month")
+        yearly = await _series(session, user, dialect, "year")
+
+    # Synthetic Claude Code token-op requests (``<cc-…-token>``) aren't real
+    # inference calls, so exclude them from the model breakdown.
+    not_internal_model = or_(
+        RequestLog.model.is_(None), ~RequestLog.model.like("<cc-%")
+    )
+    user_rows = await _group(
+        session, user, RequestLog.user_sub, start=start, end=end
+    )
+    token_rows = await _group(
+        session, user, RequestLog.token_id, start=start, end=end
+    )
+    model_rows = await _group(
+        session,
+        user,
+        RequestLog.model,
+        start=start,
+        end=end,
+        extra=not_internal_model,
+    )
 
     # Resolve human-friendly labels for users and tokens in batched queries.
     subs = {r[0] for r in user_rows if r[0]}
@@ -166,7 +289,9 @@ async def usage_analytics(
     by_user = [
         UsageGroupRow(
             key=str(r[0]) if r[0] else "",
-            label=user_names.get(r[0], r[0]) if r[0] else "(anonymous)",
+            # Requests with no caller (e.g. internal Claude Code token ops) are
+            # grouped under a single greyed "<internal>" row on the client.
+            label=user_names.get(r[0], r[0]) if r[0] else "<internal>",
             **_totals_from_row(r[1:]),
         )
         for r in user_rows
@@ -177,7 +302,7 @@ async def usage_analytics(
             label=(
                 f"{token_names[r[0]]}#{r[0]}"
                 if r[0] is not None and r[0] in token_names
-                else f"#{r[0]}" if r[0] is not None else "(none)"
+                else f"#{r[0]}" if r[0] is not None else "<internal>"
             ),
             sublabel=(
                 user_by_id.get(token_owners.get(r[0]))
@@ -204,6 +329,8 @@ async def usage_analytics(
         weekly=weekly,
         monthly=monthly,
         yearly=yearly,
+        windowed_series=windowed_series,
+        windowed_granularity=windowed_granularity,
         by_user=by_user,
         by_token=by_token,
         by_model=by_model,

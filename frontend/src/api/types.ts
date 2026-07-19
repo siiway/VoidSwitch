@@ -395,6 +395,10 @@ export interface UsageAnalytics {
   weekly: UsageBucket[];
   monthly: UsageBucket[];
   yearly: UsageBucket[];
+  // Mode-B "over time": a single series at an auto-picked granularity for the
+  // selected window (null in modes A/C).
+  windowed_series?: UsageBucket[] | null;
+  windowed_granularity?: string | null;
   by_user: UsageGroupRow[];
   by_token: UsageGroupRow[];
   by_model: UsageGroupRow[];
