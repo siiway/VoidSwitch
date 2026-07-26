@@ -154,7 +154,6 @@ export function ProviderKeys() {
   };
   const [editRevealData, setEditRevealData] = useState<RevealData | null>(null);
   const [revealShown, setRevealShown] = useState<Set<string>>(new Set());
-  const [revealConfirmField, setRevealConfirmField] = useState<string | null>(null);
   const [revealFetching, setRevealFetching] = useState(false);
 
   // Add-key helpers.
@@ -432,7 +431,6 @@ export function ProviderKeys() {
     // Reset the reveal flow — nothing is fetched until the user asks for it.
     setEditRevealData(null);
     setRevealShown(new Set());
-    setRevealConfirmField(null);
     // Infer the key's shape from its (non-secret) preview / provider type so the
     // right fields render *without* decrypting the stored secret. OAuth bundles
     // carry an "oauth·" preview prefix; Cloudflare keys are always composite.
@@ -464,8 +462,13 @@ export function ProviderKeys() {
   }
 
   // Reveal button handler: toggles off if shown; reveals from cache if the key
-  // was already fetched; otherwise opens the nested confirmation dialog.
-  function onRevealField(field: string) {
+  // was already fetched; otherwise fetches (and audits) the plaintext straight
+  // away. Clicking the per-field eye button *is* the deliberate, owner-only
+  // action, so it no longer pops a second confirmation dialog. Stacking a modal
+  // dialog on top of the (modal) edit dialog tore the edit dialog's focus trap
+  // down when the inner one closed — the edit inputs then couldn't hold focus
+  // (focus escaped to the table behind the modal). Fetching inline avoids that.
+  async function onRevealField(field: string) {
     if (revealShown.has(field)) {
       setRevealShown((s) => {
         const next = new Set(s);
@@ -478,11 +481,7 @@ export function ProviderKeys() {
       fillRevealField(field, editRevealData);
       return;
     }
-    setRevealConfirmField(field);
-  }
-
-  async function confirmRevealField() {
-    if (!editing || !revealConfirmField) return;
+    if (!editing) return;
     setRevealFetching(true);
     try {
       const r = await api.post<RevealData>(
@@ -491,7 +490,7 @@ export function ProviderKeys() {
       setEditRevealData(r);
       // expires_at is not a secret; surface it once the bundle is unlocked.
       if (r.expires_at != null) setEditExpiresAt(String(r.expires_at));
-      fillRevealField(revealConfirmField, r);
+      fillRevealField(field, r);
     } catch (e) {
       notify(
         t("providerKeys.revealFailed" as TK),
@@ -500,7 +499,6 @@ export function ProviderKeys() {
       );
     } finally {
       setRevealFetching(false);
-      setRevealConfirmField(null);
     }
   }
 
@@ -1447,43 +1445,6 @@ export function ProviderKeys() {
                 onClick={saveEdit}
               >
                 {t("common.save" as TK)}
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
-
-      {/* Nested confirmation for revealing a secret while editing. Stacks on top
-          of the edit dialog (which stays open) so the plaintext is only fetched
-          — and audited — after an explicit confirm. */}
-      <Dialog
-        open={revealConfirmField !== null}
-        onOpenChange={(_, d) => {
-          if (!d.open) setRevealConfirmField(null);
-        }}
-      >
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>{t("providerKeys.revealTitle" as TK)}</DialogTitle>
-            <DialogContent>
-              <Text size={300} block>
-                {t("providerKeys.revealMsg" as TK)}
-              </Text>
-            </DialogContent>
-            <DialogActions>
-              <Button
-                appearance="subtle"
-                disabled={revealFetching}
-                onClick={() => setRevealConfirmField(null)}
-              >
-                {t("common.cancel" as TK)}
-              </Button>
-              <Button
-                appearance="primary"
-                disabled={revealFetching}
-                onClick={confirmRevealField}
-              >
-                {t("providerKeys.revealLabel" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
