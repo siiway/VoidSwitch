@@ -240,13 +240,18 @@ async def responses(
     return await _handle(request, session, authorization, x_api_key, ApiStyle.OPENAI_RESPONSES)
 
 
-@router.get("/v1/models")
-async def list_models(
-    session: AsyncSession = Depends(get_session),
-    authorization: str | None = Header(default=None),
-    x_api_key: str | None = Header(default=None, alias="x-api-key"),
-) -> JSONResponse:
-    authed = await auth.authenticate_void_token(session, authorization, x_api_key)
+async def _advertised_models(
+    session: AsyncSession, authed: auth.AuthedToken
+) -> list[dict[str, object]]:
+    """Models this caller may actually use, in ``/v1/models`` payload shape.
+
+    Applies the same visibility rules everywhere: raw ids hidden behind an alias
+    route are dropped, disabled metadata rows are hidden, role-group access is
+    enforced (moderators see everything; others only models their groups allow),
+    and the token's ``allowed_models`` allow-list is honoured. Shared by the
+    listing endpoint and the OpenCode ``/sync-models`` report so a member always
+    sees exactly the set they can call.
+    """
     token = authed.token
 
     providers = (
@@ -314,6 +319,17 @@ async def list_models(
             if not isinstance(alias, str) or not alias:
                 continue
             _push_model(alias, provider.name)
+    return data
+
+
+@router.get("/v1/models")
+async def list_models(
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+) -> JSONResponse:
+    authed = await auth.authenticate_void_token(session, authorization, x_api_key)
+    data = await _advertised_models(session, authed)
     return JSONResponse({"object": "list", "data": data})
 
 
@@ -323,27 +339,26 @@ async def sync_models(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
 ) -> JSONResponse:
-    """Refresh the platform model catalog from the providers (token-authed).
+    """Report the models the caller can use (OpenCode ``/sync-models`` command).
 
-    Lets the OpenCode ``/models`` slash command keep the catalog in sync with
-    what the providers currently serve. Restricted to staff (admin / co-owner /
-    owner) token owners — a member has no need to reshape the shared catalog.
-    Also returns the gateway's recommended OpenCode ``model`` / ``small_model``
-    selectors (bare model ids, same values as the public ``/api/auth/config``
-    endpoint) so the plugin can sync the top-level config keys alongside the
-    provider's model map.
+    Open to **any** authenticated Void-Token, members included: it returns the
+    exact set of models that token may call — role-group access and the token's
+    allow-list applied, hidden/disabled models excluded — so the OpenCode plugin
+    can refresh its provider model map to what the *user* actually has.
+
+    It deliberately does **not** reshape the shared platform catalog; that is the
+    staff-only "sync from providers" action on the dashboard
+    (``POST /api/models/sync``). Keeping the two apart means a member's sync never
+    needs admin rights. Also returns the gateway's recommended OpenCode
+    ``model`` / ``small_model`` selectors so the plugin can sync the top-level
+    config keys alongside the provider's model map.
     """
     authed = await auth.authenticate_void_token(session, authorization, x_api_key)
-    if not auth.is_staff(authed.user):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Syncing the model catalog requires admin privileges.",
-        )
-    added, total = await models_catalog.sync_from_providers(session)
+    data = await _advertised_models(session, authed)
     return JSONResponse(
         {
-            "added": added,
-            "total": total,
+            "added": 0,
+            "total": len(data),
             "opencode_default_model": settings_store.get_str(
                 "opencode_default_model", "claude-opus-4-8"
             ),

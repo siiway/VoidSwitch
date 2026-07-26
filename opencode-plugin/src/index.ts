@@ -768,7 +768,7 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
       const pick = (v: unknown): string | undefined =>
         typeof v === "string" && v ? v : undefined
       return {
-        note: `model catalog refreshed — ${j?.added ?? 0} new, ${j?.total ?? "?"} total. Reopen the model picker to see changes.`,
+        note: `models synced — ${j?.total ?? "?"} available to you. Reopen the model picker to see changes.`,
         defaults: {
           defaultModel: pick(j?.opencode_default_model),
           smallModel: pick(j?.opencode_small_model),

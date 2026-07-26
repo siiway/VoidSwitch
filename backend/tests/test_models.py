@@ -6,10 +6,33 @@ import httpx
 import pytest
 import respx
 from voidswitch.core.config import get_settings
-from voidswitch.core.security import create_session_token
-from voidswitch.models.db import User
+from voidswitch.core.security import (
+    create_session_token,
+    generate_void_token,
+    hash_token,
+    token_fingerprint,
+)
+from voidswitch.models.db import User, VoidToken
 
 pytestmark = pytest.mark.asyncio
+
+
+async def _member_token(db) -> str:
+    """A Void-Token owned by a plain member."""
+    plaintext = generate_void_token()
+    async with db.session() as session:
+        user = User(sub="tok-member", username="carol", email="c@example.com", role="member")
+        session.add(user)
+        await session.flush()
+        session.add(
+            VoidToken(
+                user_id=user.id,
+                name="member-tok",
+                token_hash=hash_token(plaintext),
+                token_prefix=token_fingerprint(plaintext),
+            )
+        )
+    return plaintext
 
 
 def _session_headers(sub: str = "user-1") -> dict[str, str]:
@@ -169,6 +192,29 @@ async def test_v1_models_sync_with_token(client, seeded):
     # top-level selectors so the plugin can sync `model` / `small_model`.
     assert body["opencode_default_model"] == "claude-opus-4-8"
     assert isinstance(body["opencode_small_model"], str)
+
+
+async def test_v1_models_sync_allowed_for_members(client, db, seeded):
+    """A member's Void-Token may sync (no admin rights) and only sees the models
+    it can actually call — mirroring GET /v1/models — without reshaping the
+    shared catalog (that stays the staff-only /api/models/sync action)."""
+    tok = await _member_token(db)
+    resp = await client.post("/v1/models/sync", headers={"x-api-key": tok})
+    # The whole point of the fix: members are no longer blocked with 403.
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # It never reshapes the shared catalog, so nothing is ever "added".
+    assert body["added"] == 0
+    # `total` reflects exactly what this token may call, matching GET /v1/models.
+    listed = (await client.get("/v1/models", headers={"x-api-key": tok})).json()["data"]
+    assert body["total"] == len(listed)
+    # Per-caller filtering: a moderator (owner) token sees at least as many
+    # models as a plain member (who is gated by role-group access).
+    owner_total = (
+        await client.post("/v1/models/sync", headers={"x-api-key": seeded["token"]})
+    ).json()["total"]
+    assert owner_total >= body["total"]
+    assert owner_total >= 1
 
 
 DS_URL = "https://api.deepseek.com/chat/completions"

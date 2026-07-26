@@ -541,19 +541,26 @@ export function Models() {
                 </Button>
               </Tooltip>
             )}
-            <Tooltip
-              content={t("models.syncTooltip" as TK)}
-              relationship="label"
-            >
-              <Button
-                appearance="primary"
-                icon={<ArrowSyncRegular />}
-                disabled={syncing}
-                onClick={sync}
+            {/* "Sync from providers" reshapes the shared catalog — a staff-only
+                action. Members keep their OpenCode plugin in sync via the
+                gateway's own POST /v1/models/sync (the `/sync-models` command),
+                which reports the models they can access without touching the
+                shared catalog. */}
+            {isStaff && (
+              <Tooltip
+                content={t("models.syncTooltip" as TK)}
+                relationship="label"
               >
-                {syncing ? t("models.syncing" as TK) : t("models.sync" as TK)}
-              </Button>
-            </Tooltip>
+                <Button
+                  appearance="primary"
+                  icon={<ArrowSyncRegular />}
+                  disabled={syncing}
+                  onClick={sync}
+                >
+                  {syncing ? t("models.syncing" as TK) : t("models.sync" as TK)}
+                </Button>
+              </Tooltip>
+            )}
           </div>
         }
       />
