@@ -29,9 +29,11 @@ import {
   InfoRegular,
   LockClosedRegular,
   PersonRegular,
+  SettingsRegular,
 } from "@fluentui/react-icons";
+import type { BadgeProps } from "@fluentui/react-components";
 import { makeStyles } from "@fluentui/react-components";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -1302,8 +1304,18 @@ function AuditLogs({
         : s === "system"
           ? ta("common.system" as TK)
           : s;
-  const scopeIcon = (s: string) =>
-    s === "admin" ? <LockClosedRegular /> : s === "self" ? <PersonRegular /> : null;
+  // Each scope renders as a coloured pill wrapping its own icon, so the three
+  // are told apart at a glance: admin (privileged) red, self (own action) blue,
+  // system (automated/background) amber. Unknown scopes fall back to a neutral
+  // text badge.
+  const scopeMeta = (
+    s: string,
+  ): { icon: ReactElement; color: BadgeProps["color"] } | null => {
+    if (s === "admin") return { icon: <LockClosedRegular />, color: "danger" };
+    if (s === "self") return { icon: <PersonRegular />, color: "informative" };
+    if (s === "system") return { icon: <SettingsRegular />, color: "warning" };
+    return null;
+  };
 
   async function reveal(a: AuditLog) {
     const ok = await confirm({
@@ -1516,9 +1528,19 @@ function AuditLogs({
                       onClick={() => setFilter("scope", a.scope)}
                     >
                       <Tooltip content={scopeLabel(a.scope)} relationship="label">
-                        {scopeIcon(a.scope) ?? (
-                          <Badge appearance="tint">{scopeLabel(a.scope)}</Badge>
-                        )}
+                        {(() => {
+                          const meta = scopeMeta(a.scope);
+                          return meta ? (
+                            <Badge
+                              appearance="tint"
+                              color={meta.color}
+                              icon={meta.icon}
+                              aria-label={scopeLabel(a.scope)}
+                            />
+                          ) : (
+                            <Badge appearance="tint">{scopeLabel(a.scope)}</Badge>
+                          );
+                        })()}
                       </Tooltip>
                     </button>
                   </TableCell>
@@ -1581,15 +1603,19 @@ function AuditLogs({
                   {isOwner ? (
                     <TableCell>
                       {a.has_sensitive ? (
-                        <Button
-                          size="small"
-                          appearance="subtle"
-                          icon={<EyeRegular />}
-                          disabled={busy}
-                          onClick={() => reveal(a)}
+                        <Tooltip
+                          content={ta("common.reveal" as TK)}
+                          relationship="label"
                         >
-                          {ta("common.reveal" as TK)}
-                        </Button>
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            icon={<EyeRegular />}
+                            disabled={busy}
+                            onClick={() => reveal(a)}
+                            aria-label={ta("common.reveal" as TK)}
+                          />
+                        </Tooltip>
                       ) : (
                         "—"
                       )}
