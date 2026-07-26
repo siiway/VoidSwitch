@@ -44,7 +44,7 @@ from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger
 from voidswitch.core.security import decrypt_secret, encrypt_secret
 from voidswitch.models.db import ApiKey, RequestLog
-from voidswitch.services import settings_store
+from voidswitch.services import refresh_context, settings_store
 from voidswitch.services.network import Route, get_pool
 
 log = get_logger("xai_oauth")
@@ -221,6 +221,10 @@ async def _log_token_request(
     error: str | None,
 ) -> None:
     model = f"<xai-{op}-token>"
+    # A manual "refresh token" action stamps the request log with the operator
+    # who triggered it (and the target key/provider); the automatic near-expiry /
+    # 401-retry path leaves this unset and logs anonymously.
+    actor = refresh_context.get_actor()
     try:
         async with get_database().session() as session:
             session.add(
@@ -236,8 +240,12 @@ async def _log_token_request(
                     attempts=attempts,
                     error=error,
                     user_agent=OAUTH_USER_AGENT,
-                    client_type="xai-oauth",
+                    client_type="xai-oauth-refresh" if actor else "xai-oauth",
                     is_opencode=True,
+                    user_sub=actor.actor_sub if actor else None,
+                    key_id=actor.key_id if actor else None,
+                    provider_id=actor.provider_id if actor else None,
+                    provider_name=actor.provider_name if actor else None,
                 )
             )
     except Exception as exc:  # pragma: no cover - logging must not break OAuth

@@ -137,6 +137,9 @@ class ProviderOut(ProviderBase):
     # True when this provider's adapter accepts cpa/sub2api credential imports,
     # so the dashboard can surface the import panel on its key-management page.
     supports_import: bool = False
+    # True when this provider's keys can be force-refreshed via an OAuth refresh
+    # token, so the dashboard can offer a per-key "refresh token" action.
+    supports_refresh: bool = False
     added_by: int | None = None
     added_by_name: str | None = None
     # Per-provider key-management API state. The secret itself is never inlined

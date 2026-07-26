@@ -37,6 +37,7 @@ import {
   EditRegular,
   EyeOffRegular,
   EyeRegular,
+  KeyResetRegular,
   PersonRegular,
   ProhibitedRegular,
   ReOrderDotsVerticalRegular,
@@ -116,6 +117,8 @@ export function ProviderKeys() {
   // Balance-refresh + cleanup state.
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
+  // Per-key OAuth token-refresh in flight (claude-code / xai providers).
+  const [refreshingTokenId, setRefreshingTokenId] = useState<number | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [cleanDays, setCleanDays] = useState(0);
   // Which pool a "rescan all" targets: "__all__" = whole provider,
@@ -192,6 +195,7 @@ export function ProviderKeys() {
   const isClaudeCode = current?.type === "claude-code";
   const supportsBalance = current?.supports_balance ?? false;
   const supportsImport = current?.supports_import ?? false;
+  const supportsRefresh = current?.supports_refresh ?? false;
   // Distinct pool tags present among this provider's keys (for the rescan picker).
   const pools = Array.from(
     new Set((keys.data ?? []).map((k) => k.pool ?? "")),
@@ -240,6 +244,28 @@ export function ProviderKeys() {
       );
     } finally {
       setRefreshingId(null);
+    }
+  }
+
+  // Force an OAuth token refresh for a single key (claude-code / xai). The
+  // backend rotates the credential bundle, re-enables the key, and records the
+  // action in both the request and audit logs with the acting user.
+  async function refreshToken(k: ApiKey) {
+    setRefreshingTokenId(k.id);
+    try {
+      await api.post(
+        `/api/admin/providers/${providerId}/keys/${k.id}/refresh-token`,
+      );
+      notify(t("providerKeys.refreshTokenDone" as TK), k.key_preview, "success");
+      keys.reload();
+    } catch (e) {
+      notify(
+        t("providerKeys.refreshTokenFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setRefreshingTokenId(null);
     }
   }
 
@@ -1300,6 +1326,21 @@ export function ProviderKeys() {
                           aria-label={t("common.edit" as TK)}
                         />
                       </Tooltip>
+                      {supportsRefresh && (
+                        <Tooltip
+                          content={t("providerKeys.refreshTokenTip" as TK)}
+                          relationship="label"
+                        >
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            icon={<KeyResetRegular />}
+                            disabled={refreshingTokenId === k.id}
+                            onClick={() => refreshToken(k)}
+                            aria-label={t("providerKeys.refreshTokenAction" as TK)}
+                          />
+                        </Tooltip>
+                      )}
                       <Tooltip
                         content={
                           k.status === "active"

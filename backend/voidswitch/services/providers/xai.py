@@ -31,6 +31,7 @@ class XAIProvider(OpenAIProvider):
     default_models = ("grok-2", "grok-beta", "*")
     refresh_on_invalid_key = True
     supports_import = True
+    supports_refresh = True
 
     async def resolve_credential(
         self,

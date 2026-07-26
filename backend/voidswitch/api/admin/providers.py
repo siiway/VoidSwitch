@@ -108,6 +108,7 @@ def _to_out(
     adapter = get_adapter(provider)
     out.supports_balance = adapter.balance_url is not None
     out.supports_import = adapter.supports_import
+    out.supports_refresh = adapter.supports_refresh
     if redact:
         # Members may view providers (to add keys) but must not see potentially
         # secret config such as custom auth headers.

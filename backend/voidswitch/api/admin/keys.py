@@ -164,6 +164,29 @@ async def refresh_balance_one(
     )
 
 
+@router.post("/{key_id}/refresh-token", response_model=ApiKeyOut)
+async def refresh_token_one(
+    provider_id: int,
+    key_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+    settings: Settings = Depends(get_settings),
+) -> ApiKey:
+    """Force-refresh a single key's OAuth access token (Claude Code / xAI).
+
+    Immediately exchanges the stored refresh token for a fresh access token,
+    re-encrypts the rotated bundle, and brings the key back online. The
+    token-endpoint call lands in the request log stamped with the operator, and
+    the action is written to the audit trail with the same attribution.
+    """
+    provider = await _get_provider(session, provider_id)
+    key = await _get_key(session, provider_id, key_id)
+    return await keymgmt.refresh_token_one(
+        session, provider, key, actor=_actor(user, request), settings=settings
+    )
+
+
 @router.post("/reorder", response_model=list[ApiKeyOut])
 async def reorder_keys(
     provider_id: int,

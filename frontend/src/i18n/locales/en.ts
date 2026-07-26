@@ -309,6 +309,10 @@ const en = {
     noBalanceDaysHint:
       "Delete keys that have had no balance for at least the given number of days",
     refreshBalanceTip: "Refresh this key's balance",
+    refreshTokenAction: "Refresh token now",
+    refreshTokenTip: "Refresh this key's access token from its refresh token now",
+    refreshTokenDone: "Token refreshed",
+    refreshTokenFailed: "Token refresh failed",
     deleteAllRejectedTip: "Delete every key whose secret was rejected (invalid)",
     editKeyField: "Key",
     editKeyHint: "Leave blank to keep the current secret unchanged",

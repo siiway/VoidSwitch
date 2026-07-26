@@ -494,6 +494,102 @@ async def test_two_logins_create_two_keys(client, db):
     assert len(rows) == 2
 
 
+async def _make_key_on(db, provider_id: int, bundle_or_raw: dict | str) -> int:
+    secret_key = get_settings().server.secret_key
+    raw = json.dumps(bundle_or_raw) if isinstance(bundle_or_raw, dict) else bundle_or_raw
+    async with db.session() as session:
+        key = ApiKey(
+            provider_id=provider_id,
+            key_ciphertext=encrypt_secret(raw, secret=secret_key),
+            key_hash=hash_token(raw),
+            key_preview="cc",
+            status=KeyStatus.DISABLED.value,
+            disabled_reason="token expired",
+            failed_count=3,
+        )
+        session.add(key)
+        await session.flush()
+        return key.id
+
+
+async def test_manual_refresh_token_endpoint(client, db):
+    """The dashboard per-key 'refresh token' action force-refreshes the bundle,
+    re-enables the key, stamps the request log with the operator, and audits it."""
+    from voidswitch.core.audit import AuditAction
+    from voidswitch.models.db import AuditLog
+
+    headers = await _owner_headers(db)
+    pid = await _make_provider(db, name="cc-refresh", type_="claude-code")
+    kid = await _make_key_on(
+        db,
+        pid,
+        {"access_token": "old", "refresh_token": "rt-old", "expires_at": time.time() + 7200},
+    )
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(oauth_tokens.TOKEN_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"access_token": "fresh", "refresh_token": "rt-new", "expires_in": 3600},
+            )
+        )
+        resp = await client.post(
+            f"/api/admin/providers/{pid}/keys/{kid}/refresh-token", headers=headers
+        )
+    assert resp.status_code == 200, resp.text
+    out = resp.json()
+    # A successful refresh brings a disabled key back online and clears failures.
+    assert out["status"] == "active"
+    assert out["failed_count"] == 0
+    assert out["disabled_reason"] in (None, "")
+
+    secret_key = get_settings().server.secret_key
+    async with db.session() as session:
+        key = await session.get(ApiKey, kid)
+        bundle = oauth_tokens.parse_bundle(decrypt_secret(key.key_ciphertext, secret=secret_key))
+        assert bundle is not None and bundle["access_token"] == "fresh"
+        # The token-endpoint request log carries the executing user + target key.
+        rlog = (
+            await session.execute(
+                select(RequestLog).where(RequestLog.model == "<cc-refresh-token>")
+            )
+        ).scalar_one()
+        assert rlog.user_sub == "owner-1"
+        assert rlog.key_id == kid
+        assert rlog.provider_id == pid
+        assert rlog.client_type == "claude-code-oauth-refresh"
+        # The action is on the audit trail, attributed to the operator.
+        alog = (
+            await session.execute(
+                select(AuditLog).where(AuditLog.action == AuditAction.KEY_REFRESH.value)
+            )
+        ).scalar_one()
+        assert alog.actor_sub == "owner-1"
+        assert alog.detail["key_id"] == kid
+
+
+async def test_manual_refresh_static_token_rejected(client, db):
+    """A non-refreshable (static) key returns a 400, not a 500."""
+    headers = await _owner_headers(db)
+    pid = await _make_provider(db, name="cc-static", type_="claude-code")
+    kid = await _make_key_on(db, pid, "sk-ant-oat01-static-token")
+    resp = await client.post(
+        f"/api/admin/providers/{pid}/keys/{kid}/refresh-token", headers=headers
+    )
+    assert resp.status_code == 400, resp.text
+
+
+async def test_manual_refresh_unsupported_provider_rejected(client, db):
+    """Providers without OAuth refresh (e.g. plain OpenAI) reject the action."""
+    headers = await _owner_headers(db)
+    pid = await _make_provider(db, name="oai-norefresh", type_="openai")
+    kid = await _make_key_on(db, pid, "sk-openai-key")
+    resp = await client.post(
+        f"/api/admin/providers/{pid}/keys/{kid}/refresh-token", headers=headers
+    )
+    assert resp.status_code == 400, resp.text
+
+
 async def test_dispatch_oauth_401_forces_refresh_and_retries(db):
     """The dispatcher's load-bearing path: on a 401 from a claude-code upstream,
     force-refresh the bundle once, rebuild the Bearer header, and retry the same

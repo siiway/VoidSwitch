@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from voidswitch.constants import KeyStatus
 from voidswitch.core.audit import AuditAction, AuditScope, record_audit
 from voidswitch.core.config import Settings
+from voidswitch.core.logging import get_logger
 from voidswitch.core.security import decrypt_secret, encrypt_secret, hash_token
 from voidswitch.models.db import ApiKey, Provider
 from voidswitch.models.schemas import (
@@ -34,10 +35,12 @@ from voidswitch.models.schemas import (
     ApiKeyReorder,
     ApiKeyUpdate,
 )
-from voidswitch.services import oauth_tokens, settings_store
+from voidswitch.services import oauth_tokens, refresh_context, settings_store, xai_oauth
 from voidswitch.services.balance import refresh_key_balance
 from voidswitch.services.network import Route, get_pool
 from voidswitch.services.providers.registry import get_adapter
+
+log = get_logger("keymgmt")
 
 CLEANUP_TARGETS = {KeyStatus.INVALID.value, KeyStatus.INSUFFICIENT_BALANCE.value}
 
@@ -511,6 +514,97 @@ async def refresh_balance_one(
     require_balance_support(provider)
     await refresh_one(key, provider, settings)
     await session.flush()
+    return key
+
+
+# --------------------------------------------------------------------------- #
+# OAuth refresh-token refresh (Claude Code / xAI)
+# --------------------------------------------------------------------------- #
+
+
+async def refresh_token_one(
+    session: AsyncSession,
+    provider: Provider,
+    key: ApiKey,
+    *,
+    actor: Actor,
+    settings: Settings,
+) -> ApiKey:
+    """Force-refresh a single key's OAuth access token via its refresh token.
+
+    Only for providers whose adapter supports it (Claude Code, xAI). The rotated
+    credential bundle is re-encrypted and committed by the resolver; on success we
+    also clear the key's failure state and re-enable it (a working refresh means
+    the credential is healthy again). The token-endpoint call is recorded in the
+    request log stamped with the executing operator (via ``refresh_context``), and
+    the action itself is written to the audit trail with the same attribution.
+    """
+    ensure_can_manage_key(actor, key)
+    adapter = get_adapter(provider)
+    if not adapter.supports_refresh:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This provider does not support token refresh.",
+        )
+
+    token = refresh_context.set_actor(
+        refresh_context.RefreshActor(
+            actor_sub=actor.sub,
+            actor_name=actor.name,
+            key_id=key.id,
+            provider_id=provider.id,
+            provider_name=provider.name,
+            user_agent=actor.user_agent,
+        )
+    )
+    error: str | None = None
+    try:
+        await adapter.resolve_credential(
+            session, key, settings.server.secret_key, force_refresh=True
+        )
+    except (oauth_tokens.NotRefreshable, xai_oauth.NotRefreshable) as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"This key cannot be refreshed: {exc}"
+        ) from exc
+    except (oauth_tokens.LoginUpstreamError, xai_oauth.RefreshUpstreamError) as exc:
+        error = str(exc)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, error) from exc
+    finally:
+        refresh_context.reset(token)
+
+    # The resolver committed the rotated bundle in its own transaction; re-read so
+    # this session sees the fresh ciphertext/last_checked_at before we touch state.
+    try:
+        await session.refresh(key)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.debug("orm_refresh_skipped", error=str(exc))
+    # A successful refresh means the credential works again — clear the failure
+    # bookkeeping and bring the key back online.
+    key.failed_count = 0
+    key.disabled_reason = None
+    key.disabled_since = None
+    key.rate_limit_until = None
+    if key.status != KeyStatus.ACTIVE.value:
+        key.status = KeyStatus.ACTIVE.value
+    key.last_checked_at = _utcnow()
+    await session.flush()
+
+    await record_audit(
+        session,
+        action=AuditAction.KEY_REFRESH,
+        actor_sub=actor.sub,
+        actor_name=actor.name,
+        target_type="provider",
+        target_id=provider.id,
+        detail={
+            "provider_name": provider.name,
+            "key_id": key.id,
+            "preview": key.key_preview,
+        },
+        ip=actor.ip,
+        user_agent=actor.user_agent,
+        scope=actor.audit_scope,
+    )
     return key
 
 

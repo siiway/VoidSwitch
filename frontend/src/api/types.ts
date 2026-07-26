@@ -44,6 +44,7 @@ export interface Provider {
   active_key_count: number;
   supports_balance: boolean;
   supports_import: boolean;
+  supports_refresh: boolean;
   added_by?: number | null;
   added_by_name?: string | null;
   key_api_enabled: boolean;
