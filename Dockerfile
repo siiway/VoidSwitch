@@ -15,11 +15,14 @@
 # ---- builder: resolve and install dependencies into a self-contained venv ----
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
+# Dependencies install from PyPI by default. To build behind a package mirror,
+# pass one at build time (empty = default PyPI):
+#   docker build --build-arg UV_INDEX_URL=https://<your-mirror>/pypi/simple/ .
+ARG UV_INDEX_URL=""
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=0 \
-    # PyPI Mirror
-    UV_INDEX_URL=https://pypi-mirror.siiway.top/pypi/simple/
+    UV_INDEX_URL=${UV_INDEX_URL}
 
 WORKDIR /app/backend
 
