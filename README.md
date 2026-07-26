@@ -63,7 +63,7 @@ Each has its own README with full details.
 cd backend
 cp config.example.yaml config.yaml     # fill in Prism client_id / client_secret
 uv sync
-uv run voidswitch                       # http://localhost:8080  (docs at /docs)
+uv run voidswitch                       # http://localhost:8080  (Swagger at /swagger)
 ```
 
 **2. Frontend**

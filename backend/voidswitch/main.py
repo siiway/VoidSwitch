@@ -13,7 +13,6 @@ from voidswitch import __version__
 from voidswitch.api import (
     announcements as announcements_api,
     auth as auth_api,
-    docs_site,
     install as install_api,
     me as me_api,
     models as models_api,
@@ -127,9 +126,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         description="Multi-provider LLM API reverse proxy with proxy/key failover.",
         lifespan=lifespan,
-        # Swagger UI moves to /swagger so /docs can host the private VitePress
-        # documentation site (mounted below). ReDoc + the raw schema keep their
-        # defaults.
+        # Swagger UI lives at /swagger (the usage docs are a separate public
+        # VitePress site, not served by the backend). ReDoc + the raw schema keep
+        # their defaults.
         docs_url="/swagger",
     )
     app.state.settings = settings
@@ -190,10 +189,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # schema at /provider-api/docs). Authenticated by a provider's vsk-… token.
     app.mount("/provider-api", provider_api.subapp)
 
-    # Private documentation site (built VitePress) — auth-gated, served at /docs/.
-    # Only users who can sign in to the platform may view it.
-    app.mount("/docs", docs_site.subapp)
-
     @app.get("/healthz", tags=["system"])
     async def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": __version__})
@@ -209,7 +204,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "anthropic": "/v1/messages",
                 "models": "/v1/models",
                 "swagger": "/swagger",
-                "docs": "/docs/",
                 "provider_key_api_docs": "/provider-api/docs",
             },
         }

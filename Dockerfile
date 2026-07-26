@@ -37,20 +37,6 @@ COPY backend/ /app/backend/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-# ---- docs builder: build the VitePress usage site so the backend can serve it ----
-# The docs server (voidswitch/api/docs_site.py) serves this static output — auth-
-# gated — at /docs/. Building it here means `docker compose build` produces the
-# docs alongside the gateway, and the runtime image reads the product directly
-# from /app/docs/dist. Proxy build-args (HTTP_PROXY, …) are honoured automatically.
-FROM oven/bun:1 AS docs-builder
-WORKDIR /docs
-
-# Install deps first (cached), then build against the sources.
-COPY docs/package.json ./
-RUN bun install
-COPY docs/ ./
-RUN bun run docs:build
-
 # ---- runtime: slim image carrying only the venv + source ----
 FROM python:3.13-slim-bookworm
 
@@ -68,10 +54,6 @@ COPY --from=builder --chown=voidswitch:voidswitch /app/backend /app/backend
 # <repo-root>/opencode-plugin/src/index.ts → /app/opencode-plugin/src/index.ts.
 # Only src is needed: the plugin's lone import is type-only and erased at load.
 COPY --chown=voidswitch:voidswitch opencode-plugin/src /app/opencode-plugin/src
-
-# Built docs — served (auth-gated) at /docs/ by docs_site.py, which defaults to
-# reading /app/docs/dist. Override with VOIDSWITCH_SERVER__DOCS_DIR.
-COPY --from=docs-builder --chown=voidswitch:voidswitch /docs/.vitepress/dist /app/docs/dist
 
 # Put the venv on PATH so `voidswitch` resolves without `uv run`.
 ENV PATH="/app/backend/.venv/bin:$PATH" \

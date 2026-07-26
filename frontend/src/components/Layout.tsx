@@ -38,7 +38,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { api, API_BASE, getToken } from "../api/client";
+import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { LANGUAGES } from "../i18n";
@@ -53,14 +53,19 @@ type NavScope = "member" | "staff" | "owner";
 
 type TranslationKey = keyof Translations;
 
+// The usage docs are a public, standalone VitePress site (deployed to GitHub
+// Pages). English lives under /en/; open that locale when the dashboard is in
+// English so the two stay in sync.
+const DOCS_URL = "https://voidswitch.siiway.page/";
+
 interface NavItem {
   to: string;
   label: string;
   labelKey: string;
   icon: ReactElement;
   scope: NavScope;
-  // When set, the item is an external link opened in a new tab (e.g. the private
-  // docs site), not an in-app route. The session token is appended at click time.
+  // When set, the item is an external link opened in a new tab (e.g. the public
+  // docs site), not an in-app route.
   external?: boolean;
 }
 
@@ -149,7 +154,7 @@ const SECTIONS: NavSection[] = [
       { to: "/chat", label: "Chat", labelKey: "nav.chat", icon: <ChatRegular />, scope: "member" },
       { to: "/token", label: "My API Key", labelKey: "nav.myApiKey", icon: <KeyRegular />, scope: "member" },
       {
-        to: "/docs/",
+        to: DOCS_URL,
         label: "Docs",
         labelKey: "nav.docs",
         icon: <BookRegular />,
@@ -160,14 +165,8 @@ const SECTIONS: NavSection[] = [
   },
 ];
 
-function docsHref(path: string): string {
-  return `${API_BASE}${path}`;
-}
-
-function docsBridgeHref(path: string): string {
-  const token = getToken();
-  const base = docsHref(path);
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+function docsUrlForLang(base: string, lang: string): string {
+  return lang === "en" ? `${base}en/` : base;
 }
 
 const useStyles = makeStyles({
@@ -468,25 +467,11 @@ export function Layout() {
                       return (
                         <a
                           key={item.to}
-                          href={docsHref(item.to)}
+                          href={docsUrlForLang(item.to, i18n.language)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className={styles.item}
-                          onClick={(ev) => {
-                            handleNavClick();
-                            if (
-                              ev.defaultPrevented ||
-                              ev.button !== 0 ||
-                              ev.metaKey ||
-                              ev.ctrlKey ||
-                              ev.shiftKey ||
-                              ev.altKey
-                            ) {
-                              return;
-                            }
-                            ev.preventDefault();
-                            window.open(docsBridgeHref(item.to), "_blank", "noopener,noreferrer");
-                          }}
+                          onClick={handleNavClick}
                         >
                           <span className={styles.itemIcon}>{item.icon}</span>
                           <span style={{ flex: 1 }}>{item.label}</span>

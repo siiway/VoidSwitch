@@ -19,9 +19,9 @@ services:
     container_name: voidswitch
     build:
       # Context is the repo root so the OpenCode plugin source is bundled and the
-      # /install endpoint works. See the Dockerfile header for why. The build also
-      # compiles the VitePress docs (docs/) into /app/docs/dist so the backend can
-      # serve the private docs site at /docs/ — no separate build step needed.
+      # /install endpoint works. See the Dockerfile header for why. (The usage
+      # docs are a separate public VitePress site — see docs/ and the Deploy docs
+      # workflow — and are no longer built into this image.)
       context: .
       dockerfile: Dockerfile
       args:

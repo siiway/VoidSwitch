@@ -19,13 +19,17 @@ Use `bun` / `bunx` for frontend package and script operations where possible. Do
 
 ## Documentation
 
-There is a private, auth-gated VitePress **usage** site in `docs/` (served by the
-backend at `/docs/`; see `backend/voidswitch/api/docs_site.py`). When a change
-alters user-facing behaviour (a page, a permission, a setting, an endpoint, a
-flow), update the relevant `docs/**` page in the same change — keep it in sync.
+There is a public, bilingual VitePress **usage** site in `docs/`, deployed to
+GitHub Pages at `voidswitch.siiway.page` (see `.github/workflows/docs.yml`). When
+a change alters user-facing behaviour (a page, a permission, a setting, an
+endpoint, a flow), update the relevant `docs/**` page in the same change — keep
+it in sync.
 
-**All documentation is written in Chinese** — the primary language of the
-platform's users across all regions.
+**Docs are bilingual**: Simplified Chinese is the root locale (`docs/**`), with
+an English mirror under `docs/en/**` (mounted at `/en/`). Chinese is the source
+of truth — author/update the `docs/**` page first, then mirror the change into
+`docs/en/**` (English internal links carry the `/en` prefix). Chinese remains the
+primary language of the platform's users across all regions.
 
 Keep the tone **usage-focused**: how to do things and the caveats that matter to
 users/operators. Avoid deep principle/architecture explanations (a short

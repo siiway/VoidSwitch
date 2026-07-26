@@ -60,12 +60,6 @@ class ServerSettings(BaseSettings):
     # session without Prism. NEVER enable in production. Toggle via
     # VOIDSWITCH_SERVER__DEV_MODE=true.
     dev_mode: bool = False
-    # Filesystem path of the built VitePress documentation site (its
-    # ``.vitepress/dist`` output). Served — auth-gated — at ``/docs/``. When
-    # empty, a couple of well-known locations are tried (the in-image
-    # ``/app/docs/dist`` and the repo's ``docs/.vitepress/dist`` for local dev).
-    # Override with VOIDSWITCH_SERVER__DOCS_DIR=/path/to/dist.
-    docs_dir: str = ""
 
 
 class DatabaseSettings(BaseSettings):

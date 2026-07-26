@@ -118,8 +118,13 @@ function CodeBlock({ code }: { code: string }) {
 export function MyToken() {
   const notify = useNotify();
   const confirm = useConfirm();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   type TK = keyof Translations;
+  // Public docs site (English lives under /en/); track the dashboard language.
+  const docsBase =
+    i18n.language === "en"
+      ? "https://voidswitch.siiway.page/en"
+      : "https://voidswitch.siiway.page";
   const tokensList = useAsync<VoidToken[]>(() => api.get("/api/me/tokens"));
   const usage = useAsync<Usage>(() => api.get("/api/me/usage"));
   const [name, setName] = useState("default");
@@ -429,7 +434,7 @@ export function MyToken() {
                     components={{
                       code: <code />,
                       strong: <strong />,
-                      docs: <a href={`${API_BASE}/docs/guide/opencode`} target="_blank" rel="noreferrer" />,
+                      docs: <a href={`${docsBase}/guide/opencode`} target="_blank" rel="noreferrer" />,
                     }}
                   />
                 </Text>

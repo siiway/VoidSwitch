@@ -33,7 +33,7 @@ VoidSwitch 是一个**多供应商 LLM API 反向代理**。它在一个端点�
 Completions、OpenAI Responses 和 Anthropic 格式的流量，在它们之间进行转换，并将请求转发到
 能够服务该模型的任何上游供应商 — 同时处理密钥轮换、代理故障转移和每用户配额。
 
-此文档站点是**私有的**：只有能够登录 VoidSwitch 控制台的用户才能阅读。
+本文档是**公开的**，任何人都可以阅读；提供中文与 English 两种语言，用页面右上角的语言菜单切换。
 
 - 刚来？从[简介](/guide/introduction)开始。
 - 想发送请求？参阅[你的 API 密钥](/guide/api-keys)和[调用 API](/guide/using-the-api)。

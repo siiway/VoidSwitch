@@ -46,7 +46,6 @@ VoidSwitch 有三个权限层级。本指南中**使用网关**部分适用于�
 | `/v1/responses` | OpenAI Responses API |
 | `/v1/messages` | Anthropic 风格消息 |
 | `/v1/models` | 列出你可以调用的模型 |
-| `/docs/` | 此文档站点（私有） |
 | `/swagger` | 交互式 API 参考（Swagger UI） |
 
 下一步：[登录](/guide/sign-in)。
