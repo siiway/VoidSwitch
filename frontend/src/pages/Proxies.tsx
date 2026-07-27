@@ -14,12 +14,14 @@ import {
   TableHeaderCell,
   TableRow,
   Textarea,
+  Tooltip,
   tokens,
 } from "@fluentui/react-components";
 import {
   CloudOffRegular,
   CloudRegular,
   DeleteRegular,
+  EditRegular,
   PulseRegular,
 } from "@fluentui/react-icons";
 import { useState } from "react";
@@ -56,7 +58,12 @@ export function Proxies() {
   const providers = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
   const [bulk, setBulk] = useState("");
   const [localAddr, setLocalAddr] = useState("");
+  const [name, setName] = useState("");
   const [adding, setAdding] = useState(false);
+  // Per-proxy rename dialog (the name doubles as the proxy's description).
+  const [editing, setEditing] = useState<Proxy | null>(null);
+  const [editName, setEditName] = useState("");
+  const [savingName, setSavingName] = useState(false);
   // Set when a delete is requested for a proxy that providers still reference.
   const [inUse, setInUse] = useState<{
     proxy: Proxy;
@@ -81,10 +88,12 @@ export function Proxies() {
       const created = await api.post<Proxy[]>("/api/admin/proxies", {
         urls,
         local_address: localAddr.trim() || null,
+        note: name.trim() || null,
       });
       notify("Proxies added", `${created.length} new`, "success");
       setBulk("");
       setLocalAddr("");
+      setName("");
       proxies.reload();
     } catch (e) {
       notify("Add failed", e instanceof Error ? e.message : String(e), "error");
@@ -118,6 +127,32 @@ export function Proxies() {
         e instanceof Error ? e.message : String(e),
         "error",
       );
+    }
+  }
+
+  function openRename(p: Proxy) {
+    setEditing(p);
+    setEditName(p.note ?? "");
+  }
+
+  async function saveName() {
+    if (!editing) return;
+    setSavingName(true);
+    try {
+      await api.patch(`/api/admin/proxies/${editing.id}`, {
+        note: editName.trim() || null,
+      });
+      notify(t("proxies.renamed" as TK), editName.trim() || editing.url, "success");
+      setEditing(null);
+      proxies.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setSavingName(false);
     }
   }
 
@@ -248,6 +283,13 @@ export function Proxies() {
           onChange={(_, d) => setBulk(d.value)}
         />
       </Field>
+      <Field label={t("proxies.nameOnAdd" as TK)} style={{ marginBottom: 8 }}>
+        <Input
+          value={name}
+          placeholder={t("proxies.namePlaceholder" as TK)}
+          onChange={(_, d) => setName(d.value)}
+        />
+      </Field>
       <Field
         label={t("proxies.localSourceIp" as TK)}
         style={{ marginBottom: 8 }}
@@ -281,6 +323,7 @@ export function Proxies() {
         <DataTable ariaLabel={t("proxies.title" as TK)}>
           <TableHeader>
             <TableRow>
+              <TableHeaderCell>{t("proxies.name" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("proxies.url" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("proxies.sourceIp" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("proxies.status" as TK)}</TableHeaderCell>
@@ -293,6 +336,7 @@ export function Proxies() {
           <TableBody>
             {(proxies.data ?? []).map((p) => (
               <TableRow key={p.id}>
+                <TableCell>{p.note || "—"}</TableCell>
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {p.url || "(direct)"}
                 </TableCell>
@@ -318,6 +362,15 @@ export function Proxies() {
                   >
                     {t("proxies.probe" as TK)}
                   </Button>
+                  <Tooltip content={t("common.edit" as TK)} relationship="label">
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      icon={<EditRegular />}
+                      aria-label={t("common.edit" as TK)}
+                      onClick={() => openRename(p)}
+                    />
+                  </Tooltip>
                   <Button
                     size="small"
                     appearance="subtle"
@@ -339,6 +392,53 @@ export function Proxies() {
           </TableBody>
         </DataTable>
       )}
+
+      <Dialog
+        open={editing !== null}
+        onOpenChange={(_, d) => {
+          if (!d.open) setEditing(null);
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{t("proxies.editNameTitle" as TK)}</DialogTitle>
+            <DialogContent>
+              <div
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  marginBottom: 8,
+                }}
+              >
+                {editing?.url || "(direct)"}
+              </div>
+              <Field label={t("proxies.nameLabel" as TK)}>
+                <Input
+                  value={editName}
+                  placeholder={t("proxies.namePlaceholder" as TK)}
+                  onChange={(_, d) => setEditName(d.value)}
+                />
+              </Field>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="subtle"
+                disabled={savingName}
+                onClick={() => setEditing(null)}
+              >
+                {t("common.cancel" as TK)}
+              </Button>
+              <Button
+                appearance="primary"
+                disabled={savingName}
+                onClick={saveName}
+              >
+                {t("common.save" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
       <Dialog
         open={inUse !== null}

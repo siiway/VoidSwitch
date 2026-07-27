@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             name="proxy_resurrector",
             tick=run_proxy_resurrector,
             interval_key="proxy_probe_interval_seconds",
-            enabled_key="proxy_resurrector_enabled",
+            enabled_key="proxy_health_check_enabled",
             min_interval=15,
         )
     )

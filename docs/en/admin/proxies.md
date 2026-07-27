@@ -8,16 +8,31 @@ The **Proxies** page is **staff-only**.
 1. Open **Proxies**.
 2. Paste one or more proxy URLs, **one per line**, for example
    `http://user:pass@host:port` or `socks5://host:port`.
-3. Optionally set a **local source IP** (`local_address`), a **weight**, and a note.
+3. Optionally set a **name** (which doubles as the description), a **local source IP**
+   (`local_address`), and a **weight**.
+
+After adding, each proxy row can be renamed at any time via its **edit** button. The name is
+only used to recognise a proxy in the list; it does not affect routing.
 
 ## How proxies are used
 
 - A provider's **egress proxy** mode decides whether it uses **all** active proxies, only **selected**
   proxies, or a **direct** connection.
 - On a network/timeout error, the scheduler fails over to another proxy, and disables a problematic proxy
-  after it exceeds a dynamic failure threshold.
-- A background **proxy reviver** periodically re-tests disabled proxies and re-enables those that have
-  recovered. Its interval can be adjusted in [Settings](/en/admin/settings).
+  after it exceeds a dynamic failure threshold (requires **proxy health check** to be on — see below).
+- A background **proxy health check** periodically re-tests disabled proxies and re-enables those that
+  have recovered. Its interval can be adjusted in [Settings](/en/admin/settings).
+
+### Proxy health check
+
+**Enable proxy health check** in [Settings](/en/admin/settings) is the master switch for automatic
+proxy health management:
+
+- **On** (default): the gateway probes disabled proxies to re-enable recovered ones, and
+  **auto-disables** a proxy that fails past the threshold.
+- **Off**: no health probing, no auto-disable, and no auto-enable — connectivity is left to an
+  external manager (e.g. a mihomo instance). Failures are still counted, but the gateway never
+  parks a proxy on its own.
 
 ## Proxy switching turned off
 

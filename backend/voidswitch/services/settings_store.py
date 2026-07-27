@@ -21,11 +21,26 @@ _cache_loaded = False
 _lock = asyncio.Lock()
 
 
+# Settings keys that were renamed. Maps old → new so a stored value survives the
+# rename instead of silently reverting to the new key's default.
+_RENAMED_KEYS: dict[str, str] = {
+    # ``proxy_resurrector_enabled`` grew from "re-enable recovered proxies" into
+    # a full proxy health-check master switch (probe + auto-disable + auto-enable).
+    "proxy_resurrector_enabled": "proxy_health_check_enabled",
+}
+
+
 async def ensure_defaults(session: AsyncSession) -> None:
-    """Seed any missing default settings rows (idempotent)."""
-    existing_keys = {row[0] for row in (await session.execute(select(Setting.key))).all()}
+    """Seed any missing default settings rows (idempotent), migrating renames."""
+    rows = {row.key: row for row in (await session.execute(select(Setting))).scalars().all()}
+    # Carry a renamed key's stored value forward before seeding defaults, so an
+    # operator's explicit choice is preserved across the rename.
+    for old_key, new_key in _RENAMED_KEYS.items():
+        if old_key in rows and new_key not in rows:
+            session.add(Setting(key=new_key, value=rows[old_key].value))
+            rows[new_key] = rows[old_key]  # mark present so the default isn't seeded
     for key, value in DEFAULT_SETTINGS.items():
-        if key not in existing_keys:
+        if key not in rows:
             session.add(Setting(key=key, value=value))
     await session.flush()
 

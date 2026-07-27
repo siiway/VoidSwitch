@@ -43,7 +43,7 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
       "static_proxy_url",
       "max_proxy_failures",
       "proxy_probe_interval_seconds",
-      "proxy_resurrector_enabled",
+      "proxy_health_check_enabled",
       "proxy_probe_url",
     ],
   },
@@ -109,7 +109,7 @@ const RATE_LIMIT_KEYS = [
 const PROXY_SWITCHING_ONLY = new Set([
   "max_proxy_failures",
   "proxy_probe_interval_seconds",
-  "proxy_resurrector_enabled",
+  "proxy_health_check_enabled",
   "proxy_probe_url",
 ]);
 
@@ -251,7 +251,7 @@ export function Settings() {
       auto_disable_zero_balance: t("settings.autoDisableZeroBalance" as TK),
       balance_probe_enabled: t("settings.balanceProbeEnabled" as TK),
       balance_rescan_enabled: t("settings.balanceRescanEnabled" as TK),
-      proxy_resurrector_enabled: t("settings.proxyResurrectorEnabled" as TK),
+      proxy_health_check_enabled: t("settings.proxyHealthCheckEnabled" as TK),
       proxy_probe_url: t("settings.proxyProbeUrl" as TK),
       opencode_default_model: t("settings.opencodeDefaultModel" as TK),
       opencode_small_model: t("settings.opencodeSmallModel" as TK),

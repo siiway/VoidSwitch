@@ -338,12 +338,16 @@ def _mark_rate_limited(
     return cooldown
 
 
-def _penalize_proxy(proxy: Proxy | None, reason: str, threshold: int) -> None:
+def _penalize_proxy(
+    proxy: Proxy | None, reason: str, threshold: int, *, auto_disable: bool = True
+) -> None:
     if proxy is None:
         return
     proxy.failed_count += 1
     proxy.last_checked_at = _utcnow()
-    if proxy.failed_count >= threshold:
+    # With health-checking off, connectivity is managed externally — count the
+    # failure but never park the proxy (it also won't be auto-resurrected).
+    if auto_disable and proxy.failed_count >= threshold:
         proxy.status = ProxyStatus.DISABLED.value
         proxy.disabled_reason = reason
 
@@ -422,6 +426,10 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     # Proxy switching off (external proxy like mihomo handles egress): every
     # request goes through a single fixed route and no proxy is ever disabled.
     proxy_switching = settings_store.get_bool("proxy_switching_enabled", True)
+    # When proxy health-checking is off, connectivity is managed externally
+    # (e.g. mihomo): a failing proxy is never auto-disabled (and the resurrector
+    # never re-enables one), so failures are counted but never park a proxy.
+    proxy_health_check = settings_store.get_bool("proxy_health_check_enabled", True)
     fixed_routes = (
         None
         if proxy_switching
@@ -521,7 +529,9 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 if outcome.network_error:
                     last_error = outcome.error or "network error"
                     last_status = 502
-                    _penalize_proxy(proxy, last_error, proxy_threshold)
+                    _penalize_proxy(
+                        proxy, last_error, proxy_threshold, auto_disable=proxy_health_check
+                    )
                     await session.flush()
                     continue  # keep key, next route
 

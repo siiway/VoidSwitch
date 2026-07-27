@@ -130,7 +130,12 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "auto_disable_zero_balance": True,
     "balance_probe_enabled": True,
     "balance_rescan_enabled": True,
-    "proxy_resurrector_enabled": True,
+    # Master switch for automatic proxy health management. When on, the gateway
+    # probes disabled proxies to re-enable recovered ones (the resurrector task)
+    # AND auto-disables a proxy that fails past ``max_proxy_failures``. Turn it
+    # off to leave proxy connectivity entirely to an external manager (e.g. a
+    # mihomo instance): no health-check probing, no auto-disable, no auto-enable.
+    "proxy_health_check_enabled": True,
     "proxy_probe_url": "https://api.openai.com/v1/models",
     # Log retention. A background task deletes audit/request log rows older than
     # the configured number of days, to keep the database from growing without

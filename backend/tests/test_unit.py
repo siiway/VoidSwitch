@@ -1388,6 +1388,30 @@ async def test_database_init_and_settings_defaults(db):
     assert set(DEFAULT_SETTINGS).issubset(keys)
 
 
+async def test_renamed_setting_migrates_stored_value(db):
+    """A stored value under a renamed key is carried forward to the new key so an
+    operator's explicit choice survives the rename (proxy_resurrector_enabled →
+    proxy_health_check_enabled)."""
+    from sqlalchemy import select
+    from voidswitch.models.db import Setting
+    from voidswitch.services import settings_store
+
+    async with db.session() as session:
+        # Simulate a legacy DB: old key stored False, new key absent.
+        await session.execute(
+            Setting.__table__.delete().where(Setting.key == "proxy_health_check_enabled")
+        )
+        session.add(Setting(key="proxy_resurrector_enabled", value=False))
+        await session.flush()
+        await settings_store.ensure_defaults(session)
+        new = (
+            await session.execute(
+                select(Setting).where(Setting.key == "proxy_health_check_enabled")
+            )
+        ).scalar_one()
+    assert new.value is False
+
+
 async def test_deep_merge_opencode_config():
     from voidswitch.api.models import _deep_merge
 
