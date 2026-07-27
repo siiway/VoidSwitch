@@ -7,7 +7,9 @@ The **Users** page lists all users who have logged in, along with their role, st
 
 - **Grant / revoke admin** (owner only) — promote a member to admin or demote them back.
   The owner and co-owner roles come from the primary team on Prism and cannot be set here.
-- The **Team Role** column shows the user's role in the primary team (Prism).
+- The **Team Role** column shows the user's role in the primary team (Prism). For users who are **not**
+  in the primary team, the column instead shows their [role group](/en/admin/role-groups) name(s) in
+  *italics*; hover to see the Prism team id(s) that placed them into those groups (there may be several).
 - When someone is a VoidSwitch admin but **not** an admin of the primary team, they are marked "local override" —
   meaning the admin role was granted here rather than coming from Prism.
 

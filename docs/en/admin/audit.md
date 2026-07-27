@@ -12,6 +12,8 @@ Each record contains:
 - **Scope** — `admin` (admin interface), `self` (a user acting on their own resources), or `system` (background tasks);
 - **Target**, **details** (non-secret context), IP, and User Agent.
 
+Sign-ins are recorded too, and the method is distinguished: an interactive Prism login (`auth.login`) versus a **login-token** sign-in (`auth.token_login`, whose detail carries `method: login_token` and the token fingerprint). So when someone enters the dashboard with an emergency login token, the audit trail makes that explicit.
+
 Use the filters (action, scope, actor, target type, IP / User-Agent, and **time range**) and search to narrow down records,
 and use "Jump to ID" to locate a specific record. The time range supports quick intervals like the last 1 hour / 24 hours / 7 days / 30 days,
 or a custom exact start and end time.

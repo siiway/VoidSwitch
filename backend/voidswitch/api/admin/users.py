@@ -44,13 +44,24 @@ def _auto_disable_tokens(target: User) -> int:
     return disabled
 
 
+def _to_user_out(u: User) -> UserOut:
+    out = UserOut.model_validate(u)
+    # Role-group names come from the user's (auto/manual) memberships; the
+    # built-in moderator group is never stored there, so this lists only the
+    # custom groups that gate model access.
+    out.role_group_names = sorted(
+        m.group.name for m in u.group_memberships if m.group is not None
+    )
+    return out
+
+
 @router.get("", response_model=list[UserOut])
 async def list_users(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
-) -> list[User]:
+) -> list[UserOut]:
     rows = (await session.execute(select(User).order_by(User.id))).scalars().all()
-    return list(rows)
+    return [_to_user_out(u) for u in rows]
 
 
 @router.patch("/{user_id}", response_model=UserOut)

@@ -112,12 +112,17 @@ async def token_login(
     if user is None or not user.enabled or not auth.is_staff(user):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid login token.")
     user.last_login_at = dt.datetime.now(dt.UTC)
+    # Record the login-token sign-in explicitly — a distinct action plus the
+    # login method + client, so it's clear in the audit trail that this session
+    # was established with a login token rather than an interactive Prism login.
     await record_audit(
         session,
         action=AuditAction.AUTH_TOKEN_LOGIN,
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
+        detail={"method": "login_token", "token_prefix": user.login_token_prefix},
         ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
         scope=AuditScope.SELF.value,
     )
     return _session_out(user, settings)

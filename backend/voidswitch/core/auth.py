@@ -316,6 +316,12 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
     # no main team configured or the user isn't in it.
     main_team_role = role_groups.effective_team_role(identity.teams, settings.admin.main_team_id)
 
+    # The user's Prism team ids, snapshotted for display (which team(s) placed a
+    # non-main-team user into their role group(s)).
+    team_ids = [
+        str(t["id"]) for t in identity.teams if isinstance(t, dict) and t.get("id") is not None
+    ]
+
     # Access policy: a non-moderator who isn't mapped to any role group — and has
     # no explicit owner/bootstrap grant — has no business on the platform. Refuse
     # the login outright (e.g. someone not in main_team_id and not in any mapped
@@ -339,6 +345,7 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
             picture=identity.picture,
             role=role.value,
             prism_role=main_team_role,
+            team_ids=team_ids,
             last_login_at=dt.datetime.now(dt.UTC),
         )
         session.add(user)
@@ -349,6 +356,7 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
         existing.name = identity.name or existing.name
         existing.picture = identity.picture or existing.picture
         existing.prism_role = main_team_role
+        existing.team_ids = team_ids
         existing.last_login_at = dt.datetime.now(dt.UTC)
         existing.role = _merge_role(existing.role, role)
         await session.flush()

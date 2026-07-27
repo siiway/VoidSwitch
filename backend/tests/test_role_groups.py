@@ -194,12 +194,18 @@ async def test_login_grants_member_via_role_group(db):
         gid = group.id
 
     settings = _settings(main_team_id="main")
-    identity = _identity("worker", teams=[{"id": "t-x", "role": "member"}])
+    identity = _identity(
+        "worker", teams=[{"id": "t-x", "role": "member"}, {"id": "t-y", "role": "member"}]
+    )
     async with db.session() as session:
         user = await auth.upsert_user(session, settings, identity)
         assert user.role == "member"
         ids = await role_groups.user_group_ids(session, user.id)
         assert ids == {gid}
+        # The user's Prism team ids are snapshotted for the dashboard's "team
+        # role" display (a non-main-team member is labelled by role group, with
+        # their team ids on hover).
+        assert user.team_ids == ["t-x", "t-y"]
 
 
 @pytest.mark.asyncio

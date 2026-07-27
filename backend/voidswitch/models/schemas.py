@@ -31,6 +31,12 @@ class UserOut(BaseModel):
     # dashboard can flag a "local admin override" (VS role=admin while the main
     # team doesn't make them an admin).
     prism_role: str | None = None
+    # The Prism team ids the user belongs to (snapshot at last login). Shown as a
+    # hover for users who are not in the main team.
+    team_ids: list[str] = []
+    # Names of the (custom) role groups the user belongs to. Used to label a
+    # non-main-team user's "team role" cell with their role group(s).
+    role_group_names: list[str] = []
     enabled: bool
     last_login_at: dt.datetime | None = None
     created_at: dt.datetime

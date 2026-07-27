@@ -545,6 +545,8 @@ const zh: Translations = {
     roleUpdated: "角色已更新",
     forceLogout: "强制登出",
     forceLogoutDone: "用户已登出",
+    teamsTooltip: "所属团队：{ids}",
+    noTeamInfo: "无团队信息记录",
   },
   reveal: {
     title: "Reveal 密钥",

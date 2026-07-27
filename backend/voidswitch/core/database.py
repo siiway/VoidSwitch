@@ -147,6 +147,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("users", "login_token_hash", "VARCHAR(64)"),
     ("users", "login_token_prefix", "VARCHAR(32)"),
     ("users", "void_tokens_admin_disabled", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("users", "team_ids", "JSON NOT NULL DEFAULT '[]'"),
     ("announcements", "target_role_group_ids", "JSON NOT NULL DEFAULT '[]'"),
 )
 

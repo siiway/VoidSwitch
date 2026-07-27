@@ -561,6 +561,8 @@ const en = {
     roleUpdated: "Role updated",
     forceLogout: "Force logout",
     forceLogoutDone: "User signed out",
+    teamsTooltip: "Teams: {ids}",
+    noTeamInfo: "No team info recorded",
   },
   reveal: {
     title: "Reveal key",

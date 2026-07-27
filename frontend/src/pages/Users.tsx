@@ -142,16 +142,40 @@ export function Users() {
                   )}
                 </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
-                  {u.prism_role ?? "—"}
-                  {u.role === "admin" && u.prism_role !== "admin" ? (
-                    <Badge
-                      appearance="outline"
-                      size="small"
-                      style={{ marginLeft: 6 }}
+                  {u.prism_role ? (
+                    <>
+                      {u.prism_role}
+                      {u.role === "admin" && u.prism_role !== "admin" ? (
+                        <Badge
+                          appearance="outline"
+                          size="small"
+                          style={{ marginLeft: 6 }}
+                        >
+                          {t("common.localOverride" as TK)}
+                        </Badge>
+                      ) : null}
+                    </>
+                  ) : u.role_group_names && u.role_group_names.length > 0 ? (
+                    // Not in the main team: show the role group(s) that grant
+                    // access (italic), with the placing team id(s) on hover.
+                    <Tooltip
+                      relationship="label"
+                      content={
+                        u.team_ids && u.team_ids.length > 0
+                          ? t("users.teamsTooltip" as TK).replace(
+                              "{ids}",
+                              u.team_ids.join(", "),
+                            )
+                          : t("users.noTeamInfo" as TK)
+                      }
                     >
-                      {t("common.localOverride" as TK)}
-                    </Badge>
-                  ) : null}
+                      <span style={{ fontStyle: "italic" }}>
+                        {u.role_group_names.join(", ")}
+                      </span>
+                    </Tooltip>
+                  ) : (
+                    "—"
+                  )}
                 </TableCell>
                 <TableCell>
                   <Badge

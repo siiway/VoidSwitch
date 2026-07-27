@@ -13,6 +13,10 @@ export interface User {
   // The user's role in the main team (Prism): owner/co-owner/admin/member/null.
   // Used to flag a "local admin override".
   prism_role?: string | null;
+  // Prism team ids the user belongs to (snapshot at last login).
+  team_ids?: string[];
+  // Names of the (custom) role groups the user belongs to.
+  role_group_names?: string[];
   enabled: boolean;
   last_login_at?: string | null;
   created_at: string;

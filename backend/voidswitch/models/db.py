@@ -67,6 +67,10 @@ class User(Base, TimestampMixin):
     # flag a "local admin override" (a VoidSwitch admin who is not a main-team
     # admin). Not the user's instance/site-wide Prism role.
     prism_role: Mapped[str | None] = mapped_column(String(32), default=None)
+    # The user's Prism team ids (snapshot at login). Surfaced for users who are
+    # not in the configured main team, so the dashboard can show which team(s)
+    # placed them in their role group(s).
+    team_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # Bumped whenever every existing dashboard session must be invalidated (e.g.
