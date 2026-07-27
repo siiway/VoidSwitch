@@ -1388,6 +1388,42 @@ async def test_database_init_and_settings_defaults(db):
     assert set(DEFAULT_SETTINGS).issubset(keys)
 
 
+async def test_periodic_task_gate_keys(db):
+    """A task is reported enabled only when its enabled_key AND every gate_key are
+    on, so the dashboard never shows a task as running while its feature is off
+    (e.g. the proxy resurrector while proxy switching is disabled)."""
+    from voidswitch.services import settings_store
+    from voidswitch.tasks.manager import PeriodicTask
+
+    async def _noop() -> None:  # pragma: no cover - never ticked in this test
+        return None
+
+    task = PeriodicTask(
+        name="proxy_resurrector",
+        tick=_noop,
+        interval_key="proxy_probe_interval_seconds",
+        enabled_key="proxy_health_check_enabled",
+        gate_keys=("proxy_switching_enabled",),
+    )
+    async with db.session() as session:
+        await settings_store.update(
+            session,
+            {"proxy_health_check_enabled": True, "proxy_switching_enabled": True},
+        )
+    assert task.is_enabled() is True
+
+    async with db.session() as session:
+        await settings_store.update(session, {"proxy_switching_enabled": False})
+    assert task.is_enabled() is False  # gated off by the dependent feature
+
+    async with db.session() as session:
+        await settings_store.update(
+            session,
+            {"proxy_switching_enabled": True, "proxy_health_check_enabled": False},
+        )
+    assert task.is_enabled() is False  # its own switch is off
+
+
 async def test_renamed_setting_migrates_stored_value(db):
     """A stored value under a renamed key is carried forward to the new key so an
     operator's explicit choice survives the rename (proxy_resurrector_enabled →

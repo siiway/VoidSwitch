@@ -195,13 +195,21 @@ function StaffDashboard() {
           </div>
         </Card>
       ))}
+      <HeatmapSection />
       {system.data ? (
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        <Text
+          size={200}
+          block
+          style={{
+            color: tokens.colorNeutralForeground3,
+            marginTop: 24,
+            textAlign: "center",
+          }}
+        >
           VoidSwitch v{system.data.version}
           {system.data.commit ? ` (${system.data.commit})` : ""}
         </Text>
       ) : null}
-      <HeatmapSection />
     </div>
   );
 }

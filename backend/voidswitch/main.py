@@ -84,6 +84,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             tick=run_proxy_resurrector,
             interval_key="proxy_probe_interval_seconds",
             enabled_key="proxy_health_check_enabled",
+            # Moot when proxy switching is off (external egress) — report it as
+            # disabled and don't run it, rather than spinning a no-op tick.
+            gate_keys=("proxy_switching_enabled",),
             min_interval=15,
         )
     )
