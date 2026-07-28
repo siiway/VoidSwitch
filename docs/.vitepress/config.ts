@@ -1,4 +1,10 @@
 import { defineConfig } from "vitepress";
+import { readFileSync } from "node:fs";
+
+// Caddyfile TextMate grammar for syntax highlighting (not bundled in Shiki).
+const caddyfileGrammar = JSON.parse(
+  readFileSync(new URL("./caddyfile.tmLanguage.json", import.meta.url), "utf-8"),
+);
 
 // Public documentation site (deployed to GitHub Pages at voidswitch.siiway.page).
 // Bilingual: Simplified Chinese is the root locale (served at `/`), English is
@@ -45,6 +51,7 @@ const zhSidebar = {
         { text: "供应商目录", link: "/admin/provider-catalog" },
         { text: "上游密钥", link: "/admin/keys" },
         { text: "代理", link: "/admin/proxies" },
+        { text: "反向代理", link: "/admin/reverse-proxy" },
         { text: "模型", link: "/admin/models" },
         { text: "身份组", link: "/admin/role-groups" },
         { text: "用户", link: "/admin/users" },
@@ -96,6 +103,7 @@ const enSidebar = {
         { text: "Provider catalog", link: "/en/admin/provider-catalog" },
         { text: "Upstream keys", link: "/en/admin/keys" },
         { text: "Proxies", link: "/en/admin/proxies" },
+        { text: "Reverse proxy", link: "/en/admin/reverse-proxy" },
         { text: "Models", link: "/en/admin/models" },
         { text: "Role groups", link: "/en/admin/role-groups" },
         { text: "Users", link: "/en/admin/users" },
@@ -128,6 +136,9 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: false,
   ignoreDeadLinks: true,
+  markdown: {
+    languages: [caddyfileGrammar],
+  },
   locales: {
     root: {
       label: "简体中文",

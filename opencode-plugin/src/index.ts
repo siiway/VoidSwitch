@@ -413,6 +413,64 @@ function recordError(message: string, toConsole: boolean): void {
 const UPSTREAM_FAILED_STATUS = "Upstream Failed"
 
 /**
+ * Standard HTTP status descriptions, including Cloudflare-specific codes
+ * (520–530) that often carry an empty reason phrase over HTTP/2 and cause
+ * OpenCode to display "<none>" instead of a useful message.
+ */
+const HTTP_STATUS_DESCRIPTIONS: Record<number, string> = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  402: "Payment Required",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  406: "Not Acceptable",
+  407: "Proxy Authentication Required",
+  408: "Request Timeout",
+  409: "Conflict",
+  410: "Gone",
+  411: "Length Required",
+  412: "Precondition Failed",
+  413: "Content Too Large",
+  414: "URI Too Long",
+  415: "Unsupported Media Type",
+  416: "Range Not Satisfiable",
+  417: "Expectation Failed",
+  418: "I'm a teapot",
+  421: "Misdirected Request",
+  422: "Unprocessable Content",
+  423: "Locked",
+  424: "Failed Dependency",
+  425: "Too Early",
+  426: "Upgrade Required",
+  428: "Precondition Required",
+  429: "Too Many Requests",
+  431: "Request Header Fields Too Large",
+  451: "Unavailable For Legal Reasons",
+  500: "Internal Server Error",
+  501: "Not Implemented",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+  505: "HTTP Version Not Supported",
+  506: "Variant Also Negotiates",
+  507: "Insufficient Storage",
+  508: "Loop Detected",
+  510: "Not Extended",
+  511: "Network Authentication Required",
+  // Cloudflare edge-specific (often seen behind Cloudflare Tunnel / proxy)
+  520: "Web Server Returned an Unknown Error",
+  521: "Web Server Is Down",
+  522: "Connection Timed Out",
+  523: "Origin Is Unreachable",
+  524: "A Timeout Occurred",
+  525: "SSL Handshake Failed",
+  526: "Invalid SSL Certificate",
+  527: "Railgun Error",
+  530: "Origin DNS Error",
+}
+
+/**
  * Header that advertises this plugin to the gateway so it can return a dedicated
  * "no upstream available" status code (see UPSTREAM_UNAVAILABLE_CODE) instead of a
  * generic 502. It is read and consumed by the gateway and never reaches the real
@@ -479,6 +537,24 @@ async function rewriteUpstreamError(res: Response): Promise<Response> {
     status: res.status,
     statusText: UPSTREAM_FAILED_STATUS,
     headers: { "content-type": "application/json" },
+  })
+}
+
+/**
+ * If a non-ok response carries an empty `statusText` (common with HTTP/2,
+ * Cloudflare edge errors, and certain proxy intermediaries), replace it with a
+ * standard description so OpenCode displays a meaningful message instead of
+ * "<none>". Preserves the original body and headers so downstream consumers
+ * (rewriteUpstreamError, error logging) still see the full response.
+ */
+function ensureErrorStatusText(res: Response): Response {
+  if (res.ok || res.statusText) return res
+  const text = HTTP_STATUS_DESCRIPTIONS[res.status]
+  if (!text) return res
+  return new Response(res.body, {
+    status: res.status,
+    statusText: text,
+    headers: res.headers,
   })
 }
 
@@ -1094,7 +1170,8 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
             }
             // Relabel "no upstream available" gateway errors so OpenCode shows
             // "Upstream Failed" rather than a generic "Bad Gateway".
-            return rewriteUpstreamError(res)
+            // Also fill in any empty statusText so OpenCode never shows "<none>".
+            return ensureErrorStatusText(await rewriteUpstreamError(res))
           },
         }
       },

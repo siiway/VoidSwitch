@@ -71,7 +71,7 @@ services:
       VOIDSWITCH_ADMIN__MAIN_TEAM_ID: "${VOIDSWITCH_MAIN_TEAM_ID:-63d4761c78c2dec09a002233e1b7c06c}"
     volumes:
       # Persists the SQLite DB across container recreation.
-      - voidswitch-data:/data
+      - ${DATA_DIR:-voidswitch-data}:/data
     healthcheck:
       # Runtime image is python-slim (no curl/wget); use the Python stdlib instead.
       test:

@@ -1,0 +1,11 @@
+# for SiiWay deploy, feel free to remove it.
+
+networks:
+  ai-network:
+    name: ai-network
+    external: true
+
+services:
+  voidswitch:
+    networks:
+      - ai-network
