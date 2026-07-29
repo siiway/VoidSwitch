@@ -17,3 +17,4 @@ backend/config.yaml
 .direnv/
 result
 .omo/
+data/

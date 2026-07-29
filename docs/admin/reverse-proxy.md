@@ -44,6 +44,9 @@ server {
     # 聊天请求体较大
     client_max_body_size 25m;
 
+    # 大部分 Prompt 保持在内存，减少 client_temp 写盘
+    client_body_buffer_size 2m;
+
     # ---- API 反代 ----
     location ~ ^/(v1|api|provider-api|healthz|install|install\.sh|install\.ps1|swagger|docs|redoc|openapi\.json)(/|$) {
         proxy_pass http://voidswitch_backend;
@@ -54,6 +57,9 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $fwd_proto;
         proxy_set_header X-Forwarded-Host $host;
+
+        # 不缓存请求体，Prompt 边接收边转发给后端
+        proxy_request_buffering off;
 
         # SSE 流式响应
         proxy_buffering off;
@@ -117,10 +123,12 @@ voidswitch.example.com {
     @api path /v1/* /api/* /provider-api/* /healthz /install /install.sh /install.ps1 /swagger /docs /redoc /openapi.json
     reverse_proxy @api 127.0.0.1:8080 {
         # 透传客户端真实 IP/协议
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {client_ip}
+        header_up X-Forwarded-For {client_ip}
         header_up X-Forwarded-Proto {scheme}
         header_up X-Forwarded-Host {host}
+
+        # Caddy 默认采用流式请求转发，无需像 nginx 一样额外配置 proxy_request_buffering off
 
         # SSE 流式响应
         flush_interval -1
@@ -143,7 +151,7 @@ voidswitch.example.com {
 Caddy 会自动申请和续签 Let's Encrypt 证书，`tls` 指令中的邮箱用于 ACME 注册。
 如果不想要自动 HTTPS（例如前面已有 CDN），可改为 `tls internal` 或省略。
 
-##  Cloudflare Tunnel
+## Cloudflare Tunnel
 
 如果你用 `cloudflared` 把内网服务暴露到公网，只需把 Tunnel 指向 nginx/Caddy 的
 监听地址（例如 `http://localhost:80`）即可。VoidSwitch 会通过 `X-Forwarded-Proto`
