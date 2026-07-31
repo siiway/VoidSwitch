@@ -1,6 +1,5 @@
 import {
   Button,
-  Card,
   Dropdown,
   Field,
   Input,
@@ -426,11 +425,10 @@ export function Settings() {
           display: "flex",
           flexDirection: "column",
           gap: 16,
-          maxWidth: 560,
         }}
       >
-        <Card
-          style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}
+        <div
+          style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, border: "1px solid var(--colorNeutralStroke1)", borderRadius: "10px" }}
         >
           <Text weight="semibold" size={400}>
             {t("settings.sectionPersonal" as TK)}
@@ -503,32 +501,34 @@ export function Settings() {
               </Option>
             </Dropdown>
           </Field>
-        </Card>
+        </div>
         {sections.map((section) => {
           const fields = section.keys
             .map((k) => renderField(k))
             .filter((node): node is ReactElement => node !== null);
           if (fields.length === 0) return null;
           return (
-            <Card
+            <div
               key={section.titleKey}
               style={{
-                padding: 20,
+                padding: 16,
                 display: "flex",
                 flexDirection: "column",
                 gap: 14,
+                border: "1px solid var(--colorNeutralStroke1)",
+                borderRadius: "10px",
               }}
             >
               <Text weight="semibold" size={400}>
                 {t(section.titleKey as TK)}
               </Text>
               {fields}
-            </Card>
+            </div>
           );
         })}
         {hasRateLimitKeys ? (
-          <Card
-            style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}
+          <div
+            style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, border: "1px solid var(--colorNeutralStroke1)", borderRadius: "10px" }}
           >
             <Text weight="semibold" size={400}>
               {t("settings.sectionAbuseLimits" as TK)}
@@ -546,7 +546,7 @@ export function Settings() {
             <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
               {t("settings.abuseLimitsHint" as TK)}
             </Text>
-          </Card>
+          </div>
         ) : null}
         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           {t("common.settingsAppliedNote" as TK)}

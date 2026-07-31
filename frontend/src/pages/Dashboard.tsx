@@ -1,4 +1,4 @@
-import { Badge, Card, Text, tokens } from "@fluentui/react-components";
+import { Badge, Text, tokens, makeStyles } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -16,8 +16,6 @@ import { Heatmap } from "../components/Heatmap";
 
 type TK = keyof Translations;
 
-// The activity heatmap(s), pinned to the bottom of the home page. Members see
-// their own; staff additionally see the site-wide roll-up.
 function HeatmapSection() {
   const { t } = useTranslation();
   const bundle = useAsync<HeatmapBundle>(() => api.get("/api/usage/heatmap"));
@@ -27,7 +25,7 @@ function HeatmapSection() {
   if (!bundle.data) return null;
 
   return (
-    <div style={{ marginTop: 32 }}>
+    <div style={{ marginTop: 20 }}>
       {bundle.data.site ? (
         <Heatmap data={bundle.data.site} title={t("heatmap.siteTitle" as TK)} />
       ) : null}
@@ -42,6 +40,24 @@ interface MyUsage {
   token_count: number;
 }
 
+const useStatStyles = makeStyles({
+  card: {
+    padding: "16px",
+    minWidth: "150px",
+    flex: "1 1 150px",
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: "10px",
+    background: tokens.colorNeutralBackground1,
+    transition: "box-shadow 0.15s",
+    ":hover": {
+      borderTopColor: tokens.colorNeutralForeground1,
+      borderRightColor: tokens.colorNeutralForeground1,
+      borderBottomColor: tokens.colorNeutralForeground1,
+      borderLeftColor: tokens.colorNeutralForeground1,
+    },
+  },
+});
+
 function Stat({
   label,
   value,
@@ -51,19 +67,36 @@ function Stat({
   value: number | string;
   accent?: string;
 }) {
+  const styles = useStatStyles();
   return (
-    <Card style={{ padding: 18, minWidth: 150, flex: "1 1 150px" }}>
+    <div className={styles.card}>
       <Text size={200} style={{ color: tokens.colorNeutralForeground3 }} block>
         {label}
       </Text>
       <Text size={800} weight="bold" style={{ color: accent }}>
         {value}
       </Text>
-    </Card>
+    </div>
   );
 }
 
-// Member view: their own usage only (no platform-wide stats or task internals).
+const useTaskStyles = makeStyles({
+  card: {
+    padding: "14px",
+    marginBottom: "8px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: "10px",
+    background: tokens.colorNeutralBackground1,
+    transition: "box-shadow 0.15s",
+    ":hover": {
+      borderTopColor: tokens.colorNeutralForeground1,
+      borderRightColor: tokens.colorNeutralForeground1,
+      borderBottomColor: tokens.colorNeutralForeground1,
+      borderLeftColor: tokens.colorNeutralForeground1,
+    },
+  },
+});
+
 function MemberDashboard() {
   const { t } = useTranslation();
   const usage = useAsync<MyUsage>(() => api.get("/api/me/usage"));
@@ -81,7 +114,7 @@ function MemberDashboard() {
       ) : usage.error ? (
         <ErrorText error={usage.error} />
       ) : usage.data ? (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
           <Stat label={t("dashboard.myRequests" as TK)} value={usage.data.requests} />
           <Stat
             label={t("dashboard.myTokens" as TK)}
@@ -96,11 +129,11 @@ function MemberDashboard() {
   );
 }
 
-// Staff view: platform-wide statistics + background task status.
 function StaffDashboard() {
   const { t } = useTranslation();
   const stats = useAsync<Stats>(() => api.get("/api/admin/stats"));
   const system = useAsync<SystemInfo>(() => api.get("/api/admin/system"));
+  const taskStyles = useTaskStyles();
 
   return (
     <div>
@@ -125,7 +158,7 @@ function StaffDashboard() {
                 display: "flex",
                 gap: 12,
                 flexWrap: "wrap",
-                marginBottom: 24,
+                marginBottom: 20,
               }}
             >
               <Stat label={t("dashboard.providers" as TK)} value={stats.data.providers} />
@@ -145,7 +178,7 @@ function StaffDashboard() {
                 display: "flex",
                 gap: 12,
                 flexWrap: "wrap",
-                marginBottom: 24,
+                marginBottom: 20,
               }}
             >
               <Stat label={t("dashboard.requests24h" as TK)} value={stats.data.requests_24h} />
@@ -169,7 +202,7 @@ function StaffDashboard() {
         {t("dashboard.backgroundTasks" as TK)}
       </Text>
       {system.data?.tasks.map((task) => (
-        <Card key={task.name} style={{ padding: 14, marginBottom: 8 }}>
+        <div key={task.name} className={taskStyles.card}>
           <div
             style={{
               display: "flex",
@@ -193,7 +226,7 @@ function StaffDashboard() {
               {task.enabled ? t("common.enabled" as TK) : t("common.disabled" as TK)}
             </Badge>
           </div>
-        </Card>
+        </div>
       ))}
       <HeatmapSection />
       {system.data ? (
@@ -202,7 +235,7 @@ function StaffDashboard() {
           block
           style={{
             color: tokens.colorNeutralForeground3,
-            marginTop: 24,
+            marginTop: 20,
             textAlign: "center",
           }}
         >

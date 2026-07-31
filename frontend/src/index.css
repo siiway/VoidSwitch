@@ -1,6 +1,3 @@
-/* Global reset. The browser's default `body { margin: 8px }` otherwise shows the
-   page background as a frame around the full-height FluentProvider, and pushes
-   the 100vh app past the viewport (extra scrollbar). */
 html,
 body,
 #root {
@@ -15,19 +12,15 @@ body,
   box-sizing: border-box;
 }
 
-/* Paint the canvas to match the Fluent neutral background per resolved theme so
-   areas outside the React tree (load flash, overscroll, narrow viewports) don't
-   flash white/black. `data-theme` is set by the FOUC script and ThemeContext. */
 html {
   background-color: #ffffff;
   color-scheme: light;
 }
 html[data-theme="dark"] {
-  background-color: #1f1f1f;
+  background-color: #000000;
   color-scheme: dark;
 }
 
-/* Slim custom scrollbars that read in both schemes. */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -43,8 +36,22 @@ html[data-theme="dark"] {
   background-color: transparent;
 }
 
-/* Monochrome provider icons (e.g. black SVG marks) vanish on dark surfaces;
-   invert them only in dark mode when opted in. */
+/* Grid-pattern canvas for auth pages — ops / engineering aesthetic that
+   replaces the old brand-coloured radial-gradient blooms. The colour must
+   react to [data-theme] because makeStyles can't re-evaluate raw colour
+   strings when the theme toggles. */
+.auth-grid {
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+[data-theme="dark"] .auth-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+}
+
 [data-theme="dark"] .provider-icon--invert-on-dark {
   filter: invert(1);
 }

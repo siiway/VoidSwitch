@@ -1,6 +1,5 @@
 import {
   Button,
-  Card,
   Dialog,
   DialogActions,
   DialogBody,
@@ -222,14 +221,14 @@ function Stat({
   accent?: string;
 }) {
   return (
-    <Card style={{ padding: 18, minWidth: 150, flex: "1 1 150px" }}>
+    <div style={{ padding: 16, minWidth: 150, flex: "1 1 150px", border: "1px solid var(--colorNeutralStroke1)", borderRadius: "10px" }}>
       <Text size={200} style={{ color: tokens.colorNeutralForeground3 }} block>
         {label}
       </Text>
       <Text size={800} weight="bold" style={{ color: accent }}>
         {value}
       </Text>
-    </Card>
+    </div>
   );
 }
 

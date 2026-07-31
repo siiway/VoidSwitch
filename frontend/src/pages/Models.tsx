@@ -1,7 +1,6 @@
 import {
   Badge,
   Button,
-  Card,
   Checkbox,
   Dialog,
   DialogActions,
@@ -63,6 +62,16 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "8px",
     ...shorthands.padding("16px"),
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: "10px",
+    background: tokens.colorNeutralBackground1,
+    transition: "box-shadow 0.15s",
+    ":hover": {
+      borderTopColor: tokens.colorNeutralForeground1,
+      borderRightColor: tokens.colorNeutralForeground1,
+      borderBottomColor: tokens.colorNeutralForeground1,
+      borderLeftColor: tokens.colorNeutralForeground1,
+    },
   },
   cardHidden: {
     display: "flex",
@@ -70,6 +79,9 @@ const useStyles = makeStyles({
     gap: "8px",
     ...shorthands.padding("16px"),
     opacity: 0.55,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: "10px",
+    background: tokens.colorNeutralBackground1,
   },
   head: {
     display: "flex",
@@ -686,7 +698,7 @@ export function Models() {
             const hasConfig =
               m.opencode_config && Object.keys(m.opencode_config).length > 0;
             return (
-              <Card key={m.model_id} className={m.enabled ? styles.card : styles.cardHidden}>
+              <div key={m.model_id} className={m.enabled ? styles.card : styles.cardHidden}>
                 <div className={styles.head}>
                   <div style={{ minWidth: 0 }}>
                     {m.display_name && (
@@ -791,7 +803,7 @@ export function Models() {
                     )}
                   </div>
                 )}
-              </Card>
+              </div>
             );
           })}
         </div>

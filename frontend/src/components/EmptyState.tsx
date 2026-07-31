@@ -1,6 +1,3 @@
-// EmptyState — a centered placeholder for empty lists/tables. Centralizing it
-// keeps every "nothing here yet" view visually identical (icon disc + title +
-// muted description + optional action) instead of each page rolling its own.
 import { Text, makeStyles, tokens } from "@fluentui/react-components";
 import type { ReactNode } from "react";
 
@@ -21,7 +18,7 @@ const useStyles = makeStyles({
     height: "56px",
     borderRadius: "50%",
     marginBottom: "4px",
-    backgroundColor: tokens.colorNeutralBackground3,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
     color: tokens.colorNeutralForeground3,
     fontSize: "28px",
   },

@@ -1,6 +1,5 @@
 import {
   Button,
-  Card,
   Dialog,
   DialogActions,
   DialogBody,
@@ -257,7 +256,7 @@ export function MyToken() {
         }}
       />
 
-      <Card style={{ padding: 18, marginBottom: 20 }}>
+      <div style={{ padding: 16, marginBottom: 20, border: "1px solid var(--colorNeutralStroke1)", borderRadius: "10px" }}>
         <Text weight="semibold" block style={{ marginBottom: 2 }}>
           {t("myToken.connect" as TK)}
         </Text>
@@ -442,11 +441,11 @@ export function MyToken() {
             </details>
           </div>
         ) : null}
-      </Card>
+      </div>
 
       {usage.data ? (
         <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
-          <Card style={{ padding: 14, flex: 1 }}>
+          <div style={{ padding: 14, flex: 1, border: "1px solid var(--colorNeutralStroke2)", borderRadius: "10px" }}>
             <Text
               size={200}
               style={{ color: tokens.colorNeutralForeground3 }}
@@ -457,8 +456,8 @@ export function MyToken() {
             <Text size={700} weight="bold">
               {usage.data.requests}
             </Text>
-          </Card>
-          <Card style={{ padding: 14, flex: 1 }}>
+          </div>
+          <div style={{ padding: 14, flex: 1, border: "1px solid var(--colorNeutralStroke2)", borderRadius: "10px" }}>
             <Text
               size={200}
               style={{ color: tokens.colorNeutralForeground3 }}
@@ -469,7 +468,7 @@ export function MyToken() {
             <Text size={700} weight="bold">
               {usage.data.tokens}
             </Text>
-          </Card>
+          </div>
         </div>
       ) : null}
 

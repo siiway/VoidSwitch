@@ -2,6 +2,7 @@ import {
   FluentProvider,
   webDarkTheme,
   webLightTheme,
+  type Theme,
 } from "@fluentui/react-components";
 import {
   createContext,
@@ -13,10 +14,6 @@ import {
   type ReactNode,
 } from "react";
 
-// Theme model: users pick an explicit scheme OR "system" (follow the OS).
-// "system" is represented as the ABSENCE of the storage key, so fresh visitors
-// and users who reset back to "system" share one state — and the FOUC script in
-// index.html can mirror this exact logic to avoid a theme flash on first paint.
 type Mode = "system" | "light" | "dark";
 type Scheme = "light" | "dark";
 
@@ -42,13 +39,82 @@ function resolveScheme(mode: Mode): Scheme {
   return mode === "system" ? systemScheme() : mode;
 }
 
+// ── Black-white theme overrides ────────────────────────────────────────
+// Override Fluent's neutral background / stroke / shadow / radius tokens
+// to match a high-contrast, border-driven ops aesthetic (Kumo-inspired).
+
+const LIGHT = {
+  colorNeutralBackground1: "#ffffff",
+  colorNeutralBackground1Hover: "#f5f5f5",
+  colorNeutralBackground1Pressed: "#e8e8e8",
+  colorNeutralBackground1Selected: "#ebebeb",
+  colorNeutralBackground2: "#ffffff",
+  colorNeutralBackground2Hover: "#f5f5f5",
+  colorNeutralBackground2Pressed: "#e8e8e8",
+  colorNeutralBackground2Selected: "#ebebeb",
+  colorNeutralBackground3: "#f0f0f0",
+  colorNeutralBackground3Hover: "#e5e5e5",
+  colorNeutralBackground3Pressed: "#dadada",
+  colorNeutralBackground3Selected: "#e0e0e0",
+  colorNeutralStroke1: "#000000",
+  colorNeutralStroke2: "#d0d0d0",
+  colorNeutralStroke3: "#e0e0e0",
+  colorNeutralStrokeAccessible: "#000000",
+  colorNeutralForeground1: "#000000",
+  colorNeutralForeground2: "#333333",
+  colorNeutralForeground3: "#666666",
+  colorNeutralForeground4: "#999999",
+};
+
+const DARK = {
+  colorNeutralBackground1: "#000000",
+  colorNeutralBackground1Hover: "#1a1a1a",
+  colorNeutralBackground1Pressed: "#2a2a2a",
+  colorNeutralBackground1Selected: "#222222",
+  colorNeutralBackground2: "#000000",
+  colorNeutralBackground2Hover: "#1a1a1a",
+  colorNeutralBackground2Pressed: "#2a2a2a",
+  colorNeutralBackground2Selected: "#222222",
+  colorNeutralBackground3: "#141414",
+  colorNeutralBackground3Hover: "#1f1f1f",
+  colorNeutralBackground3Pressed: "#2a2a2a",
+  colorNeutralBackground3Selected: "#1a1a1a",
+  colorNeutralStroke1: "#333333",
+  colorNeutralStroke2: "#2a2a2a",
+  colorNeutralStroke3: "#1f1f1f",
+  colorNeutralStrokeAccessible: "#666666",
+  colorNeutralForeground1: "#ffffff",
+  colorNeutralForeground2: "#cccccc",
+  colorNeutralForeground3: "#888888",
+  colorNeutralForeground4: "#555555",
+};
+
+const SHARED = {
+  shadow2: "none",
+  shadow4: "none",
+  shadow8: "none",
+  shadow16: "none",
+  shadow28: "none",
+  shadow64: "none",
+  shadow2Brand: "none",
+  shadow4Brand: "none",
+  shadow8Brand: "none",
+  shadow16Brand: "none",
+  shadow28Brand: "none",
+  shadow64Brand: "none",
+  borderRadiusLarge: "10px",
+  borderRadiusXLarge: "12px",
+  borderRadius2XLarge: "14px",
+};
+
+function patchTheme(theme: Theme, dark: boolean): Theme {
+  return { ...theme, ...SHARED, ...(dark ? DARK : LIGHT) } as Theme;
+}
+
 interface ThemeState {
-  /** The user's chosen mode, including "system". */
   mode: Mode;
-  /** The effective light/dark scheme actually applied to the UI. */
   scheme: Scheme;
   setMode: (mode: Mode) => void;
-  /** Convenience toggle between explicit light/dark (used by the simple switch). */
   toggle: () => void;
 }
 
@@ -66,11 +132,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const setMode = useCallback((next: Mode) => {
     setModeState(next);
     try {
-      // "system" is the absence of the key, so a reset and a fresh visit match.
       if (next === "system") localStorage.removeItem(STORAGE_KEY);
       else localStorage.setItem(STORAGE_KEY, next);
     } catch {
-      // ignore storage failures — the in-memory choice still applies this session
+      // ignore storage failures
     }
   }, []);
 
@@ -78,8 +143,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setMode(resolveScheme(mode) === "dark" ? "light" : "dark");
   }, [mode, setMode]);
 
-  // Track OS changes so "system" mode updates live (and so an explicit choice
-  // still resolves correctly if the OS flips underneath it).
   useEffect(() => {
     const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
     if (!mq) return;
@@ -91,11 +154,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const scheme: Scheme = mode === "system" ? systemPref : mode;
 
-  // Keep the document in sync with the RESOLVED scheme so areas outside the
-  // React tree (global CSS, overscroll, load flash) render the right colors.
   useEffect(() => {
     document.documentElement.style.colorScheme = scheme;
     document.documentElement.setAttribute("data-theme", scheme);
+  }, [scheme]);
+
+  const theme = useMemo(() => {
+    const dark = scheme === "dark";
+    const base = dark ? webDarkTheme : webLightTheme;
+    return patchTheme(base, dark);
   }, [scheme]);
 
   const value = useMemo<ThemeState>(
@@ -105,10 +172,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   return (
     <ThemeContext.Provider value={value}>
-      <FluentProvider
-        theme={scheme === "dark" ? webDarkTheme : webLightTheme}
-        style={{ height: "100vh" }}
-      >
+      <FluentProvider theme={theme} style={{ height: "100vh" }}>
         {children}
       </FluentProvider>
     </ThemeContext.Provider>

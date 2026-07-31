@@ -1,4 +1,4 @@
-import { Card, Text, tokens } from "@fluentui/react-components";
+import { Text, tokens } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
 import type { Heatmap as HeatmapData } from "../api/types";
@@ -109,14 +109,14 @@ function useFormatDuration(): (seconds: number) => string {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <Card style={{ padding: 14, minWidth: 120, flex: "1 1 120px" }}>
+    <div style={{ padding: 14, minWidth: 120, flex: "1 1 120px", border: "1px solid var(--colorNeutralStroke1)", borderRadius: "10px" }}>
       <Text size={200} style={{ color: tokens.colorNeutralForeground3 }} block>
         {label}
       </Text>
       <Text size={600} weight="bold">
         {value}
       </Text>
-    </Card>
+    </div>
   );
 }
 

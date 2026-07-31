@@ -1,7 +1,6 @@
 import {
   Badge,
   Button,
-  Card,
   Dialog,
   DialogActions,
   DialogBody,
@@ -59,6 +58,16 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "10px",
     ...shorthands.padding("16px"),
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: "10px",
+    background: tokens.colorNeutralBackground1,
+    transition: "box-shadow 0.15s",
+    ":hover": {
+      borderTopColor: tokens.colorNeutralForeground1,
+      borderRightColor: tokens.colorNeutralForeground1,
+      borderBottomColor: tokens.colorNeutralForeground1,
+      borderLeftColor: tokens.colorNeutralForeground1,
+    },
   },
   head: {
     display: "flex",
@@ -281,7 +290,7 @@ export function RoleGroups() {
       ) : (
         <div className={styles.grid}>
           {items.map((g) => (
-            <Card key={g.id} className={styles.card}>
+            <div key={g.id} className={styles.card}>
               <div className={styles.head}>
                 <div className={styles.title}>
                   {g.builtin ? <ShieldRegular /> : <PeopleTeamRegular />}
@@ -368,7 +377,7 @@ export function RoleGroups() {
                   </Tooltip>
                 </div>
               )}
-            </Card>
+            </div>
           ))}
         </div>
       )}

@@ -1,13 +1,3 @@
-// AuthShell — the single owner of the centered-card layout shared by every
-// auth-style page (login, callback/error cards, and any future first-run/2FA
-// screens). Putting the page background, the calm brand-bloom canvas, the card
-// chrome, and the entrance animation here guarantees those flows stay pixel
-// identical instead of each page re-deriving its own card styles.
-//
-// Why a CSS var for padding? Full-bleed children (edge-to-edge dividers) need to
-// cancel the card padding with `margin: 0 calc(-1 * var(--auth-card-pad))`. The
-// padding shrinks on small screens, so exposing it as a var keeps those children
-// correct across the responsive breakpoint without duplicating the value.
 import {
   Text,
   makeStyles,
@@ -29,17 +19,8 @@ const useStyles = makeStyles({
     justifyContent: "center",
     gap: "20px",
     padding: "32px 16px",
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: tokens.colorNeutralBackground1,
     overflow: "hidden",
-  },
-  // Two soft brand blooms from opposite corners. Built from the brand token via
-  // color-mix so they track the configured accent and read in both schemes.
-  canvas: {
-    position: "absolute",
-    inset: 0,
-    pointerEvents: "none",
-    backgroundImage: `radial-gradient(60% 60% at 0% 0%, color-mix(in srgb, ${tokens.colorBrandBackground} 8%, transparent), transparent 70%),
-      radial-gradient(60% 60% at 100% 100%, color-mix(in srgb, ${tokens.colorBrandBackground} 8%, transparent), transparent 70%)`,
   },
   brand: {
     position: "relative",
@@ -65,12 +46,9 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     boxSizing: "border-box",
-    borderRadius: "12px",
-    border: `1px solid ${tokens.colorNeutralStroke3}`,
+    borderRadius: "14px",
+    border: `2px solid ${tokens.colorNeutralStroke1}`,
     backgroundColor: tokens.colorNeutralBackground1,
-    boxShadow: tokens.shadow16,
-    // Exposed so full-bleed children can stretch edge-to-edge across the
-    // responsive padding change below.
     "--auth-card-pad": "40px",
     padding: "var(--auth-card-pad)",
     animationName: {
@@ -101,12 +79,10 @@ export function AuthShell({
 }) {
   const styles = useStyles();
   const { t } = useTranslation();
-  // Dynamic, instance-specific values stay inline (griffel can't enumerate them).
   const cardStyle: CSSProperties = { maxWidth, gap: cardGap };
 
   return (
-    <div className={styles.page}>
-      <div className={styles.canvas} aria-hidden="true" />
+    <div className={`${styles.page} auth-grid`}>
       {hideBrand ? null : (
         <div className={styles.brand}>
           <span className={styles.brandMark}>⚡</span>

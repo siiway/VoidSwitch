@@ -47,15 +47,10 @@ import { AnnouncementsPopup } from "./Announcements";
 import { ConfirmProvider, ToastProvider } from "./ui";
 import type { ReactElement } from "react";
 
-// "member" = visible to everyone, "staff" = owner/co-owner/admin, "owner" =
-// owner/co-owner only.
 type NavScope = "member" | "staff" | "owner";
 
 type TranslationKey = keyof Translations;
 
-// The usage docs are a public, standalone VitePress site (deployed to GitHub
-// Pages). English lives under /en/; open that locale when the dashboard is in
-// English so the two stay in sync.
 const DOCS_URL = "https://voidswitch.siiway.page/";
 
 interface NavItem {
@@ -64,8 +59,6 @@ interface NavItem {
   labelKey: string;
   icon: ReactElement;
   scope: NavScope;
-  // When set, the item is an external link opened in a new tab (e.g. the public
-  // docs site), not an in-app route.
   external?: boolean;
 }
 
@@ -180,7 +173,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     columnGap: "10px",
-    ...shorthands.padding("20px", "20px", "16px"),
+    ...shorthands.padding("16px", "16px"),
   },
   brandMark: {
     display: "grid",
@@ -195,14 +188,25 @@ const useStyles = makeStyles({
   nav: {
     flex: 1,
     overflowY: "auto",
-    ...shorthands.padding("4px", "12px", "12px"),
+    ...shorthands.padding("4px", "10px", "10px"),
   },
   section: {
-    marginTop: "14px",
+    marginTop: "12px",
+    ":first-child": {
+      marginTop: 0,
+    },
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorNeutralStroke2,
+    paddingTop: "10px",
+    ":first-of-type": {
+      borderTopWidth: 0,
+      paddingTop: 0,
+    },
   },
   heading: {
     display: "block",
-    ...shorthands.padding("4px", "10px"),
+    ...shorthands.padding("4px", "8px"),
     fontSize: tokens.fontSizeBase100,
     fontWeight: tokens.fontWeightSemibold,
     letterSpacing: "0.06em",
@@ -214,18 +218,17 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     columnGap: "12px",
-    height: "38px",
+    height: "36px",
     ...shorthands.padding("0", "10px"),
-    marginTop: "2px",
-    borderRadius: tokens.borderRadiusMedium,
+    marginTop: "1px",
+    borderRadius: "6px",
     color: tokens.colorNeutralForeground2,
     textDecoration: "none",
     fontSize: tokens.fontSizeBase300,
     cursor: "pointer",
-    transitionProperty: "background-color, color",
-    transitionDuration: tokens.durationFaster,
+    transition: "background-color 120ms, color 120ms",
     ":hover": {
-      backgroundColor: tokens.colorNeutralBackground2Hover,
+      backgroundColor: tokens.colorNeutralBackground1Hover,
       color: tokens.colorNeutralForeground1,
     },
   },
@@ -240,9 +243,9 @@ const useStyles = makeStyles({
     "::before": {
       content: '""',
       position: "absolute",
-      left: "-12px",
-      top: "8px",
-      bottom: "8px",
+      left: "-10px",
+      top: "6px",
+      bottom: "6px",
       width: "3px",
       borderRadius: "0 3px 3px 0",
       backgroundColor: tokens.colorBrandForeground1,
@@ -254,11 +257,13 @@ const useStyles = makeStyles({
     placeItems: "center",
   },
   footer: {
-    ...shorthands.padding("12px"),
-    ...shorthands.borderTop("1px", "solid", tokens.colorNeutralStroke2),
+    ...shorthands.padding("10px"),
+    borderTopWidth: "2px",
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorNeutralStroke1,
     display: "flex",
     flexDirection: "column",
-    rowGap: "10px",
+    rowGap: "8px",
   },
   userRow: {
     display: "flex",
@@ -279,9 +284,11 @@ const useStyles = makeStyles({
   main: {
     flex: 1,
     overflowY: "auto",
-    ...shorthands.padding("28px", "32px"),
+    width: "100%",
+    boxSizing: "border-box",
+    ...shorthands.padding("20px", "24px"),
     "@media (max-width: 768px)": {
-      ...shorthands.padding("52px", "16px", "16px"),
+      ...shorthands.padding("52px", "12px", "12px"),
     },
   },
   backdrop: {
@@ -319,8 +326,10 @@ const useStyles = makeStyles({
     flexShrink: 0,
     display: "flex",
     flexDirection: "column",
-    backgroundColor: tokens.colorNeutralBackground2,
-    ...shorthands.borderRight("1px", "solid", tokens.colorNeutralStroke2),
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderRightWidth: "2px",
+    borderRightStyle: "solid",
+    borderRightColor: tokens.colorNeutralStroke1,
     "@media (max-width: 768px)": {
       position: "fixed",
       top: 0,
@@ -330,7 +339,6 @@ const useStyles = makeStyles({
       transform: "translateX(-100%)",
       transitionProperty: "transform",
       transitionDuration: tokens.durationNormal,
-      boxShadow: tokens.shadow64,
     },
   },
   sidebarOpen: {
@@ -351,8 +359,6 @@ export function Layout() {
   const [isNarrow, setIsNarrow] = useState(
     () => window.matchMedia("(max-width: 768px)").matches,
   );
-  // When proxy switching is disabled the Proxies tab is hidden. Re-checked on
-  // navigation so toggling the setting reflects without a full reload.
   const [proxySwitching, setProxySwitching] = useState(true);
 
   useEffect(() => {
@@ -394,8 +400,6 @@ export function Layout() {
         heading: t(s.headingKey as TranslationKey),
         items: s.items
           .filter((i) => canSee(i.scope))
-          // Proxy switching off → an external proxy handles egress, so the
-          // Proxies tab is irrelevant; hide it.
           .filter((i) => proxySwitching || i.to !== "/proxies")
           .map((i) => ({ ...i, label: t(i.labelKey as TranslationKey) })),
       })).filter((s) => s.items.length > 0),

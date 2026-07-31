@@ -1,6 +1,5 @@
 import {
   Button,
-  Card,
   Dialog,
   DialogActions,
   DialogBody,
@@ -812,7 +811,7 @@ export function ProviderKeys() {
       />
 
       {isClaudeCode ? (
-        <Card style={{ marginBottom: 16, padding: 16, gap: 8 }}>
+        <div style={{ marginBottom: 16, padding: 16, gap: 8, border: "1px solid var(--colorNeutralStroke1)", borderRadius: "10px", display: "flex", flexDirection: "column" }}>
           <Text weight="semibold" block>
             Sign in with Claude (OAuth)
           </Text>
@@ -869,7 +868,7 @@ export function ProviderKeys() {
               </div>
             </>
           )}
-        </Card>
+        </div>
       ) : null}
 
       {/* Key Helper for Claude Code providers */}

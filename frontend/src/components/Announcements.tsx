@@ -1,7 +1,6 @@
 import {
   Badge,
   Button,
-  Card,
   Checkbox,
   Dialog,
   DialogActions,
@@ -40,8 +39,11 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "10px",
-    ...shorthands.padding("18px"),
-    marginBottom: "24px",
+    ...shorthands.padding("16px"),
+    marginBottom: "20px",
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: "10px",
+    background: tokens.colorNeutralBackground1,
   },
   head: {
     display: "flex",
@@ -58,8 +60,26 @@ const useStyles = makeStyles({
     gap: "4px",
     ...shorthands.padding("12px", "14px"),
     borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorNeutralBackground2,
-    ...shorthands.border("1px", "solid", tokens.colorNeutralStroke2),
+    borderTopWidth: "1px",
+    borderRightWidth: "1px",
+    borderBottomWidth: "1px",
+    borderLeftWidth: "1px",
+    borderTopStyle: "solid",
+    borderRightStyle: "solid",
+    borderBottomStyle: "solid",
+    borderLeftStyle: "solid",
+    borderTopColor: tokens.colorNeutralStroke2,
+    borderRightColor: tokens.colorNeutralStroke2,
+    borderBottomColor: tokens.colorNeutralStroke2,
+    borderLeftColor: tokens.colorNeutralStroke2,
+    background: tokens.colorNeutralBackground1,
+    transition: "box-shadow 0.15s",
+    ":hover": {
+      borderTopColor: tokens.colorNeutralForeground1,
+      borderRightColor: tokens.colorNeutralForeground1,
+      borderBottomColor: tokens.colorNeutralForeground1,
+      borderLeftColor: tokens.colorNeutralForeground1,
+    },
   },
   itemHead: {
     display: "flex",
@@ -323,11 +343,6 @@ function EditorDialog({
   );
 }
 
-/**
- * The dashboard home announcements panel: a preview of the latest few (count
- * from ``announcements_home_count``), with "view all" for the rest, plus publish
- * / edit / delete for staff (edit/delete gated by the backend's tier rules).
- */
 export function AnnouncementsPanel() {
   const styles = useStyles();
   const { t } = useTranslation();
@@ -346,7 +361,7 @@ export function AnnouncementsPanel() {
       const list = await api.get<Announcement[]>("/api/announcements", { limit: 200 });
       setItems(list);
     } catch {
-      /* silent — the panel is non-critical */
+      /* silent */
     }
   }, []);
 
@@ -390,7 +405,7 @@ export function AnnouncementsPanel() {
   const hasMore = items.length > preview.length;
 
   return (
-    <Card className={styles.panel}>
+    <div className={styles.panel}>
       <div className={styles.head}>
         <div className={styles.headTitle}>
           <MegaphoneRegular />
@@ -480,18 +495,12 @@ export function AnnouncementsPanel() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
-    </Card>
+    </div>
   );
 }
 
-// sessionStorage flag set at login (callback / dev-login) so the popup shows
-// once per fresh sign-in, per the "popup on every login" requirement.
 export const ANNOUNCE_POPUP_FLAG = "voidswitch.announce.pending";
 
-/**
- * The login popup: shown once after a fresh sign-in if any announcements exist.
- * Read-only — publishing/editing happens from the dashboard panel.
- */
 export function AnnouncementsPopup() {
   const { t } = useTranslation();
   const [items, setItems] = useState<Announcement[] | null>(null);
@@ -499,8 +508,6 @@ export function AnnouncementsPopup() {
   useEffect(() => {
     if (sessionStorage.getItem(ANNOUNCE_POPUP_FLAG) !== "1") return;
     sessionStorage.removeItem(ANNOUNCE_POPUP_FLAG);
-    // Only the single most recent announcement pops up on login; the dashboard
-    // panel shows the latest few, with "view all" for the rest.
     api
       .get<Announcement[]>("/api/announcements", { limit: 1 })
       .then((list) => {
@@ -549,7 +556,6 @@ function AnnouncementCardReadonly({ a }: { a: Announcement }) {
   return <AnnouncementItem a={a} roleGroups={[]} />;
 }
 
-/** Marks that the announcements popup should show on the next dashboard load. */
 export function armAnnouncementsPopup(): void {
   sessionStorage.setItem(ANNOUNCE_POPUP_FLAG, "1");
 }

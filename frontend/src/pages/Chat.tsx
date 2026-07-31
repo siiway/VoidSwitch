@@ -1,6 +1,5 @@
 import {
   Button,
-  Card,
   Combobox,
   Option,
   Popover,
@@ -286,7 +285,7 @@ export function Chat() {
   if (!hasToken) {
     return (
       <div className={styles.gateWrap}>
-        <Card className={styles.gateCard}>
+        <div className={styles.gateCard}>
           <span className={styles.gateMark}>
             <SparkleRegular />
           </span>
@@ -338,7 +337,7 @@ export function Chat() {
               {t("chat.use" as TK)}
             </Button>
           </div>
-        </Card>
+        </div>
       </div>
     );
   }
@@ -1018,6 +1017,9 @@ const useStyles = makeStyles({
     rowGap: "14px",
     width: "min(420px, 100%)",
     ...shorthands.padding("28px"),
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: "10px",
+    background: tokens.colorNeutralBackground1,
   },
   gateMark: {
     alignSelf: "center",
