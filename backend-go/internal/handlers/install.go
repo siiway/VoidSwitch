@@ -379,7 +379,7 @@ function Load-Json($path) {
 
 $cfg = Load-Json $Config
 
-$cfg | Add-Member -NotePropertyName '$$schema' -NotePropertyValue 'https://opencode.ai/config.json' -Force
+$cfg | Add-Member -NotePropertyName '$schema' -NotePropertyValue 'https://opencode.ai/config.json' -Force
 if (-not $cfg.PSObject.Properties['model']) {
   $cfg | Add-Member -NotePropertyName 'model' -NotePropertyValue 'voidswitch/__MODEL__' -Force
 }

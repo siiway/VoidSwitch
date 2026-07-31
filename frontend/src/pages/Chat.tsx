@@ -153,7 +153,7 @@ export function Chat() {
       setTokenDraft("");
       notify(
         t("chat.tokenMinted" as TK),
-        "A fresh vs-… token now powers the chat.",
+        t("chat.tokenMintedDesc" as TK),
         "success",
       );
     } catch (e) {
@@ -195,11 +195,11 @@ export function Chat() {
     const text = (prompt ?? input).trim();
     if (!text || busy) return;
     if (!chatToken) {
-      notify(t("chat.noToken" as TK), "Add or mint a vs-… token first.", "warning");
+      notify(t("chat.noToken" as TK), t("chat.noTokenDesc" as TK), "warning");
       return;
     }
     if (!model) {
-      notify(t("chat.noModel" as TK), "No model is available for this token.", "warning");
+      notify(t("chat.noModel" as TK), t("chat.noModelDesc" as TK), "warning");
       return;
     }
 
@@ -406,7 +406,7 @@ export function Chat() {
                 size={100}
                 style={{ color: tokens.colorNeutralForeground3 }}
               >
-                Applied as the first message of every request.
+                {t("chat.systemApplied" as TK)}
               </Text>
               <Button
                 size="small"
@@ -418,7 +418,7 @@ export function Chat() {
                 }}
                 style={{ alignSelf: "flex-start", marginTop: 4 }}
               >
-                Switch token
+                {t("chat.switchToken" as TK)}
               </Button>
             </PopoverSurface>
           </Popover>

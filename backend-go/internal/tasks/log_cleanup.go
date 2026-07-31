@@ -13,7 +13,7 @@ import (
 )
 
 func RunLogCleanup(db *gorm.DB) error {
-	if !services.GetBool("log_cleanup_enabled", false) {
+	if !services.GetBool("log_cleanup_enabled", true) {
 		return nil
 	}
 

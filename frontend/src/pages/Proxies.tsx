@@ -90,13 +90,13 @@ export function Proxies() {
         local_address: localAddr.trim() || null,
         note: name.trim() || null,
       });
-      notify("Proxies added", `${created.length} new`, "success");
+      notify(t("proxies.added" as TK), `${created.length} new`, "success");
       setBulk("");
       setLocalAddr("");
       setName("");
       proxies.reload();
     } catch (e) {
-      notify("Add failed", e instanceof Error ? e.message : String(e), "error");
+      notify(t("proxies.addFailed" as TK), e instanceof Error ? e.message : String(e), "error");
     } finally {
       setAdding(false);
     }
@@ -452,9 +452,9 @@ export function Proxies() {
             <DialogTitle>{t("proxies.inUseTitle" as TK)}</DialogTitle>
             <DialogContent>
               <div style={{ marginBottom: 8 }}>
-                <code>{inUse?.proxy.url || "(direct)"}</code> is referenced by{" "}
-                {inUse?.users.length} provider
-                {inUse && inUse.users.length === 1 ? "" : "s"}:
+                {t("proxies.inUseRef" as TK)
+                  .replace("{url}", inUse?.proxy.url || "(direct)")
+                  .replace("{count}", String(inUse?.users.length ?? 0))}
               </div>
               <ul style={{ margin: "0 0 8px 18px" }}>
                 {inUse?.users.map((pr) => (
@@ -467,9 +467,7 @@ export function Proxies() {
                 ))}
               </ul>
               <div style={{ color: tokens.colorNeutralForeground3 }}>
-                Either way it's removed from those providers. Any provider left
-                with no usable proxy in <b>Selected</b> mode will be skipped
-                until you assign another. What do you want to do?
+                {t("proxies.inUseEitherWay" as TK)}
               </div>
             </DialogContent>
             <DialogActions>
@@ -496,7 +494,7 @@ export function Proxies() {
                 }}
                 onClick={deleteInUse}
               >
-                Delete and remove from every provider
+                {t("proxies.inUseDeleteAndRemove" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

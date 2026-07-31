@@ -92,13 +92,29 @@ export function Tokens() {
   }
 
   async function toggle(t: VoidToken) {
-    await api.patch(`/api/admin/tokens/${t.id}`, { enabled: !t.enabled });
-    list.reload();
+    try {
+      await api.patch(`/api/admin/tokens/${t.id}`, { enabled: !t.enabled });
+      list.reload();
+    } catch (e) {
+      notify(
+        tr("tokens.toggleFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function toggleDebug(t: VoidToken) {
-    await api.patch(`/api/admin/tokens/${t.id}`, { debug_enabled: !t.debug_enabled });
-    list.reload();
+    try {
+      await api.patch(`/api/admin/tokens/${t.id}`, { debug_enabled: !t.debug_enabled });
+      list.reload();
+    } catch (e) {
+      notify(
+        tr("tokens.toggleFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function remove(t: VoidToken) {
@@ -109,8 +125,16 @@ export function Tokens() {
       tone: "danger",
     });
     if (!ok) return;
-    await api.del(`/api/admin/tokens/${t.id}`);
-    list.reload();
+    try {
+      await api.del(`/api/admin/tokens/${t.id}`);
+      list.reload();
+    } catch (e) {
+      notify(
+        tr("tokens.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   function openEdit(t: VoidToken) {
@@ -120,9 +144,17 @@ export function Tokens() {
 
   async function saveEdit() {
     if (!editing) return;
-    await api.patch(`/api/admin/tokens/${editing.id}`, { name: editName.trim() || "default" });
-    setEditing(null);
-    list.reload();
+    try {
+      await api.patch(`/api/admin/tokens/${editing.id}`, { name: editName.trim() || "default" });
+      setEditing(null);
+      list.reload();
+    } catch (e) {
+      notify(
+        tr("tokens.renameFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   return (
@@ -346,7 +378,7 @@ export function SecretDialog({
     >
       <DialogSurface>
         <DialogBody>
-          <DialogTitle>Your new API key</DialogTitle>
+          <DialogTitle>{tr("tokens.secretTitle" as TK)}</DialogTitle>
           <DialogContent>
             <Text
               block
@@ -381,7 +413,7 @@ export function SecretDialog({
           </DialogContent>
           <DialogActions>
             <Button appearance="primary" onClick={onClose}>
-              Done
+              {tr("tokens.secretDone" as TK)}
             </Button>
           </DialogActions>
         </DialogBody>

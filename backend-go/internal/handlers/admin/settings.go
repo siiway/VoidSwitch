@@ -30,7 +30,7 @@ func getSettings(c *gin.Context) {
 func updateSettings(c *gin.Context) {
 	db := database.GetDatabase().DB
 	user, ok := getCurrentUserGin(c)
-	if !ok || !requireStaffGin(c, user) {
+	if !ok || !requireOwnerGin(c, user) {
 		return
 	}
 
