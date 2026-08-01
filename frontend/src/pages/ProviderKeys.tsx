@@ -192,9 +192,11 @@ export function ProviderKeys() {
 
   const current = provider.data?.find((p) => p.id === providerId);
   const isClaudeCode = current?.type === "claude-code";
+  const isGrokBuild = current?.type === "grok-build";
   const supportsBalance = current?.supports_balance ?? false;
   const supportsImport = current?.supports_import ?? false;
   const supportsRefresh = current?.supports_refresh ?? false;
+  const supportsOauth = current?.supports_oauth ?? false;
   // Distinct pool tags present among this provider's keys (for the rescan picker).
   const pools = Array.from(
     new Set((keys.data ?? []).map((k) => k.pool ?? "")),
@@ -747,7 +749,9 @@ export function ProviderKeys() {
         subtitle={
           isClaudeCode
             ? t("providerKeys.claudeOAuthHint" as TK)
-            : t("providerKeys.bulkPasteHint" as TK)
+            : isGrokBuild
+              ? t("providerKeys.grokBuildOAuthHint" as TK)
+              : t("providerKeys.bulkPasteHint" as TK)
         }
         onRefresh={() => {
           keys.reload();
@@ -810,20 +814,21 @@ export function ProviderKeys() {
         }
       />
 
-      {isClaudeCode ? (
+      {supportsOauth ? (
         <div style={{ marginBottom: 16, padding: 16, gap: 8, border: "1px solid var(--colorNeutralStroke1)", borderRadius: "10px", display: "flex", flexDirection: "column" }}>
           <Text weight="semibold" block>
-            Sign in with Claude (OAuth)
+            {isGrokBuild
+              ? t("providerKeys.oauthTitleGrokBuild" as TK)
+              : t("providerKeys.oauthTitleClaude" as TK)}
           </Text>
           <Text
             size={200}
             block
             style={{ color: tokens.colorNeutralForeground3 }}
           >
-            Use a Claude Pro/Max subscription instead of an API key. This opens
-            Claude's authorization page in a new tab; after approving, copy the
-            code it shows (looks like <code>code#state</code>) and paste it back
-            here.
+            {isGrokBuild
+              ? t("providerKeys.oauthDescGrokBuild" as TK)
+              : t("providerKeys.oauthDescClaude" as TK)}
           </Text>
           {oauthState === null ? (
             <Button
@@ -833,17 +838,25 @@ export function ProviderKeys() {
               onClick={startOAuth}
               style={{ alignSelf: "flex-start", marginTop: 4 }}
             >
-              Start sign-in
+              {t("providerKeys.oauthStart" as TK)}
             </Button>
           ) : (
             <>
               <Field
-                label={t("providerKeys.pasteClaudeCode" as TK)}
+                label={
+                  isGrokBuild
+                    ? t("providerKeys.pasteGrokBuildCode" as TK)
+                    : t("providerKeys.pasteClaudeCode" as TK)
+                }
                 style={{ marginTop: 4 }}
               >
                 <Input
                   value={oauthCode}
-                  placeholder="abc123…#xyz789…"
+                  placeholder={
+                    isGrokBuild
+                      ? t("providerKeys.oauthPlaceholderGrokBuild" as TK)
+                      : t("providerKeys.oauthPlaceholderClaude" as TK)
+                  }
                   onChange={(_, d) => setOauthCode(d.value)}
                 />
               </Field>
@@ -853,7 +866,7 @@ export function ProviderKeys() {
                   disabled={oauthBusy || !oauthCode.trim()}
                   onClick={completeOAuth}
                 >
-                  Complete sign-in
+                  {t("providerKeys.oauthComplete" as TK)}
                 </Button>
                 <Button
                   appearance="subtle"

@@ -1,10 +1,14 @@
-"""xAI (Grok) OAuth token refresh for the official ``api.x.ai`` adapter.
+"""xAI (Grok) OAuth login + token refresh for the ``xai`` / ``grok-build`` adapters.
 
-Unlike :mod:`voidswitch.services.oauth_tokens` (Claude Code), this module
-implements *only* the refresh half of the flow — there is no interactive login
-here. It exists so an ``xai`` provider key stored as an xAI OAuth credential
-bundle can be kept alive by exchanging its rotating ``refresh_token`` for a
-fresh ``access_token`` against xAI's auth server.
+Like :mod:`voidswitch.services.oauth_tokens` (Claude Code), this module
+implements *both* halves of the flow:
+
+* the interactive **login** half (:func:`begin_login` / :func:`extract_code` /
+  :func:`complete_login`) — a PKCE authorization-code flow against xAI's auth
+  server used to sign a Grok Build subscription in from the dashboard; and
+* the **refresh** half (:func:`resolve_access_token`) — keeping a stored OAuth
+  bundle alive by exchanging its rotating ``refresh_token`` for a fresh
+  ``access_token``.
 
 Where the bundles come from
 ---------------------------
@@ -31,11 +35,16 @@ OAuth2 ``refresh_token`` grant against ``https://auth.x.ai/oauth2/token``.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import datetime as dt
+import hashlib
 import json
+import secrets
 import time
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,6 +76,25 @@ REFRESH_SCOPES = (
 NEAR_EXPIRY_SECONDS = 300  # refresh 5 minutes before expiry
 DEFAULT_EXPIRES_IN = 21600  # xAI access tokens live ~6h when unspecified
 
+# --- Interactive login (Grok Build subscription) -----------------------------
+# The grok-cli public client uses a PKCE authorization-code flow against xAI's
+# hosted auth server. The redirect lands on a fixed loopback address that the CLI
+# would normally catch with a throwaway local server; in VoidSwitch's server-side
+# flow the operator instead copies the full redirected URL out of the browser's
+# address bar and pastes it back (``extract_code`` parses ``?code=&state=``).
+AUTHORIZE_URL = "https://auth.x.ai/oauth2/authorize"
+REDIRECT_URI = "http://127.0.0.1:56121/callback"
+# Grok Build entitlement — the CLI-chat-proxy scope set WITHOUT ``api:access``
+# (that extra scope is what distinguishes a plain api.x.ai OAuth grant).
+LOGIN_SCOPES = (
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "grok-cli:access",
+)
+LOGIN_STATE_TTL_SECONDS = 600  # pending logins expire after 10 minutes
+
 # xAI's auth endpoint, like Claude's, is picky about datacenter IPs and default
 # user-agents; send a CLI-style UA and route through the configured proxies.
 OAUTH_USER_AGENT = "grok-cli/1.0.0"
@@ -81,6 +109,14 @@ class NotRefreshable(Exception):
 
 class RefreshUpstreamError(Exception):
     """Every egress route failed to reach xAI's token endpoint."""
+
+
+class LoginError(Exception):
+    """A user-correctable or definitively-rejected login (maps to HTTP 400)."""
+
+
+class LoginUpstreamError(Exception):
+    """Every egress route failed to reach xAI during login (maps to HTTP 502)."""
 
 
 def _lock_for(key_id: int) -> asyncio.Lock:
@@ -146,13 +182,25 @@ def _short_reason(resp: httpx.Response) -> str:
 
 
 async def _post_token(
-    payload: dict[str, Any], routes: list[Route], *, what: str = "refresh"
+    payload: dict[str, Any],
+    routes: list[Route],
+    *,
+    what: str = "refresh",
+    reject_exc: type[Exception] = NotRefreshable,
+    exhausted_exc: type[Exception] = RefreshUpstreamError,
 ) -> dict[str, Any]:
     """POST to xAI's token endpoint, trying each route until one returns 2xx.
 
+    xAI's ``/oauth2/token`` endpoint is a strict OAuth2 server: it requires the
+    body be ``application/x-www-form-urlencoded`` (a JSON body is rejected with
+    "Form requests must have Content-Type: application/x-www-form-urlencoded"),
+    so the payload is sent as form data, not JSON.
+
     Rotates past network errors and IP/rate blocks. A definitive 4xx (e.g. an
-    ``invalid_grant`` from a revoked refresh token) raises :class:`NotRefreshable`
-    immediately; exhausting every route raises :class:`RefreshUpstreamError`.
+    ``invalid_grant`` from a revoked refresh token or a spent authorization code)
+    raises ``reject_exc`` immediately; exhausting every route raises
+    ``exhausted_exc``. Callers pass the login exception pair
+    (:class:`LoginError` / :class:`LoginUpstreamError`) for the login exchange.
     """
     last_status: int | None = None
     last_reason = "no outbound route available"
@@ -162,7 +210,7 @@ async def _post_token(
         label = route.proxy_url or "direct"
         try:
             client = await get_pool().get(route, connect_timeout=15.0, read_timeout=30.0)
-            resp = await client.post(TOKEN_URL, json=payload, headers=_TOKEN_HEADERS)
+            resp = await client.post(TOKEN_URL, data=payload, headers=_TOKEN_HEADERS)
         except httpx.HTTPError as exc:
             last_status, last_reason = None, type(exc).__name__
             log.warning("xai_oauth_network_error", op=what, route=label, error=str(exc))
@@ -203,9 +251,9 @@ async def _post_token(
         )
         if resp.status_code in (403, 408, 425, 429) or resp.status_code >= 500:
             continue  # block / transient — try the next egress IP
-        raise NotRefreshable(f"xAI rejected the {what} (HTTP {resp.status_code}: {last_reason}).")
+        raise reject_exc(f"xAI rejected the {what} (HTTP {resp.status_code}: {last_reason}).")
     detail = f"HTTP {last_status}: {last_reason}" if last_status else last_reason
-    raise RefreshUpstreamError(
+    raise exhausted_exc(
         f"Could not reach xAI's token endpoint via any route (last: {detail}). "
         "Check the provider's proxies and retry."
     )
@@ -329,4 +377,167 @@ async def _refresh(refresh_token: str, routes: list[Route]) -> dict[str, Any]:
         "access_token": access,
         "refresh_token": data.get("refresh_token", refresh_token),
         "expires_at": time.time() + float(data.get("expires_in", DEFAULT_EXPIRES_IN)),
+    }
+
+
+# --- Interactive login (PKCE authorization-code flow) ------------------------
+
+
+def _b64url(raw: bytes) -> str:
+    """URL-safe base64 without padding (PKCE / state encoding)."""
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _pkce_pair() -> tuple[str, str]:
+    """Return a ``(verifier, challenge)`` PKCE pair using the S256 method."""
+    verifier = _b64url(secrets.token_bytes(32))
+    challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+    return verifier, challenge
+
+
+@dataclass(slots=True)
+class _PendingLogin:
+    verifier: str
+    provider_id: int
+    created: float
+
+
+class _StateStore:
+    """In-memory CSRF-state -> pending-login map with a short TTL.
+
+    Login state is intentionally *not* persisted: a pending login is only valid
+    within a single browser round-trip and must not survive a restart.
+    """
+
+    def __init__(self, ttl: float = LOGIN_STATE_TTL_SECONDS) -> None:
+        self._ttl = ttl
+        self._items: dict[str, _PendingLogin] = {}
+
+    def _gc(self) -> None:
+        cutoff = time.time() - self._ttl
+        stale = [state for state, item in self._items.items() if item.created < cutoff]
+        for state in stale:
+            self._items.pop(state, None)
+
+    def put(self, state: str, verifier: str, provider_id: int) -> None:
+        self._gc()
+        self._items[state] = _PendingLogin(
+            verifier=verifier, provider_id=provider_id, created=time.time()
+        )
+
+    def peek(self, state: str) -> _PendingLogin | None:
+        self._gc()
+        return self._items.get(state)
+
+    def discard(self, state: str) -> None:
+        self._items.pop(state, None)
+
+
+_login_states = _StateStore()
+
+
+def begin_login(provider_id: int) -> tuple[str, str]:
+    """Start a Grok Build OAuth login; return ``(authorize_url, state)``.
+
+    The caller shows ``authorize_url`` to the operator, who signs in and is then
+    redirected to :data:`REDIRECT_URI` (a loopback address that will not load).
+    The operator copies the full redirected URL back for :func:`complete_login`.
+    """
+    verifier, challenge = _pkce_pair()
+    state = _b64url(secrets.token_bytes(32))
+    _login_states.put(state, verifier, provider_id)
+    params = {
+        "response_type": "code",
+        "client_id": CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "scope": " ".join(LOGIN_SCOPES),
+        "state": state,
+        "nonce": secrets.token_hex(16),
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    }
+    return f"{AUTHORIZE_URL}?{urlencode(params)}", state
+
+
+def extract_code(raw: str) -> tuple[str, str | None]:
+    """Parse a pasted authorization code out of whatever the operator provides.
+
+    Accepts the full redirected callback URL (``…/callback?code=…&state=…``), a
+    bare query string, a ``code#state`` fragment, or just the code. Returns
+    ``(code, embedded_state_or_None)``.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        raise LoginError("No authorization code was provided.")
+    if "://" in raw or "code=" in raw:
+        query = urlparse(raw).query or raw.split("?", 1)[-1]
+        params = parse_qs(query)
+        codes = params.get("code")
+        if not codes:
+            raise LoginError("Could not find a `code` in the pasted URL.")
+        states = params.get("state")
+        return codes[0], (states[0] if states else None)
+    if "#" in raw:
+        code, _, state = raw.partition("#")
+        return code.strip(), (state.strip() or None)
+    return raw, None
+
+
+async def complete_login(
+    code_input: str,
+    state: str,
+    *,
+    provider_id: int,
+    session: AsyncSession | None = None,
+) -> dict[str, Any]:
+    """Exchange a pasted authorization code for an OAuth credential bundle."""
+    pending = _login_states.peek(state)
+    if pending is None:
+        raise LoginError("Unknown or expired login. Start the sign-in again.")
+    if pending.provider_id != provider_id:
+        _login_states.discard(state)
+        raise LoginError("This login was started for a different provider.")
+
+    code, embedded_state = extract_code(code_input)
+    if embedded_state is not None and embedded_state != state:
+        _login_states.discard(state)
+        raise LoginError("State mismatch — the pasted URL does not match this login.")
+
+    routes = await _select_routes(session)
+    try:
+        bundle = await _exchange_code(code, pending.verifier, routes)
+    except LoginError:
+        # A definitive rejection (spent/invalid code): burn the state so the user
+        # restarts cleanly. Transient LoginUpstreamError keeps the state for retry.
+        _login_states.discard(state)
+        raise
+    _login_states.discard(state)
+    return bundle
+
+
+async def _exchange_code(code: str, verifier: str, routes: list[Route]) -> dict[str, Any]:
+    data = await _post_token(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+            "client_id": CLIENT_ID,
+            "code_verifier": verifier,
+        },
+        routes,
+        what="exchange",
+        reject_exc=LoginError,
+        exhausted_exc=LoginUpstreamError,
+    )
+    access = data.get("access_token")
+    refresh_token = data.get("refresh_token")
+    if not access or not refresh_token:
+        raise LoginError("xAI's login response was missing tokens. Try signing in again.")
+    scope = data.get("scope")
+    scopes = scope.split() if isinstance(scope, str) and scope else list(LOGIN_SCOPES)
+    return {
+        "access_token": access,
+        "refresh_token": refresh_token,
+        "expires_at": time.time() + float(data.get("expires_in", DEFAULT_EXPIRES_IN)),
+        "scopes": scopes,
     }

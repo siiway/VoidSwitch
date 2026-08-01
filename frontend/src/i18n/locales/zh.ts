@@ -288,7 +288,7 @@ const zh: Translations = {
     cleanupFailed: "清理失败",
     oauthStartFailed: "无法启动登录",
     oauthSignedIn: "已登录",
-    oauthCredentialAdded: "Claude 订阅凭证已添加",
+    oauthCredentialAdded: "订阅凭证已添加",
     oauthSignInFailed: "登录失败",
     addFailed: "添加失败",
     updated: "密钥已更新",
@@ -299,6 +299,19 @@ const zh: Translations = {
     allPools: "全部池",
     rescanning: "扫描中…",
     pasteClaudeCode: "粘贴来自 Claude 的代码",
+    pasteGrokBuildCode: "粘贴来自 Grok Build 的回调 URL",
+    grokBuildOAuthHint: "使用 Grok Build（grok CLI）订阅登录以添加 OAuth 凭证",
+    oauthTitleClaude: "使用 Claude 登录（OAuth）",
+    oauthTitleGrokBuild: "使用 Grok Build 登录（OAuth）",
+    oauthDescClaude:
+      "使用 Claude Pro/Max 订阅代替 API 密钥。这会在新标签页打开 Claude 授权页面；批准后，复制页面显示的代码（形如 code#state）并粘贴回此处。",
+    oauthDescGrokBuild:
+      "使用 Grok Build（grok CLI）订阅代替 API 密钥。这会在新标签页打开 xAI 授权页面。批准后，浏览器会跳转到 http://127.0.0.1:56121/callback 并显示一个无法加载的页面——这是正常现象。请从地址栏复制完整 URL 并粘贴回此处。",
+    oauthStart: "开始登录",
+    oauthComplete: "完成登录",
+    oauthPlaceholderClaude: "abc123…#xyz789…",
+    oauthPlaceholderGrokBuild:
+      "http://127.0.0.1:56121/callback?code=…&state=…",
     keyPoolHint: "密钥池（可选标签 — 例如 leaked、members）",
     noBalanceDays: "无余额超过 ≥（天）",
     noBalanceDaysHint: "删除至少在给定天数内无余额的密钥",

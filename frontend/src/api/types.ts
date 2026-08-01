@@ -49,6 +49,7 @@ export interface Provider {
   supports_balance: boolean;
   supports_import: boolean;
   supports_refresh: boolean;
+  supports_oauth: boolean;
   added_by?: number | null;
   added_by_name?: string | null;
   key_api_enabled: boolean;
@@ -445,6 +446,7 @@ export interface AdapterMeta {
   default_models: string[];
   supports_balance: boolean;
   supports_import: boolean;
+  supports_oauth: boolean;
 }
 
 export interface SystemInfo {

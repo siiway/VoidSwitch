@@ -664,6 +664,51 @@ async def test_grok_adapter_classify():
     assert adapter.classify(200, {}) == ErrorClass.OK
 
 
+async def test_xai_adapter_classify():
+    provider = Provider(name="xai", type="xai")
+    adapter = get_adapter(provider)
+
+    # A genuinely bad/expired key: xAI returns HTTP 400 (not 401/403) with an
+    # "Incorrect API key provided" body — detect it by content → KEY_INVALID so
+    # the key is disabled (static) or force-refreshed (OAuth bundle).
+    assert (
+        adapter.classify(
+            400,
+            {"code": "invalid-argument", "error": "Incorrect API key provided."},
+        )
+        == ErrorClass.KEY_INVALID
+    )
+    # No credentials presented → 401 body says so → KEY_INVALID.
+    assert (
+        adapter.classify(401, {"code": "unauthenticated:no-credentials"})
+        == ErrorClass.KEY_INVALID
+    )
+    # A bare 401 with no informative body still counts as an auth failure.
+    assert adapter.classify(401, {}) == ErrorClass.KEY_INVALID
+
+    # The regression: a 403 that is NOT an invalid-key signal (region/geo,
+    # Cloudflare bot-block, per-model permission) must NOT disable a working
+    # key — it is a transient upstream error instead.
+    assert adapter.classify(403, {}) == ErrorClass.SERVER_ERROR
+    assert (
+        adapter.classify(403, {"error": "Access denied for your region."})
+        == ErrorClass.SERVER_ERROR
+    )
+    # ...unless the 403 body explicitly blames the key.
+    assert (
+        adapter.classify(403, {"error": "Invalid API key"}) == ErrorClass.KEY_INVALID
+    )
+
+    # A wrong model id is the client's fault (400 "Model not found") — passthrough.
+    assert (
+        adapter.classify(400, {"code": "invalid-argument", "error": "Model not found: grok-2"})
+        == ErrorClass.BAD_REQUEST
+    )
+    assert adapter.classify(429, {}) == ErrorClass.RATE_LIMITED
+    assert adapter.classify(200, {}) == ErrorClass.OK
+    assert adapter.classify(500, {}) == ErrorClass.SERVER_ERROR
+
+
 async def test_xai_adapter_refreshes_oauth_bundle_credential():
     from voidswitch.services import xai_oauth
 
@@ -691,6 +736,158 @@ async def test_xai_adapter_refreshes_oauth_bundle_credential():
 
     assert token == "resolved-access-token"
     assert called == {"secret_key": "secret", "force_refresh": True}
+
+
+async def test_grok_build_adapter_headers_and_classify():
+    # Grok Build is served by the CLI-chat proxy, not api.x.ai, and must carry
+    # the grok-shell client identity or the proxy rejects the request.
+    provider = Provider(name="grok-build", type="grok-build")
+    adapter = get_adapter(provider)
+
+    assert adapter.upstream_url.endswith("cli-chat-proxy.grok.com/v1/chat/completions")
+    assert adapter.supports_oauth is True
+    assert adapter.supports_import is False
+    assert adapter.refresh_on_invalid_key is True
+    assert "grok-4.5" in adapter.default_models
+
+    headers = adapter.headers("TOKEN123", {})
+    assert headers["Authorization"] == "Bearer TOKEN123"
+    assert headers["X-XAI-Token-Auth"] == "xai-grok-cli"
+    assert headers["x-grok-client-version"] == "0.2.111"
+    assert headers["x-grok-client-identifier"] == "grok-shell"
+    assert headers["User-Agent"].startswith("grok-shell/")
+
+    # Per-request extra headers win over the CLI defaults.
+    assert adapter.headers("T", {"x-grok-client-mode": "interactive"})[
+        "x-grok-client-mode"
+    ] == "interactive"
+
+    # Classification is inherited from the xai adapter: a bare 403 is transient
+    # (do NOT disable an OAuth credential over a region/permission block), while
+    # an explicit bad-key body still counts as invalid.
+    assert adapter.classify(403, {}) == ErrorClass.SERVER_ERROR
+    assert (
+        adapter.classify(400, {"error": "Incorrect API key provided."})
+        == ErrorClass.KEY_INVALID
+    )
+    assert adapter.classify(200, {}) == ErrorClass.OK
+
+    # The provider-type catalog advertises the OAuth-login capability so the
+    # dashboard renders the sign-in panel.
+    entry = next(e for e in adapter_catalog() if e["type"] == "grok-build")
+    assert entry["supports_oauth"] is True
+    assert entry["supports_import"] is False
+    assert entry["default_base_url"] == "https://cli-chat-proxy.grok.com/v1"
+
+
+async def test_xai_oauth_begin_login_and_extract_code():
+    from urllib.parse import parse_qs, urlparse
+
+    from voidswitch.services import xai_oauth
+
+    authorize_url, state = xai_oauth.begin_login(7)
+    parsed = urlparse(authorize_url)
+    assert parsed.netloc == "auth.x.ai"
+    assert parsed.path == "/oauth2/authorize"
+    params = parse_qs(parsed.query)
+    assert params["response_type"] == ["code"]
+    assert params["code_challenge_method"] == ["S256"]
+    assert params["code_challenge"]  # PKCE challenge present
+    assert params["redirect_uri"] == ["http://127.0.0.1:56121/callback"]
+    assert params["state"] == [state]
+    # Grok Build entitlement: grok-cli:access WITHOUT api:access.
+    scope = params["scope"][0]
+    assert "grok-cli:access" in scope
+    assert "api:access" not in scope
+
+    # extract_code accepts the full callback URL, a bare code, and code#state.
+    assert xai_oauth.extract_code(
+        "http://127.0.0.1:56121/callback?code=ABC123&state=xyz"
+    ) == ("ABC123", "xyz")
+    assert xai_oauth.extract_code("BARECODE") == ("BARECODE", None)
+    assert xai_oauth.extract_code("CODE#STATE") == ("CODE", "STATE")
+
+
+async def test_xai_oauth_complete_login_happy_path():
+    from voidswitch.services import xai_oauth
+
+    _, state = xai_oauth.begin_login(7)
+
+    async def fake_post_token(payload, routes, **kwargs):
+        assert payload["grant_type"] == "authorization_code"
+        assert payload["code"] == "THECODE"
+        assert payload["redirect_uri"] == "http://127.0.0.1:56121/callback"
+        assert payload["code_verifier"]  # PKCE verifier forwarded
+        return {
+            "access_token": "AT",
+            "refresh_token": "RT",
+            "expires_in": 3600,
+            "scope": "openid grok-cli:access",
+        }
+
+    original = xai_oauth._post_token
+    xai_oauth._post_token = fake_post_token  # type: ignore[assignment]
+    try:
+        bundle = await xai_oauth.complete_login(
+            f"http://127.0.0.1:56121/callback?code=THECODE&state={state}",
+            state,
+            provider_id=7,
+            session=None,
+        )
+    finally:
+        xai_oauth._post_token = original  # type: ignore[assignment]
+
+    assert bundle["access_token"] == "AT"
+    assert bundle["refresh_token"] == "RT"
+    assert bundle["scopes"] == ["openid", "grok-cli:access"]
+    assert bundle["expires_at"] > 0
+    # State is single-use: burned after a successful exchange.
+    assert xai_oauth._login_states.peek(state) is None
+
+
+async def test_xai_oauth_complete_login_rejections():
+    from voidswitch.services import xai_oauth
+
+    # Unknown/expired state.
+    with pytest.raises(xai_oauth.LoginError):
+        await xai_oauth.complete_login("code", "no-such-state", provider_id=7)
+
+    # Provider mismatch burns the state.
+    _, state = xai_oauth.begin_login(7)
+    with pytest.raises(xai_oauth.LoginError):
+        await xai_oauth.complete_login("code", state, provider_id=999)
+    assert xai_oauth._login_states.peek(state) is None
+
+    # Embedded state in the pasted URL disagrees with the login's state.
+    _, state = xai_oauth.begin_login(7)
+    with pytest.raises(xai_oauth.LoginError):
+        await xai_oauth.complete_login(
+            "http://127.0.0.1:56121/callback?code=X&state=WRONG",
+            state,
+            provider_id=7,
+            session=None,
+        )
+    assert xai_oauth._login_states.peek(state) is None
+
+    # A definitive upstream rejection (spent/invalid code) burns the state too.
+    _, state = xai_oauth.begin_login(7)
+
+    async def reject(payload, routes, **kwargs):
+        raise xai_oauth.LoginError("Invalid or unknown authorization code")
+
+    original = xai_oauth._post_token
+    xai_oauth._post_token = reject  # type: ignore[assignment]
+    try:
+        with pytest.raises(xai_oauth.LoginError):
+            await xai_oauth.complete_login(
+                f"http://127.0.0.1:56121/callback?code=SPENT&state={state}",
+                state,
+                provider_id=7,
+                session=None,
+            )
+    finally:
+        xai_oauth._post_token = original  # type: ignore[assignment]
+    assert xai_oauth._login_states.peek(state) is None
 
 
 async def test_routes_for_provider_proxy_modes():

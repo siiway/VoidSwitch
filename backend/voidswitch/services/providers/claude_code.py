@@ -34,6 +34,7 @@ class ClaudeCodeProvider(AnthropicProvider):
     refresh_on_invalid_key = True
     supports_import = True
     supports_refresh = True
+    supports_oauth = True
 
     async def resolve_credential(
         self,

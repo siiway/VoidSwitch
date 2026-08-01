@@ -25,7 +25,10 @@
   凭证包会在临近过期、缺少 access token 或收到 401 时，自动用 `refresh_token`
   向 `https://auth.x.ai/oauth2/token`（grok-cli 客户端）换取新的 access token，
   并把轮换后的凭证包回写到密钥。因此从 sub2api 导入的、仅含 `refresh_token`
-  的 Grok 账号也能在 `xai` 供应商上直接使用。
+  的 Grok 账号也能在 `xai` 供应商上直接使用。`api.x.ai` 对**无效密钥**返回的是
+  HTTP 400（`Incorrect API key`）或 401（`No credentials`），网关据此把密钥标记为失效；
+  而 HTTP **403**（地区/权限/风控等原因）被视为**临时错误**——只做轮换重试、冷却，
+  **不会**禁用一个本身可用的密钥。
 - **`grok`** 适配器对接 `console.x.ai` 网页后端（参考
   [grok2api](https://github.com/jiujiu532/grok2api)），密钥填**SSO Token**——
   即登录 console.x.ai 后浏览器 `sso` Cookie 的值（可带或不带 `sso=` 前缀）。
@@ -37,6 +40,31 @@
 并注入推理强度与联网搜索工具。若上游需要 `cf_clearance`，在**额外请求头**里以
 `Cookie: cf_clearance=...` 追加即可（会拼接到 SSO Cookie 之后，而非覆盖）。
 SSO Token 过期会被识别为密钥失效（401/403），匿名配额耗尽（429）会触发限流冷却。
+:::
+
+::: tip Grok Build（OAuth 订阅登录）
+`grok-build` 适配器对接 Grok CLI（`grok` 命令行）的订阅后端
+`https://cli-chat-proxy.grok.com/v1`，默认模型 `grok-4.5`。它复用 grok-cli 的公共 OAuth
+客户端（`b1a00492-…`），凭证会在临近过期时自动用 `refresh_token` 刷新。这是 Grok CLI 的
+**订阅额度**，与 `xai`（官方 API Key）、`grok`（console.x.ai 网页后端）相互独立。
+
+**添加密钥（OAuth 登录）：** 新建一个 `grok-build` 供应商后，进入其**密钥**页，
+按“Grok Build 订阅登录”卡片操作：
+
+1. 点击**开始登录**，在弹出的浏览器页面用 xAI 账号授权。
+2. 授权后浏览器会跳转到 `http://127.0.0.1:56121/callback`——由于网关运行在服务端，
+   该地址**无法打开是正常现象**。请从浏览器地址栏**完整复制**这个回调 URL。
+3. 把完整 URL 粘贴回**完成登录**输入框并提交，网关会用其中的授权码换取凭证包
+   （`access_token` / `refresh_token`）并保存为一条密钥。
+
+与 `xai` 一致，`grok-build` 对无效凭证（HTTP 400 `Incorrect API key` / 401）会标记密钥失效，
+而 HTTP **403**（地区/权限/风控）视为**临时错误**——仅轮换重试与冷却，不禁用可用密钥。
+:::
+
+::: warning Grok Build 合规与账号风险
+`grok-build` 复用了 Grok CLI 的公共 OAuth 客户端与私有 `cli-chat-proxy` 端点，属于对官方
+客户端的**逆向复用**，可能违反 xAI 服务条款，并存在账号被限制/封禁的风险。请自行评估后使用，
+并优先考虑官方 `xai` API Key。
 :::
 
 ## 关键设置

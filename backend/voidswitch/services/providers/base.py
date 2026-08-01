@@ -54,6 +54,11 @@ class BaseProvider:
     # implementation set this True.
     supports_refresh: bool = False
 
+    # Whether the dashboard offers an interactive OAuth sign-in panel for this
+    # provider type (e.g. Claude Code, Grok Build). Backed by an oauth module
+    # exposing begin_login/complete_login (see api/admin/keys.py).
+    supports_oauth: bool = False
+
     def __init__(self, record: Provider) -> None:
         self.record = record
 

@@ -43,10 +43,13 @@
 | --- | --- | --- | :---: | :---: | :---: |
 | `claude-code` | Anthropic Messages | `https://api.anthropic.com` | — | ✓ | ✓ |
 | `xai` | OpenAI Chat | `https://api.x.ai/v1` | — | ✓ | ✓ |
+| `grok-build` | OpenAI Chat | `https://cli-chat-proxy.grok.com/v1` | — | — | ✓ |
 | `grok` | OpenAI Responses | `https://console.x.ai/v1` | — | ✓ | — |
 
-::: tip Grok（`xai` vs `grok`）
+::: tip Grok（`xai` vs `grok-build` vs `grok`）
 - `xai` 对接官方 `api.x.ai`，密钥可为标准 API Key 或 xAI **OAuth 凭证包**（自动刷新）。
+- `grok-build` 对接 Grok CLI 订阅后端 `cli-chat-proxy.grok.com`，通过 **OAuth 登录**获取凭证（自动刷新），
+  默认模型 `grok-4.5`。这是 grok 命令行工具的订阅额度，与 `xai` API、`grok` 网页后端相互独立。
 - `grok` 对接 `console.x.ai` 网页后端（参考
   [grok2api](https://github.com/jiujiu532/grok2api)），密钥填 **SSO Token**。
 

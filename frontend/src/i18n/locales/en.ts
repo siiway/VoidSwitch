@@ -291,7 +291,7 @@ const en = {
     cleanupFailed: "Cleanup failed",
     oauthStartFailed: "Could not start sign-in",
     oauthSignedIn: "Signed in",
-    oauthCredentialAdded: "Claude subscription credential added",
+    oauthCredentialAdded: "Subscription credential added",
     oauthSignInFailed: "Sign-in failed",
     addFailed: "Add failed",
     updated: "Key updated",
@@ -304,6 +304,20 @@ const en = {
     allPools: "All pools",
     rescanning: "Rescanning…",
     pasteClaudeCode: "Paste the code from Claude",
+    pasteGrokBuildCode: "Paste the callback URL from Grok Build",
+    grokBuildOAuthHint:
+      "Sign in with a Grok Build (grok CLI) subscription to add an OAuth credential",
+    oauthTitleClaude: "Sign in with Claude (OAuth)",
+    oauthTitleGrokBuild: "Sign in with Grok Build (OAuth)",
+    oauthDescClaude:
+      "Use a Claude Pro/Max subscription instead of an API key. This opens Claude's authorization page in a new tab; after approving, copy the code it shows (looks like code#state) and paste it back here.",
+    oauthDescGrokBuild:
+      "Use a Grok Build (grok CLI) subscription instead of an API key. This opens xAI's authorization page in a new tab. After approving, the browser redirects to http://127.0.0.1:56121/callback and shows a page that fails to load — that is expected. Copy the full URL from the address bar and paste it back here.",
+    oauthStart: "Start sign-in",
+    oauthComplete: "Complete sign-in",
+    oauthPlaceholderClaude: "abc123…#xyz789…",
+    oauthPlaceholderGrokBuild:
+      "http://127.0.0.1:56121/callback?code=…&state=…",
     keyPoolHint: "Key pool (optional tag — e.g. leaked, members)",
     noBalanceDays: "No balance for ≥ (days)",
     noBalanceDaysHint:

@@ -39,7 +39,7 @@ from voidswitch.models.schemas import (
     ClaudeOAuthComplete,
     ClaudeOAuthStart,
 )
-from voidswitch.services import auth_import, keymgmt, oauth_tokens
+from voidswitch.services import auth_import, keymgmt, oauth_tokens, xai_oauth
 
 router = APIRouter(prefix="/api/admin/providers/{provider_id}/keys", tags=["admin:keys"])
 
@@ -252,16 +252,31 @@ async def delete_key(
 
 
 # --------------------------------------------------------------------------- #
-# Claude Code subscription OAuth login (claude-code providers only)
+# Subscription OAuth login (claude-code + grok-build providers)
 # --------------------------------------------------------------------------- #
 
+# Each entry maps a provider type to the service module that implements the
+# manual redirect-paste OAuth flow (begin_login / complete_login / parse_bundle
+# + LoginError / LoginUpstreamError). Both modules share the same public shape.
+_OAUTH_MODULES = {
+    "claude-code": oauth_tokens,
+    "grok-build": xai_oauth,
+}
 
-def _require_claude_code(provider: Provider) -> None:
-    if provider.type != "claude-code":
+_OAUTH_DEFAULT_NOTE = {
+    "claude-code": "Claude subscription (OAuth)",
+    "grok-build": "Grok Build (OAuth)",
+}
+
+
+def _oauth_module(provider: Provider):
+    module = _OAUTH_MODULES.get(provider.type)
+    if module is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "OAuth login is only available for claude-code providers.",
+            "OAuth login is not available for this provider.",
         )
+    return module
 
 
 @router.post("/oauth/start", response_model=ClaudeOAuthStart)
@@ -271,10 +286,10 @@ async def oauth_start(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
 ) -> ClaudeOAuthStart:
-    """Begin a Claude subscription OAuth login: return the authorize URL + state."""
+    """Begin a subscription OAuth login: return the authorize URL + state."""
     provider = await _get_provider(session, provider_id)
-    _require_claude_code(provider)
-    authorize_url, state = oauth_tokens.begin_login(provider_id)
+    module = _oauth_module(provider)
+    authorize_url, state = module.begin_login(provider_id)
     await record_audit(
         session,
         action=AuditAction.KEY_OAUTH_START,
@@ -299,14 +314,14 @@ async def oauth_complete(
 ) -> ApiKey:
     """Exchange the pasted code for a credential bundle and store it as a key."""
     provider = await _get_provider(session, provider_id)
-    _require_claude_code(provider)
+    module = _oauth_module(provider)
     try:
-        bundle = await oauth_tokens.complete_login(
+        bundle = await module.complete_login(
             body.code, body.state, provider_id=provider_id, session=session
         )
-    except oauth_tokens.LoginError as exc:
+    except module.LoginError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    except oauth_tokens.LoginUpstreamError as exc:
+    except module.LoginUpstreamError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
     # Each successful login mints a distinct credential (the access/refresh
@@ -320,7 +335,7 @@ async def oauth_complete(
         key_hash=hash_token(plaintext),
         key_preview=keymgmt.oauth_preview(bundle),
         status=KeyStatus.ACTIVE.value,
-        note=body.note or "Claude subscription (OAuth)",
+        note=body.note or _OAUTH_DEFAULT_NOTE.get(provider.type, "Subscription (OAuth)"),
         added_by=user.id,
         added_by_name=actor_display_name(user),
     )
