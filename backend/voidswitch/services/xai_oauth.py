@@ -84,14 +84,19 @@ DEFAULT_EXPIRES_IN = 21600  # xAI access tokens live ~6h when unspecified
 # address bar and pastes it back (``extract_code`` parses ``?code=&state=``).
 AUTHORIZE_URL = "https://auth.x.ai/oauth2/authorize"
 REDIRECT_URI = "http://127.0.0.1:56121/callback"
-# Grok Build entitlement — the CLI-chat-proxy scope set WITHOUT ``api:access``
-# (that extra scope is what distinguishes a plain api.x.ai OAuth grant).
+# Grok Build entitlement. The CLI-chat-proxy backend (cli-chat-proxy.grok.com)
+# rejects tokens that lack ``api:access`` with HTTP 403
+# ``{"code":"permission-denied","error":"OAuth2 token missing required scope:
+# api:access"}``, so it MUST be requested at authorization time. OAuth refresh can
+# only narrow scopes, never add them, so an ``api:access``-less login token can
+# never be upgraded — the scope has to be granted in the authorize request.
 LOGIN_SCOPES = (
     "openid",
     "profile",
     "email",
     "offline_access",
     "grok-cli:access",
+    "api:access",
 )
 LOGIN_STATE_TTL_SECONDS = 600  # pending logins expire after 10 minutes
 

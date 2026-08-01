@@ -795,10 +795,11 @@ async def test_xai_oauth_begin_login_and_extract_code():
     assert params["code_challenge"]  # PKCE challenge present
     assert params["redirect_uri"] == ["http://127.0.0.1:56121/callback"]
     assert params["state"] == [state]
-    # Grok Build entitlement: grok-cli:access WITHOUT api:access.
+    # Grok Build entitlement: cli-chat-proxy requires BOTH grok-cli:access and
+    # api:access (a login token lacking api:access is rejected with HTTP 403).
     scope = params["scope"][0]
     assert "grok-cli:access" in scope
-    assert "api:access" not in scope
+    assert "api:access" in scope
 
     # extract_code accepts the full callback URL, a bare code, and code#state.
     assert xai_oauth.extract_code(
