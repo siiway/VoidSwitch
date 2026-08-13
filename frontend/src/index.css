@@ -12,6 +12,13 @@ body,
   box-sizing: border-box;
 }
 
+/* Badges must never wrap (CJK breaks anywhere) or shrink inside flex
+   containers — a pill like 「已启用」 must stay on one line. */
+.fui-Badge {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 html {
   background-color: #ffffff;
   color-scheme: light;
