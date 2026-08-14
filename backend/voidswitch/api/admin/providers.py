@@ -30,7 +30,7 @@ from voidswitch.core.security import (
     generate_provider_api_token,
     hash_token,
 )
-from voidswitch.models.db import Provider, Proxy, User
+from voidswitch.models.db import ApiKey, Provider, Proxy, User
 from voidswitch.models.schemas import (
     ProviderCreate,
     ProviderKeyApiOut,
@@ -488,9 +488,41 @@ async def provider_catalog(_: User = Depends(require_staff)) -> list[dict[str, o
     return adapter_catalog()
 
 
+@router.get("/{provider_id}/fetch-models/keys")
+async def fetch_models_keys(
+    provider_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_staff),
+) -> list[dict[str, int | str]]:
+    """Return non-invalid, non-oauth keys for a provider (safe to use as fetch token).
+
+    Only id, note, and pool are returned — the key secret is never sent to the
+    frontend.  OAuth bundle keys are excluded because their stored secret is a JSON
+    bundle, not a plain bearer token.
+    """
+    provider = await _get_provider_or_404(session, provider_id)
+    result: list[dict[str, int | str]] = []
+    for idx, key in enumerate(provider.keys, 1):
+        if key.status == KeyStatus.INVALID.value:
+            continue
+        # Exclude OAuth bundle keys (they store a JSON object, not a plain token)
+        preview = key.key_preview or ""
+        if preview.startswith("{") or preview.startswith("["):
+            continue
+        result.append({
+            "id": key.id,
+            "index": idx,
+            "note": key.note or "",
+            "pool": key.pool or "",
+            "status": key.status,
+        })
+    return result
+
+
 class FetchModelsRequest(BaseModel):
     base_url: str
-    token: str
+    token: str = ""
+    key_id: int | None = None  # use an existing key (decrypted server-side)
     method: str = "GET"
     path: str = "/models"
 
@@ -498,12 +530,26 @@ class FetchModelsRequest(BaseModel):
 @router.post("/fetch-models")
 async def fetch_provider_models(
     body: FetchModelsRequest,
+    session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
 ) -> dict:
     """Proxy a GET/POST call to a provider's model-listing endpoint.
 
     Avoids CORS when the admin dashboard tries to call the provider API directly.
+    Accepts either a plaintext token or a key_id (whose secret is decrypted
+    server-side, so the actual key never travels to the browser).
     """
+    # Resolve token: prefer key_id (server-side decrypt), fall back to plain token.
+    token = body.token
+    if body.key_id is not None:
+        key = await session.get(ApiKey, body.key_id)
+        if key is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+        settings = get_settings()
+        token = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
+    if not token:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Either token or key_id is required.")
+
     url = _fetch_models_url(body.base_url, body.path)
     method = body.method.upper()
     if method not in ("GET", "POST"):
@@ -517,7 +563,7 @@ async def fetch_provider_models(
             timeout=httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=5.0),
             follow_redirects=False,
         ) as client:
-            headers = {"Authorization": f"Bearer {body.token}"}
+            headers = {"Authorization": f"Bearer {token}"}
             if method == "GET":
                 r = await client.get(url, headers=headers)
             else:

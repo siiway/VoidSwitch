@@ -20,6 +20,7 @@ import {
   TableHeader,
   TableHeaderCell,
   TableRow,
+  Text,
   Textarea,
   Tooltip,
   tokens,
@@ -37,7 +38,7 @@ import {
   KeyRegular,
   ShieldKeyholeRegular,
 } from "@fluentui/react-icons";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api, API_BASE } from "../api/client";
@@ -188,6 +189,15 @@ export function Providers() {
   const [keyApiToken, setKeyApiToken] = useState("");
   const [keyApiBusy, setKeyApiBusy] = useState(false);
   const [revealOpen, setRevealOpen] = useState(false);
+  // Key picker for fetch-models
+  const [keyPickerOpen, setKeyPickerOpen] = useState(false);
+  const [keyPickerKeys, setKeyPickerKeys] = useState<{ id: number; index: number; note: string; pool: string; status: string }[]>([]);
+  const [keyPickerLoading, setKeyPickerLoading] = useState(false);
+  // Provider filtering
+  const [providerSearch, setProviderSearch] = useState("");
+  const [providerFilterType, setProviderFilterType] = useState("");
+  const [providerFilterAddedBy, setProviderFilterAddedBy] = useState("");
+  const [providerFilterEnabled, setProviderFilterEnabled] = useState("");
 
   const phKeys = [
     ...new Set(
@@ -260,9 +270,16 @@ export function Providers() {
       const url = form.base_url.replace(/\{(\w+)\}/g, (_, k: string) =>
         placeholderVals[k]?.trim() || `{${k}}`,
       );
+      const body: Record<string, unknown> = { base_url: url, method: fetchMethod, path: fetchPath };
+      const kp = fetchToken.match(/^key_id:(\d+)$/);
+      if (kp) {
+        body.key_id = Number(kp[1]);
+      } else {
+        body.token = fetchToken;
+      }
       const { models } = await api.post<{ models: string[] }>(
         "/api/admin/providers/fetch-models",
-        { base_url: url, token: fetchToken, method: fetchMethod, path: fetchPath },
+        body,
       );
       if (!models?.length) throw new Error("No models found in response");
       const sorted = [...models].sort();
@@ -274,6 +291,71 @@ export function Providers() {
       setFetching(false);
     }
   }
+
+  async function openKeyPicker() {
+    if (!form?.id) return;
+    setKeyPickerLoading(true);
+    setKeyPickerOpen(true);
+    try {
+      const keys = await api.get<{ id: number; index: number; note: string; pool: string; status: string }[]>(
+        `/api/admin/providers/${form.id}/fetch-models/keys`,
+      );
+      setKeyPickerKeys(keys);
+    } catch (e) {
+      notify(
+        t("providers.keyApiActionFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setKeyPickerLoading(false);
+    }
+  }
+
+  function selectKeyForFetch(keyId: number) {
+    setFetchToken(`key_id:${keyId}`);
+    setKeyPickerOpen(false);
+  }
+
+  // Filtered providers list
+  const filteredProviders = useMemo(() => {
+    if (!providers.data) return [];
+    let list = providers.data;
+    const s = providerSearch.trim().toLowerCase();
+    if (s) {
+      list = list.filter((p) =>
+        p.name.toLowerCase().includes(s) ||
+        p.type.toLowerCase().includes(s) ||
+        (p.base_url ?? "").toLowerCase().includes(s) ||
+        (p.added_by_name ?? "").toLowerCase().includes(s) ||
+        (p.models ?? []).some((m) => m.toLowerCase().includes(s))
+      );
+    }
+    if (providerFilterType) {
+      list = list.filter((p) => p.type === providerFilterType);
+    }
+    if (providerFilterAddedBy) {
+      list = list.filter((p) => (p.added_by_name ?? "") === providerFilterAddedBy);
+    }
+    if (providerFilterEnabled === "enabled") {
+      list = list.filter((p) => p.enabled);
+    } else if (providerFilterEnabled === "disabled") {
+      list = list.filter((p) => !p.enabled);
+    }
+    return list;
+  }, [providers.data, providerSearch, providerFilterType, providerFilterAddedBy, providerFilterEnabled]);
+
+  const allTypes = useMemo(() => {
+    const types = new Set<string>();
+    (providers.data ?? []).forEach((p) => types.add(p.type));
+    return [...types].sort();
+  }, [providers.data]);
+
+  const allAddedBy = useMemo(() => {
+    const names = new Set<string>();
+    (providers.data ?? []).forEach((p) => { if (p.added_by_name) names.add(p.added_by_name); });
+    return [...names].sort();
+  }, [providers.data]);
 
   function applyFetchedModels(mode: "prepend" | "append" | "replace") {
     if (!form || !selectedIds.size) return;
@@ -487,21 +569,104 @@ export function Providers() {
       ) : providers.error ? (
         <ErrorText error={providers.error} />
       ) : (
-        <DataTable ariaLabel={t("providers.title" as TK)}>
-          <TableHeader>
-            <TableRow>
-              <TableHeaderCell>{t("providers.name" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("providers.type" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("providers.baseUrl" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("providers.keys" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("providers.addedBy" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("providers.priority" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("providers.status" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("providers.actions" as TK)}</TableHeaderCell>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(providers.data ?? []).map((p) => (
+        <>
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "center",
+              marginBottom: 12,
+            }}
+          >
+            <Input
+              placeholder={t("providers.providerFilterSearch" as TK)}
+              style={{ flex: "1 1 240px", minWidth: 200 }}
+              value={providerSearch}
+              onChange={(_, d) => setProviderSearch(d.value)}
+            />
+            <Dropdown
+              style={{ minWidth: 150 }}
+              placeholder={t("providers.providerFilterAllTypes" as TK)}
+              value={
+                providerFilterType
+                  ? providerFilterType
+                  : t("providers.providerFilterAllTypes" as TK)
+              }
+              selectedOptions={providerFilterType ? [providerFilterType] : []}
+              onOptionSelect={(_, d) =>
+                setProviderFilterType(d.optionValue ?? "")
+              }
+            >
+              {allTypes.map((tpe) => (
+                <Option key={tpe} value={tpe} text={tpe}>
+                  {tpe}
+                </Option>
+              ))}
+            </Dropdown>
+            <Dropdown
+              style={{ minWidth: 150 }}
+              placeholder={t("providers.providerFilterAllAddedBy" as TK)}
+              value={
+                providerFilterAddedBy
+                  ? providerFilterAddedBy
+                  : t("providers.providerFilterAllAddedBy" as TK)
+              }
+              selectedOptions={providerFilterAddedBy ? [providerFilterAddedBy] : []}
+              onOptionSelect={(_, d) =>
+                setProviderFilterAddedBy(d.optionValue ?? "")
+              }
+            >
+              {allAddedBy.map((name) => (
+                <Option key={name} value={name} text={name}>
+                  {name}
+                </Option>
+              ))}
+            </Dropdown>
+            <Dropdown
+              style={{ minWidth: 150 }}
+              placeholder={t("providers.providerFilterAllStatus" as TK)}
+              value={
+                providerFilterEnabled === "enabled"
+                  ? t("providers.providerFilterEnabled" as TK)
+                  : providerFilterEnabled === "disabled"
+                    ? t("providers.providerFilterDisabled" as TK)
+                    : t("providers.providerFilterAllStatus" as TK)
+              }
+              selectedOptions={providerFilterEnabled ? [providerFilterEnabled] : []}
+              onOptionSelect={(_, d) =>
+                setProviderFilterEnabled(d.optionValue ?? "")
+              }
+            >
+              <Option
+                value="enabled"
+                text={t("providers.providerFilterEnabled" as TK)}
+              >
+                {t("providers.providerFilterEnabled" as TK)}
+              </Option>
+              <Option
+                value="disabled"
+                text={t("providers.providerFilterDisabled" as TK)}
+              >
+                {t("providers.providerFilterDisabled" as TK)}
+              </Option>
+            </Dropdown>
+          </div>
+          <DataTable ariaLabel={t("providers.title" as TK)}>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>{t("providers.name" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{t("providers.type" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{t("providers.baseUrl" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{t("providers.keys" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{t("providers.addedBy" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{t("providers.priority" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{t("providers.status" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{t("providers.actions" as TK)}</TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredProviders.map((p) => (
               <TableRow key={p.id}>
                 <TableCell>{p.name}</TableCell>
                 <TableCell>{p.type}</TableCell>
@@ -625,6 +790,7 @@ export function Providers() {
             ))}
           </TableBody>
         </DataTable>
+        </>
       )}
 
       <Dialog
@@ -796,6 +962,18 @@ export function Providers() {
                       onChange={(_, d) => setFetchToken(d.value)}
                     />
                   </Field>
+                  {form?.id ? (
+                    <div>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<KeyRegular />}
+                        onClick={openKeyPicker}
+                      >
+                        {t("providers.useExistingKey" as TK)}
+                      </Button>
+                    </div>
+                  ) : null}
                   <Button
                     appearance="primary"
                     disabled={fetching || !fetchToken || !form?.base_url || (phKeys.length > 0 && !allPhFilled)}
@@ -1114,6 +1292,61 @@ export function Providers() {
                 onClick={save}
               >
                 {form?.id ? t("common.save" as TK) : t("common.create" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={keyPickerOpen}
+        onOpenChange={(_, d) => !d.open && setKeyPickerOpen(false)}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>
+              {t("providers.useExistingKeyTitle" as TK)}
+            </DialogTitle>
+            <DialogContent
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                paddingTop: 8,
+                minWidth: 360,
+              }}
+            >
+              {keyPickerLoading ? (
+                <div style={{ display: "flex", justifyContent: "center", padding: 16 }}>
+                  <Spinner size="small" />
+                </div>
+              ) : keyPickerKeys.length === 0 ? (
+                <Text style={{ color: tokens.colorNeutralForeground3 }}>
+                  {t("providers.useExistingKeyNoKeys" as TK)}
+                </Text>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {keyPickerKeys.map((k) => (
+                    <Button
+                      key={k.id}
+                      appearance="subtle"
+                      style={{ justifyContent: "flex-start" }}
+                      onClick={() => selectKeyForFetch(k.id)}
+                    >
+                      {t("providers.useExistingKeyNum" as TK).replace("{index}", String(k.index))}
+                      {k.pool ? ` · ${k.pool}` : ""}
+                      {k.note ? ` · ${k.note}` : ""}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="secondary"
+                onClick={() => setKeyPickerOpen(false)}
+              >
+                {t("common.cancel" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
