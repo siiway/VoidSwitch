@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.core.audit import AuditAction, AuditScope, record_audit
@@ -133,3 +135,55 @@ async def clean_logs_now(
         scope=AuditScope.ADMIN.value,
     )
     return result
+
+
+class StaticProxyTestRequest(BaseModel):
+    url: str = ""
+    probe_url: str = "https://api.openai.com/v1/models"
+
+
+@router.post("/test-static-proxy")
+async def test_static_proxy(
+    body: StaticProxyTestRequest,
+    _: User = Depends(require_staff),
+) -> dict[str, object]:
+    """Test a static proxy URL by making a lightweight probe request through it.
+
+    Returns success/failure with latency and diagnostic detail — the same kind of
+    probe the proxy resurrector uses, so an operator can validate a proxy URL
+    before saving it.
+    """
+    proxy_url = body.url.strip()
+    probe_url = body.probe_url.strip() or "https://api.openai.com/v1/models"
+    if not proxy_url:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Proxy URL is required.")
+    try:
+        proxy = httpx.Proxy(proxy_url)
+        transport = httpx.AsyncHTTPTransport(proxy=proxy)
+        async with httpx.AsyncClient(
+            transport=transport,
+            timeout=httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=5.0),
+            follow_redirects=False,
+        ) as client:
+            import time
+            start = time.monotonic()
+            r = await client.get(probe_url)
+            latency_ms = (time.monotonic() - start) * 1000.0
+            return {
+                "ok": True,
+                "status_code": r.status_code,
+                "latency_ms": round(latency_ms, 1),
+                "error": None,
+            }
+    except httpx.ProxyError as exc:
+        return {"ok": False, "status_code": None, "latency_ms": None,
+                "error": f"Proxy error: {exc}"}
+    except httpx.ConnectError as exc:
+        return {"ok": False, "status_code": None, "latency_ms": None,
+                "error": f"Connect error: {exc}"}
+    except httpx.TimeoutException as exc:
+        return {"ok": False, "status_code": None, "latency_ms": None,
+                "error": f"Timeout: {exc}"}
+    except Exception as exc:
+        return {"ok": False, "status_code": None, "latency_ms": None,
+                "error": f"{type(exc).__name__}: {exc}"}

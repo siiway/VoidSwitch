@@ -182,4 +182,11 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # /v1/messages).
     "call_rate_limit_window_seconds": 60,
     "call_rate_limit_max_requests": 0,
+    # Outbound connection pool sizing. Tune these up for high-concurrency streaming
+    # workloads to avoid PoolTimeout; tune them down if memory/port pressure is a
+    # concern. Effective only after a restart (new clients are created with the
+    # current value at that point, and existing clients are not retroactively
+    # resized).
+    "max_connections": 400,
+    "max_keepalive_connections": 150,
 }

@@ -39,6 +39,9 @@ async def ensure_defaults(session: AsyncSession) -> None:
         if old_key in rows and new_key not in rows:
             session.add(Setting(key=new_key, value=rows[old_key].value))
             rows[new_key] = rows[old_key]  # mark present so the default isn't seeded
+        # Delete the old-name row so it doesn't surface in load_all or the UI.
+        if old_key in rows:
+            await session.delete(rows[old_key])
     for key, value in DEFAULT_SETTINGS.items():
         if key not in rows:
             session.add(Setting(key=key, value=value))
@@ -51,6 +54,11 @@ async def load_all(session: AsyncSession) -> dict[str, Any]:
     rows = (await session.execute(select(Setting))).scalars().all()
     merged: dict[str, Any] = dict(DEFAULT_SETTINGS)
     for row in rows:
+        # Skip renamed keys so their old value doesn't leak into the returned dict
+        # under the obsolete name (the current key was already migrated by
+        # ensure_defaults and any new-name row already carries the value).
+        if row.key in _RENAMED_KEYS:
+            continue
         merged[row.key] = row.value
     async with _lock:
         _cache.clear()

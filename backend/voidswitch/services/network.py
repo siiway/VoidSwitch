@@ -15,8 +15,13 @@ from voidswitch.core.logging import get_logger
 
 log = get_logger("network")
 
-# Conservative-but-generous pool sizing for a high-throughput gateway.
-_LIMITS = httpx.Limits(max_connections=200, max_keepalive_connections=80)
+
+def _build_limits() -> httpx.Limits:
+    from voidswitch.services.settings_store import get_int
+
+    max_conns = get_int("max_connections", 400)
+    max_keep = get_int("max_keepalive_connections", 150)
+    return httpx.Limits(max_connections=max_conns, max_keepalive_connections=max_keep)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,11 +42,12 @@ def _is_socks(url: str) -> bool:
 
 def build_transport(route: Route, *, retries: int = 0) -> httpx.AsyncBaseTransport:
     """Construct an async transport implementing the requested route."""
+    limits = _build_limits()
     if route.proxy_url and _is_socks(route.proxy_url):
         # SOCKS proxying via httpx-socks. local_address is applied when supported.
         from httpx_socks import AsyncProxyTransport
 
-        kwargs: dict[str, object] = {"limits": _LIMITS, "retries": retries}
+        kwargs: dict[str, object] = {"limits": limits, "retries": retries}
         if route.local_address:
             kwargs["local_address"] = (route.local_address, 0)
         try:
@@ -55,7 +61,7 @@ def build_transport(route: Route, *, retries: int = 0) -> httpx.AsyncBaseTranspo
     return httpx.AsyncHTTPTransport(
         proxy=proxy,
         local_address=route.local_address,
-        limits=_LIMITS,
+        limits=limits,
         retries=retries,
         http2=False,
     )
@@ -89,11 +95,12 @@ class ClientPool:
                 write=read_timeout,
                 pool=connect_timeout,
             )
+            limits = _build_limits()
             client = httpx.AsyncClient(
                 transport=build_transport(route),
                 timeout=timeout,
                 follow_redirects=False,
-                limits=_LIMITS,
+                limits=limits,
             )
             self._clients[key] = client
             log.debug(

@@ -5,6 +5,7 @@ import {
   Input,
   Option,
   SpinButton,
+  Spinner,
   Switch,
   Text,
   tokens,
@@ -69,6 +70,8 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
       "request_timeout_seconds",
       "stream_idle_timeout_seconds",
       "max_retries",
+      "max_connections",
+      "max_keepalive_connections",
     ],
   },
   {
@@ -125,6 +128,9 @@ const DEPENDENT_ON: Record<string, string> = {
   log_cleanup_interval_seconds: "log_cleanup_enabled",
 };
 
+// Keys that were renamed / removed and should never appear in the UI.
+const HIDDEN_KEYS = new Set(["proxy_resurrector_enabled"]);
+
 export function Settings() {
   const { t } = useTranslation();
   const notify = useNotify();
@@ -142,6 +148,8 @@ export function Settings() {
   const [cleaning, setCleaning] = useState(false);
   const [rotatingLoginToken, setRotatingLoginToken] = useState(false);
   const [newLoginToken, setNewLoginToken] = useState<string | null>(null);
+  const [testingProxy, setTestingProxy] = useState(false);
+  const [proxyTestResult, setProxyTestResult] = useState<string | null>(null);
 
   useEffect(() => {
     if (loaded.data) setValues(loaded.data.values);
@@ -231,6 +239,35 @@ export function Settings() {
     }
   }
 
+  async function testStaticProxy() {
+    const url = String(values.static_proxy_url ?? "").trim();
+    if (!url) {
+      notify(t("settings.testStaticProxyFail" as TK), "No URL provided", "error");
+      return;
+    }
+    setTestingProxy(true);
+    setProxyTestResult(null);
+    try {
+      const r = await api.post<{ ok: boolean; status_code: number | null; latency_ms: number | null; error: string | null }>(
+        "/api/admin/settings/test-static-proxy",
+        { url },
+      );
+      if (r.ok) {
+        setProxyTestResult(t("settings.testStaticProxyOk" as TK) + ` (${r.status_code}, ${r.latency_ms}ms)`);
+        notify(t("settings.testStaticProxyOk" as TK), `${r.status_code}, ${r.latency_ms}ms`, "success");
+      } else {
+        setProxyTestResult(`${t("settings.testStaticProxyFail" as TK)}: ${r.error}`);
+        notify(t("settings.testStaticProxyFail" as TK), r.error ?? "", "error");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setProxyTestResult(`${t("settings.testStaticProxyFail" as TK)}: ${msg}`);
+      notify(t("settings.testStaticProxyFail" as TK), msg, "error");
+    } finally {
+      setTestingProxy(false);
+    }
+  }
+
   const labels = useMemo<Record<string, string>>(
     () => ({
       max_proxy_failures: t("settings.maxProxyFailures" as TK),
@@ -263,6 +300,8 @@ export function Settings() {
       logs_page_size: t("settings.logsPageSize" as TK),
       proxy_switching_enabled: t("settings.proxySwitchingEnabled" as TK),
       static_proxy_url: t("settings.staticProxyUrl" as TK),
+      max_connections: t("settings.maxConnections" as TK),
+      max_keepalive_connections: t("settings.maxKeepaliveConnections" as TK),
       announcements_home_count: t("settings.announcementsHomeCount" as TK),
     }),
     [t],
@@ -333,15 +372,45 @@ export function Settings() {
         </Field>
       );
     }
-    return (
-      <Field key={key} label={label}>
-        <Input
-          value={String(value)}
-          disabled={!isOwner}
-          onChange={(_, d) => set(key, d.value)}
-        />
-      </Field>
-    );
+    if (typeof value === "string") {
+      if (key === "static_proxy_url") {
+        return (
+          <Field key={key} label={label}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <Input
+                value={value}
+                disabled={!isOwner}
+                style={{ flex: 1 }}
+                onChange={(_, d) => set(key, d.value)}
+              />
+              <Button
+                size="small"
+                disabled={!isOwner || testingProxy || !value}
+                icon={testingProxy ? <Spinner size="extra-tiny" /> : undefined}
+                onClick={testStaticProxy}
+              >
+                {testingProxy ? t("settings.testingStaticProxy" as TK) : t("settings.testStaticProxy" as TK)}
+              </Button>
+            </div>
+            {proxyTestResult ? (
+              <Text size={200} style={{ color: tokens.colorNeutralForeground3, marginTop: 4, display: "block" }}>
+                {proxyTestResult}
+              </Text>
+            ) : null}
+          </Field>
+        );
+      }
+      return (
+        <Field key={key} label={label}>
+          <Input
+            value={value}
+            disabled={!isOwner}
+            onChange={(_, d) => set(key, d.value)}
+          />
+        </Field>
+      );
+    }
+    return null;
   }
 
   function renderRateLimitRow(labelKey: TK, windowKey: string, maxKey: string) {
@@ -387,7 +456,7 @@ export function Settings() {
   if (loaded.loading) return <Loading />;
   if (loaded.error) return <ErrorText error={loaded.error} />;
 
-  const known = new Set([...SECTIONS.flatMap((s) => s.keys), ...RATE_LIMIT_KEYS]);
+  const known = new Set([...SECTIONS.flatMap((s) => s.keys), ...RATE_LIMIT_KEYS, ...HIDDEN_KEYS]);
   const otherKeys = Object.keys(values).filter((k) => !known.has(k));
   const sections = [
     ...SECTIONS,
