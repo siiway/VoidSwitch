@@ -55,11 +55,15 @@ _NETWORK_ERRORS = (
     httpx.ConnectTimeout,
     httpx.ReadTimeout,
     httpx.WriteTimeout,
-    httpx.PoolTimeout,
     httpx.ProxyError,
     httpx.RemoteProtocolError,
     httpx.NetworkError,
 )
+
+# PoolTimeout means the connection pool was exhausted — this is a gateway
+# capacity/concurrency issue, NOT a proxy fault. Treating it as a proxy failure
+# cascades: fewer proxies → more PoolTimeouts → more disabled proxies → collapse.
+_POOL_TIMEOUT_ERRORS = (httpx.PoolTimeout,)
 
 
 def _utcnow() -> dt.datetime:
@@ -402,12 +406,14 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     last_error = "no upstream available"
     last_status = 502
     session_key = _session_key(req)
+    dispatch_started_at = _utcnow()
 
     # Per-attempt debug trail (only populated for debug-enabled tokens) and the
     # context of the most recent attempt — so that even a total failover
     # exhaustion is attributable to the provider / key / route / upstream model it
     # last tried (instead of a bare "provider —, route anthropic→?").
     debug_trail: list[dict[str, Any]] = []
+    attempt_summaries: list[dict[str, Any]] = []
     last_ctx: dict[str, Any] = {}
     last_outcome: _Attempt | None = None
 
@@ -514,6 +520,17 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     "upstream_style": upstream_style,
                     "upstream_model": upstream_model,
                 }
+                # Always record a lightweight attempt summary (for the detail modal).
+                attempt_summaries.append(
+                    _attempt_summary(
+                        attempt=attempts,
+                        provider=provider,
+                        key=key,
+                        adapter=adapter,
+                        upstream_model=upstream_model,
+                        outcome=outcome,
+                    )
+                )
                 if req.debug_enabled:
                     debug_trail.append(
                         _trail_entry(
@@ -529,9 +546,13 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 if outcome.network_error:
                     last_error = outcome.error or "network error"
                     last_status = 502
-                    _penalize_proxy(
-                        proxy, last_error, proxy_threshold, auto_disable=proxy_health_check
-                    )
+                    # PoolTimeout = connection pool saturation, NOT a proxy fault.
+                    # Penalising the proxy for this cascades failures: fewer proxies
+                    # → more PoolTimeout → more disabled proxies → collapse.
+                    if not outcome.is_pool_timeout:
+                        _penalize_proxy(
+                            proxy, last_error, proxy_threshold, auto_disable=proxy_health_check
+                        )
                     await session.flush()
                     continue  # keep key, next route
 
@@ -556,6 +577,8 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                         upstream_model=upstream_model,
                         attempts=attempts,
                         debug_attempts=debug_trail,
+                        attempt_summaries=attempt_summaries,
+                        started_at=dispatch_started_at,
                     )
 
                 if err_class in (ErrorClass.KEY_INVALID, ErrorClass.INSUFFICIENT_BALANCE):
@@ -633,6 +656,9 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     resp_headers=outcome.resp_headers,
                     resp_body=_resp_body_repr(outcome),
                     debug_attempts=debug_trail,
+                    attempt_summaries=attempt_summaries,
+                    started_at=dispatch_started_at,
+                    finished_at=_utcnow(),
                 )
                 return _passthrough_error(req, outcome, upstream_style)
 
@@ -658,6 +684,9 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         resp_headers=last_outcome.resp_headers if last_outcome else None,
         resp_body=_resp_body_repr(last_outcome) if last_outcome else None,
         debug_attempts=debug_trail,
+        attempt_summaries=attempt_summaries,
+        started_at=dispatch_started_at,
+        finished_at=_utcnow(),
     )
 
     # Distinguish "the gateway itself broke" from "no upstream could serve this
@@ -727,6 +756,7 @@ def _prepare_body(
 class _Attempt:
     network_error: bool = False
     error: str | None = None
+    is_pool_timeout: bool = False  # PoolTimeout: capacity issue, do NOT blame proxy
     status_code: int = 0
     body_bytes: bytes | None = None
     body_json: Any = None
@@ -841,6 +871,24 @@ async def _attempt(
             duration_ms=_elapsed_ms(),
             **req_meta,
         )
+    except _POOL_TIMEOUT_ERRORS as exc:
+        pool_ref = get_pool()
+        pool_info = f"pool clients={len(pool_ref._clients)}"
+        detail = (
+            f"PoolTimeout on {url!r} via proxy={route.proxy_url!r} "
+            f"({pool_info}). The connection pool is saturated under high concurrency. "
+            f"Increase max_connections in network.py or reduce concurrency. "
+            f"Proxy is NOT penalised for this. Original: {exc}"
+        )
+        log.warning("outbound_pool_timeout", url=url, proxy=route.proxy_url,
+                    pool_info=pool_info, error=str(exc))
+        return _Attempt(
+            network_error=True,
+            error=detail,
+            is_pool_timeout=True,
+            duration_ms=_elapsed_ms(),
+            **req_meta,
+        )
     except _NETWORK_ERRORS as exc:
         log.debug("outbound_network_error", url=url, error=f"{type(exc).__name__}: {exc}")
         return _Attempt(
@@ -929,6 +977,49 @@ def _trail_entry(
     }
 
 
+def _attempt_summary(
+    *,
+    attempt: int,
+    provider: Provider,
+    key: ApiKey,
+    adapter: BaseProvider,
+    upstream_model: str,
+    outcome: _Attempt,
+) -> dict[str, Any]:
+    """A lightweight, always-recorded summary of one failover attempt.
+
+    Unlike the debug trail, this is stored for every request (not debug-gated) so
+    the detail modal can show each attempt's outcome: failed attempts carry their
+    response/error, successful ones a single row. Full req/resp headers/bodies are
+    omitted — only the response body of a *failed* attempt is kept for diagnosis.
+    """
+    if outcome.network_error:
+        error_class = "network_error"
+        ok = False
+    else:
+        error_class = adapter.classify(outcome.status_code, outcome.body_json).value
+        ok = error_class == ErrorClass.OK.value
+    return {
+        "attempt": attempt,
+        "provider": provider.name,
+        "provider_id": provider.id,
+        "key_id": key.id,
+        "key_preview": key.key_preview or None,
+        "pool": key.pool or "",
+        "upstream_model": upstream_model,
+        "url": outcome.url,
+        "proxy_url": outcome.proxy_url,
+        "status_code": outcome.status_code or None,
+        "error_class": error_class,
+        "network_error": outcome.network_error,
+        "error": outcome.error,
+        # Keep the upstream error body so a failed attempt is diagnosable; omit
+        # the body on success (it's large and unneeded for a summary).
+        "resp_body": _resp_body_repr(outcome) if not ok else None,
+        "duration_ms": outcome.duration_ms,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Success finalisation (stream + non-stream)
 # --------------------------------------------------------------------------- #
@@ -946,6 +1037,8 @@ async def _finalise_success(
     upstream_model: str,
     attempts: int,
     debug_attempts: list[dict[str, Any]] | None = None,
+    attempt_summaries: list[dict[str, Any]] | None = None,
+    started_at: dt.datetime | None = None,
 ) -> DispatchResult:
     upstream_style = adapter.style
 
@@ -977,8 +1070,12 @@ async def _finalise_success(
             req_headers=outcome.req_headers if debug else None,
             resp_headers=outcome.resp_headers if debug else None,
             debug_attempts=debug_attempts if debug else None,
+            attempts_summary=attempt_summaries,
             upstream_url=outcome.url if debug else None,
             proxy_url=proxy.url if proxy and debug else None,
+            client_ip=req.client_ip,
+            started_at=started_at or _utcnow(),
+            req_status="pending",
         )
         session.add(log_row)
         await session.flush()
@@ -1036,6 +1133,9 @@ async def _finalise_success(
         resp_headers=outcome.resp_headers,
         resp_body=_resp_body_repr(outcome),
         debug_attempts=debug_attempts,
+        attempt_summaries=attempt_summaries,
+        started_at=started_at,
+        finished_at=_utcnow(),
     )
     await _bump_token_usage(session, req.token_id, usage["total_tokens"])
 
@@ -1051,11 +1151,15 @@ async def _finalise_success(
 
 
 async def _stream_cleanup(
-    response: httpx.Response, log_id: int, token_id: int | None, usage: dict[str, int]
+    response: httpx.Response, log_id: int, token_id: int | None, usage: dict[str, int],
+    *, req_status: str, first_token_ms: float | None, finished_at: dt.datetime,
 ) -> None:
     """Close the upstream response and persist captured usage — shielded caller."""
     await response.aclose()
-    await _persist_stream_usage(log_id, token_id, usage)
+    await _persist_stream_usage(log_id, token_id, usage,
+                                req_status=req_status,
+                                first_token_ms=first_token_ms,
+                                finished_at=finished_at)
 
 
 async def _build_stream(
@@ -1069,22 +1173,40 @@ async def _build_stream(
 ) -> AsyncIterator[bytes]:
     """Yield translated SSE bytes, then persist token usage on completion."""
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    start_mono = time.monotonic()
+    first_token_ms: float | None = None
 
     async def _raw() -> AsyncIterator[bytes]:
+        nonlocal first_token_ms
         async for chunk in response.aiter_bytes():
+            if first_token_ms is None and chunk:
+                first_token_ms = (time.monotonic() - start_mono) * 1000.0
             yield chunk
 
     translated = _translate_stream(inbound, upstream, _capture_usage(_raw(), usage), model)
+    req_status = "completed"
     try:
         async for piece in translated:
             yield piece
+    except asyncio.CancelledError:
+        req_status = "cancelled"
+        raise
+    except Exception:
+        req_status = "error"
+        raise
     finally:
+        finished_at = _utcnow()
         # Shield the upstream-response close + usage persistence so they complete
         # even when the client disconnects mid-stream (CancelledError). Without
         # the shield, the cancellation propagates into these awaits and the
         # upstream connection leaks / usage is lost.
         try:
-            await asyncio.shield(_stream_cleanup(response, log_id, token_id, usage))
+            await asyncio.shield(_stream_cleanup(
+                response, log_id, token_id, usage,
+                req_status=req_status,
+                first_token_ms=first_token_ms,
+                finished_at=finished_at,
+            ))
         except asyncio.CancelledError:
             log.debug("stream_cancelled", log_id=log_id)
 
@@ -1142,7 +1264,11 @@ _STREAM_USAGE_PERSIST_ATTEMPTS = 3
 _STREAM_USAGE_RETRY_BASE_DELAY = 0.5  # seconds; exponential, capped at 5s
 
 
-async def _persist_stream_usage(log_id: int, token_id: int | None, usage: dict[str, int]) -> None:
+async def _persist_stream_usage(
+    log_id: int, token_id: int | None, usage: dict[str, int],
+    *, req_status: str = "completed", first_token_ms: float | None = None,
+    finished_at: dt.datetime | None = None,
+) -> None:
     """Write final stream token usage back to the log row + token quota.
 
     Retries a few times on transient database errors — the stream is already
@@ -1160,6 +1286,10 @@ async def _persist_stream_usage(log_id: int, token_id: int | None, usage: dict[s
                     row.prompt_tokens = usage["prompt_tokens"]
                     row.completion_tokens = usage["completion_tokens"]
                     row.total_tokens = usage["total_tokens"]
+                    row.req_status = req_status
+                    if first_token_ms is not None:
+                        row.first_token_ms = first_token_ms
+                    row.finished_at = finished_at or _utcnow()
                     # Fold this (now token-complete) streamed request into the
                     # heatmap rollups exactly once, at the point tokens are known.
                     await usage_rollup.record_usage(
@@ -1265,6 +1395,11 @@ async def _log_request(
     resp_headers: dict[str, Any] | None = None,
     resp_body: Any = None,
     debug_attempts: list[dict[str, Any]] | None = None,
+    attempt_summaries: list[dict[str, Any]] | None = None,
+    started_at: dt.datetime | None = None,
+    finished_at: dt.datetime | None = None,
+    first_token_ms: float | None = None,
+    req_status: str | None = None,
 ) -> None:
     usage = usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     debug = req.debug_enabled
@@ -1283,6 +1418,7 @@ async def _log_request(
     )
     store_resp = debug or error_capture
     session_key = _session_key(req)
+    now = _utcnow()
     session.add(
         RequestLog(
             token_id=req.token_id,
@@ -1314,8 +1450,14 @@ async def _log_request(
             resp_headers=resp_headers if store_resp else None,
             resp_body=resp_body if store_resp else None,
             debug_attempts=debug_attempts if debug else None,
+            attempts_summary=attempt_summaries,
             upstream_url=upstream_url,
             proxy_url=proxy.url if proxy and debug else None,
+            client_ip=req.client_ip,
+            started_at=started_at or now,
+            finished_at=finished_at or now,
+            first_token_ms=first_token_ms,
+            req_status=req_status or ("completed" if success else "error"),
         )
     )
     # Fold every non-streamed request (success or failure) into the heatmap

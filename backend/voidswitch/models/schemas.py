@@ -590,6 +590,11 @@ class RequestLogOut(BaseModel):
 
     id: int
     ts: dt.datetime
+    started_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
+    first_token_ms: float | None = None
+    req_status: str | None = None
+    client_ip: str | None = None
     user_sub: str | None = None
     # Resolved, human-friendly caller identity + the Void-Token used.
     user_name: str | None = None
@@ -629,6 +634,11 @@ class RequestLogDetail(BaseModel):
 
     id: int
     ts: dt.datetime
+    started_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
+    first_token_ms: float | None = None
+    req_status: str | None = None
+    client_ip: str | None = None
     user_sub: str | None = None
     user_name: str | None = None
     token_id: int | None = None
@@ -666,6 +676,8 @@ class RequestLogDetail(BaseModel):
     # Per-attempt debug trail across the failover space (owner-only; stripped for
     # admins). Each entry is a dict — see dispatcher._trail_entry.
     debug_attempts: list | None = None
+    # Lightweight per-attempt summary (available to staff, not just owners).
+    attempts_summary: list | None = None
 
 
 class StatsOut(BaseModel):

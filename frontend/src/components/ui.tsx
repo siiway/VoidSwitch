@@ -579,3 +579,13 @@ export function formatDate(value?: string | null): string {
   const d = new Date(hasTz ? trimmed : `${trimmed}Z`);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }
+
+export function formatDateMs(value?: string | null): string {
+  if (!value) return "—";
+  const trimmed = value.trim();
+  const hasTz = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(trimmed);
+  const d = new Date(hasTz ? trimmed : `${trimmed}Z`);
+  if (Number.isNaN(d.getTime())) return "—";
+  const iso = d.toISOString();
+  return d.toLocaleString() + "." + iso.slice(20, 23);
+}

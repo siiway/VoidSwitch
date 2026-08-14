@@ -292,6 +292,11 @@ export interface RequestFilterOptions {
 export interface RequestLog {
   id: number;
   ts: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  first_token_ms?: number | null;
+  req_status?: string | null;
+  client_ip?: string | null;
   user_sub?: string | null;
   user_name?: string | null;
   token_id?: number | null;
@@ -352,6 +357,7 @@ export interface RequestLogDetail extends RequestLog {
   resp_headers?: Record<string, unknown> | null;
   resp_body?: unknown;
   debug_attempts?: RequestLogAttempt[] | null;
+  attempts_summary?: RequestLogAttempt[] | null;
 }
 
 // Minimal runtime shape check for a request-log payload. Catches API drift at

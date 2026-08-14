@@ -454,6 +454,16 @@ class RequestLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    # When the request was first received (= ts); kept separately for clarity.
+    started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # When the response was fully delivered (non-stream) or the stream ended.
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # Milliseconds from request receipt to first streamed token (TTFT).
+    first_token_ms: Mapped[float | None] = mapped_column(Float, default=None)
+    # Lifecycle status: "pending" (stream in flight), "completed", "cancelled", "error".
+    req_status: Mapped[str | None] = mapped_column(String(32), default=None, index=True)
+    # Client IP address (from X-Forwarded-For or request.client.host).
+    client_ip: Mapped[str | None] = mapped_column(String(64), default=None)
     token_id: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     user_sub: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
     # Stable identifier of the conversation/session behind the request (see
@@ -502,6 +512,9 @@ class RequestLog(Base):
     # upstream status, response headers/body, error class, and timing. This is what
     # makes an upstream 500 (or a total failover exhaustion) precisely diagnosable.
     debug_attempts: Mapped[list[Any] | None] = mapped_column(JSON, default=None)
+    # Lightweight per-attempt summary, recorded for every request (not debug-gated)
+    # so the detail modal can show each failover attempt's outcome.
+    attempts_summary: Mapped[list[Any] | None] = mapped_column(JSON, default=None)
     upstream_url: Mapped[str | None] = mapped_column(String(1024), default=None)
     proxy_url: Mapped[str | None] = mapped_column(String(512), default=None)
 

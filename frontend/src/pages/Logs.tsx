@@ -56,6 +56,7 @@ import {
   PageHeader,
   Pager,
   formatDate,
+  formatDateMs,
   useAsync,
   useConfirm,
   useDebouncedValue,
@@ -763,7 +764,10 @@ function RequestLogs({
             <TableHeaderCell>{tr("logs.user" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.token" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.model" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.colClientIp" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.colReqStatus" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.status" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.colTtft" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tokens" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tries" as TK)}</TableHeaderCell>
             <TableHeaderCell style={{ width: 96 }} />
@@ -785,7 +789,7 @@ function RequestLogs({
                 {r.id}
               </TableCell>
               <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
-                {formatDate(r.ts)}
+                {formatDate(r.started_at ?? r.ts)}
               </TableCell>
               <TableCell>
                 {r.user_sub ? (
@@ -836,6 +840,26 @@ function RequestLogs({
                   "—"
                 )}
               </TableCell>
+              <TableCell style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace", fontSize: 12 }}>
+                {r.client_ip ?? "—"}
+              </TableCell>
+              <TableCell>
+                <Badge
+                  color={
+                    r.req_status === "completed" ? "success" :
+                    r.req_status === "pending" ? "warning" :
+                    r.req_status === "cancelled" ? "subtle" :
+                    r.req_status === "error" ? "danger" : "subtle"
+                  }
+                  appearance="filled"
+                >
+                  {r.req_status === "pending" ? tr("logs.reqStatusPending" as TK) :
+                   r.req_status === "completed" ? tr("logs.reqStatusCompleted" as TK) :
+                   r.req_status === "cancelled" ? tr("logs.reqStatusCancelled" as TK) :
+                   r.req_status === "error" ? tr("logs.reqStatusError" as TK) :
+                   (r.req_status ?? "—")}
+                </Badge>
+              </TableCell>
               <TableCell>
                 <button
                   type="button"
@@ -856,6 +880,9 @@ function RequestLogs({
                     {r.status_code ?? "ERR"}
                   </Badge>
                 </button>
+              </TableCell>
+              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                {r.first_token_ms != null ? `${Math.round(r.first_token_ms)}ms` : "—"}
               </TableCell>
               <TableCell>{r.total_tokens}</TableCell>
               <TableCell>{r.attempts}</TableCell>
@@ -919,6 +946,9 @@ function RequestLogs({
                   {/* Summary grid */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: tokens.fontSizeBase200 }}>
                     <DetailRow label={tr("logs.time" as TK)} value={formatDate(detailLog.ts)} />
+                    <DetailRow label={tr("logs.startedAt" as TK)} value={detailLog.started_at ? formatDateMs(detailLog.started_at) : "—"} />
+                    {detailLog.finished_at ? <DetailRow label={tr("logs.finishedAt" as TK)} value={formatDateMs(detailLog.finished_at)} /> : null}
+                    {detailLog.first_token_ms != null ? <DetailRow label={tr("logs.colTtft" as TK)} value={`${Math.round(detailLog.first_token_ms)}ms`} /> : null}
                     <DetailRow label={tr("logs.status" as TK)} value={detailLog.success ? `${detailLog.status_code} OK` : `${detailLog.status_code ?? "ERR"}`} />
                     <DetailRow label={tr("logs.user" as TK)} value={detailLog.user_name ?? detailLog.user_sub ?? "—"} />
                     <DetailRow
@@ -961,6 +991,10 @@ function RequestLogs({
                       </Text>
                     </div>
                   )}
+
+                  {detailLog.attempts_summary && detailLog.attempts_summary.length > 0 ? (
+                    <AttemptTrail attempts={detailLog.attempts_summary} />
+                  ) : null}
 
                   {/* Debug view — owner / co-owner only, only reachable via the
                       dedicated debug button on a debug-recorded row. */}
