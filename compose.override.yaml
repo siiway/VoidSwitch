@@ -1,11 +1,15 @@
-# for SiiWay deploy, feel free to remove it.
+# this file is for SiiWay deploy, feel free to remove it.
 
 networks:
   ai-network:
     name: ai-network
+    external: true
+  db-network:
+    name: db-network
     external: true
 
 services:
   voidswitch:
     networks:
       - ai-network
+      - db-network
