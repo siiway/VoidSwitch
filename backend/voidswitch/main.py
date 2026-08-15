@@ -34,7 +34,11 @@ from voidswitch.api.admin import (
     users as users_api,
 )
 from voidswitch.core.config import Settings, get_settings
-from voidswitch.core.database import RequestSessionMiddleware, init_database
+from voidswitch.core.database import (
+    RequestSessionMiddleware,
+    init_database,
+    run_migrations,
+)
 from voidswitch.core.logging import configure_logging, get_logger
 from voidswitch.services import role_groups, settings_store
 from voidswitch.services.dispatcher import reconcile_pending_request_logs
@@ -53,7 +57,10 @@ error_log = get_logger("error")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     db = init_database(settings.database.url, echo=settings.database.echo)
-    await db.create_all()
+    # Schema is owned by Alembic: upgrade to head (the 0001_baseline revision
+    # creates a fresh schema and heals pre-Alembic databases, so this is safe on
+    # every boot and requires no manual migration step on deploy).
+    await run_migrations()
     async with db.session() as session:
         await settings_store.ensure_defaults(session)
         await settings_store.load_all(session)

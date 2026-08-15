@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -434,6 +435,12 @@ class Announcement(Base, TimestampMixin):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    # Composite (filter-column, id) indexes — see RequestLog.__table_args__.
+    __table_args__ = (
+        Index("ix_audit_logs_scope_id", "scope", "id"),
+        Index("ix_audit_logs_action_id", "action", "id"),
+        Index("ix_audit_logs_actor_sub_id", "actor_sub", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
@@ -457,6 +464,17 @@ class AuditLog(Base):
 
 class RequestLog(Base):
     __tablename__ = "request_logs"
+    # Composite (filter-column, id) indexes backing the admin log browser's hot
+    # query shape — ``WHERE <col> = ? ORDER BY id DESC LIMIT/OFFSET``. Declared
+    # here so Alembic autogenerate treats them as part of the schema (they were
+    # historically created by the frozen in-boot ``_ensure_indexes`` helper).
+    __table_args__ = (
+        Index("ix_request_logs_user_sub_id", "user_sub", "id"),
+        Index("ix_request_logs_model_id", "model", "id"),
+        Index("ix_request_logs_provider_name_id", "provider_name", "id"),
+        Index("ix_request_logs_token_id_id", "token_id", "id"),
+        Index("ix_request_logs_success_id", "success", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)

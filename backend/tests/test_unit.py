@@ -1832,3 +1832,48 @@ async def test_spool_first_content_detects_degenerate_empty(db):
     assert resp.closed is True  # connection cut — nothing delivered
 
 
+
+
+# --------------------------------------------------------------------------- #
+# Alembic migrations
+# --------------------------------------------------------------------------- #
+
+
+async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
+    """The 0001_baseline migration brings a pre-Alembic database up to the current
+    schema (creates missing tables, adds missing columns/indexes) without dropping
+    data, and is idempotent."""
+    from sqlalchemy import inspect, text
+    from voidswitch.core.database import init_database, run_migrations
+
+    url = f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}"
+    db = init_database(url)
+    try:
+        async with db.engine.begin() as conn:
+            # Simulate an old install: providers table only, no post-release columns.
+            await conn.exec_driver_sql(
+                "CREATE TABLE providers (id INTEGER PRIMARY KEY, name VARCHAR)"
+            )
+            await conn.exec_driver_sql("INSERT INTO providers (id, name) VALUES (1, 'legacy')")
+
+        await run_migrations()
+        await run_migrations()  # idempotent — second run is a no-op
+
+        def _check(conn):
+            insp = inspect(conn)
+            tables = set(insp.get_table_names())
+            cols = {c["name"] for c in insp.get_columns("providers")}
+            ver = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            n = conn.execute(text("SELECT COUNT(*) FROM providers")).scalar()
+            return tables, cols, ver, n
+
+        async with db.engine.connect() as conn:
+            tables, cols, ver, n = await conn.run_sync(_check)
+
+        assert "retry_on_zero_token" in cols
+        assert "drop_opencode_identity_block" in cols
+        assert {"users", "models", "api_keys", "request_logs"} <= tables
+        assert ver == "0001_baseline"
+        assert n == 1  # legacy row survived
+    finally:
+        await db.dispose()

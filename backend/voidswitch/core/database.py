@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import (
@@ -80,11 +81,51 @@ class Database:
         await self.engine.dispose()
 
 
+def _alembic_config() -> Any:
+    """Alembic ``Config`` pointing at ``backend/alembic.ini`` (lazy import so the
+    dependency is only required when migrations actually run)."""
+    from alembic.config import Config as AlembicConfig
+
+    ini = Path(__file__).resolve().parents[2] / "alembic.ini"
+    return AlembicConfig(str(ini))
+
+
+async def run_migrations() -> None:
+    """Bring the schema up to date (``alembic upgrade head``) in this event loop.
+
+    Runs inside the application's own async engine and passes the open connection
+    to ``env.py`` via ``config.attributes["connection"]``, so the migration runs on
+    the current loop instead of spawning a fresh one (which would fail from inside
+    a running FastAPI lifespan). The first migration (``0001_baseline``) both
+    creates a fresh schema and heals pre-Alembic databases, so this is safe on
+    every boot.
+    """
+
+    db = get_database()
+    cfg = _alembic_config()
+
+    async with db.engine.connect() as conn:
+        await conn.run_sync(_upgrade_head, cfg)
+
+
+def _upgrade_head(sync_conn: Any, cfg: Any) -> None:
+    from alembic import command
+
+    cfg.attributes["connection"] = sync_conn
+    command.upgrade(cfg, "head")
+
+
 # Columns added to a table after its first release. ``create_all`` makes missing
 # *tables*, but never alters an existing one, so a column added to the model would
 # raise "no such column" against a database created by an earlier version. Each
 # entry is applied with ``ALTER TABLE ... ADD COLUMN`` only when absent — idempotent
 # and safe to run on every boot. SQLite/Postgres both accept this form.
+#
+# FROZEN — Alembic owns schema changes from now on (see alembic/ and
+# :func:`run_migrations`). This list exists only to bootstrap pre-Alembic
+# databases: it is consumed exactly once, by the ``0001_baseline`` migration, and
+# must NOT be extended for new schema changes. For anything beyond an additive
+# column, write a real Alembic revision.
 #
 # LIMITATION — additive only. This lightweight mechanism handles exactly one kind
 # of schema change: adding a new, nullable-or-defaulted column. It deliberately
@@ -93,14 +134,8 @@ class Database:
 #   * changing a column's type — SQLite can't ALTER a type in place;
 #   * dropping a column        — data loss, and SQLite lacks DROP COLUMN pre-3.35;
 #   * adding constraints / indexes / non-defaulted NOT NULL columns.
-# For any of those, add a real migration step instead of an ``_ADDED_COLUMNS``
-# entry. The intended path is to introduce Alembic (the SQLAlchemy migration tool)
-# and express the change as a versioned revision — at which point this in-boot
-# helper should be frozen (kept only to bootstrap pre-Alembic databases) and no
-# new entries added. Never repurpose an existing entry to alter a column: append
-# only, and only for additive columns.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("providers", "drop_opencode_identity_block", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("providers", "drop_opencode_identity_block", "BOOLEAN NOT NULL DEFAULT false"),
     ("providers", "retry_on_zero_token", "BOOLEAN NOT NULL DEFAULT false"),
     ("providers", "proxy_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
     ("providers", "proxy_ids", "JSON NOT NULL DEFAULT '[]'"),
@@ -110,7 +145,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("providers", "added_by", "INTEGER"),
     ("providers", "added_by_name", "VARCHAR(255)"),
     ("providers", "uuid", "VARCHAR(36)"),
-    ("providers", "key_api_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("providers", "key_api_enabled", "BOOLEAN NOT NULL DEFAULT false"),
     ("providers", "key_api_token_hash", "VARCHAR(64)"),
     ("providers", "key_api_token_ciphertext", "TEXT"),
     ("providers", "key_api_token_preview", "VARCHAR(48)"),
@@ -125,8 +160,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("audit_logs", "user_agent", "VARCHAR(512)"),
     ("request_logs", "user_agent", "VARCHAR(512)"),
     ("request_logs", "client_type", "VARCHAR(64)"),
-    ("request_logs", "is_opencode", "BOOLEAN NOT NULL DEFAULT 0"),
-    ("request_logs", "debug", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("request_logs", "is_opencode", "BOOLEAN NOT NULL DEFAULT false"),
+    ("request_logs", "debug", "BOOLEAN NOT NULL DEFAULT false"),
     ("request_logs", "upstream_model", "VARCHAR(120)"),
     ("request_logs", "req_method", "VARCHAR(16)"),
     ("request_logs", "debug_attempts", "JSON"),
@@ -143,9 +178,9 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("request_logs", "req_status", "VARCHAR(32)"),
     ("request_logs", "client_ip", "VARCHAR(64)"),
     ("request_logs", "attempts_summary", "JSON"),
-    ("void_tokens", "debug_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
-    ("void_tokens", "auto_disabled", "BOOLEAN NOT NULL DEFAULT 0"),
-    ("void_tokens", "deleted", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("void_tokens", "debug_enabled", "BOOLEAN NOT NULL DEFAULT false"),
+    ("void_tokens", "auto_disabled", "BOOLEAN NOT NULL DEFAULT false"),
+    ("void_tokens", "deleted", "BOOLEAN NOT NULL DEFAULT false"),
     ("void_tokens", "deleted_at", "TIMESTAMP WITH TIME ZONE"),
     ("models", "mapped_id", "VARCHAR(255)"),
     ("models", "display_name", "VARCHAR(255)"),
@@ -153,7 +188,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("users", "session_epoch", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "login_token_hash", "VARCHAR(64)"),
     ("users", "login_token_prefix", "VARCHAR(32)"),
-    ("users", "void_tokens_admin_disabled", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("users", "void_tokens_admin_disabled", "BOOLEAN NOT NULL DEFAULT false"),
     ("users", "team_ids", "JSON NOT NULL DEFAULT '[]'"),
     ("announcements", "target_role_group_ids", "JSON NOT NULL DEFAULT '[]'"),
 )
@@ -179,12 +214,11 @@ def _add_missing_columns(conn: Any) -> None:
 # EXISTS`` (supported by SQLite ≥3.8 and Postgres), making it idempotent and safe
 # on every boot.
 #
-# These back the admin log browser's hot query shape — ``WHERE <col> = ?
-# ORDER BY id DESC LIMIT/OFFSET`` and the keyset ``COUNT(*) WHERE id > ? AND ...``
-# — where a leading equality column plus the ``id`` tie-break lets the planner
-# satisfy both the filter and the ordering from one index (both engines can scan
-# an index in reverse for ``ORDER BY id DESC``). Kept here as the single source of
-# truth rather than as ``Index()`` entries on the models to avoid name drift.
+# These indexes are now also declared on the ORM models themselves
+# (``RequestLog.__table_args__`` / ``AuditLog.__table_args__``) so Alembic
+# autogenerate treats them as part of the schema. This FROZEN list remains only
+# to heal pre-Alembic databases (consumed once by ``0001_baseline``); new indexes
+# belong in an Alembic revision.
 _ADDED_INDEXES: tuple[tuple[str, str, str], ...] = (
     ("ix_request_logs_user_sub_id", "request_logs", "user_sub, id"),
     ("ix_request_logs_model_id", "request_logs", "model, id"),

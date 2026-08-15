@@ -129,3 +129,31 @@ bulk cleanup (with `min_days` / `pool`) — the same operations as the dashboard
 sharing `services/keymgmt.py`. Providers also carry a stable public `uuid`.
 
 See the repository root for the decoupled **frontend** (Bun + React + Fluent UI).
+
+## Database migrations
+
+Schema changes are owned by **Alembic** (SQLAlchemy's migration tool), not by
+`create_all`. On startup the application runs `alembic upgrade head` automatically
+(see `voidswitch/core/database.py:run_migrations`), so a deploy only needs to
+restart the backend — no manual migration step.
+
+The first revision, `0001_baseline`, brought the project into Alembic: it creates
+a fresh schema from the current models *and* heals pre-Alembic databases (the
+frozen `_ADDED_COLUMNS` / `_ADDED_INDEXES` helpers are consumed only there and
+must not be extended).
+
+### Adding a schema change
+
+```bash
+# 1. change the SQLAlchemy model (backend/voidswitch/models/db.py)
+# 2. generate a candidate migration, then REVIEW it
+uv run alembic revision --autogenerate -m "add foo to providers"
+# 3. sanity-check that the model and the DB are in sync
+uv run alembic check
+# 4. apply locally / commit model + migration together
+```
+
+The URL comes from the app's own settings (`VOIDSWITCH_DATABASE__URL` /
+`config.yaml`); nothing is hardcoded in `alembic.ini`. Migrations run against
+both **SQLite** (dev/tests, via batch mode for ALTERs) and **PostgreSQL**
+(production, transactional DDL).

@@ -19,6 +19,7 @@ dependencies = [
     "structlog>=24.4",
     "python-multipart>=0.0.12",
     "asyncpg>=0.31.0",
+    "alembic>=1.14",
 ]
 
 [project.scripts]
