@@ -236,6 +236,7 @@ export function PageHeader({
   action,
   onRefresh,
   refreshing,
+  extraActions,
 }: {
   title: string;
   subtitle?: string;
@@ -243,6 +244,9 @@ export function PageHeader({
   onRefresh?: () => void;
   // Keep the icon spinning while an async reload is in flight.
   refreshing?: boolean;
+  // Optional controls rendered inline next to the refresh button (e.g. a
+  // live-stream toggle).
+  extraActions?: ReactNode;
 }) {
   const spinStyles = useSpinStyles();
   const { t } = useTranslation();
@@ -286,6 +290,7 @@ export function PageHeader({
               />
             </Tooltip>
           ) : null}
+          {extraActions}
         </div>
         {subtitle ? (
           <Text size={200} style={{ color: "var(--colorNeutralForeground3)" }}>

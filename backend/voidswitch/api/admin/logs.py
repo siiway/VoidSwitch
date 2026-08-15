@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import re
+import time
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +25,7 @@ from voidswitch.core.auth import (
     require_staff,
 )
 from voidswitch.core.config import Settings, get_settings
-from voidswitch.core.database import get_session
+from voidswitch.core.database import get_database, get_session
 from voidswitch.core.security import decrypt_secret
 from voidswitch.models.db import ApiKey, AuditLog, RequestLog, User, VoidToken
 from voidswitch.models.schemas import (
@@ -34,6 +38,7 @@ from voidswitch.models.schemas import (
     RequestLogOut,
     TokenRef,
 )
+from voidswitch.services import settings_store
 
 router = APIRouter(prefix="/api/admin/logs", tags=["admin:logs"])
 
@@ -295,6 +300,7 @@ def _request_log_filters(
     user_sub: str | None = None,
     token_id: int | None = None,
     provider: str | None = None,
+    client_ip: str | None = None,
     status_code: str | None = None,
     req_status: str | None = None,
     start: dt.datetime | None = None,
@@ -304,8 +310,9 @@ def _request_log_filters(
 
     Model / user / token / provider / lifecycle status are exact matches (chosen
     from the filter dropdowns); ``status_code`` accepts an exact code or an
-    ``Nxx`` class; ``start``/``end`` bound the indexed ``ts`` timestamp
-    inclusively.
+    ``Nxx`` class; ``client_ip`` is a substring/glob match on the caller's IP
+    (mirroring the audit-log IP filter, so ``10.0.*`` works); ``start``/``end``
+    bound the indexed ``ts`` timestamp inclusively.
     """
     clauses: list[ColumnElement] = []
     if not is_staff(user):
@@ -321,6 +328,8 @@ def _request_log_filters(
         clauses.append(RequestLog.token_id == token_id)
     if provider:
         clauses.append(RequestLog.provider_name == provider)
+    if client_ip:
+        clauses.append(_text_match(RequestLog.client_ip, client_ip))
     if status_code:
         clause = _status_clause(status_code)
         if clause is not None:
@@ -343,6 +352,9 @@ async def request_logs(
     user_sub: str | None = Query(default=None, description="Filter by exact caller subject."),
     token_id: int | None = Query(default=None, description="Filter by exact Void-Token id."),
     provider: str | None = Query(default=None, description="Filter by exact provider name."),
+    client_ip: str | None = Query(
+        default=None, description="Substring/glob match on the caller's IP (e.g. 10.0.*)."
+    ),
     status_code: str | None = Query(
         default=None, description="Exact status code (e.g. 404) or a class (e.g. 4xx)."
     ),
@@ -368,6 +380,7 @@ async def request_logs(
         user_sub=user_sub,
         token_id=token_id,
         provider=provider,
+        client_ip=client_ip,
         status_code=status_code,
         req_status=req_status,
         start=start,
@@ -378,7 +391,21 @@ async def request_logs(
     total = (await session.execute(count_stmt)).scalar_one()
     rows = (await session.execute(stmt.limit(limit).offset(offset))).scalars().all()
 
-    # Resolve human-friendly caller + token labels in two batched queries.
+    items = await _resolve_request_log_rows(session, rows)
+    return Page[RequestLogOut](
+        items=items,
+        total=int(total),
+        limit=limit,
+        offset=offset,
+    )
+
+
+async def _resolve_request_log_rows(
+    session: AsyncSession, rows: Sequence[RequestLog]
+) -> list[RequestLogOut]:
+    """Map request-log rows to ``RequestLogOut``, resolving the human-friendly
+    caller + token labels in two batched queries (mirrors the list endpoint; the
+    live stream reuses it so pushed rows render identically to fetched ones)."""
     token_ids = {r.token_id for r in rows if r.token_id is not None}
     subs = {r.user_sub for r in rows if r.user_sub}
     token_names: dict[int, tuple[str, str | None]] = {}
@@ -419,12 +446,7 @@ async def request_logs(
         if r.user_sub:
             out.user_name = user_names.get(r.user_sub)
         items.append(out)
-    return Page[RequestLogOut](
-        items=items,
-        total=int(total),
-        limit=limit,
-        offset=offset,
-    )
+    return items
 
 
 @router.get("/requests/locate")
@@ -435,6 +457,7 @@ async def request_locate(
     user_sub: str | None = Query(default=None),
     token_id: int | None = Query(default=None),
     provider: str | None = Query(default=None),
+    client_ip: str | None = Query(default=None),
     status_code: str | None = Query(default=None),
     req_status: str | None = Query(default=None),
     start: dt.datetime | None = Query(default=None),
@@ -450,6 +473,7 @@ async def request_locate(
         user_sub=user_sub,
         token_id=token_id,
         provider=provider,
+        client_ip=client_ip,
         status_code=status_code,
         req_status=req_status,
         start=start,
@@ -552,6 +576,176 @@ async def request_filter_options(
     return RequestFilterOptions(
         models=models, providers=providers, users=users, tokens=tokens
     )
+
+
+# --------------------------------------------------------------------------- #
+# Live request-log stream (SSE)
+# --------------------------------------------------------------------------- #
+
+# How often a connected live stream re-checks the log for new rows. 1s keeps the
+# view near-realtime while staying trivially cheap: the query is an indexed
+# ``id > last_seen`` scan with no joins, bounded by ``_STREAM_BATCH``.
+_STREAM_POLL_SECONDS = 1.0
+# Max rows pushed per poll — bounds both the query and the burst per event.
+_STREAM_BATCH = 100
+# Interval (seconds) for a keep-alive comment so idle connections through
+# proxies/load balancers aren't silently dropped.
+_STREAM_HEARTBEAT_SECONDS = 15.0
+
+# Active streams per user (in-process; a small module-level dict guarded by a
+# lock). Enforces the per-user connection cap without touching the hot request
+# path — this registry is only touched on connect/disconnect.
+_stream_lock = asyncio.Lock()
+_stream_active: dict[str, int] = {}
+
+
+async def _acquire_stream_slot(user_sub: str, max_streams: int) -> None:
+    """Reserve one live-stream slot for ``user_sub``, raising 429 when the
+    per-user cap is reached. Must be paired with a matching ``_release_stream``
+    (the stream generator's ``finally``)."""
+    if max_streams <= 0:
+        return
+    async with _stream_lock:
+        active = _stream_active.get(user_sub, 0)
+        if active >= max_streams:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                f"Too many active live-log streams (limit {max_streams}). "
+                "Close another live view and try again.",
+            )
+        _stream_active[user_sub] = active + 1
+
+
+async def _release_stream_slot(user_sub: str) -> None:
+    async with _stream_lock:
+        active = _stream_active.get(user_sub, 0)
+        if active <= 1:
+            _stream_active.pop(user_sub, None)
+        else:
+            _stream_active[user_sub] = active - 1
+
+
+@router.get("/requests/stream")
+async def request_log_stream(
+    after_id: int = Query(
+        default=0, ge=0, description="Only rows with id greater than this are streamed."
+    ),
+    model: str | None = None,
+    user_sub: str | None = Query(default=None, description="Filter by exact caller subject."),
+    token_id: int | None = Query(default=None, description="Filter by exact Void-Token id."),
+    provider: str | None = Query(default=None, description="Filter by exact provider name."),
+    client_ip: str | None = Query(
+        default=None, description="Substring/glob match on the caller's IP (e.g. 10.0.*)."
+    ),
+    status_code: str | None = Query(
+        default=None, description="Exact status code (e.g. 404) or a class (e.g. 4xx)."
+    ),
+    req_status: str | None = Query(
+        default=None,
+        description="Lifecycle status: pending / completed / cancelled / error / terminated.",
+    ),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Live request-log stream over SSE.
+
+    Pushes new request-log rows matching the same filters as ``GET
+    /requests`` (and the same member-scoping), roughly as they are written. The
+    payload for each row is the same ``RequestLogOut`` the list endpoint returns
+    (names resolved), so the client can append rows to its table directly.
+    ``after_id`` skips rows already known to the client (pass the max id
+    currently displayed); the stream only delivers strictly newer ones.
+
+    The stream is driven by a lightweight poll — ``SELECT ... WHERE id > last``
+    with no joins, once per second, bounded to ``_STREAM_BATCH`` rows — rather
+    than hooking the dispatcher's hot path, so it adds no per-request overhead
+    and stays correct even when request-log rows are written by another worker.
+
+    Per-user concurrency is capped by the ``log_stream_max_connections`` setting
+    (default 2); exceeding it returns ``429``.
+    """
+    max_streams = settings_store.get_int("log_stream_max_connections", 2)
+    await _acquire_stream_slot(user.sub, max_streams)
+    filters = _request_log_filters(
+        user,
+        model=model,
+        user_sub=user_sub,
+        token_id=token_id,
+        provider=provider,
+        client_ip=client_ip,
+        status_code=status_code,
+        req_status=req_status,
+    )
+
+    async def _stream() -> AsyncIterator[str]:
+        async for event in _stream_request_log_events(
+            get_database(), filters, user.sub, after_id=after_id
+        ):
+            yield event
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # tell nginx not to buffer the SSE body
+            "Connection": "keep-alive",
+        },
+    )
+
+
+async def _stream_request_log_events(
+    db: Any,
+    filters: list[ColumnElement],
+    user_sub: str,
+    *,
+    after_id: int = 0,
+    poll_seconds: float = _STREAM_POLL_SECONDS,
+) -> AsyncGenerator[str]:
+    """Yield SSE events (``data: …`` rows / keep-alive pings) for a live stream.
+
+    Polls ``request_logs`` for rows newer than the last emitted id (an indexed,
+    join-free query bounded to ``_STREAM_BATCH`` rows), pushes them as the same
+    ``RequestLogOut`` JSON the list endpoint returns, and emits a keep-alive
+    comment when the stream is otherwise idle. Runs until cancelled; the
+    per-user stream slot is released on exit.
+    """
+    last_id = after_id
+    last_sent = time.monotonic()
+    try:
+        while True:
+            try:
+                async with db.session() as session:
+                    stmt = (
+                        select(RequestLog)
+                        .where(RequestLog.id > last_id)
+                        .order_by(RequestLog.id.asc())
+                        .limit(_STREAM_BATCH)
+                    )
+                    for clause in filters:
+                        stmt = stmt.where(clause)
+                    rows = (await session.execute(stmt)).scalars().all()
+                    if rows:
+                        items = await _resolve_request_log_rows(session, rows)
+                if rows:
+                    last_id = rows[-1].id
+                    for item in items:
+                        yield f"data: {item.model_dump_json()}\n\n"
+                    last_sent = time.monotonic()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Transient DB blip must not kill the stream — skip this
+                # poll and try again on the next tick.
+                await asyncio.sleep(poll_seconds)
+                continue
+            # Keep-alive comment so proxies don't drop a quiet connection.
+            if time.monotonic() - last_sent >= _STREAM_HEARTBEAT_SECONDS:
+                yield ": ping\n\n"
+                last_sent = time.monotonic()
+            await asyncio.sleep(poll_seconds)
+    finally:
+        await _release_stream_slot(user_sub)
 
 
 def _redact_key_preview(preview: str | None) -> str | None:

@@ -12,7 +12,10 @@ pytestmark = pytest.mark.asyncio
 
 
 def _session_headers(
-    sub: str = "user-1", role: str = "owner", name: str = "alice"
+    sub: str = "user-1",
+    role: str = "owner",
+    name: str = "alice",
+    headers: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Dashboard session JWT for the seeded user (sub ``user-1``)."""
     token = create_session_token(
@@ -20,7 +23,7 @@ def _session_headers(
         subject=sub,
         extra={"role": role, "name": name},
     )
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {token}", **(headers or {})}
 
 
 DS_URL = "https://api.deepseek.com/chat/completions"
@@ -649,6 +652,127 @@ async def test_admin_stats_24h_metrics(client, db, seeded):
 
 
 # --------------------------------------------------------------------------- #
+# Live request-log stream (SSE)
+# --------------------------------------------------------------------------- #
+
+
+async def test_request_log_stream_pushes_new_rows(db, seeded):
+    """The live-log stream emits newly written request-log rows matching the
+    requested filters."""
+    import asyncio
+    import json as _json
+
+    from voidswitch.api.admin.logs import (
+        _request_log_filters,
+        _stream_request_log_events,
+    )
+    from voidswitch.models.db import RequestLog
+
+    async with db.session() as session:
+        session.add(RequestLog(user_sub="user-1", model="deepseek-chat", success=True))
+        await session.commit()
+
+    owner = await _load_user(db, "user-1")
+    filters = _request_log_filters(owner, model="deepseek-chat")
+    events = _stream_request_log_events(db, filters, "user-1", poll_seconds=0.05)
+
+    # The pre-existing matching row is pushed immediately.
+    first = await asyncio.wait_for(events.__anext__(), timeout=2)
+    payload = _json.loads(first[len("data: "):])
+    assert payload["model"] == "deepseek-chat"
+
+    # A new row written while the stream is open is picked up on the next poll.
+    async with db.session() as session:
+        session.add(RequestLog(user_sub="user-1", model="deepseek-chat", success=True))
+        await session.commit()
+    second = await asyncio.wait_for(events.__anext__(), timeout=2)
+    payload = _json.loads(second[len("data: "):])
+    assert payload["model"] == "deepseek-chat"
+
+    await events.aclose()
+
+
+async def test_request_log_stream_scopes_members_and_honours_filters(db, seeded):
+    """The stream honours server-side filters: a non-matching model is never
+    pushed, and member traffic is scoped to the caller."""
+    import asyncio
+    import json as _json
+
+    from voidswitch.api.admin.logs import (
+        _request_log_filters,
+        _stream_request_log_events,
+    )
+    from voidswitch.models.db import RequestLog
+
+    async with db.session() as session:
+        session.add(RequestLog(user_sub="user-2", model="gpt-4o", success=True))
+        session.add(RequestLog(user_sub="user-1", model="deepseek-chat", success=True))
+        await session.commit()
+
+    owner = await _load_user(db, "user-1")
+    # Staff filters: model=deepseek-chat → only that row is pushed.
+    filters = _request_log_filters(owner, model="deepseek-chat")
+    events = _stream_request_log_events(db, filters, "user-1", poll_seconds=0.05)
+    first = await asyncio.wait_for(events.__anext__(), timeout=2)
+    payload = _json.loads(first[len("data: "):])
+    assert payload["model"] == "deepseek-chat"
+    await events.aclose()
+
+    # A non-matching row written while streaming is NOT pushed.
+    events = _stream_request_log_events(db, filters, "user-1", poll_seconds=0.05)
+    async with db.session() as session:
+        session.add(RequestLog(user_sub="user-1", model="gpt-4o", success=True))
+        await session.commit()
+    # Wait one poll cycle, then a matching row; only the matching one arrives.
+    await asyncio.sleep(0.15)
+    async with db.session() as session:
+        session.add(RequestLog(user_sub="user-1", model="deepseek-chat", success=True))
+        await session.commit()
+    got = await asyncio.wait_for(events.__anext__(), timeout=2)
+    payload = _json.loads(got[len("data: "):])
+    assert payload["model"] == "deepseek-chat"
+    await events.aclose()
+
+
+async def test_request_log_stream_enforces_per_user_limit(client, db, seeded):
+    """More than ``log_stream_max_connections`` concurrent streams for one user
+    are rejected with 429."""
+    from voidswitch.api.admin.logs import _acquire_stream_slot, _release_stream_slot
+    from voidswitch.services import settings_store
+
+    async with db.session() as session:
+        await settings_store.update(session, {"log_stream_max_connections": 1})
+
+    # Fill the single slot; the endpoint then rejects a second connection with
+    # 429 (returned before streaming starts, so a plain GET works).
+    await _acquire_stream_slot("user-1", 1)
+    resp = await client.get(
+        "/api/admin/logs/requests/stream",
+        headers=_session_headers(),
+    )
+    assert resp.status_code == 429
+
+    # Release the slot → a new slot is acquirable again.
+    await _release_stream_slot("user-1")
+    await _acquire_stream_slot("user-1", 1)
+    await _release_stream_slot("user-1")
+
+    # Reset so other tests see the default.
+    async with db.session() as session:
+        await settings_store.update(session, {"log_stream_max_connections": 2})
+
+
+async def _load_user(db, sub):
+    from sqlalchemy import select as _select
+    from voidswitch.models.db import User
+
+    async with db.session() as session:
+        return (
+            await session.execute(_select(User).where(User.sub == sub))
+        ).scalar_one()
+
+
+# --------------------------------------------------------------------------- #
 # Log retention cleanup task
 # --------------------------------------------------------------------------- #
 
@@ -897,18 +1021,21 @@ async def test_request_log_filters_and_options(client, db, seeded):
             RequestLog(
                 user_sub="user-1", token_id=1, model="gpt-4o",
                 provider_name="openai", status_code=200, success=True,
+                client_ip="10.0.0.1",
             )
         )
         session.add(
             RequestLog(
                 user_sub="user-1", token_id=1, model="deepseek-chat",
                 provider_name="deepseek", status_code=404, success=False,
+                client_ip="192.168.1.5",
             )
         )
         session.add(
             RequestLog(
                 user_sub="user-1", token_id=1, model="deepseek-chat",
                 provider_name="deepseek", status_code=429, success=False,
+                client_ip="10.0.0.2",
             )
         )
 
@@ -928,6 +1055,11 @@ async def test_request_log_filters_and_options(client, db, seeded):
     assert all(i["provider_name"] == "openai" for i in only_openai)
     assert len(only_openai) == 1
     assert all(i["model"] == "deepseek-chat" for i in await items(model="deepseek-chat"))
+    # Client IP: substring + glob matching (mirrors the audit log's IP filter).
+    assert {i["client_ip"] for i in await items(client_ip="10.0.")} == {"10.0.0.1", "10.0.0.2"}
+    assert {i["client_ip"] for i in await items(client_ip="10.0.0.2")} == {"10.0.0.2"}
+    assert {i["client_ip"] for i in await items(client_ip="10.0.*")} == {"10.0.0.1", "10.0.0.2"}
+    assert all(i["client_ip"] == "192.168.1.5" for i in await items(client_ip="192.168.*"))
 
     # The filter-options endpoint lists the distinct values present.
     r = await client.get("/api/admin/logs/requests/filters", headers=_session_headers())
@@ -996,6 +1128,28 @@ async def test_audit_ip_ua_substring_and_glob(client, db, seeded):
     # Glob on UA.
     curl = await _audit_items(client, user_agent="curl/*")
     assert curl and all(i["user_agent"].startswith("curl/") for i in curl)
+
+
+async def test_audit_user_agent_captured_from_request(client, db, seeded):
+    """Audit rows record the caller's user-agent even when the call site only
+    passes the session/ip — the request-session middleware exposes it as an
+    ambient client context that ``record_audit`` falls back to."""
+    from sqlalchemy import select as _select
+    from voidswitch.models.db import AuditLog
+
+    # An audit action that does NOT pass ``user_agent`` (e.g. AUTH_LOGOUT, or the
+    # owner's reveal flow) must still capture the UA from the request context.
+    await client.post("/api/auth/logout", headers=_session_headers(headers={"user-agent": "curl/8.4.0"}))
+
+    async with db.session() as session:
+        rows = (
+            await session.execute(
+                _select(AuditLog).where(AuditLog.action == "auth.logout")
+            )
+        ).scalars().all()
+    assert rows, "expected an audit row for the logout"
+    assert rows[0].user_agent == "curl/8.4.0"
+    assert rows[0].ip is not None
 
 
 async def test_daily_quota_enforced(client, db, seeded):

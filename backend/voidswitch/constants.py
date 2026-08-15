@@ -165,6 +165,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "opencode_small_model": "claude-haiku-4-5-20251001",
     # Rows per page in the dashboard's Logs tables (audit + request logs).
     "logs_page_size": 50,
+    # Max simultaneous live-log-stream (SSE) connections a single user may hold
+    # open at once. Extra connections beyond this are rejected with 429.
+    "log_stream_max_connections": 2,
     # Proxy switching. When False the gateway stops rotating/failover over the
     # proxy pool: every upstream request goes through ``static_proxy_url`` (or, if
     # that is empty, directly / via the process HTTP(S)_PROXY env vars), and a

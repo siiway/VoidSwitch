@@ -650,6 +650,8 @@ const en = {
     logCleanupEnabled: "Auto-clean old logs",
     logCleanupInterval: "Log cleanup interval (s)",
     logsPageSize: "Logs page size (rows per page)",
+    logStreamMaxConnections:
+      "Max simultaneous live-log streams per user (0 = unlimited)",
     proxySwitchingEnabled:
       "Proxy switching enabled (off = always use the static proxy below)",
     staticProxyUrl:
@@ -724,6 +726,12 @@ const en = {
     route: "Route",
     status: "Status code",
     tokens: "Tokens",
+    liveConnect: "Connect live log stream",
+    liveDisconnect: "Disconnect live log stream",
+    liveOn: "Live",
+    liveOff: "Off",
+    liveError: "Stream error",
+    liveHint: "New matching requests appear here automatically.",
     tries: "Tries",
     error: "Error",
     actor: "Actor",

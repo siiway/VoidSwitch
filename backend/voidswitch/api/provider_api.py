@@ -86,6 +86,7 @@ def _actor(provider: Provider, request: Request) -> keymgmt.Actor:
         user_id=None,
         is_staff=True,
         ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
     )
 
 

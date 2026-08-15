@@ -23,6 +23,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voidswitch.core.database import get_request_client
 from voidswitch.core.security import encrypt_secret
 from voidswitch.models.db import AuditLog
 
@@ -167,7 +168,21 @@ async def record_audit(
     encrypted at rest and only ever decrypted for owners on an explicit request;
     it is never returned in the normal audit listing. Encryption requires
     ``secret_key`` (the app secret) — without it the sensitive blob is dropped.
+
+    ``ip`` / ``user_agent`` default to the current request's client context
+    (captured by the request-session middleware), so a call site that only passes
+    the session still records who connected. Pass them explicitly to override,
+    or ``None``-preserve inside a background task (no request in scope).
     """
+    if ip is None or user_agent is None:
+        ambient = get_request_client()
+        if ambient is not None:
+            ambient_ip, ambient_ua = ambient
+            if ip is None:
+                ip = ambient_ip
+            if user_agent is None:
+                user_agent = ambient_ua
+
     sensitive_ciphertext: str | None = None
     if sensitive and secret_key:
         sensitive_ciphertext = encrypt_secret(json.dumps(sensitive), secret=secret_key)

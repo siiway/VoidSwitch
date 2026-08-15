@@ -21,6 +21,20 @@ _request_session: ContextVar[AsyncSession | None] = ContextVar(
     "voidswitch_request_session", default=None
 )
 
+# The request's client context (client IP, user-agent), set alongside the
+# session so audit logging can attribute a request even when an individual
+# ``record_audit`` call site forgets to pass them.
+_request_client: ContextVar[tuple[str | None, str | None] | None] = ContextVar(
+    "voidswitch_request_client", default=None
+)
+
+
+def get_request_client() -> tuple[str | None, str | None] | None:
+    """The ambient (client IP, user-agent) of the current HTTP request, or
+    ``None`` outside a request (background tasks, tests driving the app
+    directly)."""
+    return _request_client.get()
+
 # Minimal ASGI typing for the middleware.
 _Scope = MutableMapping[str, Any]
 _Message = MutableMapping[str, Any]
@@ -320,6 +334,7 @@ class RequestSessionMiddleware:
 
         session = get_database().session_factory()
         token = _request_session.set(session)
+        client_token = _request_client.set(_extract_request_client(scope))
         committed = False
 
         async def send_wrapper(message: _Message) -> None:
@@ -347,6 +362,26 @@ class RequestSessionMiddleware:
             # even if a second cancellation arrives during shutdown.
             await _safe_close(session)
             _request_session.reset(token)
+            _request_client.reset(client_token)
+
+
+def _extract_request_client(scope: _Scope) -> tuple[str | None, str | None]:
+    """Pull the client IP and user-agent out of an ASGI scope.
+
+    ``scope["client"]`` is ``(host, port)``; the user-agent lives in the
+    header list as raw bytes. Returns ``(None, None)`` for pieces that aren't
+    present (e.g. a server without a client address).
+    """
+    ip: str | None = None
+    client = scope.get("client")
+    if isinstance(client, (tuple, list)) and client and isinstance(client[0], str):
+        ip = client[0]
+    user_agent: str | None = None
+    for name, value in scope.get("headers", []) or []:
+        if name.lower() == b"user-agent":
+            user_agent = value.decode("latin-1", errors="replace")
+            break
+    return ip, user_agent
 
 
 async def _safe_rollback(session: AsyncSession) -> None:

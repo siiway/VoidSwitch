@@ -27,8 +27,8 @@ The **Logs** page has two views:
 - **Requests** — one row per gateway call: time, user, token, model, client IP, status, status code,
   TTFT, **request duration**, token counts, retry count, and any error. Members only see their own requests;
   staff see everyone's. IPv6 addresses are truncated with `…` in the cell — hover for the full address;
-  the ID never wraps. The request duration keeps ticking up every second while a request is **in progress**
-  and freezes once it finishes (`started_at → finished_at`). **TTFT** is only meaningful for streamed requests:
+  the ID never wraps. The request duration is the `started_at → now` span, ticking up every second **only while the live log stream is connected**
+  (see "Live log stream (SSE)" below); while a request is **in progress** without a live stream it shows `—`. Once finished it freezes to `started_at → finished_at`. **TTFT** is only meaningful for streamed requests:
   it measures the time from when the gateway initiates the upstream request to when the first *real content token*
   arrives (ignoring control frames such as `message_start` / `ping`), not the time to the first network byte.
 - **Audit** *(staff)* — an administrative record of who changed what.
@@ -36,7 +36,8 @@ The **Logs** page has two views:
 Use filters to narrow the results, and use the paginator to browse pages:
 
 - **Request** logs can be filtered by **model**, **user**, **token** (all "search + select" dropdowns where you can type a keyword to filter and then select),
-  **provider** (a plain dropdown selection), **status code** (free text), and **request status** (a dropdown:
+  **provider** (a plain dropdown selection), **client IP** (free text — partial match, `*` / `?` wildcards supported, e.g. `10.0.*`),
+  **status code** (free text), and **request status** (a dropdown:
   in progress / completed / cancelled / error / terminated). For the status code you can enter a specific number (e.g. `404`),
   or enter just a single digit `2` / `3` / `4` / `5` and blur the field, and it will be auto-completed to `2xx` / `3xx` / `4xx` / `5xx`,
   matching all status codes in that class.
@@ -46,11 +47,25 @@ Use filters to narrow the results, and use the paginator to browse pages:
 - Both views support filtering by **time range**: the **Time** dropdown offers quick ranges such as "All time / Last 1 hour / Last 24 hours /
   Last 7 days / Last 30 days"; selecting "Custom" expands two date-time inputs so you can specify the exact start and end moments.
   When you pick a quick range, the current moment is fixed as the window boundary, so the range stays stable across paging or refresh and does not silently drift over time.
-- **Click** any value directly in the table (for requests: user / token / model / status; for audit: actor / scope / action / target /
+- **Click** any value directly in the table (for requests: user / token / model / status / client IP; for audit: actor / scope / action / target /
   IP / UA) to fill it into the corresponding filter.
 - Text filters (the request status code, and the audit IP / User-Agent) are **debounced** as you type, only issuing a query a moment after you stop typing,
   so filtering-as-you-type is smoother and doesn't refresh on every keystroke. When any filter (including the time range) is active,
   a **Clear filters** button appears on the right of the filter bar to restore the unfiltered state in one click.
+
+### Live log stream (SSE)
+
+The request log supports **live refresh**: next to the **refresh button** in the page header there is a connect / disconnect button.
+When connected, newly written request-log rows appear automatically at the top of the table via SSE (rows already displayed are skipped first — only newer ones are pushed).
+
+- The live stream applies the **same filters** as the list (model / user / token / provider / status code / request status)
+  and follows the same permission boundaries: members only see their own requests in real time.
+- It is driven by a lightweight **poll** (once per second, an indexed `id`-based query, no joins, at most 100 rows per tick),
+  and does not hook the gateway's hot path, so it has almost no impact on request throughput.
+- The number of simultaneous live-log streams a single user may keep open is capped by the **Max simultaneous live-log streams per user**
+  setting (`log_stream_max_connections`, default 2; `0` = unlimited); exceeding it returns `429`.
+  Mind this limit if you keep several browser tabs open for the same account.
+- On a dropped connection (e.g. a timeout or a network blip) the stream stops and shows a notice — click connect again to resume.
 
 Token exchanges for Claude Code subscription OAuth are also counted in the **Requests** log. They are not model inference requests, so the model column shows a special value
 such as `<cc-refresh-token>` or `<cc-exchange-token>`; these records usually have no user and no Void-Token.

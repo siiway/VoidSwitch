@@ -27,16 +27,17 @@ import {
   DismissRegular,
   EyeRegular,
   InfoRegular,
+  LiveRegular,
   LockClosedRegular,
   PersonRegular,
   SettingsRegular,
 } from "@fluentui/react-icons";
 import type { BadgeProps } from "@fluentui/react-components";
 import { makeStyles } from "@fluentui/react-components";
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
-import { api } from "../api/client";
+import { api, getToken, API_BASE } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { isRequestLog } from "../api/types";
 import type {
@@ -74,6 +75,10 @@ const REQ_STATUS_VALUES: string[] = [
   "error",
   "terminated",
 ];
+
+// Max rows kept from the live SSE stream before older ones are dropped, so a
+// long-lived stream can't grow the table without bound.
+const LIVE_ROW_CAP = 200;
 
 const REQ_STATUS_LABEL: Record<string, string> = {
   pending: "logs.reqStatusPending",
@@ -443,6 +448,7 @@ export function Logs() {
   type TK = keyof Translations;
   const { isStaff } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
+  const [liveEnabled, setLiveEnabled] = useState(false);
   const config = useAsync<{ logs_page_size?: number }>(() =>
     api.get("/api/auth/config"),
   );
@@ -458,11 +464,47 @@ export function Logs() {
             : t("logs.subtitleMember" as TK)
         }
         onRefresh={() => setRefreshKey((k) => k + 1)}
+        extraActions={<LiveStreamToggle enabled={liveEnabled} onToggle={setLiveEnabled} />}
       />
       <div style={{ marginTop: 16 }}>
-        <RequestLogs refreshKey={refreshKey} pageSize={pageSize} />
+        <RequestLogs
+          refreshKey={refreshKey}
+          pageSize={pageSize}
+          liveEnabled={liveEnabled}
+        />
       </div>
     </div>
+  );
+}
+
+// Connect / disconnect button for the live request-log stream, rendered next to
+// the page's refresh button.
+function LiveStreamToggle({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  onToggle: (v: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
+  return (
+    <Tooltip
+      content={enabled ? t("logs.liveDisconnect" as TK) : t("logs.liveConnect" as TK)}
+      relationship="label"
+    >
+      <Button
+        size="small"
+        appearance={enabled ? "primary" : "subtle"}
+        icon={<LiveRegular />}
+        onClick={() => onToggle(!enabled)}
+        aria-label={
+          enabled ? t("logs.liveDisconnect" as TK) : t("logs.liveConnect" as TK)
+        }
+      >
+        {enabled ? t("logs.liveOn" as TK) : t("logs.liveOff" as TK)}
+      </Button>
+    </Tooltip>
   );
 }
 
@@ -497,6 +539,7 @@ interface RequestFilters {
   user_sub: string;
   token_id: string;
   provider: string;
+  client_ip: string;
   status: string;
   req_status: string;
   // Time window. `timeMode` is UI-only (drives the preset dropdown); `start`/
@@ -511,6 +554,7 @@ const EMPTY_REQUEST_FILTERS: RequestFilters = {
   user_sub: "",
   token_id: "",
   provider: "",
+  client_ip: "",
   status: "",
   req_status: "",
   timeMode: "",
@@ -525,6 +569,7 @@ function requestFiltersFromParams(params: URLSearchParams): RequestFilters {
     user_sub: params.get("user_sub") || "",
     token_id: params.get("token_id") || "",
     provider: params.get("provider") || "",
+    client_ip: params.get("client_ip") || "",
     status: params.get("status_code") || "",
     req_status: params.get("req_status") || "",
   };
@@ -547,13 +592,140 @@ function parseLogTs(value?: string | null): number {
   return d.getTime();
 }
 
-// Request duration: fixed once finished, otherwise computed live against "now"
-// (so an in-progress stream keeps counting up until its row finalises).
-function requestDurationMs(r: RequestLog, now: number): number | null {
+// Request duration: fixed once finished. While a request is still in progress
+// it only counts up live when the live SSE stream is connected (``liveEnabled``)
+// — without it the number would just be a client-side estimate of a stale row,
+// so we show "—" instead.
+function requestDurationMs(
+  r: RequestLog,
+  now: number,
+  liveEnabled: boolean,
+): number | null {
   const start = parseLogTs(r.started_at ?? r.ts);
   if (Number.isNaN(start)) return null;
+  if (r.req_status === "pending" && !liveEnabled) return null;
   const end = r.finished_at ? parseLogTs(r.finished_at) : now;
   return Number.isNaN(end) ? null : Math.max(0, end - start);
+}
+
+// Live request-log stream over SSE. EventSource can't attach the dashboard's
+// Authorization header, so this drives a fetch() ReadableStream and parses the
+// SSE ``data:`` frames by hand.
+function useLogStream({
+  enabled,
+  query,
+  afterId,
+  onRow,
+  onError,
+}: {
+  enabled: boolean;
+  // Serialized query params (filters) sent to the stream endpoint. Changing
+  // them reconnects the stream so it stays aligned with the current filters.
+  query: string;
+  // First id the stream should skip (the max id currently displayed).
+  afterId: number;
+  onRow: (row: RequestLog) => void;
+  onError: (message: string) => void;
+}): { status: "idle" | "connecting" | "connected" | "error" } {
+  const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "error">(
+    "idle",
+  );
+  const onRowRef = useRef(onRow);
+  const onErrorRef = useRef(onError);
+  const lastIdRef = useRef(afterId);
+  useEffect(() => {
+    onRowRef.current = onRow;
+    onErrorRef.current = onError;
+  }, [onRow, onError]);
+  useEffect(() => {
+    lastIdRef.current = afterId;
+  }, [afterId]);
+
+  useEffect(() => {
+    if (!enabled) {
+      setStatus("idle");
+      return;
+    }
+    const token = getToken();
+    if (!token) {
+      setStatus("error");
+      return;
+    }
+    const controller = new AbortController();
+    setStatus("connecting");
+    let connected = false;
+
+    (async () => {
+      try {
+        const params = new URLSearchParams(query);
+        params.set("after_id", String(lastIdRef.current));
+        const url = `${API_BASE}/api/admin/logs/requests/stream?${params}`;
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            detail = body.detail || detail;
+          } catch {
+            /* ignore */
+          }
+          throw new Error(detail);
+        }
+        if (!res.body) throw new Error("empty stream");
+        setStatus("connected");
+        connected = true;
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buffer.indexOf("\n\n")) !== -1) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            for (const line of frame.split("\n")) {
+              if (!line.startsWith("data: ")) continue;
+              const payload = line.slice(6).trim();
+              if (!payload) continue;
+              try {
+                const row = JSON.parse(payload);
+                if (isRequestLog(row)) {
+                  lastIdRef.current = Math.max(lastIdRef.current, row.id);
+                  onRowRef.current(row);
+                }
+              } catch {
+                /* skip malformed frame */
+              }
+            }
+          }
+        }
+        // Server closed the stream cleanly.
+        if (connected) {
+          setStatus("error");
+          onErrorRef.current("Live stream ended.");
+        }
+      } catch (e) {
+        if (controller.signal.aborted) return; // intentional disconnect
+        setStatus("error");
+        onErrorRef.current(e instanceof Error ? e.message : String(e));
+      }
+    })();
+
+    return () => {
+      connected = false;
+      controller.abort();
+      setStatus("idle");
+    };
+  }, [enabled, query]);
+
+  return { status };
 }
 
 function formatDuration(ms: number | null): string {
@@ -578,9 +750,11 @@ function truncateIp(ip: string): string {
 function RequestLogs({
   refreshKey,
   pageSize,
+  liveEnabled,
 }: {
   refreshKey: number;
   pageSize: number;
+  liveEnabled: boolean;
 }) {
   const { t: tr } = useTranslation();
   type TK = keyof Translations;
@@ -615,12 +789,14 @@ function RequestLogs({
   // Free-text status filters every keystroke; debounce so we fetch once the
   // value settles (500ms of no typing) instead of firing a request per character.
   const debouncedStatus = useDebouncedValue(filters.status, 500);
+  const debouncedIp = useDebouncedValue(filters.client_ip, 500);
 
   const queryParams = {
     model: filters.model || undefined,
     user_sub: filters.user_sub || undefined,
     token_id: filters.token_id || undefined,
     provider: filters.provider || undefined,
+    client_ip: debouncedIp || undefined,
     status_code: debouncedStatus || undefined,
     req_status: filters.req_status || undefined,
     start: filters.start || undefined,
@@ -642,6 +818,7 @@ function RequestLogs({
       filters.user_sub,
       filters.token_id,
       filters.provider,
+      debouncedIp,
       debouncedStatus,
       filters.req_status,
       filters.start,
@@ -650,17 +827,93 @@ function RequestLogs({
   );
   const { highlightId, containerRef, markJump } = useIdJump(logs.data);
 
-  // Re-render every second while any row is still in progress, so the Duration
-  // column keeps counting up live; it freezes once the row finalises.
+  // Live request-log stream: new rows matching the current filters are pushed
+  // over SSE and prepended to the table while enabled.
+  const [liveRows, setLiveRows] = useState<RequestLog[]>([]);
+  const [liveNotice, setLiveNotice] = useState<string | null>(null);
+  const liveQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (filters.model) params.set("model", filters.model);
+    if (filters.user_sub) params.set("user_sub", filters.user_sub);
+    if (filters.token_id) params.set("token_id", filters.token_id);
+    if (filters.provider) params.set("provider", filters.provider);
+    if (debouncedIp) params.set("client_ip", debouncedIp);
+    if (debouncedStatus) params.set("status_code", debouncedStatus);
+    if (filters.req_status) params.set("req_status", filters.req_status);
+    return params.toString();
+  }, [filters, debouncedIp, debouncedStatus]);
+
+  // Max id currently shown — new stream rows start strictly after it.
+  const maxShownId = useMemo(
+    () =>
+      logs.data?.items.reduce((m, r) => Math.max(m, r.id), 0) ??
+      liveRows.reduce((m, r) => Math.max(m, r.id), 0) ??
+      0,
+    [logs.data, liveRows],
+  );
+
+  const handleLiveRow = useCallback(
+    (row: RequestLog) => {
+      // Merge by id so a streamed row that also landed in a concurrent reload
+      // doesn't duplicate; keep the newest on top, capped to avoid unbounded
+      // growth on a long-lived stream.
+      setLiveRows((prev) => {
+        const next = prev.filter((p) => p.id !== row.id);
+        next.unshift(row);
+        return next.slice(0, LIVE_ROW_CAP);
+      });
+      // Jump to page one so the freshly-arrived rows are visible.
+      if (offset !== 0) setOffset(0);
+    },
+    [offset],
+  );
+
+  useLogStream({
+    enabled: liveEnabled,
+    query: liveQuery,
+    afterId: liveEnabled ? maxShownId : 0,
+    onRow: handleLiveRow,
+    onError: (msg) => {
+      setLiveNotice(msg);
+    },
+  });
+
+  // Clear live rows when the stream is disconnected or filters change, and
+  // expire the transient error notice.
+  useEffect(() => {
+    if (!liveEnabled) {
+      setLiveRows([]);
+      setLiveNotice(null);
+    }
+  }, [liveEnabled, liveQuery]);
+
+  useEffect(() => {
+    if (!liveNotice) return;
+    const id = window.setTimeout(() => setLiveNotice(null), 6000);
+    return () => window.clearTimeout(id);
+  }, [liveNotice]);
+
+  // The table shows live rows above the loaded page (they are the newest by
+  // construction), deduped against any overlap with the fetched page.
+  const allRows = useMemo(() => {
+    const live = liveEnabled ? liveRows : [];
+    const liveIds = new Set(live.map((r) => r.id));
+    const fetched = logs.data?.items ?? [];
+    return [...live, ...fetched.filter((r) => !liveIds.has(r.id))];
+  }, [liveEnabled, liveRows, logs.data]);
+
+  // Re-render every second while the live stream is connected and any row is
+  // still in progress, so the Duration column counts up live; it freezes once
+  // the stream is disconnected or the row finalises. Without SSE we deliberately
+  // do NOT tick — a pending row's duration would just be a client-side guess.
   const [nowTick, setNowTick] = useState(0);
   useEffect(() => {
-    const hasPending = (logs.data?.items ?? []).some(
-      (r) => r.req_status === "pending",
-    );
+    if (!liveEnabled) return;
+    const hasPending = (allRows ?? []).some((r) => r.req_status === "pending");
     if (!hasPending) return;
     const id = window.setInterval(() => setNowTick((t) => t + 1), 1000);
     return () => window.clearInterval(id);
-  }, [logs.data]);
+  }, [liveEnabled, allRows]);
   void nowTick; // nowTick only exists to force re-renders; time is read live.
   const durationNow = Date.now();
 
@@ -783,6 +1036,13 @@ function RequestLogs({
           ))}
         </Dropdown>
         <Input
+          aria-label={tr("logs.ip" as TK)}
+          placeholder={tr("logs.filterIp" as TK)}
+          value={filters.client_ip}
+          style={{ minWidth: 130, maxWidth: 160 }}
+          onChange={(_, d) => setFilter("client_ip", d.value)}
+        />
+        <Input
           aria-label={tr("logs.status" as TK)}
           placeholder={tr("logs.filterStatus" as TK)}
           value={filters.status}
@@ -852,6 +1112,34 @@ function RequestLogs({
           </Tooltip>
         </div>
       </div>
+      {liveEnabled ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 8,
+            padding: "6px 10px",
+            borderRadius: 6,
+            background: tokens.colorNeutralBackground3,
+            color: tokens.colorNeutralForeground2,
+            fontSize: 12,
+          }}
+        >
+          <Badge
+            color={liveNotice ? "danger" : "success"}
+            appearance="filled"
+            size="small"
+          >
+            {liveNotice
+              ? tr("logs.liveError" as TK)
+              : tr("logs.liveOn" as TK)}
+          </Badge>
+          <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+            {liveNotice ?? tr("logs.liveHint" as TK)}
+          </Text>
+        </div>
+      ) : null}
       <div ref={containerRef}>
       <DataTable ariaLabel={tr("logs.requests" as TK)} minWidth={960}>
         <TableHeader>
@@ -872,7 +1160,7 @@ function RequestLogs({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {data.items.map((r) => (
+          {allRows.map((r) => (
             <TableRow
               key={r.id}
               data-log-row={r.id}
@@ -953,13 +1241,20 @@ function RequestLogs({
                 }}
               >
                 {r.client_ip ? (
-                  r.client_ip.length > MAX_IP_CHARS ? (
-                    <Tooltip content={r.client_ip} relationship="label">
-                      <span style={{ cursor: "default" }}>{truncateIp(r.client_ip)}</span>
-                    </Tooltip>
-                  ) : (
-                    r.client_ip
-                  )
+                  <button
+                    type="button"
+                    className={cellStyles.clickable}
+                    title={tr("logs.clickToFilter" as TK)}
+                    onClick={() => setFilter("client_ip", r.client_ip ?? "")}
+                  >
+                    {r.client_ip.length > MAX_IP_CHARS ? (
+                      <Tooltip content={r.client_ip} relationship="label">
+                        <span>{truncateIp(r.client_ip)}</span>
+                      </Tooltip>
+                    ) : (
+                      r.client_ip
+                    )}
+                  </button>
                 ) : (
                   "—"
                 )}
@@ -1015,8 +1310,8 @@ function RequestLogs({
                   whiteSpace: "nowrap",
                 }}
               >
-                {formatDuration(requestDurationMs(r, durationNow))}
-                {r.req_status === "pending" ? (
+                {formatDuration(requestDurationMs(r, durationNow, liveEnabled))}
+                {r.req_status === "pending" && liveEnabled ? (
                   <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
                     {" · …"}
                   </Text>
@@ -1092,7 +1387,7 @@ function RequestLogs({
                     <DetailRow label={tr("logs.startedAt" as TK)} value={detailLog.started_at ? formatDateMs(detailLog.started_at) : "—"} />
                     {detailLog.finished_at ? <DetailRow label={tr("logs.finishedAt" as TK)} value={formatDateMs(detailLog.finished_at)} /> : null}
                     {detailLog.first_token_ms != null ? <DetailRow label={tr("logs.colTtft" as TK)} value={`${Math.round(detailLog.first_token_ms)}ms`} /> : null}
-                    <DetailRow label={tr("logs.colDuration" as TK)} value={formatDuration(requestDurationMs(detailLog, Date.now()))} />
+                    <DetailRow label={tr("logs.colDuration" as TK)} value={formatDuration(requestDurationMs(detailLog, Date.now(), liveEnabled))} />
                     <DetailRow
                       label={tr("logs.colReqStatus" as TK)}
                       value={

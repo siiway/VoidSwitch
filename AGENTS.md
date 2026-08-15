@@ -17,6 +17,28 @@ Frontend `npm run lint` is `tsc --noEmit`; also run `npm run build` for anything
 
 Use `bun` / `bunx` for frontend package and script operations where possible. Do not run commands that regenerate `package-lock.json`; this repo uses `bun.lock`, and mixing npm and Bun lockfiles creates noisy conflicts.
 
+## Database migrations
+
+**Alembic owns the schema.** The app runs `alembic upgrade head` automatically at startup (`core/database.py:run_migrations`), so deploys need no manual migration step — the first revision (`0001_baseline`) creates a fresh schema and heals pre-Alembic databases in one idempotent pass.
+
+When you change a model, you MUST ship a migration with it:
+
+```bash
+# 1. edit the SQLAlchemy model (backend/voidswitch/models/db.py)
+# 2. generate a candidate migration, then REVIEW it (autogenerate is a draft)
+uv run alembic revision --autogenerate -m "describe the change"
+# 3. confirm the model and the DB are in sync (CI-friendly check)
+uv run alembic check
+# 4. commit the model + migration together
+```
+
+Rules:
+
+- **Never extend `_ADDED_COLUMNS` / `_ADDED_INDEXES` in `core/database.py`** — they are FROZEN and consumed only by the baseline to heal pre-Alembic databases. New columns/indexes go in an Alembic revision (or declared on the model, e.g. composite indexes in `__table_args__`).
+- The URL comes from the app's own settings (`VOIDSWITCH_DATABASE__URL` / `config.yaml`); nothing is hardcoded in `alembic.ini`. Dev/tests run SQLite, prod runs PostgreSQL — the same tree serves both (SQLite ALTERs go through batch mode).
+- Postgres nit: boolean defaults must be `DEFAULT false`, **not** `DEFAULT 0` (Postgres rejects `0` as an integer default for a boolean column).
+- Alembic runs inside the app's event loop at startup; use `alembic check` before pushing to catch a model/migration drift.
+
 ## Documentation
 
 There is a public, bilingual VitePress **usage** site in `docs/`, deployed to
