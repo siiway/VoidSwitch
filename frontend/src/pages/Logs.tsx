@@ -65,6 +65,24 @@ import {
 
 const DEFAULT_PAGE = 50;
 
+// The lifecycle statuses a request log row can be in (req_status). Ordered for
+// the filter dropdown; labels come from the i18n ``logs.reqStatus*`` keys.
+const REQ_STATUS_VALUES: string[] = [
+  "pending",
+  "completed",
+  "cancelled",
+  "error",
+  "terminated",
+];
+
+const REQ_STATUS_LABEL: Record<string, string> = {
+  pending: "logs.reqStatusPending",
+  completed: "logs.reqStatusCompleted",
+  cancelled: "logs.reqStatusCancelled",
+  error: "logs.reqStatusError",
+  terminated: "logs.reqStatusTerminated",
+};
+
 // Persistent highlight for a row the user jumped to. Unlike a brief flash this
 // stays visible (with a strong brand accent + left bar) until the user moves the
 // pointer / scrolls / types, so it's easy to spot even after an auto-scroll.
@@ -480,6 +498,7 @@ interface RequestFilters {
   token_id: string;
   provider: string;
   status: string;
+  req_status: string;
   // Time window. `timeMode` is UI-only (drives the preset dropdown); `start`/
   // `end` are absolute ISO instants sent to the backend.
   timeMode: TimeMode;
@@ -493,6 +512,7 @@ const EMPTY_REQUEST_FILTERS: RequestFilters = {
   token_id: "",
   provider: "",
   status: "",
+  req_status: "",
   timeMode: "",
   start: "",
   end: "",
@@ -506,6 +526,7 @@ function requestFiltersFromParams(params: URLSearchParams): RequestFilters {
     token_id: params.get("token_id") || "",
     provider: params.get("provider") || "",
     status: params.get("status_code") || "",
+    req_status: params.get("req_status") || "",
   };
 }
 
@@ -514,6 +535,44 @@ function requestFiltersFromParams(params: URLSearchParams): RequestFilters {
 function normalizeStatus(value: string): string {
   const s = value.trim();
   return /^[1-5]$/.test(s) ? `${s}xx` : s;
+}
+
+// Backend timestamps may be tz-less (naive UTC from SQLite) — parse them as UTC
+// so durations computed against ``Date.now()`` are correct.
+function parseLogTs(value?: string | null): number {
+  if (!value) return NaN;
+  const trimmed = value.trim();
+  const hasTz = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(trimmed);
+  const d = new Date(hasTz ? trimmed : `${trimmed}Z`);
+  return d.getTime();
+}
+
+// Request duration: fixed once finished, otherwise computed live against "now"
+// (so an in-progress stream keeps counting up until its row finalises).
+function requestDurationMs(r: RequestLog, now: number): number | null {
+  const start = parseLogTs(r.started_at ?? r.ts);
+  if (Number.isNaN(start)) return null;
+  const end = r.finished_at ? parseLogTs(r.finished_at) : now;
+  return Number.isNaN(end) ? null : Math.max(0, end - start);
+}
+
+function formatDuration(ms: number | null): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rest = Math.round(s % 60);
+  return `${m}m ${rest}s`;
+}
+
+// IPv4 addresses are at most 15 chars ("255.255.255.255"); reserve a little more
+// and truncate anything longer (IPv6) with an ellipsis. The full value is shown
+// on hover via the wrapping Tooltip.
+const MAX_IP_CHARS = 17;
+
+function truncateIp(ip: string): string {
+  return ip.length > MAX_IP_CHARS ? `${ip.slice(0, MAX_IP_CHARS)}…` : ip;
 }
 
 function RequestLogs({
@@ -560,6 +619,7 @@ function RequestLogs({
     token_id: filters.token_id || undefined,
     provider: filters.provider || undefined,
     status_code: debouncedStatus || undefined,
+    req_status: filters.req_status || undefined,
     start: filters.start || undefined,
     end: filters.end || undefined,
   };
@@ -580,11 +640,26 @@ function RequestLogs({
       filters.token_id,
       filters.provider,
       debouncedStatus,
+      filters.req_status,
       filters.start,
       filters.end,
     ],
   );
   const { highlightId, containerRef, markJump } = useIdJump(logs.data);
+
+  // Re-render every second while any row is still in progress, so the Duration
+  // column keeps counting up live; it freezes once the row finalises.
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    const hasPending = (logs.data?.items ?? []).some(
+      (r) => r.req_status === "pending",
+    );
+    if (!hasPending) return;
+    const id = window.setInterval(() => setNowTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [logs.data]);
+  void nowTick; // nowTick only exists to force re-renders; time is read live.
+  const durationNow = Date.now();
 
   function setFilter<K extends keyof RequestFilters>(
     key: K,
@@ -708,6 +783,21 @@ function RequestLogs({
           onChange={(_, d) => setFilter("status", d.value)}
           onBlur={() => setFilter("status", normalizeStatus(filters.status))}
         />
+        <Dropdown
+          aria-label={tr("logs.filterReqStatus" as TK)}
+          placeholder={tr("logs.filterReqStatus" as TK)}
+          style={{ minWidth: 130 }}
+          clearable
+          selectedOptions={filters.req_status ? [filters.req_status] : []}
+          value={filters.req_status ? tr(REQ_STATUS_LABEL[filters.req_status]) : ""}
+          onOptionSelect={(_, d) => setFilter("req_status", d.optionValue ?? "")}
+        >
+          {REQ_STATUS_VALUES.map((s) => (
+            <Option key={s} value={s} text={tr(REQ_STATUS_LABEL[s])}>
+              {tr(REQ_STATUS_LABEL[s])}
+            </Option>
+          ))}
+        </Dropdown>
         <TimeRangeFilter
           mode={filters.timeMode}
           start={filters.start}
@@ -768,6 +858,7 @@ function RequestLogs({
             <TableHeaderCell>{tr("logs.colReqStatus" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.status" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.colTtft" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.colDuration" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tokens" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tries" as TK)}</TableHeaderCell>
             <TableHeaderCell style={{ width: 96 }} />
@@ -784,6 +875,7 @@ function RequestLogs({
                 style={{
                   color: tokens.colorNeutralForeground3,
                   fontFamily: "monospace",
+                  whiteSpace: "nowrap",
                 }}
               >
                 {r.id}
@@ -840,8 +932,30 @@ function RequestLogs({
                   "—"
                 )}
               </TableCell>
-              <TableCell style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace", fontSize: 12 }}>
-                {r.client_ip ?? "—"}
+              <TableCell
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  // Reserve room for an IPv4 address plus a little slack; longer
+                  // values (IPv6) are ellipsized by the cell.
+                  maxWidth: 130,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {r.client_ip ? (
+                  r.client_ip.length > MAX_IP_CHARS ? (
+                    <Tooltip content={r.client_ip} relationship="label">
+                      <span style={{ cursor: "default" }}>{truncateIp(r.client_ip)}</span>
+                    </Tooltip>
+                  ) : (
+                    r.client_ip
+                  )
+                ) : (
+                  "—"
+                )}
               </TableCell>
               <TableCell>
                 <Badge
@@ -849,6 +963,7 @@ function RequestLogs({
                     r.req_status === "completed" ? "success" :
                     r.req_status === "pending" ? "warning" :
                     r.req_status === "cancelled" ? "subtle" :
+                    r.req_status === "terminated" ? "danger" :
                     r.req_status === "error" ? "danger" : "subtle"
                   }
                   appearance="filled"
@@ -856,6 +971,7 @@ function RequestLogs({
                   {r.req_status === "pending" ? tr("logs.reqStatusPending" as TK) :
                    r.req_status === "completed" ? tr("logs.reqStatusCompleted" as TK) :
                    r.req_status === "cancelled" ? tr("logs.reqStatusCancelled" as TK) :
+                   r.req_status === "terminated" ? tr("logs.reqStatusTerminated" as TK) :
                    r.req_status === "error" ? tr("logs.reqStatusError" as TK) :
                    (r.req_status ?? "—")}
                 </Badge>
@@ -883,6 +999,21 @@ function RequestLogs({
               </TableCell>
               <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                 {r.first_token_ms != null ? `${Math.round(r.first_token_ms)}ms` : "—"}
+              </TableCell>
+              <TableCell
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {formatDuration(requestDurationMs(r, durationNow))}
+                {r.req_status === "pending" ? (
+                  <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                    {" · …"}
+                  </Text>
+                ) : null}
               </TableCell>
               <TableCell>{r.total_tokens}</TableCell>
               <TableCell>{r.attempts}</TableCell>
@@ -949,6 +1080,16 @@ function RequestLogs({
                     <DetailRow label={tr("logs.startedAt" as TK)} value={detailLog.started_at ? formatDateMs(detailLog.started_at) : "—"} />
                     {detailLog.finished_at ? <DetailRow label={tr("logs.finishedAt" as TK)} value={formatDateMs(detailLog.finished_at)} /> : null}
                     {detailLog.first_token_ms != null ? <DetailRow label={tr("logs.colTtft" as TK)} value={`${Math.round(detailLog.first_token_ms)}ms`} /> : null}
+                    <DetailRow label={tr("logs.colDuration" as TK)} value={formatDuration(requestDurationMs(detailLog, Date.now()))} />
+                    <DetailRow
+                      label={tr("logs.colReqStatus" as TK)}
+                      value={
+                        detailLog.req_status
+                          ? tr(REQ_STATUS_LABEL[detailLog.req_status] ?? "")
+                          : "—"
+                      }
+                    />
+                    <DetailRow label={tr("logs.colClientIp" as TK)} value={detailLog.client_ip ?? "—"} />
                     <DetailRow label={tr("logs.status" as TK)} value={detailLog.success ? `${detailLog.status_code} OK` : `${detailLog.status_code ?? "ERR"}`} />
                     <DetailRow label={tr("logs.user" as TK)} value={detailLog.user_name ?? detailLog.user_sub ?? "—"} />
                     <DetailRow

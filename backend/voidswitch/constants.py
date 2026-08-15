@@ -127,6 +127,16 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "connect_timeout_seconds": 15,
     "max_retries": 6,
     "stream_idle_timeout_seconds": 120,
+    # Hard wall-clock cap on a single request (streaming included): when a
+    # request runs past this, the connection is force-cut and the log row marked
+    # ``terminated`` (已切断). Streaming has no other total-duration bound — only
+    # the idle timeout — so a slow-trickling or leaked upstream connection could
+    # otherwise stay "pending" forever. 0 = disabled (no total cap).
+    "response_timeout_seconds": 3600,
+    # Dashboard session (login-state) duration in minutes, min 60. 0 / empty →
+    # follow the `expires_in` returned by Prism at login; if Prism sends none,
+    # fall back to the server config's session_ttl_minutes.
+    "session_ttl_minutes": 0,
     "auto_disable_zero_balance": True,
     "balance_probe_enabled": True,
     "balance_rescan_enabled": True,

@@ -52,6 +52,12 @@ exhaustion (429) triggers a rate-limit cooldown.
 - **Egress proxy** — all active proxies, direct connection only, or a selected set of proxies. See [Proxies](/en/admin/proxies).
 - **Rate-limit cooldown** — how long a 429'd key waits before being retried when the upstream sends no
   `Retry-After`.
+- **Auto-retry on 200 OK + 0 tokens** — for flaky upstreams: a **200 response with zero tokens**
+  (or a stream that ends before producing any real content) is treated as a transient fault and retried
+  through the failover machinery (next key / route / provider); the empty reply is **never** delivered.
+  Streamed responses are spooled until the first real content token before being forwarded, so an empty
+  reply is retried in-flight on the same connection; normal generations stream live the moment content
+  arrives. If every attempt is empty, the client gets an upstream error.
 - **Extra headers** — custom authentication headers. These may contain secrets, so they are treated as
   sensitive and are owner-only in audit records.
 

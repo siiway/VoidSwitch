@@ -10,7 +10,17 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
 - **Proxy & Routing** — proxy toggle, static proxy URL, failure thresholds, probe interval and URL, and the reviver toggle.
 - **Keys & Balance** — key failure limit, auto-disable for zero-balance keys, and balance probe/rescan cadence and rate.
 - **Rate Limiting** — the default recovery window and the cap on any single cooldown.
-- **Timeouts & Retries** — connection / request / stream-idle timeouts and the retry budget.
+- **Timeouts & Retries** — connection / request / stream-idle timeouts, the retry budget, plus a
+  **response timeout** (`response_timeout_seconds`): a hard wall-clock cap on the whole request (streaming
+  included). When a request runs past it, the connection is **force-cut** and the log row is marked
+  **Terminated** (已切断). Streaming previously had no total-duration bound — only the idle timeout — so a
+  slow-trickling or leaked connection could stay "in progress" forever; this setting cuts such hung
+  connections (`0` = disabled). At startup, any leftover "in progress" rows older than this window are also
+  reconciled to **Terminated**.
+- **Login & Session** — **Session duration** (`session_ttl_minutes`, minutes): how long a dashboard session
+  JWT stays valid. `0` (empty) = **follow the `expires_in` Prism returns at login**; a value of at least
+  **60** minutes is used as-is; when Prism sends none and nothing is configured, the server config's
+  `session_ttl_minutes` is used. A non-zero value below 60 is rejected on save.
 - **Logs & Retention** — page size, the auto-cleanup toggle and interval, and the retention windows for request / audit / debug logs
   (`0` = keep forever). Owners can also **clean up now**. After the debug log retention window
   (`debug_log_retention_days`) expires, the detailed debug fields on rows are stripped (request/response headers and bodies, per-attempt records),

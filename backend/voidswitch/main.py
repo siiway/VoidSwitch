@@ -37,6 +37,7 @@ from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import RequestSessionMiddleware, init_database
 from voidswitch.core.logging import configure_logging, get_logger
 from voidswitch.services import role_groups, settings_store
+from voidswitch.services.dispatcher import reconcile_pending_request_logs
 from voidswitch.services.network import get_pool
 from voidswitch.tasks.balance_probe import run_balance_probe
 from voidswitch.tasks.balance_rescan import run_balance_rescan
@@ -57,6 +58,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await settings_store.ensure_defaults(session)
         await settings_store.load_all(session)
         await role_groups.ensure_moderator_group(session)
+    # Heal orphaned "pending" stream rows (worker killed mid-stream, abandoned
+    # connections) — anything still pending past the response timeout is marked
+    # terminated (已切断). Safe no-op when response_timeout_seconds = 0.
+    await reconcile_pending_request_logs()
     log.info("database_ready", url=_redact(settings.database.url))
 
     manager = TaskManager()

@@ -164,6 +164,10 @@ class PrismIdentity:
     # Platform tiers are derived from the user's role in the *main team*, never
     # from any instance/site-wide Prism role.
     teams: list[dict[str, Any]] = field(default_factory=list)
+    # ``expires_in`` (seconds) from Prism's token response — used as the
+    # dashboard session duration when the runtime ``session_ttl_minutes``
+    # setting is empty (follow what Prism returned). None when Prism sent none.
+    expires_in_seconds: int | None = None
 
 
 async def _oauth_client() -> httpx.AsyncClient:
@@ -201,9 +205,17 @@ async def exchange_code(settings: Settings, code: str, state: str) -> PrismIdent
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OAuth token exchange failed.")
     tokens = resp.json()
 
+    # The session JWT we mint afterwards may follow Prism's token lifetime when
+    # no custom duration is configured (see api.auth._session_out).
+    try:
+        expires_in_seconds = int(tokens.get("expires_in") or 0) or None
+    except (TypeError, ValueError):
+        expires_in_seconds = None
+
     claims = _decode_id_token(settings, tokens.get("id_token"))
     identity = await _fetch_userinfo(settings, tokens.get("access_token"), claims)
     identity.teams = await _fetch_teams(settings, tokens.get("access_token"))
+    identity.expires_in_seconds = expires_in_seconds
     return identity
 
 

@@ -87,6 +87,8 @@ class ProviderBase(BaseModel):
     balance_url: str | None = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: int = 0
+    # "200 OK + 0 tokens" auto-retry + response cache (memory → disk → drop).
+    retry_on_zero_token: bool = False
     # claude-code only: drop the whole "You are OpenCode…" system block.
     drop_opencode_identity_block: bool = False
     # Outbound routing: "all" | "direct" | "selected" (see constants.ProxyMode).
@@ -119,6 +121,7 @@ class ProviderUpdate(BaseModel):
     balance_url: str | None = None
     extra_headers: dict[str, str] | None = None
     timeout_seconds: int | None = None
+    retry_on_zero_token: bool | None = None
     drop_opencode_identity_block: bool | None = None
     proxy_mode: str | None = None
     proxy_ids: list[int] | None = None

@@ -28,8 +28,27 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 log = get_logger("api.auth")
 
 
-def _session_out(user: User, settings: Settings) -> SessionOut:
-    ttl = settings.server.session_ttl_minutes
+def _session_out(
+    user: User,
+    settings: Settings,
+    identity: auth.PrismIdentity | None = None,
+) -> SessionOut:
+    """Mint a dashboard session JWT with a computed lifetime.
+
+    Precedence for the TTL (minutes):
+    1. the runtime ``session_ttl_minutes`` setting, when set to >= 60;
+    2. else the ``expires_in`` Prism returned at login (``identity``), when the
+       caller is a Prism OAuth callback and Prism sent one;
+    3. else the server config's ``session_ttl_minutes`` (existing default).
+    """
+    configured = settings_store.get_int("session_ttl_minutes", 0)
+    if configured >= 60:
+        ttl = configured
+    elif identity is not None and identity.expires_in_seconds:
+        ttl = max(60, identity.expires_in_seconds // 60)
+    else:
+        ttl = settings.server.session_ttl_minutes
+    ttl = max(ttl, 1)
     token = create_session_token(
         secret=settings.server.secret_key,
         subject=user.sub,
@@ -186,7 +205,7 @@ async def callback(
         params = urlencode({"error": "login_failed"})
         return RedirectResponse(f"{target}#{params}", status_code=302)
 
-    session_out = _session_out(user, settings)
+    session_out = _session_out(user, settings, identity)
     params = urlencode(
         {"access_token": session_out.access_token, "expires_in": session_out.expires_in}
     )

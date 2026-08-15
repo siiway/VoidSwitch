@@ -14,14 +14,18 @@ In the staff **by user** breakdown, usernames are clickable: clicking one opens 
 
 The **Logs** page has two views:
 
-- **Requests** — one row per gateway call: time, model, provider, status, latency, token counts, and any error. Members only see their own requests;
-  staff see everyone's.
+- **Requests** — one row per gateway call: time, user, token, model, client IP, status, status code,
+  TTFT, **request duration**, token counts, retry count, and any error. Members only see their own requests;
+  staff see everyone's. IPv6 addresses are truncated with `…` in the cell — hover for the full address;
+  the ID never wraps. The request duration keeps ticking up every second while a request is **in progress**
+  and freezes once it finishes (`started_at → finished_at`).
 - **Audit** *(staff)* — an administrative record of who changed what.
 
 Use filters to narrow the results, and use the paginator to browse pages:
 
 - **Request** logs can be filtered by **model**, **user**, **token** (all "search + select" dropdowns where you can type a keyword to filter and then select),
-  **provider** (a plain dropdown selection), and **status code**. For the status code you can enter a specific number (e.g. `404`),
+  **provider** (a plain dropdown selection), **status code** (free text), and **request status** (a dropdown:
+  in progress / completed / cancelled / error / terminated). For the status code you can enter a specific number (e.g. `404`),
   or enter just a single digit `2` / `3` / `4` / `5` and blur the field, and it will be auto-completed to `2xx` / `3xx` / `4xx` / `5xx`,
   matching all status codes in that class.
 - **Audit** logs can be filtered by **scope**, **action**, **target type**, **actor** (search + select), and **IP** / **User-Agent**
@@ -40,8 +44,9 @@ Token exchanges for Claude Code subscription OAuth are also counted in the **Req
 such as `<cc-refresh-token>` or `<cc-exchange-token>`; these records usually have no user and no Void-Token.
 
 Every request row has an **info** button (ℹ) that opens its regular details —
-time, caller, token, model, provider, key, proxy, status, tokens, and any error.
-When a model is routed (aliased to a different upstream ID), the details show the **model route** (e.g. `codex-gpt-5.5 → gpt-5.5`),
+time, start / finish time, request duration, status code, request status (full text), the **full client IP**,
+caller, token, model, provider, key, proxy, token counts, and any error — every table header is shown here in
+**untruncated** form. When a model is routed (aliased to a different upstream ID), the details show the **model route** (e.g. `codex-gpt-5.5 → gpt-5.5`),
 making it easy to trace the mapping. Even if a request failed on all providers, the details still show the last attempted provider, key, and route.
 
 ### Debug details (owner / co-owner only)

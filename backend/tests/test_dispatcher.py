@@ -718,3 +718,242 @@ async def test_dispatch_rate_limit_no_recovery_within_interval(db, seeded):
 
     # No keys available → 502
     assert result.status_code == 502
+
+
+async def _set_zero_token(db, provider_id, enabled=True):
+    from voidswitch.models.db import Provider
+
+    async with db.session() as session:
+        provider = await session.get(Provider, provider_id)
+        provider.retry_on_zero_token = enabled
+        await session.flush()
+
+
+EMPTY_RESPONSE = {
+    "id": "chatcmpl-empty",
+    "object": "chat.completion",
+    "model": "deepseek-chat",
+    "choices": [
+        {
+            "index": 0,
+            "message": {"role": "assistant", "content": ""},
+            "finish_reason": "stop",
+        }
+    ],
+    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+}
+
+
+async def test_dispatch_zero_token_retry_non_stream(db, seeded):
+    """A 200 OK + 0 tokens response is treated as a transient fault: the
+    dispatcher retries on the next key instead of returning the empty reply."""
+    await _set_zero_token(db, seeded["provider_id"], True)
+    await _add_key(db, seeded["provider_id"], "sk-test-2")
+
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(DS_URL).mock(
+            side_effect=[
+                httpx.Response(200, json=EMPTY_RESPONSE),
+                httpx.Response(200, json=OAI_RESPONSE),
+            ]
+        )
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 200
+    assert result.attempts == 2
+    assert len(route.calls) == 2
+    assert b"hello" in (result.content or b"")
+
+
+async def test_dispatch_zero_token_exhaustion_is_an_error(db, seeded):
+    """Every attempt degenerate → the request fails as upstream_unavailable; the
+    empty 200 reply is never delivered to the client."""
+    await _set_zero_token(db, seeded["provider_id"], True)
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=EMPTY_RESPONSE))
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 502
+    assert result.error == "upstream_unavailable"
+    assert (result.content or b"").startswith(b"{")
+    assert b"0 tokens" in (result.content or b"")
+
+
+async def test_dispatch_streaming_zero_token_retries_in_flight(db, seeded):
+    """A streamed degenerate reply (ends with no content) is detected before
+    delivery and retried on the next key — the client gets the good stream."""
+    await _set_zero_token(db, seeded["provider_id"], True)
+    await _add_key(db, seeded["provider_id"], "sk-test-2")
+
+    empty_sse = (
+        b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    def _req():
+        return DispatchRequest(
+            inbound_style=ApiStyle.OPENAI,
+            model="deepseek-chat",
+            payload={
+                "model": "deepseek-chat",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            stream=True,
+            token_id=seeded["token_id"],
+        )
+
+    sse = (
+        b'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'
+        b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],'
+        b'"usage":{"prompt_tokens":1,"completion_tokens":1}}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(DS_URL).mock(
+            side_effect=[
+                httpx.Response(200, content=empty_sse, headers={"content-type": "text/event-stream"}),
+                httpx.Response(200, content=sse, headers={"content-type": "text/event-stream"}),
+            ]
+        )
+        result = await dispatch(_req())
+        assert result.stream is not None
+        collected = b""
+        async for piece in result.stream:
+            collected += piece
+
+    assert result.status_code == 200
+    assert len(route.calls) == 2  # degenerate first attempt → retried
+    assert b"Hi" in collected
+    # The final row is a clean success.
+    log = await _last_log(db)
+    assert log is not None and log.error is None
+
+
+async def test_dispatch_streaming_zero_token_exhaustion_is_error(db, seeded):
+    """Every streamed attempt degenerate → the request fails; no empty stream is
+    ever delivered to the client."""
+    await _set_zero_token(db, seeded["provider_id"], True)
+
+    empty_sse = (
+        b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    def _req():
+        return DispatchRequest(
+            inbound_style=ApiStyle.OPENAI,
+            model="deepseek-chat",
+            payload={
+                "model": "deepseek-chat",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            stream=True,
+            token_id=seeded["token_id"],
+        )
+
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(DS_URL).mock(
+            return_value=httpx.Response(
+                200, content=empty_sse, headers={"content-type": "text/event-stream"}
+            )
+        )
+        result = await dispatch(_req())
+
+    assert result.status_code == 502
+    assert result.error == "upstream_unavailable"
+    assert len(route.calls) >= 1
+
+
+
+
+async def test_build_stream_response_timeout_marks_terminated(db, seeded):
+    """A stream past the response timeout is force-cut: connection closed and
+    the log row marked ``terminated`` (已切断)."""
+    import asyncio
+    import time
+
+    from voidswitch.models.db import RequestLog, VoidToken
+    from voidswitch.services import settings_store
+    from voidswitch.services.dispatcher import _build_stream
+
+    async with db.session() as session:
+        await settings_store.update(session, {"response_timeout_seconds": 1})
+
+    async with db.session() as session:
+        token = VoidToken(user_id=seeded["user_id"], name="t", token_hash="tokhash")
+        session.add(token)
+        await session.flush()
+        row = RequestLog(token_id=token.id, user_sub=seeded["user_sub"], stream=True, req_status="pending")
+        session.add(row)
+        await session.flush()
+        log_id = row.id
+
+    class FakeResponse:
+        def __init__(self):
+            self.closed = False
+
+        async def aiter_bytes(self):
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n'
+            await asyncio.sleep(10)
+            yield b"data: [DONE]\n\n"
+
+        async def aclose(self):
+            self.closed = True
+
+    resp = FakeResponse()
+    gen = _build_stream(
+        response=resp,  # ty: ignore[invalid-argument-type]  # FakeResponse mocks httpx.Response
+        inbound=ApiStyle.OPENAI,
+        upstream=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        log_id=log_id,
+        token_id=token.id,
+        response_timeout=1,
+    )
+    started = time.monotonic()
+    collected = b""
+    async for piece in gen:
+        collected += piece
+    elapsed = time.monotonic() - started
+    assert elapsed < 5
+    assert resp.closed
+    assert b"hi" in collected
+
+    async with db.session() as session:
+        row = await session.get(RequestLog, log_id)
+        assert row.req_status == "terminated"
+        assert row.finished_at is not None
+        assert "response timeout" in (row.error or "")
+
+
+async def test_reconcile_pending_logs_marks_orphaned_terminated(db):
+    import datetime as dt
+
+    from voidswitch.models.db import RequestLog
+    from voidswitch.services import settings_store
+    from voidswitch.services.dispatcher import reconcile_pending_request_logs
+
+    async with db.session() as session:
+        await settings_store.update(session, {"response_timeout_seconds": 3600})
+    async with db.session() as session:
+        old = RequestLog(
+            req_status="pending",
+            started_at=dt.datetime.now(dt.UTC) - dt.timedelta(hours=2),
+        )
+        recent = RequestLog(
+            req_status="pending",
+            started_at=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=5),
+        )
+        session.add_all([old, recent])
+        await session.flush()
+
+    count = await reconcile_pending_request_logs()
+    assert count == 1
+
+    async with db.session() as session:
+        rows = (await session.execute(select(RequestLog))).scalars().all()
+    statuses = {r.req_status for r in rows}
+    assert "terminated" in statuses

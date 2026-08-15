@@ -78,6 +78,7 @@ interface FormState {
   weight: number;
   enabled: boolean;
   drop_opencode_identity_block: boolean;
+  retry_on_zero_token: boolean;
   proxy_mode: ProxyMode;
   proxy_ids: number[];
   model_routes: string;
@@ -96,6 +97,7 @@ const EMPTY: FormState = {
   weight: 1,
   enabled: true,
   drop_opencode_identity_block: false,
+  retry_on_zero_token: false,
   proxy_mode: "all",
   proxy_ids: [],
   model_routes: "",
@@ -237,6 +239,7 @@ export function Providers() {
       weight: p.weight,
       enabled: p.enabled,
       drop_opencode_identity_block: p.drop_opencode_identity_block,
+      retry_on_zero_token: p.retry_on_zero_token,
       proxy_mode: p.proxy_mode,
       proxy_ids: p.proxy_ids ?? [],
       model_routes: formatRoutes(p.model_routes),
@@ -392,6 +395,7 @@ export function Providers() {
       weight: form.weight,
       enabled: form.enabled,
       drop_opencode_identity_block: form.drop_opencode_identity_block,
+      retry_on_zero_token: form.retry_on_zero_token,
       proxy_mode: form.proxy_mode,
       proxy_ids: form.proxy_mode === "selected" ? form.proxy_ids : [],
       model_routes: parseRoutes(form.model_routes),
@@ -1251,6 +1255,19 @@ export function Providers() {
                   }
                 />
               )}
+              <Field
+                label={t("providers.retryZeroToken" as TK)}
+                hint={t("providers.retryZeroTokenHint" as TK)}
+              >
+                <Switch
+                  checked={form?.retry_on_zero_token ?? false}
+                  onChange={(_, d) =>
+                    setForm((f) =>
+                      f ? { ...f, retry_on_zero_token: d.checked } : f,
+                    )
+                  }
+                />
+              </Field>
               {!form?.id && (
                 <>
                   <Field

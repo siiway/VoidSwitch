@@ -18,6 +18,7 @@ streaming proxies).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -398,6 +399,9 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     connect_timeout = float(settings_store.get_int("connect_timeout_seconds", 15))
     request_timeout = float(settings_store.get_int("request_timeout_seconds", 300))
     stream_idle = float(settings_store.get_int("stream_idle_timeout_seconds", 120))
+    # Hard wall-clock cap on a single request (streaming included). When exceeded
+    # the connection is force-cut and the log row marked ``terminated``.
+    response_timeout = float(settings_store.get_int("response_timeout_seconds", 3600))
     rate_limit_recovery = settings_store.get_int("rate_limit_recovery_seconds", 180)
     rate_limit_max_cooldown = settings_store.get_int("rate_limit_max_cooldown_seconds", 3600)
 
@@ -509,6 +513,13 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     stream=req.stream,
                     connect_timeout=connect_timeout,
                     read_timeout=stream_idle if req.stream else read_timeout,
+                    # Non-streaming requests get the total response timeout as a
+                    # hard cap (streams enforce it inside _build_stream).
+                    total_timeout=response_timeout if not req.stream else None,
+                    # Streamed requests through a zero-token-retry provider are
+                    # spooled until the first real content token, so a degenerate
+                    # empty 200 can be retried before anything reaches the client.
+                    spool_first_content=bool(provider.retry_on_zero_token and req.stream),
                 )
 
                 # Remember this attempt for traceability + the debug trail.
@@ -546,10 +557,11 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 if outcome.network_error:
                     last_error = outcome.error or "network error"
                     last_status = 502
-                    # PoolTimeout = connection pool saturation, NOT a proxy fault.
-                    # Penalising the proxy for this cascades failures: fewer proxies
-                    # → more PoolTimeout → more disabled proxies → collapse.
-                    if not outcome.is_pool_timeout:
+                    # PoolTimeout / total-response-timeout are capacity or
+                    # wall-clock issues, NOT a proxy fault. Penalising the proxy
+                    # for these cascades failures: fewer proxies → more timeouts →
+                    # more disabled proxies → collapse.
+                    if outcome.blame_proxy:
                         _penalize_proxy(
                             proxy, last_error, proxy_threshold, auto_disable=proxy_health_check
                         )
@@ -561,6 +573,25 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 err_class = adapter.classify(outcome.status_code, outcome.body_json)
 
                 if err_class is ErrorClass.OK:
+                    # "200 OK + 0 tokens" auto-retry: a 200 that produced nothing
+                    # usable is a degenerate upstream result. Detect it (usage 0
+                    # for non-streaming, or a stream that ended before any real
+                    # content) and retry the next key/provider — the empty reply
+                    # is never delivered to the client.
+                    degenerate = False
+                    if provider.retry_on_zero_token:
+                        degenerate = (
+                            outcome.degenerate_empty
+                            if req.stream
+                            else _extract_usage(outcome.body_json, upstream_style)["total_tokens"]
+                            == 0
+                        )
+                    if degenerate:
+                        last_error = "upstream returned 200 OK with 0 tokens"
+                        last_status = 200
+                        key.failed_count += 1
+                        await session.flush()
+                        break  # next key/provider
                     key.total_requests += 1
                     key.last_used_at = _utcnow()
                     if key.failed_count:
@@ -579,6 +610,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                         debug_attempts=debug_trail,
                         attempt_summaries=attempt_summaries,
                         started_at=dispatch_started_at,
+                        response_timeout=response_timeout,
                     )
 
                 if err_class in (ErrorClass.KEY_INVALID, ErrorClass.INSUFFICIENT_BALANCE):
@@ -757,11 +789,20 @@ class _Attempt:
     network_error: bool = False
     error: str | None = None
     is_pool_timeout: bool = False  # PoolTimeout: capacity issue, do NOT blame proxy
+    # Whether this failure should count against the proxy. Capacity (PoolTimeout)
+    # and total-response-timeout issues are NOT proxy faults and never penalise
+    # the proxy; everything else does.
+    blame_proxy: bool = True
+    # True when a streamed 200 response ended before producing any real content
+    # — the "200 OK + 0 tokens" degenerate case. The dispatcher retries instead
+    # of delivering an empty stream.
+    degenerate_empty: bool = False
     status_code: int = 0
     body_bytes: bytes | None = None
     body_json: Any = None
     body_text: str | None = None  # decoded fallback when the body is not JSON
-    response: httpx.Response | None = None  # kept open only for a successful stream
+    # kept open only for a successful stream (possibly the spooled wrapper).
+    response: httpx.Response | _SpooledResponse | None = None
     resp_headers: dict[str, str] | None = None
     # Outbound request metadata (captured for the debug trail; headers redacted).
     req_method: str | None = None
@@ -784,6 +825,8 @@ async def _attempt(
     stream: bool,
     connect_timeout: float,
     read_timeout: float,
+    total_timeout: float | None = None,
+    spool_first_content: bool = False,
 ) -> _Attempt:
     # Outbound request metadata, shared by every return path so the debug trail
     # always knows exactly what was sent where. Auth headers are masked here.
@@ -845,15 +888,44 @@ async def _attempt(
                 stream=True,
                 headers=redact_headers(response.headers),
             )
+            resp_status = response.status_code
+            resp_headers = dict(response.headers)
+            # Degenerate-detection for the "200 OK + 0 tokens" retry feature:
+            # spool until the first real content token (or the stream ends / a
+            # short grace period passes). A stream that ends with no content is
+            # degenerate — retried by the caller instead of delivered empty.
+            if spool_first_content:
+                try:
+                    spooled, degenerate = await _spool_first_content(response, adapter.style)
+                except Exception:
+                    # Upstream faulted while spooling — close and let the caller
+                    # treat it as a network error (retry).
+                    await response.aclose()
+                    raise
+                if degenerate:
+                    return _Attempt(
+                        status_code=resp_status,
+                        degenerate_empty=True,
+                        error="upstream stream ended with no content (200 OK, 0 tokens)",
+                        resp_headers=resp_headers,
+                        duration_ms=_elapsed_ms(),
+                        **req_meta,
+                    )
+                response = spooled
             return _Attempt(
-                status_code=response.status_code,
+                status_code=resp_status,
                 response=response,
-                resp_headers=dict(response.headers),
+                resp_headers=resp_headers,
                 duration_ms=_elapsed_ms(),
                 **req_meta,
             )
 
-        response = await client.post(url, json=body, headers=headers)
+        if total_timeout and total_timeout > 0:
+            response = await asyncio.wait_for(
+                client.post(url, json=body, headers=headers), timeout=total_timeout
+            )
+        else:
+            response = await client.post(url, json=body, headers=headers)
         raw = response.content
         log.debug(
             "upstream_response",
@@ -886,6 +958,22 @@ async def _attempt(
             network_error=True,
             error=detail,
             is_pool_timeout=True,
+            blame_proxy=False,
+            duration_ms=_elapsed_ms(),
+            **req_meta,
+        )
+    except TimeoutError as exc:
+        detail = (
+            f"Response timeout after {int(total_timeout or 0)}s on {url!r} "
+            f"via proxy={route.proxy_url!r}. The upstream did not complete in time. "
+            f"Proxy is NOT penalised for this. Original: {exc}"
+        )
+        log.warning("outbound_response_timeout", url=url, proxy=route.proxy_url,
+                    timeout=total_timeout, error=str(exc))
+        return _Attempt(
+            network_error=True,
+            error=detail,
+            blame_proxy=False,
             duration_ms=_elapsed_ms(),
             **req_meta,
         )
@@ -905,6 +993,181 @@ async def _attempt(
             duration_ms=_elapsed_ms(),
             **req_meta,
         )
+
+
+# How long we wait for the first real content token of a streamed response
+# before committing to forward it live. A degenerate empty 200 from a flaky
+# upstream returns immediately, so this stays short; a slow-but-real generation
+# merely gets forwarded a moment later (no data is lost).
+_SPOOL_FIRST_CONTENT_SECONDS = 5.0
+
+
+class _SpooledResponse:
+    """Wraps a streaming httpx response that was partially consumed while
+    checking for degenerate "200 OK + 0 tokens" replies.
+
+    A background reader owns the httpx stream and pumps chunks into ``queue``;
+    ``aiter_bytes`` first yields the buffered ``prefix``, then drains the queue
+    live. This lets the dispatcher decide up front whether to retry (degenerate)
+    without ever double-iterating the httpx stream.
+    """
+
+    def __init__(
+        self,
+        response: httpx.Response,
+        prefix: bytes,
+        queue: asyncio.Queue[bytes | BaseException | None],
+    ) -> None:
+        self._response = response
+        self._prefix = prefix
+        self._queue = queue
+        self._reader: asyncio.Task | None = None
+
+    def attach_reader(self, task: asyncio.Task) -> None:
+        self._reader = task
+
+    async def aiter_bytes(self) -> AsyncIterator[bytes]:
+        if self._prefix:
+            yield self._prefix
+        while True:
+            item = await self._queue.get()
+            if item is None:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+
+    async def aclose(self) -> None:
+        if self._reader is not None and not self._reader.done():
+            self._reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reader
+        await self._response.aclose()
+
+
+async def _spool_first_content(
+    response: httpx.Response,
+    style: ApiStyle,
+    spool_timeout: float = _SPOOL_FIRST_CONTENT_SECONDS,
+) -> tuple[_SpooledResponse, bool]:
+    """Read the start of a streamed upstream response to detect a degenerate
+    "200 OK + 0 tokens" reply.
+
+    Returns ``(spooled, degenerate)``: ``spooled`` is a resumable wrapper for the
+    client (always returned; when degenerate the caller should not use it),
+    ``degenerate`` is True when the stream ended before producing any content —
+    the dispatcher retries instead of delivering an empty reply. An upstream
+    error mid-spool is re-raised so the caller can treat it as a network fault.
+    """
+    queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue()
+
+    async def _reader() -> None:
+        try:
+            async for chunk in response.aiter_bytes():
+                await queue.put(chunk)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # surface the fault to the consumer
+            await queue.put(exc)
+            return
+        await queue.put(None)
+
+    reader = asyncio.create_task(_reader())
+    prefix = bytearray()
+    deadline = time.monotonic() + spool_timeout
+    ended = False
+    while time.monotonic() < deadline:
+        try:
+            remaining = max(0.0, deadline - time.monotonic())
+            item = await asyncio.wait_for(queue.get(), timeout=remaining)
+        except TimeoutError:
+            break
+        if item is None:
+            ended = True
+            break
+        if isinstance(item, BaseException):
+            raise item
+        prefix += item
+        if _sse_has_content(bytes(prefix), style):
+            break
+    spooled = _SpooledResponse(response, bytes(prefix), queue)
+    spooled.attach_reader(reader)
+    degenerate = ended and not _sse_has_content(bytes(prefix), style)
+    if degenerate:
+        reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader
+        await response.aclose()
+    return spooled, degenerate
+
+
+def _sse_has_content(buffer: bytes, style: ApiStyle) -> bool:
+    """Whether a (possibly partial) SSE buffer carries a real content token.
+
+    Content-bearing frames differ per dialect (Chat Completions ``delta.content``,
+    Anthropic ``content_block_delta.text``, Responses ``output_text_delta``).
+    Control frames (``[DONE]``, metadata-only, empty deltas) are ignored. As a
+    fallback, a buffer with no SSE frames at all that still holds non-whitespace
+    bytes is treated as content (plain-text streaming upstreams).
+    """
+    text = buffer.decode("utf-8", errors="ignore")
+    saw_data = False
+    for block in text.split("\n\n"):
+        for line in block.splitlines():
+            if not line.startswith("data:"):
+                continue
+            saw_data = True
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if _sse_frame_has_content(obj, style):
+                return True
+    if not saw_data:
+        return bool(text.strip())
+    return False
+
+
+def _sse_frame_has_content(obj: Any, style: ApiStyle) -> bool:
+    if not isinstance(obj, dict):
+        return False
+    if style is ApiStyle.OPENAI:
+        choices = obj.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta") or choice.get("message")
+                if isinstance(delta, dict):
+                    text = delta.get("content")
+                    if isinstance(text, str) and text:
+                        return True
+                    # tool calls carry content too
+                    if delta.get("tool_calls"):
+                        return True
+        return False
+    if style is ApiStyle.OPENAI_RESPONSES:
+        if obj.get("type") == "response.output_text_delta":
+            delta = obj.get("delta")
+            if isinstance(delta, str) and delta:
+                return True
+        return False
+    # Anthropic
+    if obj.get("type") == "content_block_delta":
+        delta = obj.get("delta")
+        if isinstance(delta, dict):
+            text = delta.get("text")
+            if isinstance(text, str) and text:
+                return True
+        return False
+    if obj.get("type") == "content_block_start":
+        block = obj.get("content_block")
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            return True
+    return False
 
 
 def _try_json(raw: bytes) -> Any:
@@ -1039,6 +1302,7 @@ async def _finalise_success(
     debug_attempts: list[dict[str, Any]] | None = None,
     attempt_summaries: list[dict[str, Any]] | None = None,
     started_at: dt.datetime | None = None,
+    response_timeout: float = 0,
 ) -> DispatchResult:
     upstream_style = adapter.style
 
@@ -1089,6 +1353,7 @@ async def _finalise_success(
             model=req.model,
             log_id=log_id,
             token_id=token_id,
+            response_timeout=response_timeout,
         )
         return DispatchResult(
             status_code=200,
@@ -1151,27 +1416,35 @@ async def _finalise_success(
 
 
 async def _stream_cleanup(
-    response: httpx.Response, log_id: int, token_id: int | None, usage: dict[str, int],
-    *, req_status: str, first_token_ms: float | None, finished_at: dt.datetime,
+    response: httpx.Response | _SpooledResponse, log_id: int, token_id: int | None,
+    usage: dict[str, int], *, req_status: str, first_token_ms: float | None,
+    finished_at: dt.datetime, error: str | None = None,
 ) -> None:
     """Close the upstream response and persist captured usage — shielded caller."""
     await response.aclose()
     await _persist_stream_usage(log_id, token_id, usage,
                                 req_status=req_status,
                                 first_token_ms=first_token_ms,
-                                finished_at=finished_at)
+                                finished_at=finished_at,
+                                error=error)
 
 
 async def _build_stream(
     *,
-    response: httpx.Response,
+    response: httpx.Response | _SpooledResponse,
     inbound: ApiStyle,
     upstream: ApiStyle,
     model: str,
     log_id: int,
     token_id: int | None,
+    response_timeout: float = 0,
 ) -> AsyncIterator[bytes]:
-    """Yield translated SSE bytes, then persist token usage on completion."""
+    """Yield translated SSE bytes, then persist token usage on completion.
+
+    When ``response_timeout`` > 0 the stream is force-cut once it has run past
+    that wall-clock deadline (the connection is closed and the log row marked
+    ``terminated``).
+    """
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     start_mono = time.monotonic()
     first_token_ms: float | None = None
@@ -1185,8 +1458,32 @@ async def _build_stream(
 
     translated = _translate_stream(inbound, upstream, _capture_usage(_raw(), usage), model)
     req_status = "completed"
+    stream_error: str | None = None
+    it = translated.__aiter__()
     try:
-        async for piece in translated:
+        while True:
+            remaining = 0.0
+            if response_timeout and response_timeout > 0:
+                remaining = response_timeout - (time.monotonic() - start_mono)
+                if remaining <= 0:
+                    req_status = "terminated"
+                    stream_error = (
+                        f"response timeout after {int(response_timeout)}s — connection cut"
+                    )
+                    break
+            try:
+                if remaining > 0:
+                    piece = await asyncio.wait_for(it.__anext__(), timeout=remaining)
+                else:
+                    piece = await it.__anext__()
+            except StopAsyncIteration:
+                break
+            except TimeoutError:
+                req_status = "terminated"
+                stream_error = (
+                    f"response timeout after {int(response_timeout)}s — connection cut"
+                )
+                break
             yield piece
     except asyncio.CancelledError:
         req_status = "cancelled"
@@ -1206,6 +1503,7 @@ async def _build_stream(
                 req_status=req_status,
                 first_token_ms=first_token_ms,
                 finished_at=finished_at,
+                error=stream_error,
             ))
         except asyncio.CancelledError:
             log.debug("stream_cancelled", log_id=log_id)
@@ -1267,7 +1565,7 @@ _STREAM_USAGE_RETRY_BASE_DELAY = 0.5  # seconds; exponential, capped at 5s
 async def _persist_stream_usage(
     log_id: int, token_id: int | None, usage: dict[str, int],
     *, req_status: str = "completed", first_token_ms: float | None = None,
-    finished_at: dt.datetime | None = None,
+    finished_at: dt.datetime | None = None, error: str | None = None,
 ) -> None:
     """Write final stream token usage back to the log row + token quota.
 
@@ -1287,6 +1585,8 @@ async def _persist_stream_usage(
                     row.completion_tokens = usage["completion_tokens"]
                     row.total_tokens = usage["total_tokens"]
                     row.req_status = req_status
+                    if error is not None:
+                        row.error = error
                     if first_token_ms is not None:
                         row.first_token_ms = first_token_ms
                     row.finished_at = finished_at or _utcnow()
@@ -1481,3 +1781,42 @@ async def _bump_token_usage(session: Any, token_id: int | None, tokens: int) -> 
         row.total_requests += 1
         row.total_tokens += max(tokens, 0)
         row.last_used_at = _utcnow()
+
+
+# --------------------------------------------------------------------------- #
+# Pending-log reconciliation
+# --------------------------------------------------------------------------- #
+
+
+async def reconcile_pending_request_logs() -> int:
+    """Mark orphaned ``pending`` log rows as ``terminated``.
+
+    A streamed request whose row is still ``pending`` long after ``started_at``
+    means its end-of-stream persistence never ran (e.g. the worker was killed
+    mid-stream, or the stream was abandoned without being closed). There is no
+    legitimate request that outlives the configured ``response_timeout_seconds``
+    (0 = disabled), so anything still pending past that is force-marked
+    ``terminated``. Returns the number of rows reconciled.
+    """
+    timeout = settings_store.get_int("response_timeout_seconds", 3600)
+    if timeout <= 0:
+        return 0
+    from sqlalchemy import update
+
+    db = get_database()
+    cutoff = _utcnow() - dt.timedelta(seconds=timeout)
+    async with db.session() as session:
+        result = await session.execute(
+            update(RequestLog)
+            .where(RequestLog.req_status == "pending", RequestLog.started_at < cutoff)
+            .values(
+                req_status="terminated",
+                error="connection cut — response timeout exceeded while stream was abandoned",
+                finished_at=_utcnow(),
+            )
+        )
+        await session.commit()
+    count = int(getattr(result, "rowcount", 0) or 0)
+    if count:
+        log.warning("pending_logs_reconciled", count=count, timeout=timeout)
+    return count

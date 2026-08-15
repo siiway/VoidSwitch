@@ -36,6 +36,7 @@ export interface Provider {
   balance_url?: string | null;
   extra_headers: Record<string, string>;
   timeout_seconds: number;
+  retry_on_zero_token: boolean;
   drop_opencode_identity_block: boolean;
   proxy_mode: ProxyMode;
   proxy_ids: number[];

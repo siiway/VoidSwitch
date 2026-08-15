@@ -27,6 +27,10 @@ MIN_OPERATION_RATE_PER_MINUTE = 20
 # year, so any non-"keep forever" retention window is required to be >= this.
 MIN_HEATMAP_RETENTION_DAYS = 365
 
+# A custom dashboard session duration must be at least this many minutes
+# (0 / empty is allowed: it means "follow what Prism returns at login").
+MIN_SESSION_TTL_MINUTES = 60
+
 
 def _to_int(value: object, default: int = 0) -> int:
     if isinstance(value, bool):
@@ -69,6 +73,18 @@ def _validate_heatmap_retention(effective: dict[str, object]) -> None:
         )
 
 
+def _validate_session_ttl(effective: dict[str, object]) -> None:
+    minutes = _to_int(effective.get("session_ttl_minutes"), 0)
+    # 0 = follow Prism's expires_in at login → always fine; otherwise it must be
+    # at least an hour so sessions never silently expire mid-task.
+    if 0 < minutes < MIN_SESSION_TTL_MINUTES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Session duration is too short: it must be 0 (follow Prism) or at "
+            f"least {MIN_SESSION_TTL_MINUTES} minutes (got {minutes}).",
+        )
+
+
 @router.get("", response_model=SettingsOut)
 async def get_settings_values(
     session: AsyncSession = Depends(get_session),
@@ -91,6 +107,7 @@ async def update_settings_values(
     # rate limit (existing values overlaid with this update) before persisting.
     _validate_operation_rate_limit({**old_values, **body.values})
     _validate_heatmap_retention({**old_values, **body.values})
+    _validate_session_ttl({**old_values, **body.values})
     values = await settings_store.update(session, body.values)
     # Only record the settings that actually changed.
     changes = {}

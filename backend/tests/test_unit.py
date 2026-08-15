@@ -710,6 +710,7 @@ async def test_xai_adapter_classify():
 
 
 async def test_xai_adapter_refreshes_oauth_bundle_credential():
+    from voidswitch.models.db import ApiKey
     from voidswitch.services import xai_oauth
 
     provider = Provider(name="xai", type="xai")
@@ -726,13 +727,14 @@ async def test_xai_adapter_refreshes_oauth_bundle_credential():
         return "resolved-access-token"
 
     original = xai_oauth.resolve_access_token
-    xai_oauth.resolve_access_token = fake_resolve  # type: ignore[assignment]
+    xai_oauth.resolve_access_token = fake_resolve  # ty: ignore[invalid-assignment]
     try:
         token = await adapter.resolve_credential(
-            None, object(), "secret", force_refresh=True
+            None, ApiKey(provider_id=1, key_ciphertext="c", key_hash="h"), "secret",
+            force_refresh=True,
         )
     finally:
-        xai_oauth.resolve_access_token = original  # type: ignore[assignment]
+        xai_oauth.resolve_access_token = original  # ty: ignore[invalid-assignment]
 
     assert token == "resolved-access-token"
     assert called == {"secret_key": "secret", "force_refresh": True}
@@ -827,7 +829,7 @@ async def test_xai_oauth_complete_login_happy_path():
         }
 
     original = xai_oauth._post_token
-    xai_oauth._post_token = fake_post_token  # type: ignore[assignment]
+    xai_oauth._post_token = fake_post_token  # ty: ignore[invalid-assignment]
     try:
         bundle = await xai_oauth.complete_login(
             f"http://127.0.0.1:56121/callback?code=THECODE&state={state}",
@@ -836,7 +838,7 @@ async def test_xai_oauth_complete_login_happy_path():
             session=None,
         )
     finally:
-        xai_oauth._post_token = original  # type: ignore[assignment]
+        xai_oauth._post_token = original  # ty: ignore[invalid-assignment]
 
     assert bundle["access_token"] == "AT"
     assert bundle["refresh_token"] == "RT"
@@ -877,7 +879,7 @@ async def test_xai_oauth_complete_login_rejections():
         raise xai_oauth.LoginError("Invalid or unknown authorization code")
 
     original = xai_oauth._post_token
-    xai_oauth._post_token = reject  # type: ignore[assignment]
+    xai_oauth._post_token = reject  # ty: ignore[invalid-assignment]
     try:
         with pytest.raises(xai_oauth.LoginError):
             await xai_oauth.complete_login(
@@ -887,7 +889,7 @@ async def test_xai_oauth_complete_login_rejections():
                 session=None,
             )
     finally:
-        xai_oauth._post_token = original  # type: ignore[assignment]
+        xai_oauth._post_token = original  # ty: ignore[invalid-assignment]
     assert xai_oauth._login_states.peek(state) is None
 
 
@@ -1626,14 +1628,14 @@ async def test_renamed_setting_migrates_stored_value(db):
     """A stored value under a renamed key is carried forward to the new key so an
     operator's explicit choice survives the rename (proxy_resurrector_enabled →
     proxy_health_check_enabled)."""
-    from sqlalchemy import select
+    from sqlalchemy import delete, select
     from voidswitch.models.db import Setting
     from voidswitch.services import settings_store
 
     async with db.session() as session:
         # Simulate a legacy DB: old key stored False, new key absent.
         await session.execute(
-            Setting.__table__.delete().where(Setting.key == "proxy_health_check_enabled")
+            delete(Setting).where(Setting.key == "proxy_health_check_enabled")
         )
         session.add(Setting(key="proxy_resurrector_enabled", value=False))
         await session.flush()
@@ -1662,3 +1664,170 @@ async def test_deep_merge_opencode_config():
     # Inputs are not mutated.
     assert base["limit"] == {"context": 100, "output": 8}
     assert "extra" not in base
+
+
+
+# --------------------------------------------------------------------------- #
+# Dashboard session TTL (Prism OAuth follow)
+# --------------------------------------------------------------------------- #
+
+
+async def test_session_out_ttl_precedence(db, settings):
+    from voidswitch.api.auth import _session_out
+    from voidswitch.core.auth import PrismIdentity
+    from voidswitch.models.db import User
+    from voidswitch.services import settings_store
+
+    async with db.session() as session:
+        user = User(sub="u1", role="owner", enabled=True)
+        session.add(user)
+        await session.flush()
+        identity = PrismIdentity(
+            sub="u1", username=None, email=None, name=None, picture=None, expires_in_seconds=7200
+        )
+        # No runtime setting → follow Prism's expires_in (7200s → 120 min).
+        await settings_store.update(session, {"session_ttl_minutes": 0})
+    out = _session_out(user, settings, identity)
+    assert out.expires_in == 120 * 60
+
+    async with db.session() as session:
+        # A configured value (>= 60) wins over Prism.
+        await settings_store.update(session, {"session_ttl_minutes": 60})
+    out = _session_out(user, settings, identity)
+    assert out.expires_in == 60 * 60
+
+    async with db.session() as session:
+        # No Prism identity and no runtime setting → server config default.
+        await settings_store.update(session, {"session_ttl_minutes": 0})
+    out = _session_out(user, settings, None)
+    assert out.expires_in == settings.server.session_ttl_minutes * 60
+
+
+async def test_session_ttl_setting_validation(db):
+    from fastapi import HTTPException
+    from voidswitch.api.admin.settings import _validate_session_ttl
+
+    _validate_session_ttl({"session_ttl_minutes": 0})  # ok (follow Prism)
+    _validate_session_ttl({"session_ttl_minutes": 60})  # ok (minimum)
+    with pytest.raises(HTTPException):
+        _validate_session_ttl({"session_ttl_minutes": 30})
+
+
+# --------------------------------------------------------------------------- #
+# Request log req_status filter
+# --------------------------------------------------------------------------- #
+
+
+def test_request_log_filters_req_status():
+    from sqlalchemy import select
+    from voidswitch.api.admin.logs import _request_log_filters
+    from voidswitch.models.db import RequestLog, User
+
+    user = User(sub="s1", role="owner")
+    clauses = _request_log_filters(user, req_status="terminated")
+    stmt = select(RequestLog).where(*clauses)
+    assert "req_status" in str(stmt)
+    assert stmt.compile().params["req_status_1"] == "terminated"
+    # A member gets scoped to their own traffic on top of the status filter.
+    member = User(sub="m1", role="member")
+    clauses = _request_log_filters(member, req_status="completed")
+    stmt = select(RequestLog).where(*clauses)
+    assert stmt.compile().params["user_sub_1"] == "m1"
+
+
+# --------------------------------------------------------------------------- #
+# Stream spooling (first-content commit for the zero-token retry)
+# --------------------------------------------------------------------------- #
+
+
+def test_sse_has_content_detects_real_content():
+    from voidswitch.services.dispatcher import _sse_has_content
+
+    # OpenAI: real delta.content
+    assert _sse_has_content(
+        b'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n', ApiStyle.OPENAI
+    )
+    # OpenAI: empty delta / metadata-only / [DONE] → no content
+    assert not _sse_has_content(
+        b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\n'
+        b'data: {"choices":[{"index":0,"delta":{}}],"usage":{"total_tokens":0}}\n\n'
+        b"data: [DONE]\n\n",
+        ApiStyle.OPENAI,
+    )
+    # Anthropic: content_block_delta text
+    assert _sse_has_content(
+        b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}\n\n',
+        ApiStyle.ANTHROPIC,
+    )
+    # Anthropic: message_start (metadata only) → no content
+    assert not _sse_has_content(
+        b'data: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+        ApiStyle.ANTHROPIC,
+    )
+    # OpenAI Responses: output_text_delta
+    assert _sse_has_content(
+        b'data: {"type":"response.output_text_delta","delta":"hi"}\n\n',
+        ApiStyle.OPENAI_RESPONSES,
+    )
+    # Plain-text (non-SSE) upstream with bytes → content
+    assert _sse_has_content(b"hello world", ApiStyle.OPENAI)
+    assert not _sse_has_content(b"\n\n", ApiStyle.OPENAI)
+
+
+async def test_spool_first_content_commits_on_real_content(db):
+    from voidswitch.services.dispatcher import _spool_first_content
+
+    class FakeResponse:
+        def __init__(self, chunks):
+            self._chunks = list(chunks)
+            self.closed = False
+
+        async def aiter_bytes(self):
+            for c in self._chunks:
+                yield c
+
+        async def aclose(self):
+            self.closed = True
+
+    resp = FakeResponse(
+        [
+            b'data: {"choices":[{"index":0,"delta":{},"finish_reason":null}]}\n\n',
+            b'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n',
+            b"data: [DONE]\n\n",
+        ]
+    )
+    spooled, degenerate = await _spool_first_content(resp, ApiStyle.OPENAI)  # ty: ignore[invalid-argument-type]
+    assert degenerate is False
+    assert resp.closed is False  # stream still open for the client
+    chunks = [c async for c in spooled.aiter_bytes()]
+    assert b"Hi" in b"".join(chunks)
+    assert b"[DONE]" in b"".join(chunks)
+    await spooled.aclose()
+
+
+async def test_spool_first_content_detects_degenerate_empty(db):
+    from voidswitch.services.dispatcher import _spool_first_content
+
+    class FakeResponse:
+        def __init__(self, chunks):
+            self._chunks = list(chunks)
+            self.closed = False
+
+        async def aiter_bytes(self):
+            for c in self._chunks:
+                yield c
+
+        async def aclose(self):
+            self.closed = True
+
+    resp = FakeResponse(
+        [
+            b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\n',
+            b"data: [DONE]\n\n",
+        ]
+    )
+    _, degenerate = await _spool_first_content(resp, ApiStyle.OPENAI)  # ty: ignore[invalid-argument-type]
+    assert degenerate is True
+    assert resp.closed is True  # connection cut — nothing delivered
+
+

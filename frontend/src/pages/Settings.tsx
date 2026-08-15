@@ -68,11 +68,16 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
     keys: [
       "connect_timeout_seconds",
       "request_timeout_seconds",
+      "response_timeout_seconds",
       "stream_idle_timeout_seconds",
       "max_retries",
       "max_connections",
       "max_keepalive_connections",
     ],
+  },
+  {
+    titleKey: "settings.sectionSession",
+    keys: ["session_ttl_minutes"],
   },
   {
     titleKey: "settings.sectionLogs",
@@ -280,6 +285,8 @@ export function Settings() {
       balance_scan_rate_per_second: t("settings.balanceScanRate" as TK),
       request_timeout_seconds: t("settings.requestTimeout" as TK),
       connect_timeout_seconds: t("settings.connectTimeout" as TK),
+      response_timeout_seconds: t("settings.responseTimeout" as TK),
+      session_ttl_minutes: t("settings.sessionTtlMinutes" as TK),
       max_retries: t("settings.maxRetries" as TK),
       stream_idle_timeout_seconds: t("settings.streamIdleTimeout" as TK),
       rate_limit_recovery_seconds: t("settings.rateLimitRecovery" as TK),

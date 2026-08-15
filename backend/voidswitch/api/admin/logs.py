@@ -296,14 +296,16 @@ def _request_log_filters(
     token_id: int | None = None,
     provider: str | None = None,
     status_code: str | None = None,
+    req_status: str | None = None,
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
 ) -> list[ColumnElement]:
     """Shared WHERE clauses for the request-log list and locate endpoints.
 
-    Model / user / token / provider are exact matches (chosen from the filter
-    dropdowns); ``status_code`` accepts an exact code or an ``Nxx`` class;
-    ``start``/``end`` bound the indexed ``ts`` timestamp inclusively.
+    Model / user / token / provider / lifecycle status are exact matches (chosen
+    from the filter dropdowns); ``status_code`` accepts an exact code or an
+    ``Nxx`` class; ``start``/``end`` bound the indexed ``ts`` timestamp
+    inclusively.
     """
     clauses: list[ColumnElement] = []
     if not is_staff(user):
@@ -323,6 +325,8 @@ def _request_log_filters(
         clause = _status_clause(status_code)
         if clause is not None:
             clauses.append(clause)
+    if req_status:
+        clauses.append(RequestLog.req_status == req_status)
     if start is not None:
         clauses.append(RequestLog.ts >= start)
     if end is not None:
@@ -341,6 +345,10 @@ async def request_logs(
     provider: str | None = Query(default=None, description="Filter by exact provider name."),
     status_code: str | None = Query(
         default=None, description="Exact status code (e.g. 404) or a class (e.g. 4xx)."
+    ),
+    req_status: str | None = Query(
+        default=None,
+        description="Lifecycle status: pending / completed / cancelled / error / terminated.",
     ),
     start: dt.datetime | None = Query(
         default=None, description="Only entries at or after this instant (ISO 8601)."
@@ -361,6 +369,7 @@ async def request_logs(
         token_id=token_id,
         provider=provider,
         status_code=status_code,
+        req_status=req_status,
         start=start,
         end=end,
     ):
@@ -427,6 +436,7 @@ async def request_locate(
     token_id: int | None = Query(default=None),
     provider: str | None = Query(default=None),
     status_code: str | None = Query(default=None),
+    req_status: str | None = Query(default=None),
     start: dt.datetime | None = Query(default=None),
     end: dt.datetime | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
@@ -441,6 +451,7 @@ async def request_locate(
         token_id=token_id,
         provider=provider,
         status_code=status_code,
+        req_status=req_status,
         start=start,
         end=end,
     )

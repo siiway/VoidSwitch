@@ -194,6 +194,12 @@ class Provider(Base, TimestampMixin):
     balance_url: Mapped[str | None] = mapped_column(String(512), default=None)
     extra_headers: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=0)  # 0 = use global
+    # "200 OK + 0 tokens" auto-retry: when True, a 200 response that carries no
+    # usage is treated as a transient upstream fault (retried through the
+    # failover machinery, never cached). Such providers also use the shared
+    # response cache (memory → disk → drop) so a degenerate empty reply can be
+    # replaced by the last good cached response for the same request.
+    retry_on_zero_token: Mapped[bool] = mapped_column(Boolean, default=False)
     # claude-code masquerade only: when True, drop the inbound client's entire
     # "You are OpenCode…" system block instead of scrubbing it in place.
     drop_opencode_identity_block: Mapped[bool] = mapped_column(Boolean, default=False)
