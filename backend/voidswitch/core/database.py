@@ -101,6 +101,7 @@ class Database:
 # only, and only for additive columns.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("providers", "drop_opencode_identity_block", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("providers", "retry_on_zero_token", "BOOLEAN NOT NULL DEFAULT false"),
     ("providers", "proxy_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
     ("providers", "proxy_ids", "JSON NOT NULL DEFAULT '[]'"),
     ("providers", "key_select_mode", "VARCHAR(32) NOT NULL DEFAULT 'round_robin'"),

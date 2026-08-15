@@ -1555,8 +1555,8 @@ async def test_route_is_direct():
 
 
 async def test_add_missing_columns_migrates_legacy_table(tmp_path):
-    # A database created before `drop_opencode_identity_block` existed must gain the
-    # column on boot (create_all only makes missing *tables*), without being dropped.
+    # A database created before newer provider columns existed must gain them on
+    # boot (create_all only makes missing *tables*), without being dropped.
     from voidswitch.core.database import Database
 
     url = f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}"
@@ -1575,6 +1575,7 @@ async def test_add_missing_columns_migrates_legacy_table(tmp_path):
     await database.dispose()
 
     assert "drop_opencode_identity_block" in names
+    assert "retry_on_zero_token" in names
     assert count == 1
 
 
