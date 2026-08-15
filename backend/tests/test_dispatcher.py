@@ -929,6 +929,72 @@ async def test_build_stream_response_timeout_marks_terminated(db, seeded):
         assert "response timeout" in (row.error or "")
 
 
+async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
+    """TTFT is measured from the upstream request start to the first real
+    content token — not to the first raw byte (which only reflects the
+    upstream's connection/header latency)."""
+    import asyncio
+    import time
+
+    from voidswitch.models.db import RequestLog, VoidToken
+    from voidswitch.services.dispatcher import _build_stream
+
+    async with db.session() as session:
+        token = VoidToken(user_id=seeded["user_id"], name="t", token_hash="tokhash")
+        session.add(token)
+        await session.flush()
+        row = RequestLog(token_id=token.id, user_sub=seeded["user_sub"], stream=True, req_status="pending")
+        session.add(row)
+        await session.flush()
+        log_id = row.id
+
+    class FakeResponse:
+        def __init__(self):
+            self.closed = False
+
+        async def aiter_bytes(self):
+            # Simulate the upstream latency before any SSE frame arrives:
+            # several seconds pass before the first (content-less) frame, and
+            # more still before the first content-bearing token.
+            await asyncio.sleep(0.05)
+            yield b'data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n'
+            await asyncio.sleep(0.05)
+            yield b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\n'
+            await asyncio.sleep(0.05)
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        async def aclose(self):
+            self.closed = True
+
+    resp = FakeResponse()
+    # ``start_mono`` is the moment the upstream request was initiated — e.g.
+    # 100ms before the generator starts being consumed.
+    start_mono = time.monotonic() - 0.1
+    gen = _build_stream(
+        response=resp,  # ty: ignore[invalid-argument-type]
+        inbound=ApiStyle.OPENAI,
+        upstream=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        log_id=log_id,
+        token_id=token.id,
+        start_mono=start_mono,
+    )
+    async for _ in gen:
+        pass
+
+    async with db.session() as session:
+        row = await session.get(RequestLog, log_id)
+        # ~150ms (two content-less frames at 50ms each) + 100ms (pre-start
+        # offset): TTFT must reflect the real content token, NOT the first byte
+        # (which would be ~150ms earlier). And it must never include the full
+        # stream duration.
+        assert row.first_token_ms is not None
+        assert row.first_token_ms >= 190.0
+        assert row.first_token_ms < 300.0
+        assert row.req_status == "completed"
+
+
 async def test_reconcile_pending_logs_marks_orphaned_terminated(db):
     import datetime as dt
 

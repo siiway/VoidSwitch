@@ -32,8 +32,8 @@ A staff member's dashboard shows **both** heatmaps: **Site activity** (platform-
 
 Staff see a platform-wide overview:
 
-- Counts of **Providers**, **Active keys**, **Active proxies**, and **Void-Tokens**.
-- **24-hour activity**: requests, successes, failures, and token usage.
+- Counts of **Providers**, **Active keys**, and **Void-Tokens**.
+- **24-hour activity**: requests, successes, failures, success rate, token usage, average time-to-first-token (TTFT), and average tokens per request.
 - **Background jobs**: the status of the balance-probe, proxy-revival, and log-cleanup scheduled tasks.
 - The **Site** and **Personal** activity heatmaps at the bottom of the page (see "Activity heatmap" above).
 

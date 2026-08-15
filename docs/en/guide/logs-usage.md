@@ -4,8 +4,18 @@ VoidSwitch records every request so you can see what happened and how much was u
 
 ## Stats
 
-The **Stats** page shows usage analytics. Members view **their own** traffic; staff view platform-wide totals broken down by user, token, and model,
+The **Stats** page shows usage analytics. Members view **their own** traffic; staff view platform-wide totals broken down by user, token, model, and provider,
 across day, week, month, and year windows.
+
+From top to bottom the page shows:
+
+- **Summary** — total requests, successes / failures, tokens used, and the **success rate**.
+- **Performance** — **average time-to-first-token (TTFT)**, **average latency**, **average tokens per request**, and **token throughput (tokens/sec)**.
+  TTFT is measured from when the gateway initiates the upstream request to when the first *real content token* arrives (streamed requests; control frames are ignored).
+  Average latency uses the database-recorded `started_at → finished_at` span.
+- **Request quality** — **streamed / non-streamed** request counts and the **status-code distribution** (how often each status code occurred).
+- **Over time** — a time series of requests and tokens, with an extra **average TTFT** column per period.
+- **By user / By token / By model / By provider** — usage rankings per dimension; click an entry to open the corresponding requests in the log browser.
 
 In the staff **by user** breakdown, usernames are clickable: clicking one opens a popup with that user's **activity heatmap**
 (the same heatmap as at the bottom of the dashboard — daily token usage, cumulative / peak, longest task duration, and streak).
@@ -18,7 +28,9 @@ The **Logs** page has two views:
   TTFT, **request duration**, token counts, retry count, and any error. Members only see their own requests;
   staff see everyone's. IPv6 addresses are truncated with `…` in the cell — hover for the full address;
   the ID never wraps. The request duration keeps ticking up every second while a request is **in progress**
-  and freezes once it finishes (`started_at → finished_at`).
+  and freezes once it finishes (`started_at → finished_at`). **TTFT** is only meaningful for streamed requests:
+  it measures the time from when the gateway initiates the upstream request to when the first *real content token*
+  arrives (ignoring control frames such as `message_start` / `ping`), not the time to the first network byte.
 - **Audit** *(staff)* — an administrative record of who changed what.
 
 Use filters to narrow the results, and use the paginator to browse pages:

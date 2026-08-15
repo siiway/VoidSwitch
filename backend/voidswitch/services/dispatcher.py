@@ -806,6 +806,9 @@ class _Attempt:
     # and total-response-timeout issues are NOT proxy faults and never penalise
     # the proxy; everything else does.
     blame_proxy: bool = True
+    # Monotonic clock timestamp when the upstream request was initiated — the
+    # reference point for TTFT (time to first token) and the stream timeout.
+    start_mono: float | None = None
     # True when a streamed 200 response ended before producing any real content
     # — the "200 OK + 0 tokens" degenerate case. The dispatcher retries instead
     # of delivering an empty stream.
@@ -922,6 +925,7 @@ async def _attempt(
                         error="upstream stream ended with no content (200 OK, 0 tokens)",
                         resp_headers=resp_headers,
                         duration_ms=_elapsed_ms(),
+                        start_mono=started,
                         **req_meta,
                     )
                 response = spooled
@@ -930,6 +934,7 @@ async def _attempt(
                 response=response,
                 resp_headers=resp_headers,
                 duration_ms=_elapsed_ms(),
+                start_mono=started,
                 **req_meta,
             )
 
@@ -1367,6 +1372,7 @@ async def _finalise_success(
             log_id=log_id,
             token_id=token_id,
             response_timeout=response_timeout,
+            start_mono=outcome.start_mono,
         )
         return DispatchResult(
             status_code=200,
@@ -1454,25 +1460,39 @@ async def _build_stream(
     log_id: int,
     token_id: int | None,
     response_timeout: float = 0,
+    start_mono: float | None = None,
 ) -> AsyncIterator[bytes]:
     """Yield translated SSE bytes, then persist token usage on completion.
+
+    TTFT (``first_token_ms``) is measured from the moment the successful
+    upstream request was initiated (``start_mono``, threaded through the
+    attempt) to the first *content-bearing* SSE frame — not the first raw byte,
+    which only reflects the upstream's connection/header latency. Control frames
+    (``message_start``, ``content_block_start``, ``ping``, ``[DONE]``, empty
+    role deltas) are skipped by ``_sse_frame_has_content``.
 
     When ``response_timeout`` > 0 the stream is force-cut once it has run past
     that wall-clock deadline (the connection is closed and the log row marked
     ``terminated``).
     """
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    start_mono = time.monotonic()
-    first_token_ms: float | None = None
+    if start_mono is None:
+        start_mono = time.monotonic()
+    # A mutable holder so _capture_usage can stamp the first-token moment.
+    first_token: dict[str, float | None] = {"ms": None}
 
     async def _raw() -> AsyncIterator[bytes]:
-        nonlocal first_token_ms
         async for chunk in response.aiter_bytes():
-            if first_token_ms is None and chunk:
-                first_token_ms = (time.monotonic() - start_mono) * 1000.0
             yield chunk
 
-    translated = _translate_stream(inbound, upstream, _capture_usage(_raw(), usage), model)
+    translated = _translate_stream(
+        inbound,
+        upstream,
+        _capture_usage(
+            _raw(), usage, upstream_style=upstream, first_token=first_token, start_mono=start_mono
+        ),
+        model,
+    )
     req_status = "completed"
     stream_error: str | None = None
     it = translated.__aiter__()
@@ -1526,7 +1546,7 @@ async def _build_stream(
             await asyncio.shield(_stream_cleanup(
                 response, log_id, token_id, usage,
                 req_status=req_status,
-                first_token_ms=first_token_ms,
+                first_token_ms=first_token["ms"],
                 finished_at=finished_at,
                 error=stream_error,
             ))
@@ -1534,8 +1554,21 @@ async def _build_stream(
             log.debug("stream_cancelled", log_id=log_id)
 
 
-async def _capture_usage(raw: AsyncIterator[bytes], usage: dict[str, int]) -> AsyncIterator[bytes]:
-    """Tee the raw upstream stream to sniff usage without altering bytes."""
+async def _capture_usage(
+    raw: AsyncIterator[bytes],
+    usage: dict[str, int],
+    *,
+    upstream_style: ApiStyle,
+    first_token: dict[str, float | None],
+    start_mono: float,
+) -> AsyncIterator[bytes]:
+    """Tee the raw upstream stream to sniff usage without altering bytes.
+
+    Also stamps the TTFT: the elapsed time from ``start_mono`` to the first
+    SSE block carrying a real content token. Only the first occurrence counts;
+    ``first_token["ms"]`` stays ``None`` for a stream that never produced
+    content (e.g. a pure error/control stream).
+    """
     buffer = ""
     async for chunk in raw:
         # Normalise CRLF so usage blocks split on "\n\n" for both line styles.
@@ -1543,10 +1576,15 @@ async def _capture_usage(raw: AsyncIterator[bytes], usage: dict[str, int]) -> As
         while "\n\n" in buffer:
             block, buffer = buffer.split("\n\n", 1)
             _sniff_usage(block, usage)
+            if first_token["ms"] is None and _sse_has_content(
+                block.encode("utf-8"), upstream_style
+            ):
+                first_token["ms"] = (time.monotonic() - start_mono) * 1000.0
         yield chunk
     if buffer:
         _sniff_usage(buffer, usage)
-
+        if first_token["ms"] is None and _sse_has_content(buffer.encode("utf-8"), upstream_style):
+            first_token["ms"] = (time.monotonic() - start_mono) * 1000.0
 
 def _sniff_usage(block: str, usage: dict[str, int]) -> None:
     for line in block.splitlines():

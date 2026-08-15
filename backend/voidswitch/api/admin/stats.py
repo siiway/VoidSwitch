@@ -71,6 +71,16 @@ async def stats(
         session,
         select(func.coalesce(func.sum(RequestLog.total_tokens), 0)).where(RequestLog.ts >= since),
     )
+    avg_first_token_ms_24h = (
+        await session.execute(
+            select(func.avg(RequestLog.first_token_ms)).where(
+                RequestLog.ts >= since,
+                RequestLog.success.is_(True),
+                RequestLog.stream.is_(True),
+                RequestLog.first_token_ms.isnot(None),
+            )
+        )
+    ).scalar_one()
 
     return StatsOut(
         providers=providers,
@@ -83,4 +93,11 @@ async def stats(
         success_24h=success_24h,
         failures_24h=requests_24h - success_24h,
         tokens_24h=tokens_24h,
+        success_rate_24h=round(success_24h / requests_24h * 100, 1) if requests_24h else 0.0,
+        avg_first_token_ms_24h=(
+            round(avg_first_token_ms_24h, 1) if avg_first_token_ms_24h is not None else None
+        ),
+        avg_tokens_per_request_24h=(
+            round(tokens_24h / requests_24h, 1) if requests_24h else 0.0
+        ),
     )

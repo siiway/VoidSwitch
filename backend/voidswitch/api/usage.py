@@ -25,9 +25,11 @@ from voidswitch.models.schemas import (
     HeatmapDay,
     HeatmapOut,
     HeatmapStats,
+    StatusCount,
     UsageAnalyticsOut,
     UsageBucket,
     UsageGroupRow,
+    UsagePerformance,
     UsageTotals,
 )
 from voidswitch.services import settings_store
@@ -99,6 +101,17 @@ _COUNT = func.count(RequestLog.id)
 _PROMPT = func.coalesce(func.sum(RequestLog.prompt_tokens), 0)
 _COMPLETION = func.coalesce(func.sum(RequestLog.completion_tokens), 0)
 _TOKENS = func.coalesce(func.sum(RequestLog.total_tokens), 0)
+# Average TTFT over streamed successes that recorded one. ``first_token_ms`` is
+# NULL for non-streamed requests and for streams that never produced a token.
+_AVG_FIRST_TOKEN = func.avg(
+    case(
+        (
+            RequestLog.stream.is_(True) & RequestLog.first_token_ms.isnot(None),
+            RequestLog.first_token_ms,
+        ),
+        else_=None,
+    )
+)
 
 
 def _scope(stmt: Select, user: User) -> Select:
@@ -147,7 +160,7 @@ async def _series(
     period = _period_expr(dialect, granularity).label("period")
     stmt = _apply_window(
         _scope(
-            select(period, _COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS),
+            select(period, _COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS, _AVG_FIRST_TOKEN),
             user,
         ),
         start,
@@ -159,12 +172,110 @@ async def _series(
     stmt = stmt.group_by(period).order_by(period.desc()).limit(limit)
     rows = (await session.execute(stmt)).all()
     buckets = [
-        UsageBucket(period=str(r[0]), **_totals_from_row(r[1:]))
+        UsageBucket(
+            period=str(r[0]),
+            **_totals_from_row(r[1:6]),
+            avg_first_token_ms=(
+                round(float(r[6]), 1)
+                if r[6] is not None
+                else None
+            ),
+        )
         for r in rows
         if r[0] is not None
     ]
     buckets.reverse()  # chronological order for charting
     return buckets
+
+
+async def _performance(
+    session: AsyncSession,
+    user: User,
+    dialect: str,
+    *,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
+) -> UsagePerformance:
+    """Windowed performance aggregates: average TTFT, average latency, tokens
+    per request, and token throughput.
+
+    Latency uses the SQL-computed elapsed time between ``started_at`` and
+    ``finished_at`` (the DB clock, per dialect) so it stays consistent with how
+    the Logs page renders durations — and it works even though ``latency_ms`` on
+    the row itself is never written by the dispatcher.
+    """
+    if dialect == "postgresql":
+        latency = func.extract("epoch", RequestLog.finished_at - RequestLog.started_at) * 1000.0
+        total_seconds = func.sum(
+            func.coalesce(
+                func.extract("epoch", RequestLog.finished_at - RequestLog.started_at),
+                0.0,
+            )
+        )
+    else:
+        latency = (
+            func.julianday(RequestLog.finished_at) - func.julianday(RequestLog.started_at)
+        ) * 86400000.0
+        total_seconds = func.sum(
+            func.coalesce(
+                (func.julianday(RequestLog.finished_at) - func.julianday(RequestLog.started_at))
+                * 86400.0,
+                0.0,
+            )
+        )
+
+    stmt = _scope(
+        select(
+            _AVG_FIRST_TOKEN,
+            func.avg(case((RequestLog.success.is_(True), latency), else_=None)),
+            func.sum(RequestLog.total_tokens),
+            total_seconds,
+            func.sum(case((RequestLog.stream.is_(True), 1), else_=0)),
+            func.sum(case((RequestLog.stream.is_(False), 1), else_=0)),
+            _COUNT,
+        ),
+        user,
+    )
+    stmt = _apply_window(stmt, start, end)
+    row = (await session.execute(stmt)).one()
+    avg_first, avg_latency, total_tokens, total_secs, streams, non_streams, total_req = row
+    total_tokens = int(total_tokens or 0)
+    total_secs = float(total_secs or 0)
+    total_req = int(total_req or 0)
+    return UsagePerformance(
+        avg_first_token_ms=round(float(avg_first), 1) if avg_first is not None else None,
+        avg_latency_ms=round(float(avg_latency), 1) if avg_latency is not None else None,
+        avg_tokens_per_request=round(total_tokens / total_req, 1) if total_req else 0.0,
+        tokens_per_second=round(total_tokens / total_secs, 2) if total_secs > 0 else None,
+        stream_requests=int(streams or 0),
+        non_stream_requests=int(non_streams or 0),
+    )
+
+
+async def _status_codes(
+    session: AsyncSession,
+    user: User,
+    *,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
+) -> list[StatusCount]:
+    """HTTP status-code distribution over the window."""
+    stmt = _apply_window(
+        _scope(
+            select(RequestLog.status_code, _COUNT)
+            .where(RequestLog.status_code.isnot(None)),
+            user,
+        ),
+        start,
+        end,
+    )
+    stmt = stmt.group_by(RequestLog.status_code).order_by(RequestLog.status_code)
+    rows = (await session.execute(stmt)).all()
+    return [
+        StatusCount(status_code=int(r[0]), count=int(r[1]))
+        for r in rows
+        if r[0] is not None
+    ]
 
 
 async def _group(
@@ -255,6 +366,9 @@ async def usage_analytics(
         end=end,
         extra=not_internal_model,
     )
+    provider_rows = await _group(
+        session, user, RequestLog.provider_name, start=start, end=end
+    )
 
     # Resolve human-friendly labels for users and tokens in batched queries.
     subs = {r[0] for r in user_rows if r[0]}
@@ -321,6 +435,17 @@ async def usage_analytics(
         )
         for r in model_rows
     ]
+    by_provider = [
+        UsageGroupRow(
+            key=r[0] or "",
+            label=r[0] or "(unknown)",
+            **_totals_from_row(r[1:]),
+        )
+        for r in provider_rows
+    ]
+
+    performance = await _performance(session, user, dialect, start=start, end=end)
+    status_codes = await _status_codes(session, user, start=start, end=end)
 
     return UsageAnalyticsOut(
         scope="all" if is_staff(user) else "self",
@@ -334,6 +459,9 @@ async def usage_analytics(
         by_user=by_user,
         by_token=by_token,
         by_model=by_model,
+        by_provider=by_provider,
+        performance=performance,
+        status_codes=status_codes,
     )
 
 

@@ -167,10 +167,6 @@ function StaffDashboard() {
                 value={`${stats.data.active_keys}/${stats.data.total_keys}`}
                 accent={tokens.colorPaletteGreenForeground1}
               />
-              <Stat
-                label={t("dashboard.activeProxies" as TK)}
-                value={`${stats.data.active_proxies}/${stats.data.total_proxies}`}
-              />
               <Stat label={t("dashboard.voidTokens" as TK)} value={stats.data.tokens} />
             </div>
             <div
@@ -192,7 +188,24 @@ function StaffDashboard() {
                 value={stats.data.failures_24h}
                 accent={tokens.colorPaletteRedForeground1}
               />
+              <Stat
+                label={t("dashboard.successRate24h" as TK)}
+                value={`${stats.data.success_rate_24h}%`}
+                accent={tokens.colorPaletteGreenForeground1}
+              />
               <Stat label={t("dashboard.tokens24h" as TK)} value={stats.data.tokens_24h} />
+              <Stat
+                label={t("dashboard.avgTtft24h" as TK)}
+                value={
+                  stats.data.avg_first_token_ms_24h != null
+                    ? `${Math.round(stats.data.avg_first_token_ms_24h)}ms`
+                    : "—"
+                }
+              />
+              <Stat
+                label={t("dashboard.avgTokensPerReq24h" as TK)}
+                value={stats.data.avg_tokens_per_request_24h}
+              />
             </div>
           </>
         )

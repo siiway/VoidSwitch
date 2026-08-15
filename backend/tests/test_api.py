@@ -499,6 +499,19 @@ async def test_usage_analytics_staff_sees_everything(client, db, seeded):
     assert {r["key"] for r in body["by_user"]} == {"user-1", "user-2"}
     assert {r["key"] for r in body["by_token"]} == {"1", "2"}
     assert {r["key"] for r in body["by_model"]} == {"deepseek-chat", "gpt-4o"}
+    # Providers breakdown mirrors the model grouping (no provider recorded on
+    # these seeded rows, so they all fall under one "(unknown)" bucket).
+    assert {r["label"] for r in body["by_provider"]} == {"(unknown)"}
+    # Performance aggregates: TTFT only counts streamed successes, and the
+    # seeded rows have no started/finished timestamps → no latency/TTFT values.
+    perf = body["performance"]
+    assert perf["avg_first_token_ms"] is None
+    assert perf["avg_latency_ms"] is None
+    assert perf["avg_tokens_per_request"] == 8.0  # 24 tokens / 3 requests
+    assert perf["stream_requests"] == 0
+    assert perf["non_stream_requests"] == 3
+    # Status-code distribution: unset status codes are excluded.
+    assert body["status_codes"] == []
 
 
 async def test_usage_analytics_member_sees_only_self(client, db, seeded):
@@ -594,6 +607,45 @@ async def test_usage_mode_b_returns_windowed_series(client, db, seeded):
     assert body["windowed_series"] is not None
     assert sum(b["requests"] for b in body["windowed_series"]) == 3
     assert body["daily"] == []
+
+
+async def test_admin_stats_24h_metrics(client, db, seeded):
+    """The dashboard 24h stats include success rate, average TTFT, and average
+    tokens per request — and a streamed request with a recorded TTFT feeds the
+    average."""
+    from voidswitch.models.db import RequestLog
+
+    async with db.session() as session:
+        session.add(
+            RequestLog(
+                user_sub="user-1", token_id=1, model="deepseek-chat",
+                success=True, stream=True, first_token_ms=250.0,
+                prompt_tokens=10, completion_tokens=20, total_tokens=30,
+            )
+        )
+        session.add(
+            RequestLog(
+                user_sub="user-1", token_id=1, model="deepseek-chat",
+                success=True, stream=False, first_token_ms=None,
+                prompt_tokens=5, completion_tokens=5, total_tokens=10,
+            )
+        )
+        session.add(
+            RequestLog(
+                user_sub="user-1", token_id=1, model="deepseek-chat",
+                success=False, stream=False,
+                prompt_tokens=0, completion_tokens=0, total_tokens=0,
+            )
+        )
+
+    resp = await client.get("/api/admin/stats", headers=_session_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["requests_24h"] == 3
+    assert body["success_24h"] == 2
+    assert body["success_rate_24h"] == pytest.approx(66.7, abs=0.1)
+    assert body["avg_first_token_ms_24h"] == pytest.approx(250.0)
+    assert body["avg_tokens_per_request_24h"] == pytest.approx(40 / 3, abs=0.1)
 
 
 # --------------------------------------------------------------------------- #

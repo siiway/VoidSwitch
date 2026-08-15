@@ -694,6 +694,9 @@ class StatsOut(BaseModel):
     success_24h: int
     failures_24h: int
     tokens_24h: int
+    success_rate_24h: float = 0.0
+    avg_first_token_ms_24h: float | None = None
+    avg_tokens_per_request_24h: float = 0.0
 
 
 class Page[T](BaseModel):
@@ -723,6 +726,9 @@ class UsageBucket(UsageTotals):
     """One point on a time series, labelled by its calendar period."""
 
     period: str
+    # Average time-to-first-token (ms) for streamed successful requests in this
+    # bucket (``None`` when no streamed success carried a TTFT).
+    avg_first_token_ms: float | None = None
 
 
 class UsageGroupRow(UsageTotals):
@@ -731,6 +737,29 @@ class UsageGroupRow(UsageTotals):
     key: str
     label: str
     sublabel: str | None = None
+
+
+class UsagePerformance(BaseModel):
+    """Windowed performance/latency aggregates over ``request_logs``."""
+
+    # Average TTFT (ms) for streamed successful requests.
+    avg_first_token_ms: float | None = None
+    # Average end-to-end latency (ms) for successful requests.
+    avg_latency_ms: float | None = None
+    # Average tokens per request.
+    avg_tokens_per_request: float = 0.0
+    # Token throughput: total tokens / total wall-clock seconds.
+    tokens_per_second: float | None = None
+    # Stream vs. non-stream request counts (the quality block uses these).
+    stream_requests: int = 0
+    non_stream_requests: int = 0
+
+
+class StatusCount(BaseModel):
+    """One HTTP status-code bucket (used for the request-quality block)."""
+
+    status_code: int
+    count: int
 
 
 class UsageAnalyticsOut(BaseModel):
@@ -748,6 +777,9 @@ class UsageAnalyticsOut(BaseModel):
     by_user: list[UsageGroupRow]
     by_token: list[UsageGroupRow]
     by_model: list[UsageGroupRow]
+    by_provider: list[UsageGroupRow] = Field(default_factory=list)
+    performance: UsagePerformance = Field(default_factory=UsagePerformance)
+    status_codes: list[StatusCount] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

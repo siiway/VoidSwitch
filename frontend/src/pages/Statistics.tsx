@@ -211,6 +211,12 @@ function nf(n: number): string {
   return n.toLocaleString();
 }
 
+function fmtMs(v?: number | null): string {
+  if (v == null) return "—";
+  if (v < 1000) return `${Math.round(v)}ms`;
+  return `${(v / 1000).toFixed(2)}s`;
+}
+
 function Stat({
   label,
   value,
@@ -283,6 +289,7 @@ function TimeSeries({
           <TableHeaderCell>{t("stats.success" as any)}</TableHeaderCell>
           <TableHeaderCell>{t("stats.failedCol" as any)}</TableHeaderCell>
           <TableHeaderCell>{t("stats.tokensCol" as any)}</TableHeaderCell>
+          <TableHeaderCell>{t("stats.ttftCol" as any)}</TableHeaderCell>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -300,6 +307,7 @@ function TimeSeries({
               {nf(b.failures)}
             </TableCell>
             <TableCell>{nf(b.total_tokens)}</TableCell>
+            <TableCell>{fmtMs(b.avg_first_token_ms)}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -514,7 +522,7 @@ function Breakdown({
   t: (key: string) => string;
   // Which request-log filter this breakdown maps to. Clicking a row's label
   // jumps to the logs page with that filter applied.
-  filterKey: "user_sub" | "token_id" | "model";
+  filterKey: "user_sub" | "token_id" | "model" | "provider";
   // Optional per-row action (the user breakdown offers an activity heatmap).
   onHeatmap?: (row: UsageGroupRow) => void;
 }) {
@@ -944,7 +952,89 @@ export function Statistics() {
                 label={t("stats.tokensUsed" as TK)}
                 value={nf(stats.data.totals.total_tokens)}
               />
+              <Stat
+                label={t("stats.successRate" as TK)}
+                value={
+                  stats.data.totals.requests > 0
+                    ? `${((stats.data.totals.success / stats.data.totals.requests) * 100).toFixed(1)}%`
+                    : "—"
+                }
+                accent={tokens.colorPaletteGreenForeground1}
+              />
             </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title={t("stats.performance" as TK)} t={t as any}>
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              <Stat
+                label={t("stats.avgTtft" as TK)}
+                value={fmtMs(stats.data.performance.avg_first_token_ms)}
+              />
+              <Stat
+                label={t("stats.avgLatency" as TK)}
+                value={fmtMs(stats.data.performance.avg_latency_ms)}
+              />
+              <Stat
+                label={t("stats.avgTokensPerReq" as TK)}
+                value={stats.data.performance.avg_tokens_per_request}
+              />
+              <Stat
+                label={t("stats.tokensPerSec" as TK)}
+                value={
+                  stats.data.performance.tokens_per_second != null
+                    ? nf(stats.data.performance.tokens_per_second)
+                    : "—"
+                }
+              />
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title={t("stats.quality" as TK)} t={t as any}>
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                flexWrap: "wrap",
+                marginBottom: 16,
+              }}
+            >
+              <Stat
+                label={t("stats.streamed" as TK)}
+                value={nf(stats.data.performance.stream_requests)}
+              />
+              <Stat
+                label={t("stats.nonStreamed" as TK)}
+                value={nf(stats.data.performance.non_stream_requests)}
+              />
+            </div>
+            {stats.data.status_codes.length > 0 ? (
+              <DataTable ariaLabel={t("stats.quality" as TK)} minWidth={400}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHeaderCell>{t("stats.statusCode" as TK)}</TableHeaderCell>
+                    <TableHeaderCell>{t("stats.statusCodeCount" as TK)}</TableHeaderCell>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stats.data.status_codes.map((s) => (
+                    <TableRow key={s.status_code}>
+                      <TableCell>{s.status_code}</TableCell>
+                      <TableCell>{nf(s.count)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </DataTable>
+            ) : (
+              <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                {t("common.noData" as any)}
+              </Text>
+            )}
           </CollapsibleSection>
 
           <OverTimeSection data={stats.data} mode={overTimeMode} t={t as any} />
@@ -974,6 +1064,13 @@ export function Statistics() {
             rows={stats.data.by_model}
             t={t as any}
             filterKey="model"
+          />
+          <Breakdown
+            title={t("stats.byProvider" as TK)}
+            keyHeader={t("stats.providerCol" as TK)}
+            rows={stats.data.by_provider}
+            t={t as any}
+            filterKey="provider"
           />
         </>
       ) : null}

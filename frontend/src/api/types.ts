@@ -246,6 +246,9 @@ export interface Stats {
   success_24h: number;
   failures_24h: number;
   tokens_24h: number;
+  success_rate_24h: number;
+  avg_first_token_ms_24h?: number | null;
+  avg_tokens_per_request_24h: number;
 }
 
 export interface AuditLog {
@@ -392,12 +395,27 @@ export interface UsageTotals {
 
 export interface UsageBucket extends UsageTotals {
   period: string;
+  avg_first_token_ms?: number | null;
 }
 
 export interface UsageGroupRow extends UsageTotals {
   key: string;
   label: string;
   sublabel?: string | null;
+}
+
+export interface UsagePerformance {
+  avg_first_token_ms?: number | null;
+  avg_latency_ms?: number | null;
+  avg_tokens_per_request: number;
+  tokens_per_second?: number | null;
+  stream_requests: number;
+  non_stream_requests: number;
+}
+
+export interface StatusCount {
+  status_code: number;
+  count: number;
 }
 
 export interface UsageAnalytics {
@@ -415,6 +433,9 @@ export interface UsageAnalytics {
   by_user: UsageGroupRow[];
   by_token: UsageGroupRow[];
   by_model: UsageGroupRow[];
+  by_provider: UsageGroupRow[];
+  performance: UsagePerformance;
+  status_codes: StatusCount[];
 }
 
 export interface HeatmapDay {
