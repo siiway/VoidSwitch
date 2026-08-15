@@ -184,11 +184,17 @@ async def update_role_group(
             await session.delete(existing)
         await session.flush()
         new_mappings = []
+        seen: set[tuple[str, str]] = set()
         for m in body.mappings:
             team_id = m.team_id.strip()
             if not team_id:
                 continue
             min_role = _validated_min_role(m.min_role)
+            # De-duplicate: the table enforces (role_group_id, team_id, min_role)
+            # uniqueness, so a duplicate entry in the batch would 500 on flush.
+            if (team_id, min_role) in seen:
+                continue
+            seen.add((team_id, min_role))
             session.add(
                 RoleGroupMapping(role_group_id=group.id, team_id=team_id, min_role=min_role)
             )

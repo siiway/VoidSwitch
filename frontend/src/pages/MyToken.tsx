@@ -76,7 +76,7 @@ function CodeBlock({ code }: { code: string }) {
       setTimeout(() => setCopied(false), 1500);
     } catch {
       notify(
-        t("myToken.copyFailed" as TK),
+        t("chat.copyFailed" as TK),
         t("myToken.clipboardUnavailable" as TK),
         "error",
       );
@@ -198,16 +198,24 @@ export function MyToken() {
   async function rotate(token: VoidToken) {
     const ok = await confirm({
       title: t("myToken.rotateTitle" as TK),
-      message: `Rotate "${token.name}"? The old key stops working immediately.`,
+      message: t("myToken.rotateMsg" as TK).replace("{name}", token.name),
       confirmLabel: t("myToken.rotate" as TK),
       tone: "danger",
     });
     if (!ok) return;
-    const rotated = await api.post<VoidTokenWithSecret>(
-      `/api/me/tokens/${token.id}/rotate`,
-    );
-    setSecret(rotated);
-    tokensList.reload();
+    try {
+      const rotated = await api.post<VoidTokenWithSecret>(
+        `/api/me/tokens/${token.id}/rotate`,
+      );
+      setSecret(rotated);
+      tokensList.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function remove(token: VoidToken) {
@@ -218,19 +226,43 @@ export function MyToken() {
       tone: "danger",
     });
     if (!ok) return;
-    await api.del(`/api/me/tokens/${token.id}`);
-    tokensList.reload();
-    usage.reload();
+    try {
+      await api.del(`/api/me/tokens/${token.id}`);
+      tokensList.reload();
+      usage.reload();
+    } catch (e) {
+      notify(
+        t("common.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function toggleDebug(token: VoidToken) {
-    await api.patch(`/api/me/tokens/${token.id}`, { debug_enabled: !token.debug_enabled });
-    tokensList.reload();
+    try {
+      await api.patch(`/api/me/tokens/${token.id}`, { debug_enabled: !token.debug_enabled });
+      tokensList.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function toggleEnabled(token: VoidToken) {
-    await api.patch(`/api/me/tokens/${token.id}`, { enabled: !token.enabled });
-    tokensList.reload();
+    try {
+      await api.patch(`/api/me/tokens/${token.id}`, { enabled: !token.enabled });
+      tokensList.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   function openEdit(token: VoidToken) {
@@ -240,9 +272,17 @@ export function MyToken() {
 
   async function saveEdit() {
     if (!editing) return;
-    await api.patch(`/api/me/tokens/${editing.id}`, { name: editName.trim() || "default" });
-    setEditing(null);
-    tokensList.reload();
+    try {
+      await api.patch(`/api/me/tokens/${editing.id}`, { name: editName.trim() || "default" });
+      setEditing(null);
+      tokensList.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   return (

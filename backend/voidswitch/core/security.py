@@ -144,9 +144,18 @@ def decrypt_secret(ciphertext: str, *, secret: str) -> str:
     """Decrypt a value produced by :func:`encrypt_secret`.
 
     Falls back to treating the value as plaintext if it was never encrypted
-    (tolerates manual DB seeding / migrations from an unencrypted store).
+    (tolerates manual DB seeding / migrations from an unencrypted store). A value
+    that *is* a Fernet token (the ``gAAAAA`` magic prefix) but fails to decrypt —
+    e.g. the app ``secret_key`` was rotated — is an integrity failure: fail closed
+    rather than shipping the ciphertext to an upstream as if it were the key.
     """
-    try:
-        return _fernet(secret).decrypt(ciphertext.encode("ascii")).decode("utf-8")
-    except (InvalidToken, ValueError):
-        return ciphertext
+    if ciphertext.startswith("gAAAAA"):
+        try:
+            return _fernet(secret).decrypt(ciphertext.encode("ascii")).decode("utf-8")
+        except (InvalidToken, ValueError):
+            raise ValueError(
+                "Stored credential is encrypted but could not be decrypted — the "
+                "app secret_key may have changed or the value is corrupt."
+            ) from None
+    # Not a Fernet token: legacy plaintext seeding.
+    return ciphertext

@@ -166,7 +166,9 @@ async def list_providers(
         .all()
     )
     show_key_api = is_owner(user)
-    return [_to_out(p, show_key_api=show_key_api) for p in rows]
+    return [
+        _to_out(p, redact=not is_owner(user), show_key_api=show_key_api) for p in rows
+    ]
 
 
 @router.post("", response_model=ProviderOut, status_code=status.HTTP_201_CREATED)
@@ -232,7 +234,7 @@ async def create_provider(
         scope=audit_scope_for(user),
     )
     await session.refresh(provider)
-    return _to_out(provider, show_key_api=is_owner(user))
+    return _to_out(provider, redact=not is_owner(user), show_key_api=is_owner(user))
 
 
 @router.patch("/{provider_id}", response_model=ProviderOut)
@@ -257,7 +259,7 @@ async def update_provider(
             real_changes[field] = value
     if not real_changes:
         await session.refresh(provider)
-        return _to_out(provider, show_key_api=is_owner(user))
+        return _to_out(provider, redact=not is_owner(user), show_key_api=is_owner(user))
     # Allow renaming a provider after creation, but keep names unique.
     if "name" in real_changes and real_changes["name"] != provider.name:
         clash = (
@@ -297,7 +299,7 @@ async def update_provider(
         scope=audit_scope_for(user),
     )
     await session.refresh(provider)
-    return _to_out(provider, show_key_api=is_owner(user))
+    return _to_out(provider, redact=not is_owner(user), show_key_api=is_owner(user))
 
 
 @router.delete("/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)

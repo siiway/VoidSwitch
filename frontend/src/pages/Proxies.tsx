@@ -170,8 +170,16 @@ export function Proxies() {
       tone: "danger",
     });
     if (!ok) return;
-    await api.del(`/api/admin/proxies/${p.id}`);
-    proxies.reload();
+    try {
+      await api.del(`/api/admin/proxies/${p.id}`);
+      proxies.reload();
+    } catch (e) {
+      notify(
+        t("common.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function deleteInUse() {

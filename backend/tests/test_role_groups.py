@@ -220,8 +220,10 @@ async def test_reenable_restores_tokens_on_login(db):
         )
         session.add(token)
         await session.flush()
-        # Simulate the disable flow: tokens off + flag set, account re-enabled.
+        # Simulate the disable flow: the parked token is marked auto_disabled and
+        # the flag set, account re-enabled.
         token.enabled = False
+        token.auto_disabled = True
         user.void_tokens_admin_disabled = True
         user.enabled = True
         await session.flush()

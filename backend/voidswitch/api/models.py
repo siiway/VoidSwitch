@@ -104,6 +104,35 @@ async def _get_or_create_entry(
     return entry
 
 
+async def _validated_role_group_ids(
+    session: AsyncSession, ids: list[int]
+) -> list[int]:
+    """Validate a role-group allow-list; reject unknown ids instead of silently
+    dropping them (a dropped id would otherwise quietly revoke access for the
+    affected members)."""
+    existing = set(
+        (
+            await session.execute(select(RoleGroup.id).where(RoleGroup.builtin.is_(False)))
+        )
+        .scalars()
+        .all()
+    )
+    unknown = sorted(set(ids) - existing)
+    if unknown:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Unknown role group id(s): {unknown}.",
+        )
+    # De-duplicate, preserving order.
+    seen: set[int] = set()
+    result: list[int] = []
+    for gid in ids:
+        if gid not in seen:
+            seen.add(gid)
+            result.append(gid)
+    return result
+
+
 @router.put("", response_model=ModelOut)
 async def upsert_model(
     body: ModelUpsert,
@@ -123,6 +152,21 @@ async def upsert_model(
                 "mapped_id must differ from the model id "
                 "(use it to rename, not to alias to itself).",
             )
+        # The alias must be unique — two entries claiming the same mapped_id
+        # would overwrite each other in the gateway's alias map nondeterministically.
+        if mapped:
+            clash = (
+                await session.execute(
+                    select(ModelEntry.id).where(
+                        ModelEntry.mapped_id == mapped, ModelEntry.model_id != model_id
+                    )
+                )
+            ).first()
+            if clash is not None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"Another model is already mapped to the alias '{mapped}'.",
+                )
         entry.mapped_id = mapped or None
     if body.display_name is not None:
         entry.display_name = body.display_name.strip() or None
@@ -133,20 +177,9 @@ async def upsert_model(
     if body.enabled is not None:
         entry.enabled = body.enabled
     if body.allowed_role_group_ids is not None:
-        # Drop ids that no longer exist (e.g. a deleted group) and the built-in
-        # moderator group (always allowed, never stored).
-        valid_ids = set(
-            (
-                await session.execute(
-                    select(RoleGroup.id).where(RoleGroup.builtin.is_(False))
-                )
-            )
-            .scalars()
-            .all()
+        entry.allowed_role_group_ids = await _validated_role_group_ids(
+            session, body.allowed_role_group_ids
         )
-        entry.allowed_role_group_ids = [
-            gid for gid in body.allowed_role_group_ids if gid in valid_ids
-        ]
     await session.flush()
     await record_audit(
         session,
@@ -181,16 +214,9 @@ async def batch_update_models(
     # Resolve the valid (non-builtin) role-group ids once for the whole batch.
     role_group_ids: list[int] | None = None
     if body.allowed_role_group_ids is not None:
-        valid_ids = set(
-            (
-                await session.execute(
-                    select(RoleGroup.id).where(RoleGroup.builtin.is_(False))
-                )
-            )
-            .scalars()
-            .all()
+        role_group_ids = await _validated_role_group_ids(
+            session, body.allowed_role_group_ids
         )
-        role_group_ids = [gid for gid in body.allowed_role_group_ids if gid in valid_ids]
     merge = body.opencode_config_mode != "overwrite"
     for model_id in ids:
         entry = await _get_or_create_entry(session, model_id, user)

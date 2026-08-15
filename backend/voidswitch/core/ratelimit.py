@@ -31,8 +31,13 @@ from collections import defaultdict, deque
 class SlidingWindowLimiter:
     """A per-key sliding-window counter. Not shared across processes."""
 
+    # Sweep frequency for dropping long-idle subjects (bounds memory on the
+    # otherwise-unbounded subject table).
+    _GC_INTERVAL = 60.0
+
     def __init__(self) -> None:
         self._windows: dict[str, deque[float]] = defaultdict(deque)
+        self._last_gc = time.monotonic()
 
     def allow(self, key: str, *, window_seconds: float, max_requests: int) -> bool:
         """Record a hit for ``key`` and return whether it is within the limit.
@@ -51,7 +56,23 @@ class SlidingWindowLimiter:
         if len(window) >= max_requests:
             return False
         window.append(now)
+        self._maybe_gc(now, window_seconds)
         return True
+
+    def _maybe_gc(self, now: float, window_seconds: float) -> None:
+        """Drop subjects whose window is empty and last touched long ago.
+
+        Without this, every distinct subject ever seen (every user, every token)
+        keeps one dict entry for the process lifetime.
+        """
+        if now - self._last_gc < self._GC_INTERVAL:
+            return
+        self._last_gc = now
+        cutoff = now - max(window_seconds * 2, 300.0)
+        stale = [k for k, v in self._windows.items() if not v or v[-1] < cutoff]
+        for k in stale:
+            if not self._windows[k]:
+                del self._windows[k]
 
 
 # Process-wide singletons shared by the request guards.

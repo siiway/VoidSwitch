@@ -52,6 +52,13 @@ def apply_balance(
         return
     if not auto_disable:
         return
+    # A manually-disabled key is sticky: the on-demand "refresh balance" endpoint
+    # probes any key (not just ACTIVE ones), and an operator's explicit disable
+    # must not be silently flipped to insufficient_balance (which the rescan would
+    # then auto-re-enable). The recovery branch above already refuses to
+    # auto-re-enable such keys — keep the disable branch consistent.
+    if key.status == KeyStatus.DISABLED.value:
+        return
     if detail.get("error") == "authentication_error":
         key.status = KeyStatus.INVALID.value
         key.disabled_reason = "balance probe: authentication failed"

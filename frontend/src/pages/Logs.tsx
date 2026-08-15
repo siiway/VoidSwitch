@@ -597,6 +597,9 @@ function RequestLogs({
   const [detailLog, setDetailLog] = useState<RequestLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailMode, setDetailMode] = useState<"info" | "debug">("info");
+  // Guard against a detail fetch resolving after the dialog was closed (or a
+  // different row opened): only the latest request may populate the dialog.
+  const detailReqRef = useRef<{ id: number; mode: "info" | "debug" } | null>(null);
   const [revealMode, setRevealMode] = useState(false);
 
   useEffect(() => {
@@ -695,23 +698,27 @@ function RequestLogs({
   }
 
   async function openDetail(r: RequestLog, mode: "info" | "debug") {
+    const reqId = { id: r.id, mode };
+    detailReqRef.current = reqId;
     setDetailLoading(true);
     setRevealMode(false);
     setDetailMode(mode);
     try {
       const d = await api.get<unknown>(`/api/admin/logs/requests/${r.id}`);
+      if (detailReqRef.current !== reqId) return; // stale — dialog closed / re-opened
       // Validate the shape at the boundary rather than trusting a blind cast, so
       // an API change surfaces as a controlled fallback instead of a broken
       // object rendered downstream.
       if (!isRequestLog(d)) throw new Error("unexpected log-detail shape");
       setDetailLog(d as RequestLogDetail);
     } catch {
+      if (detailReqRef.current !== reqId) return;
       // Fallback to the row we already have. RequestLogDetail only adds optional
       // fields on top of RequestLog, so the row is a valid (if sparse) detail —
       // no unsafe cast needed.
       setDetailLog({ ...r });
     } finally {
-      setDetailLoading(false);
+      if (detailReqRef.current === reqId) setDetailLoading(false);
     }
   }
 
@@ -1060,7 +1067,12 @@ function RequestLogs({
       {/* Detail modal */}
       <Dialog
         open={detailLog !== null}
-        onOpenChange={(_, d) => { if (!d.open) setDetailLog(null); }}
+        onOpenChange={(_, d) => {
+          if (!d.open) {
+            detailReqRef.current = null;
+            setDetailLog(null);
+          }
+        }}
         modalType="non-modal"
       >
         <DialogSurface style={{ maxWidth: 820, width: "100%" }}>
@@ -1181,7 +1193,7 @@ function RequestLogs({
               )}
             </DialogContent>
             <DialogActions>
-              <Button appearance="primary" onClick={() => setDetailLog(null)}>
+              <Button appearance="primary" onClick={() => { detailReqRef.current = null; setDetailLog(null); }}>
                 {tr("common.close" as TK)}
               </Button>
             </DialogActions>

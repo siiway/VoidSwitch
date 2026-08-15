@@ -109,6 +109,10 @@ export function Chat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  // Abort any in-flight stream when the component unmounts, so the fetch is torn
+  // down instead of appending to unmounted state / leaking the connection.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   const loadModels = useCallback(async () => {
     if (!chatToken) {
       setModels([]);

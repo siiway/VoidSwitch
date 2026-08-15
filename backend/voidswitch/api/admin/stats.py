@@ -47,7 +47,12 @@ async def stats(
     total_proxies = await _count(session, select(func.count(Proxy.id)))
     active_proxies = await _count(
         session,
-        select(func.count(Proxy.id)).where(Proxy.status == ProxyStatus.ACTIVE.value),
+        # A proxy is "active" only when enabled AND marked active — the selector
+        # and resurrector both require enabled, but the dashboard's disable action
+        # leaves ``status`` untouched, so counting status alone would over-report.
+        select(func.count(Proxy.id)).where(
+            Proxy.enabled.is_(True), Proxy.status == ProxyStatus.ACTIVE.value
+        ),
     )
     tokens = await _count(
         session, select(func.count(VoidToken.id)).where(VoidToken.deleted.is_(False))

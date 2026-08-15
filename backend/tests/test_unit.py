@@ -1877,3 +1877,40 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# Review fixes: session-key truncation, decrypt fail-closed
+# --------------------------------------------------------------------------- #
+
+
+def test_session_key_truncates_client_session_id():
+    from voidswitch.services.dispatcher import DispatchRequest, _session_key
+
+    req = DispatchRequest(
+        inbound_style=ApiStyle.OPENAI,
+        model="m",
+        payload={},
+        stream=False,
+        token_id=7,
+        session_id="x" * 5000,
+    )
+    key = _session_key(req)
+    # The whole key (prefix + id) must fit the VARCHAR(255) session_id column.
+    assert len(key) <= 255
+    assert key.startswith("t7:sid:")
+
+
+def test_decrypt_secret_fails_closed_on_corrupt_fernet():
+    import pytest
+    from voidswitch.core.security import decrypt_secret, encrypt_secret
+
+    plain = "sk-secret-1"
+    ct = encrypt_secret(plain, secret="key-a")
+    assert decrypt_secret(ct, secret="key-a") == plain
+    # A different secret key → the stored Fernet token can no longer be decrypted:
+    # fail closed instead of returning the ciphertext as the "key".
+    with pytest.raises(ValueError):
+        decrypt_secret(ct, secret="key-b")
+    # A legacy plaintext value (not a Fernet token) still passes through.
+    assert decrypt_secret("sk-plain", secret="anything") == "sk-plain"

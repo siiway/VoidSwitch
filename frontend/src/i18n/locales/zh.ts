@@ -937,6 +937,7 @@ const zh: Translations = {
       "然后运行 <code>opencode</code> → <code>/connect</code> → <strong>VoidSwitch</strong> 并粘贴一个 <code>vs-…</code> 令牌。要直接嵌入令牌，在 URL 后追加 <code>?token=vs-…</code>。",
     createFailed: "创建失败",
     rotateTitle: "轮换令牌",
+    rotateMsg: '轮换 "{name}"？旧密钥将立即失效。',
     clipboardUnavailable: "此浏览器不支持剪贴板",
     copyToClipboard: "复制到剪贴板",
   },

@@ -636,10 +636,18 @@ export function ProviderKeys() {
 
   async function toggle(k: ApiKey) {
     const enabled = k.status !== "active";
-    await api.patch(`/api/admin/providers/${providerId}/keys/${k.id}`, {
-      enabled,
-    });
-    keys.reload();
+    try {
+      await api.patch(`/api/admin/providers/${providerId}/keys/${k.id}`, {
+        enabled,
+      });
+      keys.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function remove(k: ApiKey) {
@@ -653,8 +661,16 @@ export function ProviderKeys() {
       tone: "danger",
     });
     if (!ok) return;
-    await api.del(`/api/admin/providers/${providerId}/keys/${k.id}`);
-    keys.reload();
+    try {
+      await api.del(`/api/admin/providers/${providerId}/keys/${k.id}`);
+      keys.reload();
+    } catch (e) {
+      notify(
+        t("common.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function reveal(k: ApiKey) {
@@ -684,10 +700,18 @@ export function ProviderKeys() {
 
   async function toggleProvider() {
     if (!current) return;
-    await api.patch(`/api/admin/providers/${providerId}`, {
-      enabled: !current.enabled,
-    });
-    provider.reload();
+    try {
+      await api.patch(`/api/admin/providers/${providerId}`, {
+        enabled: !current.enabled,
+      });
+      provider.reload();
+    } catch (e) {
+      notify(
+        t("common.updateFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
   }
 
   async function persistOrder(ordered: ApiKey[]) {

@@ -27,6 +27,10 @@ export function LoginCallback() {
     }
     if (token) {
       setToken(token);
+      // Strip the token out of the address bar / history — it is a live session
+      // credential and must not linger in the URL (visible in screenshots,
+      // bookmarks, referrers).
+      history.replaceState(null, "", location.pathname + location.search);
       // Show the announcements popup once after this fresh sign-in.
       armAnnouncementsPopup();
       void reload().then(() => navigate("/", { replace: true }));

@@ -138,6 +138,18 @@ async def mapping_tables(session: AsyncSession) -> tuple[dict[str, str], set[str
     return alias_to_source, hidden_sources
 
 
+async def hidden_model_ids(session: AsyncSession) -> set[str]:
+    """Model ids not callable under their raw name.
+
+    Combines the metadata-alias hiding (``mapping_tables``) with route-hiding: a
+    raw id an alias route hides behind itself on *every* provider that could serve
+    it is not advertised, so it must be rejected at the gateway too.
+    """
+    _, hidden = await mapping_tables(session)
+    providers = await _enabled_providers(session)
+    return hidden | _hidden_upstreams(providers)
+
+
 async def clean_unserved(session: AsyncSession) -> tuple[int, list[str]]:
     """Delete metadata rows for model ids no provider serves.
 

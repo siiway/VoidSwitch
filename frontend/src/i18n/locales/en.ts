@@ -960,6 +960,7 @@ const en = {
     opencodeAfter: 'Then run <code>opencode</code> → <code>/connect</code> → <strong>VoidSwitch</strong> and paste a <code>vs-…</code> token. To embed the token instead, append <code>?token=vs-…</code> to the URL.',
     createFailed: "Create failed",
     rotateTitle: "Rotate token",
+    rotateMsg: 'Rotate "{name}"? The old key stops working immediately.',
     clipboardUnavailable: "Clipboard is unavailable in this browser",
     copyToClipboard: "Copy to clipboard",
   },

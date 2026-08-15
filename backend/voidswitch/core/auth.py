@@ -385,12 +385,17 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
 
 
 async def restore_auto_disabled_tokens(session: AsyncSession, user: User) -> None:
-    """Re-enable only Void-Tokens parked by forced logout / user disable."""
+    """Re-enable only Void-Tokens parked by forced logout / user disable.
+
+    ``_auto_disable_tokens`` marks exactly the tokens it parked with
+    ``auto_disabled``, so only those are brought back — a token the user (or an
+    owner) had deliberately disabled *before* the account was disabled must not
+    be silently re-enabled.
+    """
     if not user.enabled or not user.void_tokens_admin_disabled:
         return
-    has_token_marks = any(token.auto_disabled for token in user.tokens)
     for token in user.tokens:
-        if not token.deleted and (token.auto_disabled or not has_token_marks):
+        if not token.deleted and token.auto_disabled:
             token.enabled = True
             token.auto_disabled = False
     user.void_tokens_admin_disabled = False

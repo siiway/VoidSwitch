@@ -23,10 +23,10 @@ import datetime as dt
 import hashlib
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,6 +79,13 @@ def _stringify(value: Any) -> str:
         return str(value)
 
 
+# ``request_logs.session_id`` is VARCHAR(255); the client-controlled session id is
+# unbounded, so cap it here — otherwise an oversized ``x-voidswitch-session``
+# header overflows the column on PostgreSQL and 500s the request (the upstream
+# has already been paid for at that point).
+_MAX_SESSION_ID_CHARS = 240
+
+
 def _session_key(req: DispatchRequest) -> str:
     """A stable identifier for the conversation/session behind a request.
 
@@ -94,13 +101,14 @@ def _session_key(req: DispatchRequest) -> str:
     Always namespaced by the calling Void-Token so two tokens never share a pin.
     """
     if req.session_id:
-        return f"t{req.token_id}:sid:{req.session_id}"
+        sid = req.session_id[:_MAX_SESSION_ID_CHARS]
+        return f"t{req.token_id}:sid:{sid}"
     payload = req.payload or {}
     meta = payload.get("metadata")
     if isinstance(meta, dict):
         uid = meta.get("user_id")
         if isinstance(uid, str) and uid:
-            return f"t{req.token_id}:u:{uid}"
+            return f"t{req.token_id}:u:{uid[:_MAX_SESSION_ID_CHARS]}"
     parts: list[str] = []
     # ``system``/``messages`` (OpenAI-chat & Anthropic) or ``instructions``/``input``
     # (OpenAI Responses) — whichever the inbound dialect carries.
@@ -482,10 +490,15 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
             try:
                 plaintext = await _resolve_token(session, adapter, key, secret_key)
             except Exception as exc:
-                _disable_key(key, KeyStatus.INVALID, f"token resolve failed: {exc}")
-                last_error = "token resolve failed"
+                # A credential-resolution failure (e.g. a transient network blip
+                # while refreshing a Claude Code / xAI OAuth bundle) is NOT proof
+                # the key is invalid — permanently disabling it here would park a
+                # still-usable key until an operator intervenes. Record it and
+                # move to the next key; a genuinely bad key still gets disabled
+                # via the upstream 401 path.
+                last_error = f"credential resolve failed: {exc}"
                 last_status = 401
-                await session.flush()
+                log.debug("credential_resolve_failed", key_id=key.id, error=str(exc))
                 continue  # next key
             url, headers, body = _prepare_body(
                 req,
@@ -1110,7 +1123,7 @@ def _sse_has_content(buffer: bytes, style: ApiStyle) -> bool:
     fallback, a buffer with no SSE frames at all that still holds non-whitespace
     bytes is treated as content (plain-text streaming upstreams).
     """
-    text = buffer.decode("utf-8", errors="ignore")
+    text = buffer.decode("utf-8", errors="ignore").replace("\r\n", "\n")
     saw_data = False
     for block in text.split("\n\n"):
         for line in block.splitlines():
@@ -1369,7 +1382,10 @@ async def _finalise_success(
     # Non-streaming success.
     upstream_json = outcome.body_json
     usage = _extract_usage(upstream_json, upstream_style)
-    if upstream_json is not None:
+    # Translation expects a JSON object; a non-object JSON body (``[]``, ``42``,
+    # ``"ok"``) from a misbehaving upstream must be passed through verbatim rather
+    # than crashing the translator (which would 500 after the upstream was billed).
+    if isinstance(upstream_json, dict):
         translated = _translate_response(
             req.inbound_style, upstream_style, upstream_json, req.model
         )
@@ -1488,11 +1504,20 @@ async def _build_stream(
     except asyncio.CancelledError:
         req_status = "cancelled"
         raise
+    except GeneratorExit:
+        # Starlette abandons the iterator on client disconnect — record it as
+        # cancelled rather than a clean completion.
+        req_status = "cancelled"
+        raise
     except Exception:
         req_status = "error"
         raise
     finally:
         finished_at = _utcnow()
+        # Free the translation generator chain (it may still be buffering chunks
+        # after a timeout/terminated break) before closing the upstream response.
+        with contextlib.suppress(asyncio.CancelledError, GeneratorExit, Exception):
+            await cast(AsyncGenerator[bytes], it).aclose()
         # Shield the upstream-response close + usage persistence so they complete
         # even when the client disconnects mid-stream (CancelledError). Without
         # the shield, the cancellation propagates into these awaits and the
@@ -1513,7 +1538,8 @@ async def _capture_usage(raw: AsyncIterator[bytes], usage: dict[str, int]) -> As
     """Tee the raw upstream stream to sniff usage without altering bytes."""
     buffer = ""
     async for chunk in raw:
-        buffer += chunk.decode("utf-8", errors="ignore")
+        # Normalise CRLF so usage blocks split on "\n\n" for both line styles.
+        buffer += chunk.decode("utf-8", errors="ignore").replace("\r\n", "\n")
         while "\n\n" in buffer:
             block, buffer = buffer.split("\n\n", 1)
             _sniff_usage(block, usage)

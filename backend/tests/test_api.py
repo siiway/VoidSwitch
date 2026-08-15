@@ -944,3 +944,41 @@ async def test_audit_ip_ua_substring_and_glob(client, db, seeded):
     # Glob on UA.
     curl = await _audit_items(client, user_agent="curl/*")
     assert curl and all(i["user_agent"].startswith("curl/") for i in curl)
+
+
+async def test_daily_quota_enforced(client, db, seeded):
+    """A token with a daily_quota is rejected once today's requests reach it."""
+    from voidswitch.models.db import VoidToken
+
+    async with db.session() as session:
+        token = await session.get(VoidToken, seeded["token_id"])
+        token.daily_quota = 1
+        await session.flush()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        first = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {seeded['token']}"},
+            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert first.status_code == 200
+        # The first request is logged, so the second is over the daily quota.
+        second = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {seeded['token']}"},
+            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    assert second.status_code == 429
+    assert "Daily request quota" in second.json()["detail"]
+
+
+async def test_malformed_messages_rejected_400(client, seeded):
+    """A request body whose ``messages`` is not a list is a client error (400),
+    not a translator crash (500)."""
+    resp = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {seeded['token']}"},
+        json={"model": "deepseek-chat", "messages": "not-a-list"},
+    )
+    assert resp.status_code == 400

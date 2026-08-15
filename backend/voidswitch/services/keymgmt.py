@@ -208,14 +208,26 @@ async def add_keys(
         if not raw:
             continue
         # For Claude Code providers, accept colon-separated OAuth bundles:
-        # access_token:refresh_token:expires_at → JSON bundle.
-        if is_claude_code and raw.count(":") == 2 and oauth_tokens.parse_bundle(raw) is None:
+        # access_token:refresh_token:expires_at → JSON bundle. Only convert when
+        # the middle/third fields actually look like a bundle (a plain token that
+        # happens to contain two colons must not be reinterpreted, and a
+        # non-numeric expires_at must not 500 the import).
+        if (
+            is_claude_code
+            and raw.count(":") == 2
+            and oauth_tokens.parse_bundle(raw) is None
+        ):
             parts = raw.split(":", 2)
-            raw = json.dumps({
-                "access_token": parts[0],
-                "refresh_token": parts[1],
-                "expires_at": float(parts[2]),
-            })
+            try:
+                expires_at = float(parts[2])
+            except ValueError:
+                expires_at = None
+            if expires_at is not None and parts[1]:
+                raw = json.dumps({
+                    "access_token": parts[0],
+                    "refresh_token": parts[1],
+                    "expires_at": expires_at,
+                })
         digest = hash_token(raw)
         if digest in existing_hashes or digest in seen:
             continue
@@ -565,6 +577,13 @@ async def refresh_token_one(
     except (oauth_tokens.NotRefreshable, xai_oauth.NotRefreshable) as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, f"This key cannot be refreshed: {exc}"
+        ) from exc
+    except oauth_tokens.LoginError as exc:
+        # A definitive upstream rejection on the refresh grant (e.g. the refresh
+        # token was revoked / expired) — a user-correctable state, surfaced as a
+        # 400 rather than a 500.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"Claude rejected the refresh: {exc}"
         ) from exc
     except (oauth_tokens.LoginUpstreamError, xai_oauth.RefreshUpstreamError) as exc:
         error = str(exc)

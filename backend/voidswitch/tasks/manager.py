@@ -74,7 +74,7 @@ class TaskManager:
         return [
             {
                 "name": t.name,
-                "interval_seconds": settings_store.get_int(t.interval_key, t.min_interval),
+                "interval_seconds": self._effective_interval(t),
                 "enabled": t.is_enabled(),
                 "runs": t.runs,
                 "last_run": t.last_run.isoformat() if t.last_run else None,
@@ -82,6 +82,11 @@ class TaskManager:
             }
             for t in self._tasks
         ]
+
+    @staticmethod
+    def _effective_interval(task: PeriodicTask) -> int:
+        """The interval actually used, matching the loop's ``_run`` sleep."""
+        return max(task.min_interval, settings_store.get_int(task.interval_key, 120))
 
     async def _run(self, task: PeriodicTask) -> None:
         # Small initial stagger so tasks don't all fire at boot.
@@ -98,7 +103,7 @@ class TaskManager:
                     log.warning("task_tick_failed", task=task.name, error=str(exc))
                 task.runs += 1
                 task.last_run = dt.datetime.now(dt.UTC)
-            interval = max(task.min_interval, settings_store.get_int(task.interval_key, 120))
+            interval = self._effective_interval(task)
             await self._sleep(interval)
 
     async def _sleep(self, seconds: float) -> None:

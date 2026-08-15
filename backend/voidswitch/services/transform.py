@@ -274,7 +274,7 @@ def anthropic_request_to_openai(payload: dict[str, Any]) -> dict[str, Any]:
             messages.append(assistant_msg)
         elif tool_results:
             messages.extend(tool_results)
-            leftover = [p for p in text_parts if p.get("type") != "image_url" or True]
+            leftover = [p for p in text_parts if p.get("type") != "image_url"]
             if leftover and any(p.get("type") == "text" and p["text"] for p in leftover):
                 messages.append({"role": role, "content": leftover})
         else:
@@ -440,10 +440,14 @@ def openai_response_to_anthropic(resp: dict[str, Any], *, model: str) -> dict[st
 
 
 async def iter_sse(stream: AsyncIterator[bytes]) -> AsyncIterator[tuple[str | None, str]]:
-    """Yield ``(event, data)`` pairs from an SSE byte stream."""
+    """Yield ``(event, data)`` pairs from an SSE byte stream.
+
+    CRLF line endings (legal per the SSE spec) are normalised to LF so frame
+    splitting on ``\\n\\n`` works for both line styles.
+    """
     buffer = ""
     async for chunk in stream:
-        buffer += chunk.decode("utf-8", errors="replace")
+        buffer += chunk.decode("utf-8", errors="replace").replace("\r\n", "\n")
         while "\n\n" in buffer:
             raw, buffer = buffer.split("\n\n", 1)
             event: str | None = None
@@ -1308,14 +1312,15 @@ async def openai_stream_to_responses(
         return events
 
     def _close_text() -> list[bytes]:
-        nonlocal output_index
+        nonlocal output_index, text_buffer, text_item_id
         assert text_item_id is not None
+        buffered = text_buffer
         item = {
             "id": text_item_id,
             "type": "message",
             "status": "completed",
             "role": "assistant",
-            "content": [{"type": "output_text", "text": text_buffer, "annotations": []}],
+            "content": [{"type": "output_text", "text": buffered, "annotations": []}],
         }
         final_output.append(item)
         events = [
@@ -1327,7 +1332,7 @@ async def openai_stream_to_responses(
                     "item_id": text_item_id,
                     "output_index": output_index,
                     "content_index": 0,
-                    "text": text_buffer,
+                    "text": buffered,
                 },
             ),
             _sse(
@@ -1338,7 +1343,7 @@ async def openai_stream_to_responses(
                     "item_id": text_item_id,
                     "output_index": output_index,
                     "content_index": 0,
-                    "part": {"type": "output_text", "text": text_buffer, "annotations": []},
+                    "part": {"type": "output_text", "text": buffered, "annotations": []},
                 },
             ),
             _sse(
@@ -1352,6 +1357,10 @@ async def openai_stream_to_responses(
             ),
         ]
         output_index += 1
+        # Reset so a later text phase after tool calls opens a fresh block instead
+        # of re-appending this one's text.
+        text_buffer = ""
+        text_item_id = None
         return events
 
     async for _event, data in iter_sse(stream):

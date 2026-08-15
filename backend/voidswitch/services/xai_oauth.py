@@ -339,27 +339,26 @@ async def resolve_access_token(
     if not needs_refresh:
         return str(access)
 
-    async with _lock_for(key.id):
-        # Re-read committed state in case a concurrent request just refreshed.
-        try:
-            await session.refresh(key)
-        except Exception as exc:
-            log.debug("orm_refresh_skipped", error=str(exc))
-        plaintext = decrypt_secret(key.key_ciphertext, secret=secret_key)
+    async with _lock_for(key.id), get_database().session() as rot_session:
+        # Re-read committed state in a *dedicated* session and rotate there. The
+        # caller's ``session`` is shared (the request transaction / the dispatcher)
+        # and may carry unrelated pending writes; committing it here would persist
+        # those mid-request and split the request into two transactions. Rotating
+        # in its own transaction keeps the single-use refresh token durable while
+        # leaving the caller's transaction intact.
+        fresh_key = await rot_session.get(ApiKey, key.id)
+        if fresh_key is None:
+            raise NotRefreshable("key no longer exists")
+        plaintext = decrypt_secret(fresh_key.key_ciphertext, secret=secret_key)
         bundle = parse_bundle(plaintext) or bundle
         access = bundle.get("access_token")
         refresh_token = bundle.get("refresh_token") or refresh_token
         if not force_refresh and access and not _near_expiry(bundle):
             return str(access)
-
-        routes = await _select_routes(session)
+        routes = await _select_routes(rot_session)
         new_bundle = await _refresh(str(refresh_token), routes)
-        key.key_ciphertext = encrypt_secret(json.dumps(new_bundle), secret=secret_key)
-        key.last_checked_at = dt.datetime.now(dt.UTC)
-        await session.flush()
-        # Commit immediately so the rotated refresh token is durable and visible
-        # to other concurrent requests (refresh tokens are single-use/rotating).
-        await session.commit()
+        fresh_key.key_ciphertext = encrypt_secret(json.dumps(new_bundle), secret=secret_key)
+        fresh_key.last_checked_at = dt.datetime.now(dt.UTC)
         log.info("xai_oauth_token_refreshed", key_id=key.id)
         return str(new_bundle["access_token"])
 

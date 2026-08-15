@@ -8,11 +8,12 @@ styles are translated transparently by the dispatcher.
 
 from __future__ import annotations
 
+import datetime as dt
 from fnmatch import fnmatch
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import (
@@ -25,7 +26,7 @@ from voidswitch.constants import (
 from voidswitch.core import auth, ratelimit
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
-from voidswitch.models.db import ModelEntry, Provider, VoidToken
+from voidswitch.models.db import ModelEntry, Provider, RequestLog, VoidToken
 from voidswitch.services import models_catalog, role_groups, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
@@ -47,6 +48,31 @@ def _check_rpm(token: VoidToken) -> None:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"Rate limit exceeded ({token.rpm_limit} req/min).",
+        )
+
+
+async def _check_daily_quota(session: AsyncSession, token: VoidToken) -> None:
+    """Enforce a Void-Token's per-UTC-day request cap (``daily_quota``).
+
+    Counts today's logged requests for the token (the same rows the request-log
+    browser shows). 0 = unlimited.
+    """
+    if token.daily_quota <= 0:
+        return
+    start_of_day = dt.datetime.now(dt.UTC).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    used = (
+        await session.execute(
+            select(func.count(RequestLog.id)).where(
+                RequestLog.token_id == token.id, RequestLog.ts >= start_of_day
+            )
+        )
+    ).scalar_one()
+    if used >= token.daily_quota:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Daily request quota exceeded ({token.daily_quota} requests/day).",
         )
 
 
@@ -86,11 +112,13 @@ async def _resolve_public_model(session: AsyncSession, model: str) -> str:
     When an admin maps ``deepseek-v4`` → public ``ds``, callers must use ``ds``;
     ``ds`` resolves back to ``deepseek-v4`` for dispatch, and calling the raw
     ``deepseek-v4`` is rejected so the upstream id can't be reached directly.
+    Raw ids hidden by an *alias route* (not just a metadata alias) are rejected
+    the same way — they are never advertised, so they must not be callable.
     """
-    alias_to_source, hidden_sources = await models_catalog.mapping_tables(session)
+    alias_to_source, _ = await models_catalog.mapping_tables(session)
     if model in alias_to_source:
         return alias_to_source[model]
-    if model in hidden_sources:
+    if model in await models_catalog.hidden_model_ids(session):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             f"Model '{model}' is not available under this id.",
@@ -131,10 +159,22 @@ async def _handle(
     if not isinstance(model, str) or not model:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing 'model'.")
 
+    # A request body in the wrong shape (e.g. ``messages`` a string instead of a
+    # list) would crash the translator later as a 500 after upstream billing;
+    # reject it up front as a 400.
+    for field in ("messages", "tools", "input"):
+        if field in payload and payload[field] is not None and not isinstance(
+            payload[field], (list, str) if field == "input" else list
+        ):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"'{field}' must be a list."
+            )
+
     # Allow-list and rate-limit are checked against the *public* id the caller
     # used, then the model is resolved to its real upstream id (if it's an alias).
     _check_model_allowed(authed.token, model)
     _check_rpm(authed.token)
+    await _check_daily_quota(session, authed.token)
     model = await _resolve_public_model(session, model)
     payload["model"] = model
 

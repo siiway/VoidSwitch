@@ -957,3 +957,37 @@ async def test_reconcile_pending_logs_marks_orphaned_terminated(db):
         rows = (await session.execute(select(RequestLog))).scalars().all()
     statuses = {r.req_status for r in rows}
     assert "terminated" in statuses
+
+
+async def test_dispatch_non_dict_json_body_passthrough(db, seeded):
+    """A 2xx upstream body that parses as JSON but is not an object (e.g. a bare
+    list) must be relayed verbatim instead of crashing the cross-style
+    translator."""
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, json=["a", "b"]))
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 200
+    assert json.loads(result.content or b"{}") == ["a", "b"]
+
+
+async def test_dispatch_non_dict_json_anthropic_body_passthrough(db, seeded):
+    """Same passthrough holds when the inbound style differs (Anthropic) — the
+    translator would crash on a non-dict upstream reply."""
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(200, content=b"42"))
+        result = await dispatch(
+            DispatchRequest(
+                inbound_style=ApiStyle.ANTHROPIC,
+                model="deepseek-chat",
+                payload={
+                    "model": "deepseek-chat",
+                    "max_tokens": 8,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                stream=False,
+                token_id=seeded["token_id"],
+            )
+        )
+    assert result.status_code == 200
+    assert (result.content or b"").strip() == b"42"
