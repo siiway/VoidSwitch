@@ -709,13 +709,21 @@ async def _stream_request_log_events(
     ``RequestLogOut`` JSON the list endpoint returns, and emits a keep-alive
     comment when the stream is otherwise idle. Runs until cancelled; the
     per-user stream slot is released on exit.
+
+    Also re-pushes rows that were previously sent as ``pending`` once they
+    finalise (``finished_at`` is set), so the client's duration and status
+    update live without a manual refresh.
     """
     last_id = after_id
+    # Track ids of rows we have already pushed in their final form (non-pending
+    # with a finished_at), so we don't re-push them on every poll.
+    finalised_ids: set[int] = set()
     last_sent = time.monotonic()
     try:
         while True:
             try:
                 async with db.session() as session:
+                    # New rows (id > last_id).
                     stmt = (
                         select(RequestLog)
                         .where(RequestLog.id > last_id)
@@ -725,10 +733,36 @@ async def _stream_request_log_events(
                     for clause in filters:
                         stmt = stmt.where(clause)
                     rows = (await session.execute(stmt)).scalars().all()
-                    if rows:
-                        items = await _resolve_request_log_rows(session, rows)
-                if rows:
-                    last_id = rows[-1].id
+                    # Rows that have been finalised since the last poll (were
+                    # pending, now have a finished_at). Only query when there
+                    # might be candidates — the last_id window is bounded.
+                    update_rows: list[RequestLog] = []
+                    if last_id > after_id and finalised_ids:
+                        update_stmt = (
+                            select(RequestLog)
+                            .where(
+                                RequestLog.id <= last_id,
+                                RequestLog.id.notin_(list(finalised_ids)),
+                                RequestLog.finished_at.isnot(None),
+                                RequestLog.req_status != "pending",
+                            )
+                            .order_by(RequestLog.id.asc())
+                            .limit(_STREAM_BATCH)
+                        )
+                        for clause in filters:
+                            update_stmt = update_stmt.where(clause)
+                        update_rows = (await session.execute(update_stmt)).scalars().all()
+
+                    all_rows = rows + [r for r in update_rows if r.id not in {rr.id for rr in rows}]
+                    # Mark every pushed row that is definitively finalised so
+                    # we never query for it again.
+                    for r in all_rows:
+                        if r.finished_at is not None and r.req_status != "pending":
+                            finalised_ids.add(r.id)
+                    if all_rows:
+                        items = await _resolve_request_log_rows(session, all_rows)
+                if all_rows:
+                    last_id = max(last_id, all_rows[-1].id)
                     for item in items:
                         yield f"data: {item.model_dump_json()}\n\n"
                     last_sent = time.monotonic()

@@ -62,3 +62,9 @@ html[data-theme="dark"] {
 [data-theme="dark"] .provider-icon--invert-on-dark {
   filter: invert(1);
 }
+
+/* Dialog surfaces get a subtle border so they stand out against the
+   backdrop, improving readability in both light and dark themes. */
+.fui-DialogSurface {
+  border: 1px solid var(--colorNeutralStroke2);
+}

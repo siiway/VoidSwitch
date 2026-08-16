@@ -869,7 +869,7 @@ export function Providers() {
                   {t("providers.fetchModels" as TK)}
                 </Button>
               </div>
-              {fetchOpen && (
+              <div style={{ display: fetchOpen ? "block" : "none" }}>
                 <div
                   style={{
                     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -1078,7 +1078,7 @@ export function Providers() {
                     </>
                   )}
                 </div>
-              )}
+              </div>
               <Field
                 label={t("providers.modelRoutes" as TK)}
                 hint={t("providers.modelRoutesHint" as TK)}

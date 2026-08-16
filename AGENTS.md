@@ -96,3 +96,25 @@ Owner-only (use `require_owner` on the backend and gate the control with `isOwne
 ### Proxy switching
 
 - `proxy_switching_enabled=false` means an external proxy (e.g. mihomo) handles egress: every request uses `static_proxy_url` (or direct / `HTTP(S)_PROXY` env), no failover, and no proxy is auto-disabled. When off, the Proxies tab is hidden from the nav and a direct URL shows an explicit disabled notice; the proxy-pool tuning settings are hidden too.
+
+## Focus loss in Dialogs
+
+**Root cause**: Fluent UI's `Dialog` uses a `FocusTrapZone` that re-focuses when the DOM subtree inside the dialog changes. If a section inside the dialog is conditionally mounted (`{cond && <JSX>}`), the `FocusTrapZone` re-evaluates its focus target when the conditional content appears/disappears, stealing focus from whichever input the user was interacting with.
+
+**Fix**: never conditionally mount/unmount content inside a Dialog. Use `display: none` / `display: block` (or `visibility`) to hide/show instead:
+
+```tsx
+{/* bad — FocusTrapZone re-focuses when fetchOpen flips */}
+<DialogContent>
+  {fetchOpen && <FetchPanel />}
+</DialogContent>
+
+{/* good — DOM stays stable, FocusTrapZone never re-focuses */}
+<DialogContent>
+  <div style={{ display: fetchOpen ? "block" : "none" }}>
+    <FetchPanel />
+  </div>
+</DialogContent>
+```
+
+This also applies to any wrapper that owns focus management (Popover, Drawer, etc.).

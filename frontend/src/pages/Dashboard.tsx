@@ -177,19 +177,7 @@ function StaffDashboard() {
                 marginBottom: 20,
               }}
             >
-              <Stat label={t("dashboard.requests24h" as TK)} value={stats.data.requests_24h} />
-              <Stat
-                label={t("dashboard.success24h" as TK)}
-                value={stats.data.success_24h}
-                accent={tokens.colorPaletteGreenForeground1}
-              />
-              <Stat
-                label={t("dashboard.failed24h" as TK)}
-                value={stats.data.failures_24h}
-                accent={tokens.colorPaletteRedForeground1}
-              />
-              <Stat
-                label={t("dashboard.successRate24h" as TK)}
+              <Stat label={t("dashboard.successRate24h" as TK)}
                 value={`${stats.data.success_rate_24h}%`}
                 accent={tokens.colorPaletteGreenForeground1}
               />

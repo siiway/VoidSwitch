@@ -299,6 +299,9 @@ async def _log_token_request(
                     key_id=actor.key_id if actor else None,
                     provider_id=actor.provider_id if actor else None,
                     provider_name=actor.provider_name if actor else None,
+                    started_at=dt.datetime.now(dt.UTC),
+                    finished_at=dt.datetime.now(dt.UTC),
+                    req_status="completed",
                 )
             )
     except Exception as exc:  # pragma: no cover - logging must not break OAuth

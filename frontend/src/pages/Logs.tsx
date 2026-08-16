@@ -502,7 +502,7 @@ function LiveStreamToggle({
           enabled ? t("logs.liveDisconnect" as TK) : t("logs.liveConnect" as TK)
         }
       >
-        {enabled ? t("logs.liveOn" as TK) : t("logs.liveOff" as TK)}
+        {enabled ? t("logs.liveOn" as TK) : t("logs.liveConnect" as TK)}
       </Button>
     </Tooltip>
   );
@@ -651,11 +651,14 @@ function useLogStream({
       setStatus("error");
       return;
     }
-    const controller = new AbortController();
-    setStatus("connecting");
-    let connected = false;
+    let active = true;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    (async () => {
+    async function connect() {
+      if (!active) return;
+      const controller = new AbortController();
+      setStatus("connecting");
+
       try {
         const params = new URLSearchParams(query);
         params.set("after_id", String(lastIdRef.current));
@@ -665,19 +668,18 @@ function useLogStream({
           signal: controller.signal,
           cache: "no-store",
         });
+        if (!active) { controller.abort(); return; }
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
           try {
             const body = await res.json();
             detail = body.detail || detail;
-          } catch {
-            /* ignore */
-          }
+          } catch { /* ignore */ }
           throw new Error(detail);
         }
         if (!res.body) throw new Error("empty stream");
+        if (!active) { controller.abort(); return; }
         setStatus("connected");
-        connected = true;
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -700,27 +702,34 @@ function useLogStream({
                   lastIdRef.current = Math.max(lastIdRef.current, row.id);
                   onRowRef.current(row);
                 }
-              } catch {
-                /* skip malformed frame */
-              }
+              } catch { /* skip malformed frame */ }
             }
           }
-        }
-        // Server closed the stream cleanly.
-        if (connected) {
+}
+        // Server closed cleanly — not an error, but no reconnect.
+        if (active) {
           setStatus("error");
           onErrorRef.current("Live stream ended.");
         }
       } catch (e) {
-        if (controller.signal.aborted) return; // intentional disconnect
+        if (!active) return;
+        if (controller.signal.aborted) return;
         setStatus("error");
         onErrorRef.current(e instanceof Error ? e.message : String(e));
+        // Auto-reconnect after a short delay.
+        if (active) {
+          reconnectTimeout = setTimeout(() => {
+            if (active) void connect();
+          }, 3000);
+        }
       }
-    })();
+    }
+
+    void connect();
 
     return () => {
-      connected = false;
-      controller.abort();
+      active = false;
+      if (reconnectTimeout !== null) clearTimeout(reconnectTimeout);
       setStatus("idle");
     };
   }, [enabled, query]);
