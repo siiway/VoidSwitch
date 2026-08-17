@@ -19,7 +19,7 @@ from voidswitch.core.security import (
     encrypt_secret,
     hash_token,
 )
-from voidswitch.models.db import ApiKey, Provider, Proxy, RequestLog, User
+from voidswitch.models.db import ApiKey, Provider, RequestLog, User
 from voidswitch.services import oauth_tokens, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
@@ -359,6 +359,36 @@ async def _make_provider(db, *, name: str, type_: str) -> int:
         return provider.id
 
 
+async def _add_system_node(db, url: str) -> None:
+    """Add a node to the System node group (OAuth system egress)."""
+    from voidswitch.models.db import Node, NodeGroupMember
+    from voidswitch.services import routing
+
+    async with db.session() as session:
+        node = Node(url=url, type="http", status="active")
+        session.add(node)
+        await session.flush()
+        system = await routing.system_group(session)
+        if system is not None:
+            session.add(NodeGroupMember(group_id=system.id, node_id=node.id))
+        await session.flush()
+
+
+async def _add_default_node(db, url: str) -> None:
+    """Add a node to the default node group (provider egress)."""
+    from voidswitch.models.db import Node, NodeGroupMember
+    from voidswitch.services import routing
+
+    async with db.session() as session:
+        node = Node(url=url, type="http", status="active")
+        session.add(node)
+        await session.flush()
+        default = await routing.default_group(session)
+        if default is not None:
+            session.add(NodeGroupMember(group_id=default.id, node_id=node.id))
+        await session.flush()
+
+
 async def test_oauth_start_rejects_non_claude_code(client, db):
     headers = await _owner_headers(db)
     pid = await _make_provider(db, name="oai", type_="openai")
@@ -423,14 +453,12 @@ async def test_oauth_complete_rejects_non_claude_code(client, db):
 
 
 async def test_oauth_complete_routes_through_proxies_and_rotates(client, db):
-    """The exchange leaves via the configured proxies and rotates past a blocked
-    egress (a 403 on the first proxy) to a working one."""
+    """The exchange leaves via the System group's nodes and rotates past a
+    blocked egress (a 403 on the first node) to a working one."""
     headers = await _owner_headers(db)
     pid = await _make_provider(db, name="cc-proxy", type_="claude-code")
-    async with db.session() as session:
-        session.add(Proxy(url="http://p1.local:8080", status="active", enabled=True))
-        session.add(Proxy(url="http://p2.local:8080", status="active", enabled=True))
-        await session.flush()
+    await _add_system_node(db, "http://p1.local:8080")
+    await _add_system_node(db, "http://p2.local:8080")
 
     start = await client.post(f"/api/admin/providers/{pid}/keys/oauth/start", headers=headers)
     state = start.json()["state"]
@@ -609,6 +637,7 @@ async def test_dispatch_oauth_401_forces_refresh_and_retries(db):
         )
         session.add(provider)
         await session.flush()
+        provider_id = provider.id
         key = ApiKey(
             provider_id=provider.id,
             key_ciphertext=encrypt_secret(json.dumps(bundle), secret=secret_key),
@@ -619,6 +648,33 @@ async def test_dispatch_oauth_401_forces_refresh_and_retries(db):
         session.add(key)
         await session.flush()
         key_id = key.id
+
+    # The 401 → force-refresh → retry walks forward through the provider's
+    # outbound route hops, so give the cc-dispatch provider two egress nodes.
+    await _add_default_node(db, "http://127.0.0.1:38080")
+    await _add_default_node(db, "http://127.0.0.1:38081")
+
+    # Expose the dispatched model with a 1:1 route to the claude-code provider.
+    from voidswitch.models.db import ExposedModel, Route, RouteLayer, RoutePoolEntry
+
+    async with db.session() as session:
+        exposed = ExposedModel(model_id="claude-3-5-sonnet")
+        session.add(exposed)
+        await session.flush()
+        route = Route(exposed_model_id=exposed.id)
+        session.add(route)
+        await session.flush()
+        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
+        session.add(layer)
+        await session.flush()
+        session.add(
+            RoutePoolEntry(
+                layer_id=layer.id,
+                provider_id=provider_id,
+                upstream_model="claude-3-5-sonnet",
+            )
+        )
+        await session.flush()
 
     msg_url = "https://api.anthropic.com/v1/messages"
     msg_ok = {

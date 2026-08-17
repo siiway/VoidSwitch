@@ -1,4 +1,4 @@
-"""Models catalog: listing, metadata edits, sync, and /v1/models enrichment."""
+"""Exposed models catalog: listing, metadata edits, sync, and /v1/models enrichment."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from voidswitch.core.security import (
     hash_token,
     token_fingerprint,
 )
-from voidswitch.models.db import User, VoidToken
+from voidswitch.models.db import ExposedModel, User, VoidToken
 
 pytestmark = pytest.mark.asyncio
 
@@ -50,29 +50,41 @@ async def _add_member(db, sub: str = "member-1") -> None:
         await session.flush()
 
 
-async def test_catalog_lists_provider_models(client, seeded):
+async def _add_exposed(db, model_id: str) -> None:
+    """Create an exposed model with an empty route."""
+    from voidswitch.services import model_routing
+
+    async with db.session() as session:
+        entry = ExposedModel(model_id=model_id)
+        session.add(entry)
+        await session.flush()
+        await model_routing.get_or_create_route(session, entry)
+        await session.flush()
+
+
+async def test_catalog_lists_exposed_models(client, seeded):
     resp = await client.get("/api/models", headers=_session_headers())
     assert resp.status_code == 200, resp.text
     ids = {m["model_id"] for m in resp.json()}
-    # "*" wildcards never become catalog entries.
+    # The seeded exposed model is listed.
     assert "deepseek-chat" in ids
     assert "*" not in ids
     chat = next(m for m in resp.json() if m["model_id"] == "deepseek-chat")
-    assert chat["served"] is True
-    assert "deepseek" in chat["providers"]
-    assert chat["registered"] is False  # no metadata row yet
+    assert chat["id"] is not None
 
 
-async def test_sync_registers_entries(client, seeded):
-    resp = await client.post("/api/models/sync", headers=_session_headers())
+async def test_v1_models_lists_upstreams_only_for_staff(client, seeded):
+    # The exposed model is advertised; upstream model id = public id (unmapped).
+    resp = await client.get("/v1/models", headers={"x-api-key": seeded["token"]})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["added"] >= 1
-    # Idempotent: a second sync adds nothing.
-    resp2 = await client.post("/api/models/sync", headers=_session_headers())
-    assert resp2.json()["added"] == 0
+    data = resp.json()["data"]
+    ids = {m["id"] for m in data}
+    assert "deepseek-chat" in ids
+    chat = next(m for m in data if m["id"] == "deepseek-chat")
+    assert chat["object"] == "model"
 
 
-async def test_upsert_sets_description_and_config(client, seeded):
+async def test_upsert_sets_metadata(client, seeded):
     resp = await client.put(
         "/api/models",
         headers=_session_headers(),
@@ -80,13 +92,13 @@ async def test_upsert_sets_description_and_config(client, seeded):
             "model_id": "deepseek-chat",
             "description": "DeepSeek chat model",
             "opencode_config": {"name": "DeepSeek", "limit": {"context": 65536}},
+            "limit_context": 131072,
         },
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["description"] == "DeepSeek chat model"
-    assert body["opencode_config"]["name"] == "DeepSeek"
-    assert body["registered"] is True
+    assert body["limit_context"] == 131072
 
 
 async def test_member_cannot_edit(client, db, seeded):
@@ -158,18 +170,24 @@ async def test_batch_update(client, seeded):
     assert chat["description"] == "batched"
 
 
-async def test_v1_models_includes_metadata_and_hides_disabled(client, seeded):
-    # Enrich + then disable through the metadata API.
+async def test_v1_models_includes_merged_opencode_and_hides_disabled(client, seeded):
+    # Enrich then disable through the metadata API.
     await client.put(
         "/api/models",
         headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "description": "hello", "opencode_config": {"x": 1}},
+        json={
+            "model_id": "deepseek-chat",
+            "description": "hello",
+            "opencode_config": {"limit": {"context": 64000}},
+            "limit_context": 128000,
+        },
     )
     resp = await client.get("/v1/models", headers={"x-api-key": seeded["token"]})
     assert resp.status_code == 200, resp.text
     chat = next(m for m in resp.json()["data"] if m["id"] == "deepseek-chat")
     assert chat["description"] == "hello"
-    assert chat["opencode"] == {"x": 1}
+    # Structured field overrides the custom config's limit.context.
+    assert chat["opencode"]["limit"]["context"] == 128000
 
     # Disabling hides it from the advertised list entirely.
     await client.put(
@@ -196,20 +214,15 @@ async def test_v1_models_sync_with_token(client, seeded):
 
 async def test_v1_models_sync_allowed_for_members(client, db, seeded):
     """A member's Void-Token may sync (no admin rights) and only sees the models
-    it can actually call — mirroring GET /v1/models — without reshaping the
-    shared catalog (that stays the staff-only /api/models/sync action)."""
+    it can actually call."""
     tok = await _member_token(db)
     resp = await client.post("/v1/models/sync", headers={"x-api-key": tok})
-    # The whole point of the fix: members are no longer blocked with 403.
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # It never reshapes the shared catalog, so nothing is ever "added".
+    # Never reshapes the shared catalog, so nothing is ever "added".
     assert body["added"] == 0
-    # `total` reflects exactly what this token may call, matching GET /v1/models.
     listed = (await client.get("/v1/models", headers={"x-api-key": tok})).json()["data"]
     assert body["total"] == len(listed)
-    # Per-caller filtering: a moderator (owner) token sees at least as many
-    # models as a plain member (who is gated by role-group access).
     owner_total = (
         await client.post("/v1/models/sync", headers={"x-api-key": seeded["token"]})
     ).json()["total"]
@@ -229,87 +242,58 @@ OAI_RESPONSE = {
 }
 
 
-async def test_mapping_hides_source_and_exposes_alias(client, seeded):
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "mapped_id": "ds-pub"},
-    )
-    # Dashboard catalog exposes both the source and its public id.
-    listed = (await client.get("/api/models", headers=_session_headers())).json()
-    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
-    assert chat["mapped_id"] == "ds-pub"
-    assert chat["public_id"] == "ds-pub"
+async def test_call_via_exposed_model_routes_to_upstream(client, db, seeded):
+    """An exposed model with a different upstream_model routes to the upstream id."""
+    from sqlalchemy import select
+    from voidswitch.models.db import Provider, RouteLayer, RoutePoolEntry
+    from voidswitch.services import model_routing
 
-    # /v1/models advertises only the alias, never the raw upstream id.
-    data = (await client.get("/v1/models", headers={"x-api-key": seeded["token"]})).json()["data"]
-    ids = {m["id"] for m in data}
-    assert "ds-pub" in ids
-    assert "deepseek-chat" not in ids
+    async with db.session() as session:
+        provider = (
+            await session.execute(select(Provider).where(Provider.id == seeded["provider_id"]))
+        ).scalar_one()
+        provider.models = ["deepseek-chat", "*", "gpt-5"]
+        new_exp = ExposedModel(model_id="ds-pub")
+        session.add(new_exp)
+        await session.flush()
+        route = await model_routing.get_or_create_route(session, new_exp)
+        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
+        session.add(layer)
+        await session.flush()
+        session.add(
+            RoutePoolEntry(
+                layer_id=layer.id,
+                provider_id=seeded["provider_id"],
+                upstream_model="deepseek-chat",
+            )
+        )
+        await session.flush()
 
-
-async def test_mapping_self_alias_rejected(client, seeded):
-    resp = await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "mapped_id": "deepseek-chat"},
-    )
-    assert resp.status_code == 422
-
-
-async def test_call_via_alias_routes_to_source(client, seeded):
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "mapped_id": "ds-pub"},
-    )
     with respx.mock(assert_all_called=False) as mock:
-        route = mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        route_mock = mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
         resp = await client.post(
             "/v1/chat/completions",
             headers={"Authorization": f"Bearer {seeded['token']}"},
             json={"model": "ds-pub", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert resp.status_code == 200, resp.text
-        # The upstream received the real model id, not the public alias.
-        sent = route.calls.last.request
         import json as _json
 
-        assert _json.loads(sent.content)["model"] == "deepseek-chat"
+        # The upstream received the real (upstream) model id.
+        assert _json.loads(route_mock.calls.last.request.content)["model"] == "deepseek-chat"
 
 
-async def test_call_via_hidden_source_rejected(client, seeded):
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "mapped_id": "ds-pub"},
-    )
+async def test_call_with_unexposed_model_rejected(client, seeded):
+    """A model id with no exposed row is rejected (raw upstream ids aren't callable)."""
     resp = await client.post(
         "/v1/chat/completions",
         headers={"Authorization": f"Bearer {seeded['token']}"},
-        json={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        json={"model": "not-exposed-anywhere", "messages": [{"role": "user", "content": "hi"}]},
     )
     assert resp.status_code == 404
 
 
-async def test_clear_mapping(client, seeded):
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "mapped_id": "ds-pub"},
-    )
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "mapped_id": ""},
-    )
-    listed = (await client.get("/api/models", headers=_session_headers())).json()
-    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
-    assert chat["mapped_id"] is None
-    assert chat["public_id"] == "deepseek-chat"
-
-
-async def test_delete_metadata(client, seeded):
+async def test_delete_removes_exposed_model(client, seeded):
     created = (
         await client.put(
             "/api/models",
@@ -320,110 +304,41 @@ async def test_delete_metadata(client, seeded):
     entry_id = created["id"]
     resp = await client.delete(f"/api/models/{entry_id}", headers=_session_headers())
     assert resp.status_code == 204
-    # Still listed (provider serves it) but no longer registered.
+    # The exposed model is gone from the catalog entirely.
     listed = (await client.get("/api/models", headers=_session_headers())).json()
-    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
-    assert chat["registered"] is False
+    assert all(m["model_id"] != "deepseek-chat" for m in listed)
 
 
-async def test_clean_unserved_removes_orphaned_entries(client, db, seeded):
-    # Disable the provider so no models are served — makes the orphan truly unserved.
-    from sqlalchemy import update
-    from voidswitch.models.db import Provider
-
-    async with db.session() as session:
-        await session.execute(
-            update(Provider).where(Provider.id == seeded["provider_id"]).values(enabled=False)
-        )
-        await session.commit()
-
-    # Create a metadata entry for a model that no provider serves.
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "orphan-model", "opencode_config": {"name": "Orphan"}, "description": "will be orphaned"},
-    )
-    # Verify it exists in catalog.
+async def test_clean_unserved_removes_models_without_route(client, db, seeded):
+    # Create an exposed model with an empty route (no usable upstream).
+    await _add_exposed(db, "orphan-model")
     listed = (await client.get("/api/models", headers=_session_headers())).json()
-    orphan = next((m for m in listed if m["model_id"] == "orphan-model"), None)
-    assert orphan is not None
-    assert orphan["served"] is False  # no provider serves this
-    assert orphan["registered"] is True  # has metadata row
+    assert any(m["model_id"] == "orphan-model" for m in listed)
 
-    # Clean: should remove the orphan.
     resp = await client.post("/api/models/clean", headers=_session_headers())
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["deleted"] == 1
-    assert "orphan-model" in body["model_ids"]
+    assert resp.json()["deleted"] == 1
+    assert "orphan-model" in resp.json()["model_ids"]
 
-    # Verify it's gone from catalog.
     listed2 = (await client.get("/api/models", headers=_session_headers())).json()
-    orphans = [m for m in listed2 if m["model_id"] == "orphan-model"]
-    assert not orphans
+    assert not any(m["model_id"] == "orphan-model" for m in listed2)
 
-    # Running clean again should be idempotent (nothing to delete).
     resp2 = await client.post("/api/models/clean", headers=_session_headers())
     assert resp2.status_code == 200
     assert resp2.json()["deleted"] == 0
 
 
-async def test_clean_unserved_preserves_served_models(client, seeded):
-    # deepseek-chat IS served (provider has wildcard). Clean should NOT remove its metadata.
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "opencode_config": {"name": "DeepSeek"}, "description": "kept"},
-    )
+async def test_clean_preserves_models_with_route(client, seeded):
+    # deepseek-chat has a route (seeded) → clean must NOT remove it.
     resp = await client.post("/api/models/clean", headers=_session_headers())
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["deleted"] == 0
-    assert "deepseek-chat" not in body["model_ids"]
-
-    # deepseek-chat metadata is still there.
+    assert resp.json()["deleted"] == 0
     listed = (await client.get("/api/models", headers=_session_headers())).json()
-    chat = next((m for m in listed if m["model_id"] == "deepseek-chat"), None)
-    assert chat is not None
-    assert chat["opencode_config"] == {"name": "DeepSeek"}
+    assert any(m["model_id"] == "deepseek-chat" for m in listed)
 
 
 async def test_clean_unserved_requires_staff(client, db, seeded):
     await _add_member(db)
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "orphan2", "description": "x"},
-    )
+    await _add_exposed(db, "orphan2")
     resp = await client.post("/api/models/clean", headers=_session_headers("member-1"))
     assert resp.status_code == 403
-
-
-async def test_display_name(client, seeded):
-    resp = await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "display_name": "DeepSeek Chat Pro"},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["display_name"] == "DeepSeek Chat Pro"
-
-    listed = (await client.get("/api/models", headers=_session_headers())).json()
-    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
-    assert chat["display_name"] == "DeepSeek Chat Pro"
-
-    # /v1/models also advertises display_name.
-    data = (await client.get("/v1/models", headers={"x-api-key": seeded["token"]})).json()["data"]
-    chat = next(m for m in data if m["id"] == "deepseek-chat")
-    assert chat["display_name"] == "DeepSeek Chat Pro"
-
-    # Clear display_name.
-    await client.put(
-        "/api/models",
-        headers=_session_headers(),
-        json={"model_id": "deepseek-chat", "display_name": ""},
-    )
-    listed = (await client.get("/api/models", headers=_session_headers())).json()
-    chat = next(m for m in listed if m["model_id"] == "deepseek-chat")
-    assert chat["display_name"] is None

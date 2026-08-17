@@ -4,9 +4,10 @@ The **Models** page lists all available model IDs on the platform, one card per 
 
 ## What a card shows
 
-- The **public ID** you use when calling (which may be an alias of an upstream ID).
+- The **exposed model ID** you use when calling (e.g. `fast-coder`; upstream model IDs are never
+  advertised to you).
 - An optional **display name** and **description** set by staff.
-- Which **providers** currently serve it, and whether it is **being served**.
+- Being backed by a **route flowchart**: layered fallback pools of upstreams, with automatic fallback on failure.
 - Whether you are **allowed** to call it (based on your role group).
 
 ## Search and filter
@@ -36,4 +37,4 @@ Members usually don't need to sync explicitly — models that are already served
 
 ## Calling a model
 
-Use the model's **public ID** as the `model` field in your request. See [Calling the API](/en/guide/using-the-api).
+Use the model's **exposed model ID** as the `model` field in your request. See [Calling the API](/en/guide/using-the-api).

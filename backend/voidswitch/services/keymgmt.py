@@ -35,9 +35,8 @@ from voidswitch.models.schemas import (
     ApiKeyReorder,
     ApiKeyUpdate,
 )
-from voidswitch.services import oauth_tokens, refresh_context, settings_store, xai_oauth
+from voidswitch.services import oauth_tokens, refresh_context, routing, settings_store, xai_oauth
 from voidswitch.services.balance import refresh_key_balance
-from voidswitch.services.network import Route, get_pool
 from voidswitch.services.providers.registry import get_adapter
 
 log = get_logger("keymgmt")
@@ -469,8 +468,7 @@ async def delete_key(
 async def refresh_one(key: ApiKey, provider: Provider, settings: Settings) -> bool | None:
     """Probe a single key's balance, applying auto enable/disable. Never raises."""
     auto_disable = settings_store.get_bool("auto_disable_zero_balance", True)
-    pool = get_pool()
-    client = await pool.get(Route(), connect_timeout=15.0, read_timeout=30.0)
+    client, _route, _node = await routing.system_client()
     try:
         return await refresh_key_balance(
             key, provider, client, settings, auto_disable=auto_disable

@@ -49,7 +49,8 @@ exhaustion (429) triggers a rate-limit cooldown.
   key **pool** (for example, routing a `-lkd` alias to "leaked" keys).
 - **Key selection** — how a key is chosen per request: round-robin, random, failover, or a session-pinned
   mode. All modes fail over to the remaining keys.
-- **Egress proxy** — all active proxies, direct connection only, or a selected set of proxies. See [Proxies](/en/admin/proxies).
+- **Node group** — which [node group](/en/admin/proxies) this provider's upstream requests use; empty = the **default node group**.
+- **Slug** — the provider's stable internal id. Upstream model IDs are applied as `slug/model` (this id is never advertised).
 - **Rate-limit cooldown** — how long a 429'd key waits before being retried when the upstream sends no
   `Retry-After`.
 - **Auto-retry on 200 OK + 0 tokens** — for flaky upstreams: a **200 response with zero tokens**

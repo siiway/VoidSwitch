@@ -28,6 +28,10 @@ class ErrorClass(StrEnum):
     KEY_INVALID = "key_invalid"
     INSUFFICIENT_BALANCE = "insufficient_balance"
     RATE_LIMITED = "rate_limited"
+    # The model does not exist at this upstream — a *routable* failure: the
+    # dispatcher must fall through to the next upstream/pool instead of surfacing
+    # a 404 to the client (an exposed model may be routeable to another provider).
+    NOT_FOUND = "not_found"
     BAD_REQUEST = "bad_request"  # client's fault — return as-is, do not rotate
     SERVER_ERROR = "server_error"  # upstream/transient — rotate key/proxy & retry
 
@@ -147,6 +151,10 @@ class BaseProvider:
             return ErrorClass.KEY_INVALID
         if status_code == 402:
             return ErrorClass.INSUFFICIENT_BALANCE
+        if status_code == 404:
+            # 404 = model not found at this upstream → fall through to the next
+            # pool/upstream rather than surfacing a 404 to the client.
+            return ErrorClass.NOT_FOUND
         if status_code == 429:
             return ErrorClass.RATE_LIMITED
         if status_code in (408, 409, 425) or status_code >= 500:
@@ -154,6 +162,13 @@ class BaseProvider:
         if 400 <= status_code < 500:
             return ErrorClass.BAD_REQUEST
         return ErrorClass.SERVER_ERROR
+
+    def detect_no_quota(self, status_code: int, body: Any) -> bool:
+        """Whether a response definitively means *no quota / no balance* (as
+        opposed to a generic rate limit). Adapters override this to recognise
+        e.g. a 429 whose body says "no credits" — such keys are *permanently*
+        disabled (INSUFFICIENT_BALANCE) rather than temporarily parked."""
+        return False
 
     # -- Balance ---------------------------------------------------------- #
     async def fetch_balance(

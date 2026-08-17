@@ -26,7 +26,13 @@ from sqlalchemy.orm import (
     relationship,
 )
 
-from voidswitch.constants import KeySelectMode, KeyStatus, ProxyMode, ProxyStatus, Role
+from voidswitch.constants import (
+    KeySelectMode,
+    KeyStatus,
+    NodeStatus,
+    NodeType,
+    Role,
+)
 
 
 def _utcnow() -> dt.datetime:
@@ -129,41 +135,132 @@ class VoidToken(Base, TimestampMixin):
         return f"{label}#{user.id}" if label else None
 
 
-class ModelEntry(Base, TimestampMixin):
-    """Catalog metadata for a model id offered across the platform.
+class ExposedModel(Base, TimestampMixin):
+    """An *exposed* model — the only model ids clients ever see or call.
 
-    The *available* model ids come from the providers' ``models`` lists (and
-    alias routes); this table layers human-facing metadata on top of them: a
-    description and a custom OpenCode model config (deep-merged into the model
-    block the OpenCode plugin builds). Rows are created on demand — either by an
-    admin editing a model, by the "sync from providers" action, or by a user
-    refreshing the catalog through the OpenCode ``/models`` command.
+    ``model_id`` is the public id (e.g. ``fast-coder``, ``astr-chat``). It has
+    no direct link to a specific provider: dispatcher routing resolves it through
+    :class:`Route` → :class:`RouteLayer` → :class:`RoutePoolEntry` to reach the
+    real upstream (``slug/model`` refs which are never advertised). Structured
+    metadata fields here feed the OpenCode plugin config block and the
+    ``/v1/models`` payload. Field precedence when building the downstream config:
+    explicit structured fields > ``opencode_config`` (custom JSON) > models.dev
+    placeholder > defaults.
     """
 
-    __tablename__ = "models"
+    __tablename__ = "exposed_models"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     model_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    # Optional public alias. When set, the model is advertised (and must be
-    # called) under this id instead of ``model_id``; the raw ``model_id`` is
-    # hidden from /v1/models and rejected at the gateway, so the upstream id
-    # never leaks and two providers' colliding ids can be disambiguated.
-    mapped_id: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
     display_name: Mapped[str | None] = mapped_column(String(255), default=None)
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    # Custom OpenCode model config, deep-merged into the plugin's built model.
+    # Custom OpenCode model config (deep-merged below the structured fields).
     opencode_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     # When False the model is hidden from the advertised list (/v1/models) and
-    # the OpenCode picker, even if a provider still serves it.
+    # the OpenCode picker.
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # Role groups whose members may call this model. The built-in "moderator"
     # group (owner/co-owner/admin) is always allowed and is *not* listed here.
-    # An empty list therefore means "moderators only". A user who is not a
-    # moderator may call the model only if one of their role groups is listed.
     allowed_role_group_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    # Structured metadata (override opencode_config when set).
+    limit_context: Mapped[int | None] = mapped_column(Integer, default=None)
+    limit_input: Mapped[int | None] = mapped_column(Integer, default=None)
+    limit_output: Mapped[int | None] = mapped_column(Integer, default=None)
+    reasoning: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    # Capabilities {"text","image","audio","tool"} booleans + modalities JSON.
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    modalities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # models.dev mapping: the matched registry id + when it was last synced.
+    models_dev_id: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
+    models_dev_synced_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     # Who first registered metadata for this model (id + display-name snapshot).
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
+
+    route: Mapped[Route | None] = relationship(
+        back_populates="exposed_model", cascade="all, delete-orphan",
+        uselist=False, lazy="selectin",
+    )
+
+
+class Route(Base, TimestampMixin):
+    """The dispatch flowchart for one exposed model.
+
+    Top of the flow is the user-requested model; below it sit ordered
+    :class:`RouteLayer` fallback pools (position 0 first). Each layer is a pool
+    of upstream :class:`RoutePoolEntry` refs tried with weighted randomness.
+    """
+
+    __tablename__ = "routes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    exposed_model_id: Mapped[int] = mapped_column(
+        ForeignKey("exposed_models.id", ondelete="CASCADE"), unique=True, index=True
+    )
+
+    exposed_model: Mapped[ExposedModel] = relationship(
+        back_populates="route", lazy="selectin"
+    )
+    layers: Mapped[list[RouteLayer]] = relationship(
+        back_populates="route",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="RouteLayer.position",
+    )
+
+
+class RouteLayer(Base):
+    """One fallback pool of a route flowchart (ordered by ``position``).
+
+    ``max_attempts`` is how many of this layer's entries are tried (in weighted
+    order) before falling through to the next layer: 1 = pick one at random;
+    >1 = try up to that many (all entries if attempts ≥ entry count).
+    """
+
+    __tablename__ = "route_layers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    route_id: Mapped[int] = mapped_column(
+        ForeignKey("routes.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=1)
+
+    route: Mapped[Route] = relationship(back_populates="layers", lazy="selectin")
+    entries: Mapped[list[RoutePoolEntry]] = relationship(
+        back_populates="layer",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="RoutePoolEntry.id",
+    )
+
+
+class RoutePoolEntry(Base):
+    """One upstream reference inside a route layer pool.
+
+    Points at a provider (by id) and the exact ``upstream_model`` it should be
+    called with (provider slug + model, e.g. ``deepseek/deepseek-v4-flash``).
+    ``key_pool`` optionally restricts dispatch to keys carrying that pool tag.
+    """
+
+    __tablename__ = "route_pool_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    layer_id: Mapped[int] = mapped_column(
+        ForeignKey("route_layers.id", ondelete="CASCADE"), index=True
+    )
+    provider_id: Mapped[int | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"), default=None, index=True
+    )
+    upstream_model: Mapped[str] = mapped_column(String(255), default="")
+    weight: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    key_pool: Mapped[str] = mapped_column(String(64), default="")
+
+    layer: Mapped[RouteLayer] = relationship(back_populates="entries", lazy="selectin")
+    provider: Mapped[Provider | None] = relationship(lazy="joined")
 
 
 class Provider(Base, TimestampMixin):
@@ -177,6 +274,16 @@ class Provider(Base, TimestampMixin):
         String(36), unique=True, index=True, default=_new_uuid
     )
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    # Stable internal slug applied to this provider's upstream model ids
+    # ("slug/model"), used as the internal model index — never advertised.
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True, default="")
+    # Outbound node group this provider's upstream requests use; null = the
+    # global default group.
+    node_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("node_groups.id", ondelete="SET NULL"),
+        default=None,
+        index=True,
+    )
     # Adapter key, e.g. "openai", "anthropic", "deepseek".
     type: Mapped[str] = mapped_column(String(64), default="openai")
     base_url: Mapped[str] = mapped_column(String(512), default="")
@@ -204,11 +311,6 @@ class Provider(Base, TimestampMixin):
     # claude-code masquerade only: when True, drop the inbound client's entire
     # "You are OpenCode…" system block instead of scrubbing it in place.
     drop_opencode_identity_block: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Outbound routing: "all" (any active proxy), "direct" (never proxy), or
-    # "selected" (only the proxy IDs in proxy_ids). See constants.ProxyMode.
-    proxy_mode: Mapped[str] = mapped_column(String(16), default=ProxyMode.ALL.value)
-    # Proxy IDs this provider may use when proxy_mode == "selected".
-    proxy_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
     # How this provider picks which upstream key to lead with for each request:
     # "round_robin" | "random" | "fallback" | "pinned_round_robin" |
     # "pinned_random". See constants.KeySelectMode.
@@ -290,24 +392,102 @@ class ApiKey(Base, TimestampMixin):
     provider: Mapped[Provider] = relationship(back_populates="keys", lazy="selectin")
 
 
-class Proxy(Base, TimestampMixin):
-    __tablename__ = "proxies"
+class Node(Base, TimestampMixin):
+    """One outbound node (replaces the old ``Proxy``).
+
+    A node is a concrete egress hop VoidSwitch can issue a request through.
+    ``type`` selects the transport: plain HTTP/SOCKS forward proxy, a
+    voidswitch-agent relay, or Direct (``url`` empty). Nodes belong to
+    :class:`NodeGroup`\\ s which own the routing order.
+    """
+
+    __tablename__ = "nodes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # e.g. http://user:pass@host:port, socks5://host:port. Empty = direct.
+    # e.g. http://user:pass@host:port, socks5://host:port, or an agent address.
+    # Empty = Direct node.
     url: Mapped[str] = mapped_column(String(512), default="", unique=True)
+    type: Mapped[str] = mapped_column(String(16), default=NodeType.HTTP.value)
+    # Agent-node credential (encrypted, like upstream key secrets). Never plain.
+    token_ciphertext: Mapped[str | None] = mapped_column(Text, default=None)
     # Bind outbound sockets to this local source IP (httpx local_address).
     local_address: Mapped[str | None] = mapped_column(String(64), default=None)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    status: Mapped[str] = mapped_column(String(32), default=ProxyStatus.ACTIVE.value, index=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default=NodeStatus.ACTIVE.value, index=True
+    )
     failed_count: Mapped[int] = mapped_column(Integer, default=0)
     weight: Mapped[int] = mapped_column(Integer, default=1)
     latency_ms: Mapped[float | None] = mapped_column(Float, default=None)
+    # Exponentially-weighted moving average of latency (ms) used for the
+    # node-group dynamic ordering.
+    latency_ewma: Mapped[float | None] = mapped_column(Float, default=None)
     note: Mapped[str | None] = mapped_column(String(255), default=None)
     disabled_reason: Mapped[str | None] = mapped_column(String(255), default=None)
     last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_checked_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
+    )
+
+
+class NodeGroup(Base, TimestampMixin):
+    """A freely-created group of outbound nodes used by the routing system.
+
+    A group picks *nodes* from the global pool and/or *inherits* the members of
+    other groups (live reference, like Python class inheritance). Each group may
+    define its own idle probe URL + interval; ``slug="system"`` is the special
+    system-request group (only (co-)owners may edit its nodes), and
+    ``slug="default"`` is the group used by providers with no explicit
+    ``node_group_id``.
+    """
+
+    __tablename__ = "node_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str | None] = mapped_column(String(64), unique=True, default=None)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    probe_url: Mapped[str | None] = mapped_column(String(512), default=None)
+    # 0 = fall back to the global node_probe_interval_seconds.
+    probe_interval_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    members: Mapped[list[NodeGroupMember]] = relationship(
+        back_populates="group",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="NodeGroupMember.id",
+        foreign_keys="NodeGroupMember.group_id",
+    )
+
+
+class NodeGroupMember(Base):
+    """One row of a group: a direct node OR an inherited group (never both)."""
+
+    __tablename__ = "node_group_members"
+    __table_args__ = (
+        UniqueConstraint("group_id", "node_id", name="uq_group_node"),
+        UniqueConstraint("group_id", "source_group_id", name="uq_group_source_group"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("node_groups.id", ondelete="CASCADE"), index=True
+    )
+    node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nodes.id", ondelete="CASCADE"), default=None, index=True
+    )
+    source_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("node_groups.id", ondelete="CASCADE"), default=None, index=True
+    )
+    weight: Mapped[int] = mapped_column(Integer, default=1)
+
+    group: Mapped[NodeGroup] = relationship(
+        back_populates="members", lazy="selectin", foreign_keys="NodeGroupMember.group_id"
+    )
+    node: Mapped[Node | None] = relationship(lazy="joined")
+    source_group: Mapped[NodeGroup | None] = relationship(
+        lazy="joined", foreign_keys=[source_group_id]
     )
 
 
@@ -321,13 +501,30 @@ class Setting(Base):
     )
 
 
+class ModelsDevCache(Base):
+    """Cached models.dev registry entry (id → raw JSON).
+
+    Populated by the periodic sync (see ``services.models_dev``); used as
+    placeholder metadata for exposed models matched to a registry id. Keyed by
+    the registry model id; ``updated_at`` drives the sync cadence.
+    """
+
+    __tablename__ = "models_dev_cache"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class RoleGroup(Base, TimestampMixin):
     """A named "身份组" that determines which models its members may call.
 
     The built-in ``moderator`` group (``builtin=True``, ``slug="moderator"``) is
     seeded on first boot, always grants access to every model, and may not be
     deleted. Custom groups gate access to the specific models that list them in
-    ``ModelEntry.allowed_role_group_ids``. Membership is recomputed at every
+    ``ExposedModel.allowed_role_group_ids``. Membership is recomputed at every
     login from the team→role mappings below.
     """
 

@@ -12,6 +12,7 @@ import {
   Field,
   Input,
   Option,
+  Spinner,
   Switch,
   Text,
   Textarea,
@@ -21,6 +22,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
+  ArrowRoutingRegular,
   ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
@@ -28,11 +30,17 @@ import {
   SearchRegular,
 } from "@fluentui/react-icons";
 import JSON5 from "json5";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { ModelEntry, ModelSyncResult, RoleGroup } from "../api/types";
+import type {
+  ModelEntry,
+  ModelSyncResult,
+  ModelsDevSearchResult,
+  RoleGroup,
+} from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
   ErrorText,
@@ -102,18 +110,29 @@ const useStyles = makeStyles({
 
 interface EditState {
   model_id: string;
-  mapped_id: string;
   display_name: string;
   description: string;
   enabled: boolean;
   config: string;
+  limit_context: string;
+  limit_input: string;
+  limit_output: string;
+  reasoning: boolean;
+  capabilities: {
+    text: boolean;
+    image: boolean;
+    audio: boolean;
+    tool: boolean;
+  };
+  modalities_input: string;
+  modalities_output: string;
+  models_dev_id: string;
 }
 
 type BatchEnabled = "unchanged" | "enabled" | "disabled";
 
-// Which field(s) the catalog search box matches against. "all" (default) checks
-// every field, including the custom display name.
-type SearchField = "all" | "id" | "name" | "description" | "provider";
+// Which field(s) the catalog search box matches against.
+type SearchField = "all" | "id" | "name" | "description";
 
 function prettyJson(value: unknown): string {
   if (!value || (typeof value === "object" && Object.keys(value).length === 0)) {
@@ -140,12 +159,20 @@ function parseConfig(text: string): Record<string, unknown> | "INVALID" {
   }
 }
 
+function intOrEmpty(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  return Number.isNaN(n) ? null : Math.max(0, Math.floor(n));
+}
+
 export function Models() {
   const { t } = useTranslation();
   type TK = keyof Translations;
   const styles = useStyles();
   const notify = useNotify();
   const confirm = useConfirm();
+  const navigate = useNavigate();
   const { isStaff } = useAuth();
   const catalog = useAsync<ModelEntry[]>(() => api.get("/api/models"));
   const roleGroups = useAsync<RoleGroup[]>(() =>
@@ -154,23 +181,18 @@ export function Models() {
 
   const [search, setSearch] = useState("");
   const [searchField, setSearchField] = useState<SearchField>("all");
-  const [filterProvider, setFilterProvider] = useState("all");
   const [filterAvail, setFilterAvail] = useState("all");
   const [filterGroup, setFilterGroup] = useState("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Per-model "which role groups may call this model" editor.
   const [groupEdit, setGroupEdit] = useState<{
     model_id: string;
     ids: Set<number>;
   } | null>(null);
   const [groupSearch, setGroupSearch] = useState("");
-  const customGroups = useMemo(
-    () => (roleGroups.data ?? []).filter((g) => !g.builtin),
-    [roleGroups.data],
-  );
+  const customGroups = (roleGroups.data ?? []).filter((g) => !g.builtin);
 
   function openGroupEdit(m: ModelEntry) {
     setGroupSearch("");
@@ -215,7 +237,6 @@ export function Models() {
   const [batchDescOn, setBatchDescOn] = useState(true);
   const [batchDesc, setBatchDesc] = useState("");
   const [batchEnabled, setBatchEnabled] = useState<BatchEnabled>("unchanged");
-  // Batch: access (role groups) + OpenCode config (merge / overwrite).
   const [batchGroupsOn, setBatchGroupsOn] = useState(false);
   const [batchGroupIds, setBatchGroupIds] = useState<Set<number>>(new Set());
   const [batchGroupSearch, setBatchGroupSearch] = useState("");
@@ -226,7 +247,6 @@ export function Models() {
   );
 
   function openBatch() {
-    // Reset the optional toggles each time so nothing is applied unintentionally.
     setBatchDescOn(false);
     setBatchDesc("");
     setBatchEnabled("unchanged");
@@ -250,54 +270,35 @@ export function Models() {
 
   const items = catalog.data ?? [];
 
-  const allProviders = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of items) for (const p of m.providers) set.add(p);
-    return [...set].sort();
-  }, [items]);
-
-  const filtered = useMemo(() => {
+  const filtered = items.filter((m) => {
     const q = search.trim().toLowerCase();
-    let result = items;
+    let match = true;
     if (q) {
-      const matchId = (m: ModelEntry) =>
-        m.model_id.toLowerCase().includes(q) ||
-        m.public_id.toLowerCase().includes(q);
-      const matchName = (m: ModelEntry) =>
-        (m.display_name ?? "").toLowerCase().includes(q);
-      const matchDesc = (m: ModelEntry) =>
-        (m.description ?? "").toLowerCase().includes(q);
-      const matchProvider = (m: ModelEntry) =>
-        m.providers.some((p) => p.toLowerCase().includes(q));
-      result = result.filter((m) => {
-        switch (searchField) {
-          case "id":
-            return matchId(m);
-          case "name":
-            return matchName(m);
-          case "description":
-            return matchDesc(m);
-          case "provider":
-            return matchProvider(m);
-          default:
-            return (
-              matchId(m) || matchName(m) || matchDesc(m) || matchProvider(m)
-            );
-        }
-      });
+      const modelId = m.model_id.toLowerCase();
+      const name = (m.display_name ?? "").toLowerCase();
+      const desc = (m.description ?? "").toLowerCase();
+      switch (searchField) {
+        case "id":
+          match = modelId.includes(q);
+          break;
+        case "name":
+          match = name.includes(q);
+          break;
+        case "description":
+          match = desc.includes(q);
+          break;
+        default:
+          match = modelId.includes(q) || name.includes(q) || desc.includes(q);
+      }
     }
-    if (filterProvider !== "all")
-      result = result.filter((m) => m.providers.includes(filterProvider));
-    if (filterAvail === "available") result = result.filter((m) => m.enabled);
-    else if (filterAvail === "hidden") result = result.filter((m) => !m.enabled);
-    if (filterGroup === "unassigned")
-      result = result.filter((m) => m.allowed_role_group_ids.length === 0);
-    else if (filterGroup !== "all")
-      result = result.filter((m) =>
-        m.allowed_role_group_ids.includes(Number(filterGroup)),
-      );
-    return result;
-  }, [items, search, searchField, filterProvider, filterAvail, filterGroup]);
+    if (match && filterAvail === "available") match = m.enabled;
+    else if (match && filterAvail === "hidden") match = !m.enabled;
+    if (match && filterGroup === "unassigned")
+      match = m.allowed_role_group_ids.length === 0;
+    else if (match && filterGroup !== "all")
+      match = m.allowed_role_group_ids.includes(Number(filterGroup));
+    return match;
+  });
 
   function searchFieldLabel(field: SearchField): string {
     switch (field) {
@@ -307,8 +308,6 @@ export function Models() {
         return t("models.searchFieldName" as TK);
       case "description":
         return t("models.searchFieldDescription" as TK);
-      case "provider":
-        return t("models.searchFieldProvider" as TK);
       default:
         return t("models.searchFieldAll" as TK);
     }
@@ -363,22 +362,23 @@ export function Models() {
     }
   }
 
-  const unserved = useMemo(
-    () => items.filter((m) => !m.served && m.registered),
-    [items],
-  );
+  // Exposed models with no resolvable upstream (empty or disabled route) are the
+  // closest client-side signal that "clean" has work to do.
+  const unserved = filtered.filter((m) => (m.upstreams ?? []).length === 0);
+  // For the confirm dialog we look at the whole catalog, not the filtered view.
+  const cleanable = items.filter((m) => (m.upstreams ?? []).length === 0);
 
   async function doClean() {
-    if (!unserved.length) return;
+    if (!cleanable.length) return;
     const ok = await confirm({
       title: t("models.cleanTitle" as TK),
       message:
         t("models.cleanMsg" as TK).replace(
           "{count}",
-          String(unserved.length),
+          String(cleanable.length),
         ) +
         "\n\n" +
-        unserved.map((m) => `• ${m.model_id}`).join("\n"),
+        cleanable.map((m) => `• ${m.model_id}`).join("\n"),
       confirmLabel: t("models.cleanConfirm" as TK),
       tone: "danger",
     });
@@ -408,14 +408,35 @@ export function Models() {
     }
   }
 
+  const CAP_WORDS: Array<keyof EditState["capabilities"]> = [
+    "text",
+    "image",
+    "audio",
+    "tool",
+  ];
+
   function openEdit(m: ModelEntry) {
+    const caps = (m.capabilities ?? {}) as Record<string, unknown>;
+    const mods = (m.modalities ?? {}) as Record<string, unknown>;
     setEdit({
       model_id: m.model_id,
-      mapped_id: m.mapped_id ?? "",
       display_name: m.display_name ?? "",
       description: m.description ?? "",
       enabled: m.enabled,
       config: prettyJson(m.opencode_config),
+      limit_context: m.limit_context != null ? String(m.limit_context) : "",
+      limit_input: m.limit_input != null ? String(m.limit_input) : "",
+      limit_output: m.limit_output != null ? String(m.limit_output) : "",
+      reasoning: !!m.reasoning,
+      capabilities: {
+        text: !!caps.text,
+        image: !!caps.image,
+        audio: !!caps.audio,
+        tool: !!caps.tool,
+      },
+      modalities_input: Number(mods?.input) > 0 ? String(mods.input) : "",
+      modalities_output: Number(mods?.output) > 0 ? String(mods.output) : "",
+      models_dev_id: m.models_dev_id ?? "",
     });
   }
 
@@ -430,24 +451,33 @@ export function Models() {
       );
       return;
     }
-    if (edit.mapped_id.trim() === edit.model_id) {
-      notify(
-        t("models.invalidMapping" as TK),
-        t("models.invalidMappingMsg" as TK),
-        "error",
-      );
-      return;
+    const payload: Record<string, unknown> = {
+      model_id: edit.model_id,
+      display_name: edit.display_name.trim(),
+      description: edit.description,
+      opencode_config: config,
+      enabled: edit.enabled,
+      reasoning: edit.reasoning,
+      capabilities: {},
+      modalities: {},
+    };
+    for (const w of CAP_WORDS) {
+      if (edit.capabilities[w]) (payload.capabilities as Record<string, unknown>)[w] = true;
     }
+    const mi = intOrEmpty(edit.modalities_input);
+    const mo = intOrEmpty(edit.modalities_output);
+    if (mi != null) (payload.modalities as Record<string, unknown>).input = mi;
+    if (mo != null) (payload.modalities as Record<string, unknown>).output = mo;
+    const lc = intOrEmpty(edit.limit_context);
+    const li = intOrEmpty(edit.limit_input);
+    const lo = intOrEmpty(edit.limit_output);
+    if (lc != null) payload.limit_context = lc;
+    if (li != null) payload.limit_input = li;
+    if (lo != null) payload.limit_output = lo;
+    if (edit.models_dev_id.trim()) payload.models_dev_id = edit.models_dev_id.trim();
     setSaving(true);
     try {
-      await api.put("/api/models", {
-        model_id: edit.model_id,
-        mapped_id: edit.mapped_id.trim(),
-        display_name: edit.display_name.trim(),
-        description: edit.description,
-        opencode_config: config,
-        enabled: edit.enabled,
-      });
+      await api.put("/api/models", payload);
       notify(t("models.saved" as TK), edit.model_id, "success");
       setEdit(null);
       catalog.reload();
@@ -504,9 +534,7 @@ export function Models() {
     if (m.id == null) return;
     const ok = await confirm({
       title: t("models.deleteTitle" as TK),
-      message: m.served
-        ? t("models.deleteMsgServed" as TK).replace("{id}", m.model_id)
-        : t("models.deleteMsgUnserved" as TK).replace("{id}", m.model_id),
+      message: t("models.deleteMsgServed" as TK).replace("{id}", m.model_id),
       confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
@@ -553,11 +581,6 @@ export function Models() {
                 </Button>
               </Tooltip>
             )}
-            {/* "Sync from providers" reshapes the shared catalog — a staff-only
-                action. Members keep their OpenCode plugin in sync via the
-                gateway's own POST /v1/models/sync (the `/sync-models` command),
-                which reports the models they can access without touching the
-                shared catalog. */}
             {isStaff && (
               <Tooltip
                 content={t("models.syncTooltip" as TK)}
@@ -604,9 +627,6 @@ export function Models() {
           <Option value="description">
             {t("models.searchFieldDescription" as TK)}
           </Option>
-          <Option value="provider">
-            {t("models.searchFieldProvider" as TK)}
-          </Option>
         </Dropdown>
         <Input
           className={styles.search}
@@ -632,18 +652,6 @@ export function Models() {
 
       <div className={styles.toolbar}>
         <Dropdown
-          aria-label={t("models.filterProvider" as TK)}
-          style={{ minWidth: 150 }}
-          selectedOptions={[filterProvider]}
-          value={filterProvider === "all" ? t("models.filterAllProviders" as TK) : filterProvider}
-          onOptionSelect={(_, d) => setFilterProvider(d.optionValue ?? "all")}
-        >
-          <Option value="all">{t("models.filterAllProviders" as TK)}</Option>
-          {allProviders.map((p) => (
-            <Option key={p} value={p}>{p}</Option>
-          ))}
-        </Dropdown>
-        <Dropdown
           aria-label={t("models.filterAvailability" as TK)}
           style={{ minWidth: 130 }}
           selectedOptions={[filterAvail]}
@@ -660,7 +668,6 @@ export function Models() {
           <Option value="available">{t("common.enabled" as TK)}</Option>
           <Option value="hidden">{t("models.unavailableHidden" as TK)}</Option>
         </Dropdown>
-        {/* Role-group access is a staff concept; members don't see (or fetch) it. */}
         {isStaff && (
           <Dropdown
             aria-label={t("models.filterGroup" as TK)}
@@ -707,13 +714,8 @@ export function Models() {
                       </Text>
                     )}
                     <Text weight={m.display_name ? "regular" : "semibold"} className={styles.modelId}>
-                      {m.public_id}
+                      {m.model_id}
                     </Text>
-                    {m.mapped_id ? (
-                      <Text size={100} className={styles.dim} block>
-                        ← {m.model_id}
-                      </Text>
-                    ) : null}
                   </div>
                   {isStaff && (
                     <Checkbox
@@ -736,14 +738,14 @@ export function Models() {
                       {t("models.unavailableHidden" as TK)}
                     </Badge>
                   )}
-                  {m.mapped_id && (
-                    <Badge appearance="tint" color="success">
-                      {t("common.mapped" as TK)}
+                  {m.reasoning && (
+                    <Badge appearance="tint" color="brand">
+                      {t("models.reasoningBadge" as TK)}
                     </Badge>
                   )}
-                  {!m.served && (
-                    <Badge appearance="tint" color="warning">
-                      {t("common.noProvider" as TK)}
+                  {m.models_dev_id && (
+                    <Badge appearance="tint" color="informative">
+                      models.dev
                     </Badge>
                   )}
                   {hasConfig && (
@@ -751,15 +753,25 @@ export function Models() {
                       {t("common.customConfig" as TK)}
                     </Badge>
                   )}
-                  {m.providers.map((p) => (
-                    <Badge key={p} appearance="outline" color="informative">
-                      {p}
-                    </Badge>
-                  ))}
+                  {isStaff &&
+                    (m.upstreams ?? []).map((u) => (
+                      <Badge key={u} appearance="outline" color="informative">
+                        {u}
+                      </Badge>
+                    ))}
                 </div>
 
                 {isStaff && (
                   <div className={styles.actions}>
+                    <Tooltip content={t("models.route" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<ArrowRoutingRegular />}
+                        onClick={() => navigate(`/models/${encodeURIComponent(m.model_id)}/route`)}
+                        aria-label={t("models.route" as TK)}
+                      />
+                    </Tooltip>
                     <Tooltip content={t("common.edit" as TK)} relationship="label">
                       <Button
                         size="small"
@@ -790,17 +802,15 @@ export function Models() {
                         aria-label={t("models.access" as TK)}
                       />
                     </Tooltip>
-                    {m.registered && (
-                      <Tooltip content={t("common.delete" as TK)} relationship="label">
-                        <Button
-                          size="small"
-                          appearance="subtle"
-                          icon={<DeleteRegular />}
-                          onClick={() => remove(m)}
-                          aria-label={t("common.delete" as TK)}
-                        />
-                      </Tooltip>
-                    )}
+                    <Tooltip content={t("common.delete" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<DeleteRegular />}
+                        onClick={() => remove(m)}
+                        aria-label={t("common.delete" as TK)}
+                      />
+                    </Tooltip>
                   </div>
                 )}
               </div>
@@ -810,7 +820,9 @@ export function Models() {
       )}
 
       <Dialog open={edit !== null} onOpenChange={(_, d) => !d.open && setEdit(null)}>
-        <DialogSurface>
+        <DialogSurface
+          style={{ maxWidth: 640 }}
+        >
           <DialogBody>
             <DialogTitle>{t("models.editModel" as TK)}</DialogTitle>
             <DialogContent
@@ -831,18 +843,6 @@ export function Models() {
                   }
                 />
               </Field>
-              <Field
-                label={t("models.publicId" as TK)}
-                hint={t("models.publicIdHint" as TK)}
-              >
-                <Input
-                  value={edit?.mapped_id ?? ""}
-                  placeholder={t("models.publicIdPlaceholder" as TK)}
-                  onChange={(_, d) =>
-                    setEdit((f) => (f ? { ...f, mapped_id: d.value } : f))
-                  }
-                />
-              </Field>
               <Field label={t("models.description" as TK)}>
                 <Textarea
                   value={edit?.description ?? ""}
@@ -852,6 +852,87 @@ export function Models() {
                   }
                 />
               </Field>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <Field label={t("models.limitContext" as TK)}>
+                  <Input
+                    type="number"
+                    value={edit?.limit_context ?? ""}
+                    placeholder="200000"
+                    style={{ width: 140 }}
+                    onChange={(_, d) =>
+                      setEdit((f) => (f ? { ...f, limit_context: d.value } : f))
+                    }
+                  />
+                </Field>
+                <Field label={t("models.limitInput" as TK)}>
+                  <Input
+                    type="number"
+                    value={edit?.limit_input ?? ""}
+                    style={{ width: 140 }}
+                    onChange={(_, d) =>
+                      setEdit((f) => (f ? { ...f, limit_input: d.value } : f))
+                    }
+                  />
+                </Field>
+                <Field label={t("models.limitOutput" as TK)}>
+                  <Input
+                    type="number"
+                    value={edit?.limit_output ?? ""}
+                    style={{ width: 140 }}
+                    onChange={(_, d) =>
+                      setEdit((f) => (f ? { ...f, limit_output: d.value } : f))
+                    }
+                  />
+                </Field>
+              </div>
+              <Switch
+                label={t("models.reasoning" as TK)}
+                checked={edit?.reasoning ?? false}
+                onChange={(_, d) =>
+                  setEdit((f) => (f ? { ...f, reasoning: d.checked } : f))
+                }
+              />
+              <Field label={t("models.capabilities" as TK)}>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  {CAP_WORDS.map((w) => (
+                    <Checkbox
+                      key={w}
+                      label={w}
+                      checked={edit?.capabilities[w] ?? false}
+                      onChange={(_, d) =>
+                        setEdit((f) =>
+                          f
+                            ? {
+                                ...f,
+                                capabilities: { ...f.capabilities, [w]: d.checked },
+                              }
+                            : f,
+                        )
+                      }
+                    />
+                  ))}
+                </div>
+              </Field>
+              <div style={{ display: "flex", gap: 12 }}>
+                <Field label={t("models.modalitiesInput" as TK)} hint={t("models.modalitiesHint" as TK)}>
+                  <Input
+                    type="number"
+                    value={edit?.modalities_input ?? ""}
+                    onChange={(_, d) =>
+                      setEdit((f) => (f ? { ...f, modalities_input: d.value } : f))
+                    }
+                  />
+                </Field>
+                <Field label={t("models.modalitiesOutput" as TK)}>
+                  <Input
+                    type="number"
+                    value={edit?.modalities_output ?? ""}
+                    onChange={(_, d) =>
+                      setEdit((f) => (f ? { ...f, modalities_output: d.value } : f))
+                    }
+                  />
+                </Field>
+              </div>
               <Field
                 label={t("models.configLabel" as TK)}
                 hint={t("models.configHint" as TK)}
@@ -871,6 +952,12 @@ export function Models() {
                 checked={edit?.enabled ?? true}
                 onChange={(_, d) =>
                   setEdit((f) => (f ? { ...f, enabled: d.checked } : f))
+                }
+              />
+              <ModelsDevSection
+                modelsDevId={edit?.models_dev_id ?? ""}
+                onPick={(id) =>
+                  setEdit((f) => (f ? { ...f, models_dev_id: id } : f))
                 }
               />
             </DialogContent>
@@ -1102,6 +1189,164 @@ export function Models() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+    </div>
+  );
+}
+
+function ModelsDevSection({
+  modelsDevId,
+  onPick,
+}: {
+  modelsDevId: string;
+  onPick: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
+  const notify = useNotify();
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<Record<string, unknown>[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [syncingMd, setSyncingMd] = useState(false);
+
+  async function search() {
+    const query = q.trim();
+    if (!query) return;
+    setSearching(true);
+    try {
+      const r = await api.get<ModelsDevSearchResult>(
+        "/api/models/models-dev/search",
+        { q: query },
+      );
+      setResults(r.results ?? []);
+    } catch (e) {
+      notify(
+        t("models.modelsDevSearchFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function syncMd() {
+    setSyncingMd(true);
+    try {
+      const r = await api.post<{ synced: number }>("/api/models/models-dev/sync");
+      notify(
+        t("models.modelsDevSynced" as TK),
+        t("models.modelsDevSyncedDetail" as TK).replace(
+          "{count}",
+          String(r.synced),
+        ),
+        "success",
+      );
+    } catch (e) {
+      notify(
+        t("models.modelsDevSearchFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setSyncingMd(false);
+    }
+  }
+
+  function label(entry: Record<string, unknown>): string {
+    return String(entry.name ?? entry.id ?? "");
+  }
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${tokens.colorNeutralStroke2}`,
+        borderRadius: 8,
+        padding: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        background: tokens.colorNeutralBackground2,
+      }}
+    >
+      <div style={{ fontWeight: 600 }}>{t("models.modelsDevTitle" as TK)}</div>
+      {modelsDevId ? (
+        <Field label={t("models.modelsDevLinked" as TK)}>
+          <Input readOnly value={modelsDevId} />
+        </Field>
+      ) : (
+        <Button
+          size="small"
+          appearance="subtle"
+          disabled={syncingMd}
+          onClick={syncMd}
+        >
+          {syncingMd
+            ? t("models.modelsDevSyncing" as TK)
+            : t("models.modelsDevSync" as TK)}
+        </Button>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <Input
+          placeholder={t("models.modelsDevSearch" as TK)}
+          value={q}
+          onChange={(_, d) => setQ(d.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") search();
+          }}
+        />
+        <Button disabled={searching || !q.trim()} onClick={search}>
+          {searching ? <Spinner size="tiny" /> : t("models.modelsDevSearchBtn" as TK)}
+        </Button>
+      </div>
+      {results.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            maxHeight: 200,
+            overflowY: "auto",
+          }}
+        >
+          {results.map((entry, i) => {
+            const id = String(entry.id ?? entry.name ?? "");
+            const selected = id === modelsDevId;
+            return (
+              <div
+                key={id || i}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  border: `1px solid ${tokens.colorNeutralStroke2}`,
+                  borderRadius: 6,
+                  padding: "6px 8px",
+                  background: tokens.colorNeutralBackground1,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {label(entry)}
+                  </div>
+                  <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                    {entry.description ? String(entry.description) : ""}
+                  </Text>
+                </div>
+                <Button
+                  size="small"
+                  appearance={selected ? "primary" : "subtle"}
+                  onClick={() => onPick(id)}
+                >
+                  {selected
+                    ? t("models.modelsDevSelected" as TK)
+                    : t("models.modelsDevUse" as TK)}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

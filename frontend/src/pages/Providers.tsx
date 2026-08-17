@@ -47,11 +47,9 @@ import type {
   AdapterMeta,
   ApiKey,
   KeySelectMode,
-  ModelRoute,
+  NodeGroup,
   Provider,
   ProviderKeyApi,
-  Proxy,
-  ProxyMode,
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
@@ -71,6 +69,7 @@ type TK = keyof Translations;
 interface FormState {
   id?: number;
   name: string;
+  slug: string;
   type: string;
   base_url: string;
   models: string;
@@ -79,9 +78,7 @@ interface FormState {
   enabled: boolean;
   drop_opencode_identity_block: boolean;
   retry_on_zero_token: boolean;
-  proxy_mode: ProxyMode;
-  proxy_ids: number[];
-  model_routes: string;
+  node_group_id: number | null;
   key_select_mode: KeySelectMode;
   rate_limit_cooldown_seconds: number;
   initial_keys: string;
@@ -90,6 +87,7 @@ interface FormState {
 
 const EMPTY: FormState = {
   name: "",
+  slug: "",
   type: "openai",
   base_url: "",
   models: "",
@@ -98,69 +96,12 @@ const EMPTY: FormState = {
   enabled: true,
   drop_opencode_identity_block: false,
   retry_on_zero_token: false,
-  proxy_mode: "all",
-  proxy_ids: [],
-  model_routes: "",
+  node_group_id: null,
   key_select_mode: "round_robin",
   rate_limit_cooldown_seconds: 0,
   initial_keys: "",
   initial_keys_pool: "",
 };
-
-// Model routes use one line per route: `alias => upstream @ pool`
-// (`=> upstream` and `@ pool` are both optional).
-//
-// Parsing is done left-to-right and anchored on the ` => ` arrow first: the
-// alias is everything before the *first* arrow, and ` @ pool` is only looked for
-// in the remainder (the upstream side). This keeps an alias that itself contains
-// ` @ ` from being mis-split as a pool separator. When there is no arrow the line
-// is the short `alias` or `alias @ pool` form, where ` @ ` still delimits the
-// pool (an alias containing ` @ ` is inherently ambiguous in that shorthand).
-function parseRoutes(text: string): ModelRoute[] {
-  return text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((line): ModelRoute => {
-      const arrow = line.indexOf(" => ");
-      if (arrow >= 0) {
-        const alias = line.slice(0, arrow).trim();
-        // Everything after the arrow is `upstream[ @ pool]`.
-        const rest = line.slice(arrow + 4);
-        const at = rest.lastIndexOf(" @ ");
-        if (at >= 0) {
-          return {
-            alias,
-            upstream: rest.slice(0, at).trim(),
-            pool: rest.slice(at + 3).trim(),
-          };
-        }
-        return { alias, upstream: rest.trim(), pool: "" };
-      }
-      // No arrow: `alias` or `alias @ pool`.
-      const at = line.lastIndexOf(" @ ");
-      if (at >= 0) {
-        return {
-          alias: line.slice(0, at).trim(),
-          upstream: "",
-          pool: line.slice(at + 3).trim(),
-        };
-      }
-      return { alias: line, upstream: "", pool: "" };
-    })
-    .filter((r) => r.alias);
-}
-
-function formatRoutes(routes: ModelRoute[]): string {
-  return (routes ?? [])
-    .map((r) => {
-      let s = r.alias;
-      if (r.upstream) s += ` => ${r.upstream}`;
-      if (r.pool) s += ` @ ${r.pool}`;
-      return s;
-    })
-    .join("\n");
-}
 
 export function Providers() {
   const { t } = useTranslation();
@@ -173,7 +114,7 @@ export function Providers() {
   const catalog = useAsync<AdapterMeta[]>(() =>
     api.get("/api/admin/providers/catalog/types"),
   );
-  const proxies = useAsync<Proxy[]>(() => api.get("/api/admin/proxies"));
+  const nodeGroups = useAsync<NodeGroup[]>(() => api.get("/api/admin/node-groups"));
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [fetchOpen, setFetchOpen] = useState(false);
@@ -210,12 +151,6 @@ export function Providers() {
   ];
   const allPhFilled = phKeys.every((k) => (placeholderVals[k] ?? "").trim());
 
-  const PROXY_MODE_LABEL: Record<ProxyMode, string> = {
-    all: t("providers.proxyModeAll" as TK),
-    direct: t("providers.proxyModeDirect" as TK),
-    selected: t("providers.proxyModeSelected" as TK),
-  };
-
   const KEY_SELECT_MODE_LABEL: Record<KeySelectMode, string> = {
     round_robin: t("providers.keyModeRoundRobin" as TK),
     random: t("providers.keyModeRandom" as TK),
@@ -232,6 +167,7 @@ export function Providers() {
     setForm({
       id: p.id,
       name: p.name,
+      slug: p.slug ?? "",
       type: p.type,
       base_url: p.base_url,
       models: p.models.join("\n"),
@@ -240,9 +176,7 @@ export function Providers() {
       enabled: p.enabled,
       drop_opencode_identity_block: p.drop_opencode_identity_block,
       retry_on_zero_token: p.retry_on_zero_token,
-      proxy_mode: p.proxy_mode,
-      proxy_ids: p.proxy_ids ?? [],
-      model_routes: formatRoutes(p.model_routes),
+      node_group_id: p.node_group_id ?? null,
       key_select_mode: p.key_select_mode ?? "round_robin",
       rate_limit_cooldown_seconds: p.rate_limit_cooldown_seconds ?? 0,
       initial_keys: "",
@@ -388,6 +322,7 @@ export function Providers() {
       .filter(Boolean);
     const payload = {
       name: form.name,
+      slug: form.slug,
       type: form.type,
       base_url: form.base_url,
       models,
@@ -396,9 +331,7 @@ export function Providers() {
       enabled: form.enabled,
       drop_opencode_identity_block: form.drop_opencode_identity_block,
       retry_on_zero_token: form.retry_on_zero_token,
-      proxy_mode: form.proxy_mode,
-      proxy_ids: form.proxy_mode === "selected" ? form.proxy_ids : [],
-      model_routes: parseRoutes(form.model_routes),
+      node_group_id: form.node_group_id,
       key_select_mode: form.key_select_mode,
       rate_limit_cooldown_seconds: Math.max(
         0,
@@ -1080,19 +1013,69 @@ export function Providers() {
                 </div>
               </div>
               <Field
-                label={t("providers.modelRoutes" as TK)}
-                hint={t("providers.modelRoutesHint" as TK)}
+                label={t("providers.slug" as TK)}
+                hint={t("providers.slugHint" as TK)}
               >
-                <Textarea
-                  value={form?.model_routes ?? ""}
-                  rows={3}
-                  placeholder={
-                    "deepseek-v4-flash-lkd => deepseek-v4-flash @ leaked\ndeepseek-v4-flash => deepseek-v4-flash @ members"
-                  }
-                  onChange={(_, d) =>
-                    setForm((f) => (f ? { ...f, model_routes: d.value } : f))
-                  }
+                <Input
+                  value={form?.slug ?? ""}
+                  placeholder={t("providers.slugPlaceholder" as TK)}
+                  onChange={(_, d) => {
+                    const val = d.value
+                      .toLowerCase()
+                      .replace(/[^a-z0-9-_]/g, "-")
+                      .replace(/-+/g, "-");
+                    setForm((f) => (f ? { ...f, slug: val } : f));
+                  }}
+                  onBlur={() => {
+                    if (form && !form.slug.trim() && form.name.trim()) {
+                      const val = form.name
+                        .toLowerCase()
+                        .replace(/[^a-z0-9-_]/g, "-")
+                        .replace(/-+/g, "-")
+                        .replace(/^-+|-+$/g, "");
+                      setForm((f) => (f ? { ...f, slug: val } : f));
+                    }
+                  }}
                 />
+              </Field>
+              <Field
+                label={t("providers.nodeGroup" as TK)}
+                hint={t("providers.nodeGroupHint" as TK)}
+              >
+                <Dropdown
+                  placeholder={t("providers.nodeGroupDefault" as TK)}
+                  value={
+                    form?.node_group_id != null
+                      ? (nodeGroups.data ?? []).find(
+                          (g) => g.id === form.node_group_id,
+                        )?.name ?? `#${form.node_group_id}`
+                      : t("providers.nodeGroupDefault" as TK)
+                  }
+                  selectedOptions={
+                    form?.node_group_id != null
+                      ? [String(form.node_group_id)]
+                      : []
+                  }
+                  onOptionSelect={(_, d) =>
+                    setForm((f) =>
+                      f
+                        ? {
+                            ...f,
+                            node_group_id: d.optionValue
+                              ? Number(d.optionValue)
+                              : null,
+                          }
+                        : f,
+                    )
+                  }
+                >
+                  {(nodeGroups.data ?? []).map((g) => (
+                    <Option key={g.id} value={String(g.id)} text={g.name}>
+                      {g.name}
+                      {g.is_system ? ` (${t("nodes.systemBadge" as TK)})` : ""}
+                    </Option>
+                  ))}
+                </Dropdown>
               </Field>
               <div style={{ display: "flex", gap: 12 }}>
                 <Field label={t("providers.priorityHint" as TK)}>
@@ -1128,68 +1111,6 @@ export function Providers() {
                   setForm((f) => (f ? { ...f, enabled: d.checked } : f))
                 }
               />
-              <Field label={t("providers.outboundProxy" as TK)}>
-                <Dropdown
-                  value={
-                    form
-                      ? PROXY_MODE_LABEL[form.proxy_mode]
-                      : PROXY_MODE_LABEL.all
-                  }
-                  selectedOptions={form ? [form.proxy_mode] : ["all"]}
-                  onOptionSelect={(_, d) =>
-                    d.optionValue &&
-                    setForm((f) =>
-                      f ? { ...f, proxy_mode: d.optionValue as ProxyMode } : f,
-                    )
-                  }
-                >
-                  {(Object.keys(PROXY_MODE_LABEL) as ProxyMode[]).map((m) => (
-                    <Option key={m} value={m} text={PROXY_MODE_LABEL[m]}>
-                      {PROXY_MODE_LABEL[m]}
-                    </Option>
-                  ))}
-                </Dropdown>
-              </Field>
-              {form?.proxy_mode === "selected" && (
-                <Field
-                  label={t("providers.proxiesHint" as TK)}
-                  hint={t("providers.proxiesHelp" as TK)}
-                >
-                  <Dropdown
-                    multiselect
-                    placeholder={t("providers.selectProxies" as TK)}
-                    value={
-                      (form?.proxy_ids ?? [])
-                        .map(
-                          (id) =>
-                            (proxies.data ?? []).find((p) => p.id === id)
-                              ?.url ?? `#${id}`,
-                        )
-                        .join(", ") || ""
-                    }
-                    selectedOptions={(form?.proxy_ids ?? []).map(String)}
-                    onOptionSelect={(_, d) =>
-                      setForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              proxy_ids: d.selectedOptions.map((s) =>
-                                Number(s),
-                              ),
-                            }
-                          : f,
-                      )
-                    }
-                  >
-                    {(proxies.data ?? []).map((p) => (
-                      <Option key={p.id} value={String(p.id)} text={p.url}>
-                        {p.url}
-                        {p.status !== "active" ? ` (${p.status})` : ""}
-                      </Option>
-                    ))}
-                  </Dropdown>
-                </Field>
-              )}
               <Field
                 label={t("providers.keySelectMode" as TK)}
                 hint={t("providers.keySelectModeHint" as TK)}

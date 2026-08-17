@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import MODERATOR_GROUP_SLUG, TEAM_ROLE_RANK, Role
 from voidswitch.core.auth import STAFF_ROLES
-from voidswitch.models.db import ModelEntry, RoleGroup, RoleGroupMembership, User
+from voidswitch.models.db import ExposedModel, RoleGroup, RoleGroupMembership, User
 
 # Normalised → canonical team role string (mirrors Prism's role vocabulary).
 _TEAM_ROLE_ALIASES = {
@@ -191,7 +191,7 @@ async def user_group_ids(session: AsyncSession, user_id: int) -> set[int]:
 
 
 async def user_can_access_model(session: AsyncSession, user: User, model_id: str) -> bool:
-    """Whether ``user`` may call ``model_id`` (the resolved upstream id).
+    """Whether ``user`` may call ``model_id`` (an exposed model id).
 
     Moderators may call everything. Everyone else needs one of their role groups
     listed in the model's ``allowed_role_group_ids`` (empty → moderators only).
@@ -199,7 +199,9 @@ async def user_can_access_model(session: AsyncSession, user: User, model_id: str
     if is_moderator(user):
         return True
     entry = (
-        await session.execute(select(ModelEntry).where(ModelEntry.model_id == model_id))
+        await session.execute(
+            select(ExposedModel).where(ExposedModel.model_id == model_id)
+        )
     ).scalar_one_or_none()
     allowed = set(entry.allowed_role_group_ids or []) if entry is not None else set()
     if not allowed:
@@ -208,7 +210,7 @@ async def user_can_access_model(session: AsyncSession, user: User, model_id: str
 
 
 def model_allowed_for_groups(
-    entry: ModelEntry | None, group_ids: set[int], *, is_mod: bool
+    entry: ExposedModel | None, group_ids: set[int], *, is_mod: bool
 ) -> bool:
     """Pure-Python access check used when the caller already loaded the data."""
     if is_mod:

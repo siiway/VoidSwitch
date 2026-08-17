@@ -8,10 +8,10 @@ import httpx
 import pytest
 import respx
 from sqlalchemy import select
-from voidswitch.constants import ApiStyle, KeyStatus, ProxyStatus
+from voidswitch.constants import ApiStyle, KeyStatus, NodeStatus
 from voidswitch.core.config import get_settings
 from voidswitch.core.security import encrypt_secret, hash_token
-from voidswitch.models.db import ApiKey, Proxy
+from voidswitch.models.db import ApiKey, Node
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
 pytestmark = pytest.mark.asyncio
@@ -58,12 +58,45 @@ async def _add_key_pool(db, provider_id: int, raw: str, pool: str) -> int:
         return key.id
 
 
-async def _add_proxy(db, url: str) -> int:
+async def _add_node(db, url: str) -> int:
+    """Add an active HTTP node to the default node group (provider egress)."""
+    from voidswitch.models.db import NodeGroupMember
+    from voidswitch.services import routing
+
     async with db.session() as session:
-        proxy = Proxy(url=url, status=ProxyStatus.ACTIVE.value)
-        session.add(proxy)
+        node = Node(url=url, type="http", status=NodeStatus.ACTIVE.value)
+        session.add(node)
         await session.flush()
-        return proxy.id
+        default = await routing.default_group(session)
+        if default is not None:
+            session.add(NodeGroupMember(group_id=default.id, node_id=node.id))
+        await session.flush()
+        return node.id
+
+
+async def _expose_route(db, model_id: str, provider_id: int, upstream: str, *, pool: str = ""):
+    """Create an exposed model with a 1:1 route to a provider (and optional pool)."""
+    from voidswitch.models.db import ExposedModel, Route, RouteLayer, RoutePoolEntry
+
+    async with db.session() as session:
+        entry = ExposedModel(model_id=model_id)
+        session.add(entry)
+        await session.flush()
+        route = Route(exposed_model_id=entry.id)
+        session.add(route)
+        await session.flush()
+        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
+        session.add(layer)
+        await session.flush()
+        session.add(
+            RoutePoolEntry(
+                layer_id=layer.id,
+                provider_id=provider_id,
+                upstream_model=upstream,
+                key_pool=pool,
+            )
+        )
+        await session.flush()
 
 
 async def test_dispatch_success_non_stream(db, seeded):
@@ -136,8 +169,8 @@ async def test_dispatch_insufficient_balance_disables_key(db, seeded):
 
 
 async def test_dispatch_proxy_failover_on_network_error(db, seeded):
-    await _add_proxy(db, "http://127.0.0.1:38080")
-    await _add_proxy(db, "http://127.0.0.1:38081")
+    await _add_node(db, "http://127.0.0.1:38080")
+    await _add_node(db, "http://127.0.0.1:38081")
     with respx.mock(assert_all_called=False) as mock:
         mock.post(DS_URL).mock(
             side_effect=[
@@ -157,18 +190,8 @@ async def test_dispatch_proxy_failover_on_network_error(db, seeded):
     assert result.status_code == 200
     assert result.attempts == 2
     async with db.session() as session:
-        proxies = (await session.execute(select(Proxy))).scalars().all()
-    assert any(p.failed_count >= 1 for p in proxies)
-
-
-async def _set_provider_proxy(db, provider_id, mode, proxy_ids):
-    from voidswitch.models.db import Provider
-
-    async with db.session() as session:
-        provider = await session.get(Provider, provider_id)
-        provider.proxy_mode = mode
-        provider.proxy_ids = proxy_ids
-        await session.flush()
+        nodes = (await session.execute(select(Node))).scalars().all()
+    assert any(n.failed_count >= 1 for n in nodes)
 
 
 async def _last_log(db):
@@ -195,9 +218,15 @@ async def _dispatch_hi(seeded):
 
 
 async def test_dispatch_selected_proxy_mode_pins_to_assigned_proxy(db, seeded):
-    await _add_proxy(db, "http://127.0.0.1:38080")
-    p2 = await _add_proxy(db, "http://127.0.0.1:38081")
-    await _set_provider_proxy(db, seeded["provider_id"], "selected", [p2])
+    # The provider's default node group routes egress. Two nodes exist; only the
+    # first is active, so dispatch must pin to it (the "assigned" node), never the
+    # disabled second one.
+    p1 = await _add_node(db, "http://127.0.0.1:38080")
+    p2 = await _add_node(db, "http://127.0.0.1:38081")
+    async with db.session() as session:
+        node = await session.get(Node, p2)
+        node.status = NodeStatus.DISABLED.value
+        await session.flush()
 
     with respx.mock(assert_all_called=False) as mock:
         mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
@@ -205,12 +234,22 @@ async def test_dispatch_selected_proxy_mode_pins_to_assigned_proxy(db, seeded):
 
     assert result.status_code == 200
     log = await _last_log(db)
-    assert log is not None and log.proxy_id == p2  # used the assigned proxy, not p1
+    assert log is not None and log.proxy_id == p1  # used the active node, not p2
 
 
 async def test_dispatch_direct_proxy_mode_uses_no_proxy(db, seeded):
-    await _add_proxy(db, "http://127.0.0.1:38080")  # exists but must be ignored
-    await _set_provider_proxy(db, seeded["provider_id"], "direct", [])
+    # Even with a node in the default group, a provider assigned to an EMPTY node
+    # group routes direct (an empty group = direct).
+    await _add_node(db, "http://127.0.0.1:38080")
+    from voidswitch.models.db import NodeGroup, Provider
+
+    async with db.session() as session:
+        empty = NodeGroup(name="Empty")
+        session.add(empty)
+        await session.flush()
+        provider = await session.get(Provider, seeded["provider_id"])
+        provider.node_group_id = empty.id
+        await session.flush()
 
     with respx.mock(assert_all_called=False) as mock:
         mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
@@ -221,30 +260,18 @@ async def test_dispatch_direct_proxy_mode_uses_no_proxy(db, seeded):
     assert log is not None and log.proxy_id is None  # went direct
 
 
-async def test_dispatch_selected_with_all_assigned_down_skips_provider(db, seeded):
-    # Assign a proxy, then disable it: no active assigned proxy remains, and a
-    # "selected" provider must NOT fall back to direct — it is skipped → 502.
-    pid = await _add_proxy(db, "http://127.0.0.1:38080")
-    async with db.session() as session:
-        proxy = await session.get(Proxy, pid)
-        proxy.status = ProxyStatus.DISABLED.value
-        await session.flush()
-    await _set_provider_proxy(db, seeded["provider_id"], "selected", [pid])
-
-    result = await _dispatch_hi(seeded)
-    assert result.status_code == 502
-    assert result.attempts == 0  # never attempted — no route available
+# test_dispatch_selected_with_all_assigned_down_skips_provider is obsolete: under
+# the routing model an empty node group (all nodes down) degrades to DIRECT rather
+# than skipping the provider, so there is no "no usable route → skip → 502" path.
 
 
 async def test_dispatch_model_route_targets_key_pool(db, seeded):
-    from voidswitch.models.db import Provider
-
-    # A "leaked"-pooled key, plus an alias route to the deepseek upstream on it.
+    # A "leaked"-pooled key, plus an exposed model routed to the deepseek upstream
+    # through exactly that key pool.
     leaked_id = await _add_key_pool(db, seeded["provider_id"], "sk-leaked-1", "leaked")
-    async with db.session() as session:
-        prov = await session.get(Provider, seeded["provider_id"])
-        prov.model_routes = [{"alias": "ds-lkd", "upstream": "deepseek-chat", "pool": "leaked"}]
-        await session.flush()
+    await _expose_route(
+        db, "ds-lkd", seeded["provider_id"], "deepseek-chat", pool="leaked"
+    )
 
     with respx.mock(assert_all_called=False) as mock:
         mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
@@ -275,13 +302,7 @@ async def _enable_debug(db, token_id: int) -> None:
 
 async def test_dispatch_records_upstream_model_for_route(db, seeded):
     """A model route records both the inbound alias and the routed upstream id."""
-    from voidswitch.models.db import Provider
-
-    await _add_key_pool(db, seeded["provider_id"], "sk-leaked-1", "leaked")
-    async with db.session() as session:
-        prov = await session.get(Provider, seeded["provider_id"])
-        prov.model_routes = [{"alias": "ds-lkd", "upstream": "deepseek-chat", "pool": "leaked"}]
-        await session.flush()
+    await _expose_route(db, "ds-lkd", seeded["provider_id"], "deepseek-chat")
 
     with respx.mock(assert_all_called=False) as mock:
         mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
@@ -306,13 +327,8 @@ async def test_dispatch_upstream_500_exhaustion_is_traceable(db, seeded):
     """A total failover on repeated upstream 500s still attributes the failing
     row to the provider / route / upstream model it last tried (not "provider —").
     With a debug token the last upstream body + a full per-attempt trail are kept."""
-    from voidswitch.models.db import Provider
-
     await _enable_debug(db, seeded["token_id"])
-    async with db.session() as session:
-        prov = await session.get(Provider, seeded["provider_id"])
-        prov.model_routes = [{"alias": "codex-gpt-5.5", "upstream": "gpt-5.5", "pool": ""}]
-        await session.flush()
+    await _expose_route(db, "codex-gpt-5.5", seeded["provider_id"], "gpt-5.5")
 
     err = {"error": {"message": "internal boom", "type": "server_error"}}
     with respx.mock(assert_all_called=False) as mock:
@@ -405,14 +421,7 @@ async def test_dispatch_success_non_debug_captures_nothing(db, seeded):
 
 
 async def test_dispatch_no_provider_returns_404(db, seeded):
-    # Narrow the seeded provider so it no longer matches via the "*" wildcard.
-    from voidswitch.models.db import Provider
-
-    async with db.session() as session:
-        provider = await session.get(Provider, seeded["provider_id"])
-        provider.models = ["deepseek-chat"]
-        await session.flush()
-
+    # A model id that is not exposed (e.g. a raw upstream id) is rejected.
     result = await dispatch(
         DispatchRequest(
             inbound_style=ApiStyle.OPENAI,
@@ -479,6 +488,7 @@ async def _add_responses_provider(db) -> int:
         await session.flush()
         pid = provider.id
     await _add_key(db, pid, "sk-resp-1")
+    await _expose_route(db, "gpt-5", pid, "gpt-5")
     return pid
 
 

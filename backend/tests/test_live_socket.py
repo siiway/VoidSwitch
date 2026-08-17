@@ -15,7 +15,16 @@ import pytest
 from voidswitch.constants import ApiStyle, KeyStatus
 from voidswitch.core.config import get_settings
 from voidswitch.core.security import encrypt_secret, hash_token
-from voidswitch.models.db import ApiKey, Provider, User, VoidToken
+from voidswitch.models.db import (
+    ApiKey,
+    ExposedModel,
+    Provider,
+    RouteLayer,
+    RoutePoolEntry,
+    User,
+    VoidToken,
+)
+from voidswitch.services import model_routing
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
 pytestmark = pytest.mark.asyncio
@@ -100,6 +109,21 @@ async def _seed(db, base_url: str) -> int:
                 key_hash=hash_token("k-live"),
                 key_preview="k",
                 status=KeyStatus.ACTIVE.value,
+            )
+        )
+        await session.flush()
+        exposed = ExposedModel(model_id="mock-model")
+        session.add(exposed)
+        await session.flush()
+        route = await model_routing.get_or_create_route(session, exposed)
+        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
+        session.add(layer)
+        await session.flush()
+        session.add(
+            RoutePoolEntry(
+                layer_id=layer.id,
+                provider_id=provider.id,
+                upstream_model="mock-model",
             )
         )
         await session.flush()

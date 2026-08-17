@@ -152,9 +152,9 @@ export function MyToken() {
         api.get<ModelEntry[]>("/api/models"),
       ]);
       const infos: ModelInfo[] = catalog
-        .filter((m) => m.served && m.enabled)
+        .filter((m) => m.enabled)
         .map((m) => ({
-          id: m.public_id,
+          id: m.model_id,
           display_name: m.display_name ?? undefined,
           description: m.description ?? undefined,
           opencode:

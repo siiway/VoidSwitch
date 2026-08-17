@@ -7,7 +7,12 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
 
 ## Groups
 
-- **Proxy & Routing** — proxy toggle, static proxy URL, failure thresholds, probe interval and URL, and the reviver toggle.
+- **Nodes & Routing** — the proxy-switching master toggle (`proxy_switching_enabled`): `true` = the node /
+  node-group routing system is on; `false` = routing is off and every request goes through
+  `static_proxy_url` (or the environment). Routing-related settings include `node_default_probe_url` (default
+  probe URL), `node_probe_interval_seconds` (idle health-check interval), `node_rank_alpha/beta/gamma`
+  (weights for dynamic node ordering), `max_retries` (max retries per request), and `max_proxy_failures`
+  (failure threshold before a node is disabled).
 - **Keys & Balance** — key failure limit, auto-disable for zero-balance keys, and balance probe/rescan cadence and rate.
 - **Rate Limiting** — the default recovery window and the cap on any single cooldown.
 - **Timeouts & Retries** — connection / request / stream-idle timeouts, the retry budget, plus a
@@ -40,5 +45,7 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
 
 ## Notes
 
-- Settings that only apply under certain conditions are hidden otherwise (for example, the static proxy URL only appears when the proxy toggle is off).
+- Settings that only apply under certain conditions are hidden otherwise (for example, the static proxy URL only appears when **proxy switching / routing** is off, and the node-pool tuning settings only when the routing system is on).
+- The **models.dev sync interval** (`models_dev_sync_interval_minutes`) controls how often exposed models'
+  models.dev placeholder metadata is refreshed (default `1440` = daily).
 - Changes take effect on save; background tasks pick up the new intervals on their next tick.

@@ -19,7 +19,7 @@ from sqlalchemy import select
 from voidswitch.constants import KeyStatus
 from voidswitch.core.config import get_settings
 from voidswitch.core.security import decrypt_secret, encrypt_secret, hash_token
-from voidswitch.models.db import ApiKey, Provider, Proxy, RequestLog
+from voidswitch.models.db import ApiKey, Provider, RequestLog
 from voidswitch.services import settings_store, xai_oauth
 
 pytestmark = pytest.mark.asyncio
@@ -46,6 +46,21 @@ async def _make_key(db, secret: str) -> int:
         session.add(key)
         await session.flush()
         return key.id
+
+
+async def _add_system_node(db, url: str) -> None:
+    """Add a node to the System node group (xAI OAuth system egress)."""
+    from voidswitch.models.db import Node, NodeGroupMember
+    from voidswitch.services import routing
+
+    async with db.session() as session:
+        node = Node(url=url, type="http", status="active")
+        session.add(node)
+        await session.flush()
+        system = await routing.system_group(session)
+        if system is not None:
+            session.add(NodeGroupMember(group_id=system.id, node_id=node.id))
+        await session.flush()
 
 
 async def test_static_api_key_is_returned_as_is(db):
@@ -199,13 +214,11 @@ async def test_bundle_without_access_or_refresh_raises(db):
 
 
 async def test_refresh_rotates_past_blocked_egress(db):
-    """A 403 on the first proxy rotates to the next egress and succeeds."""
+    """A 403 on the first node rotates to the next egress and succeeds."""
     secret_key = get_settings().server.secret_key
     key_id = await _make_key(db, json.dumps({"refresh_token": "r-only"}))
-    async with db.session() as session:
-        session.add(Proxy(url="http://p1.local:8080", status="active", enabled=True))
-        session.add(Proxy(url="http://p2.local:8080", status="active", enabled=True))
-        await session.flush()
+    await _add_system_node(db, "http://p1.local:8080")
+    await _add_system_node(db, "http://p2.local:8080")
     with respx.mock(assert_all_called=True) as mock:
         route = mock.post(xai_oauth.TOKEN_URL).mock(
             side_effect=[

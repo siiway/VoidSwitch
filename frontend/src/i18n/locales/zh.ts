@@ -63,7 +63,7 @@ const zh: Translations = {
     dashboard: "仪表盘",
     providers: "提供商",
     models: "模型",
-    proxies: "代理",
+    nodes: "节点与节点组",
     tokens: "令牌",
     users: "用户",
     roleGroups: "身份组",

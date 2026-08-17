@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import KeySelectMode, KeyStatus, ProxyMode
+from voidswitch.constants import KeySelectMode, KeyStatus
 from voidswitch.core.audit import AuditAction, record_audit, split_sensitive
 from voidswitch.core.auth import (
     actor_display_name,
@@ -30,7 +30,7 @@ from voidswitch.core.security import (
     generate_provider_api_token,
     hash_token,
 )
-from voidswitch.models.db import ApiKey, Provider, Proxy, User
+from voidswitch.models.db import ApiKey, NodeGroup, Provider, User
 from voidswitch.models.schemas import (
     ProviderCreate,
     ProviderKeyApiOut,
@@ -48,8 +48,33 @@ log = get_logger("admin.providers")
 
 router = APIRouter(prefix="/api/admin/providers", tags=["admin:providers"])
 
-_PROXY_MODES = {m.value for m in ProxyMode}
 _KEY_SELECT_MODES = {m.value for m in KeySelectMode}
+
+
+def _slugify(name: str) -> str:
+    """A stable provider slug (internal ``slug/model`` index), from a name."""
+    out: list[str] = []
+    for ch in (name or "").lower():
+        if ch.isalnum():
+            out.append(ch)
+        elif out and out[-1] != "-":
+            out.append("-")
+    slug = "".join(out).strip("-") or "provider"
+    return slug[:64]
+
+
+async def _unique_slug(session: AsyncSession, base: str, *, exclude_id: int | None = None) -> str:
+    slug = _slugify(base)
+    candidate = slug
+    n = 2
+    while True:
+        q = select(Provider.id).where(Provider.slug == candidate)
+        if exclude_id is not None:
+            q = q.where(Provider.id != exclude_id)
+        if (await session.execute(q)).first() is None:
+            return candidate
+        candidate = f"{slug}-{n}"
+        n += 1
 
 
 def _validate_key_select_mode(mode: str | None) -> None:
@@ -57,6 +82,20 @@ def _validate_key_select_mode(mode: str | None) -> None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             f"key_select_mode must be one of {sorted(_KEY_SELECT_MODES)}.",
+        )
+
+
+async def _validate_node_group(session: AsyncSession, node_group_id: int | None) -> None:
+    """Reject a node_group_id that doesn't reference a real node group."""
+    if node_group_id is None:
+        return
+    exists = (
+        await session.execute(select(NodeGroup.id).where(NodeGroup.id == node_group_id))
+    ).first()
+    if exists is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Unknown node group id: {node_group_id}.",
         )
 
 
@@ -135,26 +174,6 @@ def _ensure_can_edit(user: User, provider: Provider) -> None:
     )
 
 
-async def _validate_proxy_config(
-    session: AsyncSession, mode: str | None, proxy_ids: list[int] | None
-) -> None:
-    """Reject an unknown proxy_mode or proxy_ids that don't reference real proxies."""
-    if mode is not None and mode not in _PROXY_MODES:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"proxy_mode must be one of {sorted(_PROXY_MODES)}.",
-        )
-    if proxy_ids:
-        found = (
-            (await session.execute(select(Proxy.id).where(Proxy.id.in_(proxy_ids)))).scalars().all()
-        )
-        missing = sorted(set(proxy_ids) - set(found))
-        if missing:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown proxy id(s): {missing}."
-            )
-
-
 @router.get("", response_model=list[ProviderOut])
 async def list_providers(
     session: AsyncSession = Depends(get_session),
@@ -188,27 +207,27 @@ async def create_provider(
     cls = adapter_class(body.type)
     models = body.models or list(cls.default_models)
     base_url = body.base_url or cls.default_base_url
-    await _validate_proxy_config(session, body.proxy_mode, body.proxy_ids)
+    await _validate_node_group(session, body.node_group_id)
     _validate_key_select_mode(body.key_select_mode)
+    slug = (body.slug or "").strip() or _slugify(body.name)
+    slug = await _unique_slug(session, slug)
 
     provider = Provider(
         name=body.name,
         type=body.type,
+        slug=slug,
         base_url=base_url,
         enabled=body.enabled,
         priority=body.priority,
         weight=body.weight,
         models=models,
-        model_map=body.model_map,
         balance_url=body.balance_url,
         extra_headers=body.extra_headers,
         timeout_seconds=body.timeout_seconds,
         drop_opencode_identity_block=body.drop_opencode_identity_block,
-        proxy_mode=body.proxy_mode,
-        proxy_ids=body.proxy_ids,
+        node_group_id=body.node_group_id,
         key_select_mode=body.key_select_mode,
         rate_limit_cooldown_seconds=max(0, body.rate_limit_cooldown_seconds),
-        model_routes=[r.model_dump() for r in body.model_routes],
         added_by=user.id,
         added_by_name=actor_display_name(user),
     )
@@ -271,12 +290,14 @@ async def update_provider(
         ).first()
         if clash is not None:
             raise HTTPException(status.HTTP_409_CONFLICT, "Provider name already exists.")
-    if "proxy_mode" in real_changes or "proxy_ids" in real_changes:
-        await _validate_proxy_config(
-            session,
-            real_changes.get("proxy_mode", provider.proxy_mode),
-            real_changes.get("proxy_ids", provider.proxy_ids),
+    if "node_group_id" in real_changes:
+        await _validate_node_group(session, real_changes["node_group_id"])
+    if "slug" in real_changes and real_changes["slug"].strip():
+        real_changes["slug"] = await _unique_slug(
+            session, real_changes["slug"].strip(), exclude_id=provider_id
         )
+    else:
+        real_changes.pop("slug", None)
     if "key_select_mode" in real_changes:
         _validate_key_select_mode(real_changes["key_select_mode"])
     for field, value in real_changes.items():

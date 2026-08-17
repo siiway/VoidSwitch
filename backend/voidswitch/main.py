@@ -23,8 +23,8 @@ from voidswitch.api import (
 from voidswitch.api.admin import (
     keys as keys_api,
     logs as logs_api,
+    nodes as nodes_api,
     providers as providers_api,
-    proxies as proxies_api,
     reveal as reveal_api,
     role_groups as role_groups_api,
     settings as settings_api,
@@ -40,14 +40,14 @@ from voidswitch.core.database import (
     run_migrations,
 )
 from voidswitch.core.logging import configure_logging, get_logger
-from voidswitch.services import role_groups, settings_store
+from voidswitch.services import role_groups, routing, settings_store
 from voidswitch.services.dispatcher import reconcile_pending_request_logs
 from voidswitch.services.network import get_pool
 from voidswitch.tasks.balance_probe import run_balance_probe
 from voidswitch.tasks.balance_rescan import run_balance_rescan
 from voidswitch.tasks.log_cleanup import run_log_cleanup
 from voidswitch.tasks.manager import PeriodicTask, TaskManager
-from voidswitch.tasks.proxy_resurrector import run_proxy_resurrector
+from voidswitch.tasks.node_resurrector import run_node_resurrector
 
 log = get_logger("main")
 error_log = get_logger("error")
@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await settings_store.ensure_defaults(session)
         await settings_store.load_all(session)
         await role_groups.ensure_moderator_group(session)
+        await routing.ensure_seeded_groups(session)
     # Heal orphaned "pending" stream rows (worker killed mid-stream, abandoned
     # connections) — anything still pending past the response timeout is marked
     # terminated (已切断). Safe no-op when response_timeout_seconds = 0.
@@ -92,11 +93,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     manager.register(
         PeriodicTask(
-            name="proxy_resurrector",
-            tick=run_proxy_resurrector,
-            interval_key="proxy_probe_interval_seconds",
+            name="node_resurrector",
+            tick=run_node_resurrector,
+            interval_key="node_probe_interval_seconds",
             enabled_key="proxy_health_check_enabled",
-            # Moot when proxy switching is off (external egress) — report it as
+            # Moot when routing is off (external egress) — report it as
             # disabled and don't run it, rather than spinning a no-op tick.
             gate_keys=("proxy_switching_enabled",),
             min_interval=15,
@@ -189,7 +190,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Admin.
     app.include_router(providers_api.router)
     app.include_router(keys_api.router)
-    app.include_router(proxies_api.router)
+    app.include_router(nodes_api.router)
+    app.include_router(nodes_api.groups_router)
     app.include_router(tokens_api.router)
     app.include_router(settings_api.router)
     app.include_router(logs_api.router)

@@ -26,8 +26,8 @@ from voidswitch.constants import (
 from voidswitch.core import auth, ratelimit
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
-from voidswitch.models.db import ModelEntry, Provider, RequestLog, VoidToken
-from voidswitch.services import models_catalog, role_groups, settings_store
+from voidswitch.models.db import ExposedModel, RequestLog, VoidToken
+from voidswitch.services import model_routing, role_groups, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
 router = APIRouter(tags=["gateway"])
@@ -107,23 +107,26 @@ def _check_model_allowed(token: VoidToken, model: str) -> None:
 
 
 async def _resolve_public_model(session: AsyncSession, model: str) -> str:
-    """Map a public alias to its real upstream id; reject a hidden raw id.
+    """Map a public model id to its exposed-model row.
 
-    When an admin maps ``deepseek-v4`` → public ``ds``, callers must use ``ds``;
-    ``ds`` resolves back to ``deepseek-v4`` for dispatch, and calling the raw
-    ``deepseek-v4`` is rejected so the upstream id can't be reached directly.
-    Raw ids hidden by an *alias route* (not just a metadata alias) are rejected
-    the same way — they are never advertised, so they must not be callable.
+    Only *exposed* ids are callable. Raw upstream ids (``slug/model``) are never
+    advertised and are rejected here, so an upstream id can't be reached
+    directly.
     """
-    alias_to_source, _ = await models_catalog.mapping_tables(session)
-    if model in alias_to_source:
-        return alias_to_source[model]
-    if model in await models_catalog.hidden_model_ids(session):
+    entry = (
+        await session.execute(select(ExposedModel).where(ExposedModel.model_id == model))
+    ).scalar_one_or_none()
+    if entry is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             f"Model '{model}' is not available under this id.",
         )
-    return model
+    if not entry.enabled:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"Model '{model}' is not available under this id.",
+        )
+    return entry.model_id
 
 
 async def _body(request: Request) -> dict:
@@ -285,80 +288,73 @@ async def _advertised_models(
 ) -> list[dict[str, object]]:
     """Models this caller may actually use, in ``/v1/models`` payload shape.
 
-    Applies the same visibility rules everywhere: raw ids hidden behind an alias
-    route are dropped, disabled metadata rows are hidden, role-group access is
-    enforced (moderators see everything; others only models their groups allow),
-    and the token's ``allowed_models`` allow-list is honoured. Shared by the
-    listing endpoint and the OpenCode ``/sync-models`` report so a member always
-    sees exactly the set they can call.
+    Only *exposed* models are advertised (upstream ``slug/model`` ids never are).
+    Role-group access is enforced (moderators see everything; others only models
+    their groups allow), and the token's ``allowed_models`` allow-list is
+    honoured. The ``opencode`` block is the fully merged downstream config
+    (defaults ← models.dev placeholder ← custom config ← structured fields).
     """
     token = authed.token
 
-    providers = (
-        (await session.execute(select(Provider).where(Provider.enabled.is_(True)))).scalars().all()
-    )
-    # Per-model metadata (description + OpenCode config). A disabled entry hides
-    # the model from the advertised list entirely.
-    entries = {
-        e.model_id: e for e in (await session.execute(select(ModelEntry))).scalars().all()
-    }
-    # Role-group access: moderators see every model; others only models whose
-    # allowed role groups include one of theirs.
+    entries = (await session.execute(select(ExposedModel))).scalars().all()
+
     is_mod = role_groups.is_moderator(authed.user)
     group_ids = set() if is_mod else await role_groups.user_group_ids(session, authed.user.id)
     seen: set[str] = set()
     data: list[dict[str, object]] = []
     allowed = token.allowed_models or []
 
-    def _push_model(model_id: str, provider_name: str) -> None:
-        nonlocal data, seen, allowed, entries, group_ids, is_mod
-        entry = entries.get(model_id)
-        if entry is not None and not entry.enabled:
+    # Pre-load the models.dev entries referenced by any exposed model, once.
+    dev_ids = [e.models_dev_id for e in entries if e.models_dev_id]
+    md_by_id: dict[str, dict] = {}
+    if dev_ids:
+        from sqlalchemy import select as _select
+
+        from voidswitch.models.db import ModelsDevCache
+
+        rows = (
+            (
+                await session.execute(
+                    _select(ModelsDevCache).where(ModelsDevCache.id.in_(dev_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        md_by_id = {r.id: r.data or {} for r in rows}
+
+    def _push(entry: ExposedModel) -> None:
+        nonlocal data, seen, allowed, group_ids, is_mod, md_by_id
+        if not entry.enabled:
             return
         if not role_groups.model_allowed_for_groups(entry, group_ids, is_mod=is_mod):
             return
-        public_id = entry.mapped_id if entry is not None and entry.mapped_id else model_id
-        if public_id in seen:
+        model_id = entry.model_id
+        if model_id in seen:
             return
         if allowed and not any(
-            pattern == "*" or pattern == public_id or fnmatch(public_id, pattern)
+            pattern == "*" or pattern == model_id or fnmatch(model_id, pattern)
             for pattern in (str(p) for p in allowed)
         ):
             return
-        seen.add(public_id)
+        seen.add(model_id)
         item: dict[str, object] = {
-            "id": public_id,
+            "id": model_id,
             "object": "model",
             "created": 0,
-            "owned_by": provider_name,
+            "owned_by": "voidswitch",
         }
-        if entry is not None:
-            if entry.display_name:
-                item["display_name"] = entry.display_name
-            if entry.description:
-                item["description"] = entry.description
-            if entry.opencode_config:
-                item["opencode"] = entry.opencode_config
+        # Downstream config: never advertise upstream refs.
+        dev_entry = md_by_id.get(entry.models_dev_id) if entry.models_dev_id else None
+        item["opencode"] = model_routing.build_opencode_config(entry, dev_entry)
+        if entry.display_name:
+            item["display_name"] = entry.display_name
+        if entry.description:
+            item["description"] = entry.description
         data.append(item)
 
-    for provider in providers:
-        # Raw upstream ids hidden behind alias routes must not be advertised;
-        # only the alias (listed below via model_routes) is callable.
-        hidden = models_catalog.routed_upstreams(provider)
-        for model in provider.models or []:
-            if model == "*" or model in hidden:
-                continue
-            _push_model(model, provider.name)
-        # Also advertise alias-route models. Each alias gets a ModelEntry row
-        # during sync, looked up by its alias name so mapped_id / description /
-        # opencode_config still apply.
-        for route in provider.model_routes or []:
-            if not isinstance(route, dict):
-                continue
-            alias = route.get("alias")
-            if not isinstance(alias, str) or not alias:
-                continue
-            _push_model(alias, provider.name)
+    for entry in entries:
+        _push(entry)
     return data
 
 

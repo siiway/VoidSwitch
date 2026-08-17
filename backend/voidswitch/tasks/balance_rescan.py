@@ -14,8 +14,9 @@ from voidswitch.core.config import get_settings
 from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger
 from voidswitch.models.db import ApiKey, Provider
+from voidswitch.services import routing
 from voidswitch.services.balance import refresh_key_balance
-from voidswitch.services.network import Route, get_pool
+from voidswitch.services.network import get_pool
 from voidswitch.services.providers.registry import get_adapter
 
 log = get_logger("tasks.balance_rescan")
@@ -25,9 +26,12 @@ async def run_balance_rescan() -> None:
     db = get_database()
     settings = get_settings()
     pool = get_pool()
-    client = await pool.get(Route(), connect_timeout=15.0, read_timeout=30.0)
 
     async with db.session() as session:
+        routes = await routing.system_routes(session)
+        route, _node = routes[0]
+        client = await pool.get(route, connect_timeout=15.0, read_timeout=30.0)
+
         providers = (
             (await session.execute(select(Provider).where(Provider.enabled.is_(True))))
             .scalars()

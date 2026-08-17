@@ -3,16 +3,45 @@
 The **Models** page is visible to everyone, but staff can manage it. See the
 [user-facing models guide](/en/guide/models) for the reader's perspective.
 
-## Per-model metadata
+## Exposed models
 
-For any model ID, staff can set:
+The **Models** page lists **exposed models** (e.g. `fast-coder`, `astr-chat`) — the **only** ids
+users/clients ever see. Upstream model ids (e.g. `deepseek/deepseek-chat`) are never advertised.
+
+Each exposed model has a **route flowchart**:
+
+- The top is the **exposed model** itself;
+- below it are ordered **layers** (fallback pools);
+- each layer is a **pool** of upstream entries (provider + upstream model + weight), with a per-layer
+  **max attempts** (`max_attempts`; `1` = pick one, `>1` = try several).
+
+Failures eligible for fallback (429 rate-limit / 404 model-not-found / 5xx) move down the flow / to the
+next upstream; a **400** (client error) is returned as-is; a response definitively out of quota disables
+that upstream key.
+
+Route flowcharts are edited on a **dedicated page**: top model → layer pools → upstreams.
+
+## Per-exposed-model metadata
+
+For any exposed model, staff can set:
 
 - **Display name** and **description**;
-- **Public alias** (`mapped_id`) — once set, clients see and must use this ID instead of the original
-  upstream ID, hiding the upstream and eliminating ambiguity conflicts;
-- Custom **OpenCode config**, which the plugin deep-merges into that model;
+- The structured fields **limit_context / limit_input / limit_output / reasoning /
+  capabilities (text/image/audio/tool) / modalities**;
+- A custom **OpenCode config** (`opencode_config`);
 - **Enable** — hide the model from `/v1/models` and the selector without deleting it;
 - The **role groups** allowed to call it.
+
+### models.dev integration
+
+- Search **models.dev** on the Models page and **map** a model onto the exposed model;
+- its data is used as **placeholder metadata** (anything you fill in overrides it);
+- the sync interval is the `models_dev_sync_interval_minutes` setting (default `1440` = daily);
+- endpoints: `/api/models/models-dev/search?q=`, `/api/models/models-dev/sync`.
+
+### Downstream config precedence (OpenCode plugin)
+
+Structured fields **>** custom `opencode_config` **>** models.dev placeholder **>** defaults.
 
 ## Bulk edit
 
@@ -32,19 +61,15 @@ For OpenCode config, choose:
 - Other users need one of the [role groups](/en/admin/role-groups) listed on the model.
 - Therefore, an empty allow-list means "moderator only".
 
-## Sync and cleanup
+## Sync from providers
 
-There are **two mutually independent** "syncs" here:
+**Sync from providers** (the button on the Models page, `POST /api/models/sync`) ingests the upstream
+models currently served by enabled providers and **reshapes the shared catalog**. This is a **staff-only**
+operation; members do not see the button.
+(OpenCode's `/sync-models` command — `POST /v1/models/sync` — is open to **all members** and aligns the
+plugin's list with the exposed models you **can currently call**; it never touches the shared catalog.)
 
-- **Sync from providers** (the button on the Models page, `POST /api/models/sync`) adds catalog rows for all
-  model IDs currently served by enabled providers, **reshaping the shared catalog**. This is a **staff-only**
-  operation; members do not see the button.
-- **OpenCode sync** (`POST /v1/models/sync`, i.e. OpenCode's `/sync-models` command) is open to **all members**.
-  It does *not* reshape the shared catalog; it merely reports the set of models that token **can currently
-  call** (applying role-group access and the token's allow-list, and excluding hidden/disabled models), so the
-  plugin can align its own model list with the permissions the user actually holds. So members can sync without
-  admin privileges.
-- **Clean up unserved** removes model metadata rows that no provider serves anymore (staff-only).
+**Clean up unserved** removes metadata rows no longer served by any upstream model (staff-only).
 
 ## Hidden models
 

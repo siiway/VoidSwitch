@@ -1,13 +1,14 @@
-"""Models catalog — visible to every signed-in user, editable by staff.
+"""Exposed models catalog + route flowcharts — visible to every signed-in user,
+editable by staff.
 
-Members get a read-only, card-friendly view of every available model id and its
-description / OpenCode config. Staff may edit descriptions and the custom
-OpenCode model config (individually or in batch). Any signed-in user may refresh
-the catalog from the providers (also reachable from the OpenCode ``/models``
-command via the gateway endpoint in ``api.proxy``).
+Members get a read-only view of every *exposed* model and its metadata. Staff may
+edit metadata (individually or in batch), wire the route flowcharts (exposed →
+layer pools → upstream refs), and match models to the models.dev registry.
 """
 
 from __future__ import annotations
+
+import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -22,7 +23,15 @@ from voidswitch.core.auth import (
     require_staff,
 )
 from voidswitch.core.database import get_session
-from voidswitch.models.db import ModelEntry, RoleGroup, User
+from voidswitch.models.db import (
+    ExposedModel,
+    Provider,
+    RoleGroup,
+    Route,
+    RouteLayer,
+    RoutePoolEntry,
+    User,
+)
 from voidswitch.models.schemas import (
     ModelBatchResult,
     ModelBatchUpdate,
@@ -30,18 +39,17 @@ from voidswitch.models.schemas import (
     ModelOut,
     ModelSyncResult,
     ModelUpsert,
+    ModelWithRouteOut,
+    RouteOut,
+    RouteUpdate,
 )
-from voidswitch.services import models_catalog
+from voidswitch.services import model_routing, models_catalog, models_dev
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    """Recursively merge ``override`` into ``base``, returning a new dict.
-
-    Nested dicts are merged key-by-key; every other value (lists, scalars) from
-    ``override`` replaces the one in ``base``. Inputs are not mutated.
-    """
+    """Recursively merge ``override`` into ``base``, returning a new dict."""
     result = dict(base)
     for key, value in override.items():
         existing = result.get(key)
@@ -52,26 +60,74 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def _to_out(item: models_catalog.CatalogItem) -> ModelOut:
-    entry = item.entry
+def _to_out(item: ExposedModel) -> ModelOut:
+    upstreams = []
+    route = item.route
+    if route is not None:
+        seen: set[tuple[int | None, str]] = set()
+        for layer in route.layers:
+            for entry in layer.entries:
+                key = (entry.provider_id, entry.upstream_model)
+                if key in seen:
+                    continue
+                seen.add(key)
+                provider = entry.provider
+                if provider is None:
+                    continue
+                slug = provider.slug or provider.name
+                upstreams.append(
+                    f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug
+                )
     return ModelOut(
-        id=entry.id if entry is not None else None,
+        id=item.id,
         model_id=item.model_id,
-        mapped_id=item.mapped_id,
-        public_id=item.public_id,
-        display_name=entry.display_name if entry is not None else None,
-        description=entry.description if entry is not None else None,
-        opencode_config=entry.opencode_config if entry is not None else {},
+        display_name=item.display_name,
+        description=item.description,
+        opencode_config=item.opencode_config or {},
         enabled=item.enabled,
-        allowed_role_group_ids=(
-            list(entry.allowed_role_group_ids or []) if entry is not None else []
-        ),
-        providers=item.providers,
-        served=item.served,
-        registered=item.registered,
-        added_by_name=entry.added_by_name if entry is not None else None,
-        created_at=entry.created_at if entry is not None else None,
-        updated_at=entry.updated_at if entry is not None else None,
+        allowed_role_group_ids=list(item.allowed_role_group_ids or []),
+        limit_context=item.limit_context,
+        limit_input=item.limit_input,
+        limit_output=item.limit_output,
+        reasoning=item.reasoning,
+        capabilities=item.capabilities or {},
+        modalities=item.modalities or {},
+        models_dev_id=item.models_dev_id,
+        models_dev_synced_at=item.models_dev_synced_at,
+        upstreams=upstreams,
+        added_by_name=item.added_by_name,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+def _route_out(route: Route | None) -> RouteOut | None:
+    if route is None:
+        return None
+    return RouteOut(
+        id=route.id,
+        exposed_model_id=route.exposed_model_id,
+        layers=[
+            {
+                "id": layer.id,
+                "position": layer.position,
+                "max_attempts": layer.max_attempts,
+                "entries": [
+                    {
+                        "id": e.id,
+                        "provider_id": e.provider_id,
+                        "provider_name": e.provider.name if e.provider else None,
+                        "provider_slug": e.provider.slug if e.provider else None,
+                        "upstream_model": e.upstream_model,
+                        "weight": e.weight,
+                        "enabled": e.enabled,
+                        "key_pool": e.key_pool,
+                    }
+                    for e in layer.entries
+                ],
+            }
+            for layer in route.layers
+        ],
     )
 
 
@@ -90,17 +146,19 @@ async def list_models(
 
 async def _get_or_create_entry(
     session: AsyncSession, model_id: str, user: User
-) -> ModelEntry:
+) -> ExposedModel:
     entry = (
-        await session.execute(select(ModelEntry).where(ModelEntry.model_id == model_id))
+        await session.execute(select(ExposedModel).where(ExposedModel.model_id == model_id))
     ).scalar_one_or_none()
     if entry is None:
-        entry = ModelEntry(
+        entry = ExposedModel(
             model_id=model_id,
             added_by=user.id,
             added_by_name=actor_display_name(user),
         )
         session.add(entry)
+        await session.flush()
+        await model_routing.get_or_create_route(session, entry)
     return entry
 
 
@@ -108,8 +166,7 @@ async def _validated_role_group_ids(
     session: AsyncSession, ids: list[int]
 ) -> list[int]:
     """Validate a role-group allow-list; reject unknown ids instead of silently
-    dropping them (a dropped id would otherwise quietly revoke access for the
-    affected members)."""
+    dropping them."""
     existing = set(
         (
             await session.execute(select(RoleGroup.id).where(RoleGroup.builtin.is_(False)))
@@ -123,7 +180,6 @@ async def _validated_role_group_ids(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             f"Unknown role group id(s): {unknown}.",
         )
-    # De-duplicate, preserving order.
     seen: set[int] = set()
     result: list[int] = []
     for gid in ids:
@@ -144,38 +200,16 @@ async def upsert_model(
     if not model_id:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "model_id is required.")
     entry = await _get_or_create_entry(session, model_id, user)
-    if body.mapped_id is not None:
-        mapped = body.mapped_id.strip()
-        if mapped == model_id:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "mapped_id must differ from the model id "
-                "(use it to rename, not to alias to itself).",
-            )
-        # The alias must be unique — two entries claiming the same mapped_id
-        # would overwrite each other in the gateway's alias map nondeterministically.
-        if mapped:
-            clash = (
-                await session.execute(
-                    select(ModelEntry.id).where(
-                        ModelEntry.mapped_id == mapped, ModelEntry.model_id != model_id
-                    )
-                )
-            ).first()
-            if clash is not None:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"Another model is already mapped to the alias '{mapped}'.",
-                )
-        entry.mapped_id = mapped or None
-    if body.display_name is not None:
-        entry.display_name = body.display_name.strip() or None
-    if body.description is not None:
-        entry.description = body.description
-    if body.opencode_config is not None:
-        entry.opencode_config = body.opencode_config
-    if body.enabled is not None:
-        entry.enabled = body.enabled
+    for field, value in body.model_dump(exclude={"model_id"}, exclude_none=True).items():
+        if field in ("limit_context", "limit_input", "limit_output"):
+            setattr(entry, field, max(0, int(value)) if value else None)
+            continue
+        if field == "models_dev_id":
+            entry.models_dev_id = value or None
+            if value:
+                entry.models_dev_synced_at = dt.datetime.now(dt.UTC)
+            continue
+        setattr(entry, field, value)
     if body.allowed_role_group_ids is not None:
         entry.allowed_role_group_ids = await _validated_role_group_ids(
             session, body.allowed_role_group_ids
@@ -194,11 +228,8 @@ async def upsert_model(
         },
         ip=request.client.host if request.client else None,
     )
-    catalog = await models_catalog.build_catalog(session)
-    item = next((i for i in catalog if i.model_id == model_id), None)
-    if item is None:  # pragma: no cover - just-written row is always present
-        item = models_catalog.CatalogItem(model_id=model_id, entry=entry, providers=[])
-    return _to_out(item)
+    entry = await session.get(ExposedModel, entry.id)
+    return _to_out(entry)
 
 
 @router.post("/batch", response_model=ModelBatchResult)
@@ -211,7 +242,6 @@ async def batch_update_models(
     ids = [m.strip() for m in body.model_ids if m and m.strip()]
     if not ids:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "model_ids is required.")
-    # Resolve the valid (non-builtin) role-group ids once for the whole batch.
     role_group_ids: list[int] | None = None
     if body.allowed_role_group_ids is not None:
         role_group_ids = await _validated_role_group_ids(
@@ -223,7 +253,6 @@ async def batch_update_models(
         if body.description is not None:
             entry.description = body.description
         if body.opencode_config is not None:
-            # Deep-merge into the existing config, or replace it wholesale.
             entry.opencode_config = (
                 _deep_merge(entry.opencode_config or {}, body.opencode_config)
                 if merge
@@ -255,11 +284,7 @@ async def sync_models(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
 ) -> ModelSyncResult:
-    """Register a metadata row for every served model id that lacks one.
-
-    Staff-only (admin / co-owner / owner): a member has no need to reshape the
-    shared catalog. It only discovers what providers already serve.
-    """
+    """Auto-expose every currently-served upstream id with a 1:1 route."""
     added, total = await models_catalog.sync_from_providers(
         session, added_by=user.id, added_by_name=actor_display_name(user)
     )
@@ -283,11 +308,7 @@ async def clean_unserved(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
 ) -> ModelCleanResult:
-    """Delete metadata for every model id no enabled provider currently serves.
-
-    Staff-only (it is destructive). Returns the deleted count and the sorted
-    list of model ids that were removed.
-    """
+    """Delete exposed models whose route resolves to no enabled upstream."""
     deleted, ids = await models_catalog.clean_unserved(session)
     if deleted:
         await record_audit(
@@ -310,7 +331,7 @@ async def delete_model(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
 ) -> None:
-    entry = await session.get(ModelEntry, entry_id)
+    entry = await session.get(ExposedModel, entry_id)
     if entry is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Model metadata not found.")
     model_id = entry.model_id
@@ -325,3 +346,136 @@ async def delete_model(
         detail={"model_id": model_id},
         ip=request.client.host if request.client else None,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Route flowcharts (staff editor)
+# --------------------------------------------------------------------------- #
+
+
+async def _get_exposed(session: AsyncSession, model_id: str) -> ExposedModel:
+    entry = (
+        await session.execute(select(ExposedModel).where(ExposedModel.model_id == model_id))
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Exposed model not found.")
+    return entry
+
+
+@router.get("/{model_id}/route", response_model=ModelWithRouteOut)
+async def get_route(
+    model_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_staff),
+) -> ModelWithRouteOut:
+    entry = await _get_exposed(session, model_id)
+    route = await model_routing.resolve_route(session, entry)
+    out = ModelWithRouteOut(**_to_out(entry).model_dump())
+    out.route = _route_out(route)
+    return out
+
+
+@router.put("/{model_id}/route", response_model=ModelWithRouteOut)
+async def update_route(
+    model_id: str,
+    body: RouteUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> ModelWithRouteOut:
+    entry = await _get_exposed(session, model_id)
+    route = await model_routing.get_or_create_route(session, entry)
+    provider_ids = {
+        e.provider_id for layer in body.layers for e in layer.entries if e.provider_id
+    }
+    if provider_ids:
+        found = set(
+            (await session.execute(select(Provider.id).where(Provider.id.in_(provider_ids))))
+            .scalars()
+            .all()
+        )
+        missing = sorted(provider_ids - found)
+        if missing:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown provider id(s): {missing}."
+            )
+    # Replace the whole flowchart.
+    for layer in list(route.layers):
+        await session.delete(layer)
+    for pos, layer_in in enumerate(body.layers):
+        layer = RouteLayer(
+            route_id=route.id,
+            position=pos,
+            max_attempts=max(1, layer_in.max_attempts),
+        )
+        session.add(layer)
+        await session.flush()
+        for entry_in in layer_in.entries:
+            session.add(
+                RoutePoolEntry(
+                    layer_id=layer.id,
+                    provider_id=entry_in.provider_id,
+                    upstream_model=(entry_in.upstream_model or "").strip(),
+                    weight=max(1, entry_in.weight),
+                    enabled=entry_in.enabled,
+                    key_pool=(entry_in.key_pool or "").strip(),
+                )
+            )
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.MODEL_UPSERT,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="model",
+        target_id=entry.id,
+        detail={"model_id": model_id, "changes": {"route": body.model_dump()}},
+        ip=request.client.host if request.client else None,
+    )
+    route = await model_routing.resolve_route(session, entry)
+    out = ModelWithRouteOut(**_to_out(entry).model_dump())
+    out.route = _route_out(route)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# models.dev integration (staff)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/models-dev/search")
+async def models_dev_search(
+    q: str,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_staff),
+) -> dict:
+    rows = (
+        (await session.execute(select(models_dev.ModelsDevCache))).scalars().all()
+        if models_dev.sync_enabled()
+        else []
+    )
+    results = models_dev.search_cached(rows, q)
+    return {
+        "results": results,
+        "synced": models_dev.sync_enabled(),
+    }
+
+
+@router.post("/models-dev/sync")
+async def models_dev_sync_now(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> dict:
+    count = await models_dev.sync_now(session)
+    await record_audit(
+        session,
+        action=AuditAction.MODEL_SYNC,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="models_dev",
+        detail={"synced": count},
+        ip=request.client.host if request.client else None,
+        scope=audit_scope_for(user),
+    )
+    return {"synced": count}

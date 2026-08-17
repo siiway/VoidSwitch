@@ -18,8 +18,18 @@ from voidswitch.core.security import (
     token_fingerprint,
 )
 from voidswitch.main import create_app
-from voidswitch.models.db import ApiKey, Provider, Proxy, User, VoidToken
-from voidswitch.services import settings_store
+from voidswitch.models.db import (
+    ApiKey,
+    ExposedModel,
+    Node,
+    Provider,
+    Route,
+    RouteLayer,
+    RoutePoolEntry,
+    User,
+    VoidToken,
+)
+from voidswitch.services import routing, settings_store
 from voidswitch.services.network import get_pool
 
 
@@ -36,6 +46,7 @@ async def db(tmp_path) -> AsyncIterator[Database]:
     async with database.session() as session:
         await settings_store.ensure_defaults(session)
         await settings_store.load_all(session)
+        await routing.ensure_seeded_groups(session)
     try:
         yield database
     finally:
@@ -61,6 +72,7 @@ async def seeded(db: Database):
         session.add(token)
         provider = Provider(
             name="deepseek",
+            slug="deepseek",
             type="deepseek",
             base_url="https://api.deepseek.com",
             models=["deepseek-chat", "*"],
@@ -77,6 +89,26 @@ async def seeded(db: Database):
         )
         session.add(key)
         await session.flush()
+        # Expose the served model so the gateway can dispatch to it.
+        exposed = ExposedModel(model_id="deepseek-chat")
+        session.add(exposed)
+        await session.flush()
+        # Build the route directly (avoiding get_or_create_route's lazy-load of
+        # ``exposed.route`` on a freshly-flushed object, which trips MissingGreenlet).
+        route = Route(exposed_model_id=exposed.id)
+        session.add(route)
+        await session.flush()
+        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
+        session.add(layer)
+        await session.flush()
+        session.add(
+            RoutePoolEntry(
+                layer_id=layer.id,
+                provider_id=provider.id,
+                upstream_model="deepseek-chat",
+            )
+        )
+        await session.flush()
         result = {
             "user_id": user.id,
             "user_sub": user.sub,
@@ -84,6 +116,8 @@ async def seeded(db: Database):
             "token_id": token.id,
             "provider_id": provider.id,
             "key_id": key.id,
+            "exposed_model_id": exposed.id,
+            "exposed_model": "deepseek-chat",
         }
     return result
 
@@ -96,12 +130,18 @@ async def client(db: Database) -> AsyncIterator[AsyncClient]:
         yield ac
 
 
-async def add_proxy(db: Database, url: str) -> int:
+async def add_node(db: Database, url: str) -> int:
     async with db.session() as session:
-        proxy = Proxy(url=url, status="active")
-        session.add(proxy)
+        node = Node(url=url, type="http", status="active")
+        session.add(node)
         await session.flush()
-        return proxy.id
+        default = await routing.default_group(session)
+        if default is not None:
+            from voidswitch.models.db import NodeGroupMember
+
+            session.add(NodeGroupMember(group_id=default.id, node_id=node.id))
+        await session.flush()
+        return node.id
 
 
 def now() -> dt.datetime:

@@ -94,7 +94,7 @@ const SECTIONS: NavSection[] = [
         scope: "staff",
       },
       { to: "/models", label: "Models", labelKey: "nav.models", icon: <CubeRegular />, scope: "member" },
-      { to: "/proxies", label: "Proxies", labelKey: "nav.proxies", icon: <CloudRegular />, scope: "staff" },
+      { to: "/nodes", label: "Nodes & Groups", labelKey: "nav.nodes", icon: <CloudRegular />, scope: "staff" },
       { to: "/tokens", label: "Tokens", labelKey: "nav.tokens", icon: <KeyRegular />, scope: "owner" },
     ],
   },

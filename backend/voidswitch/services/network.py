@@ -26,14 +26,19 @@ def _build_limits() -> httpx.Limits:
 
 @dataclass(frozen=True, slots=True)
 class Route:
-    """An outbound network route: an optional proxy + optional source IP."""
+    """An outbound network route: an optional proxy + optional source IP.
+
+    ``agent_node_id`` is set for voidswitch-agent nodes so a custom relay
+    transport can pick the shared agent connection (used once the agent lands).
+    """
 
     proxy_url: str | None = None
     local_address: str | None = None
+    agent_node_id: int | None = None
 
     @property
     def is_direct(self) -> bool:
-        return not self.proxy_url and not self.local_address
+        return not self.proxy_url and not self.local_address and not self.agent_node_id
 
 
 def _is_socks(url: str) -> bool:
@@ -71,7 +76,9 @@ class ClientPool:
     """Caches AsyncClients keyed by route + timeout profile."""
 
     def __init__(self) -> None:
-        self._clients: dict[tuple[str | None, str | None, float, float], httpx.AsyncClient] = {}
+        self._clients: dict[
+            tuple[str | None, str | None, int | None, float, float], httpx.AsyncClient
+        ] = {}
         self._lock = asyncio.Lock()
 
     async def get(
@@ -81,7 +88,13 @@ class ClientPool:
         connect_timeout: float = 15.0,
         read_timeout: float = 300.0,
     ) -> httpx.AsyncClient:
-        key = (route.proxy_url, route.local_address, connect_timeout, read_timeout)
+        key = (
+            route.proxy_url,
+            route.local_address,
+            route.agent_node_id,
+            connect_timeout,
+            read_timeout,
+        )
         client = self._clients.get(key)
         if client is not None and not client.is_closed:
             return client

@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import KeyStatus, ProxyStatus
+from voidswitch.constants import KeyStatus, NodeStatus
 from voidswitch.core.auth import require_staff
 from voidswitch.core.database import get_session
-from voidswitch.models.db import ApiKey, Provider, Proxy, RequestLog, User, VoidToken
+from voidswitch.models.db import ApiKey, Node, Provider, RequestLog, User, VoidToken
 from voidswitch.models.schemas import StatsOut
 
 router = APIRouter(prefix="/api/admin/stats", tags=["admin:stats"])
@@ -44,14 +44,15 @@ async def stats(
         session,
         select(func.count(ApiKey.id)).where(ApiKey.status == KeyStatus.ACTIVE.value),
     )
-    total_proxies = await _count(session, select(func.count(Proxy.id)))
+    total_proxies = await _count(session, select(func.count(Node.id)))
     active_proxies = await _count(
         session,
-        # A proxy is "active" only when enabled AND marked active — the selector
-        # and resurrector both require enabled, but the dashboard's disable action
-        # leaves ``status`` untouched, so counting status alone would over-report.
-        select(func.count(Proxy.id)).where(
-            Proxy.enabled.is_(True), Proxy.status == ProxyStatus.ACTIVE.value
+        # A node is "active" only when enabled AND marked active — the routing
+        # and resurrector both require enabled, but the dashboard's disable
+        # action leaves ``status`` untouched, so counting status alone would
+        # over-report.
+        select(func.count(Node.id)).where(
+            Node.enabled.is_(True), Node.status == NodeStatus.ACTIVE.value
         ),
     )
     tokens = await _count(

@@ -29,25 +29,19 @@ from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import ApiStyle, KeyStatus, ProxyStatus
+from voidswitch.constants import ApiStyle, KeyStatus
 from voidswitch.core.config import get_settings
 from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger, redact_headers
-from voidswitch.models.db import ApiKey, Provider, Proxy, RequestLog
-from voidswitch.services import settings_store, transform, usage_rollup
+from voidswitch.models.db import ApiKey, ExposedModel, Node, Provider, RequestLog
+from voidswitch.services import model_routing, routing, settings_store, transform, usage_rollup
 from voidswitch.services.network import Route, get_pool
 from voidswitch.services.providers.base import BaseProvider, ErrorClass
 from voidswitch.services.providers.registry import get_adapter
-from voidswitch.services.selector import (
-    active_proxies,
-    resolve_model,
-    routes_for_provider,
-    select_keys,
-    select_providers,
-    static_routes,
-)
+from voidswitch.services.selector import select_keys, static_routes
 
 log = get_logger("dispatcher")
 
@@ -351,28 +345,6 @@ def _mark_rate_limited(
     return cooldown
 
 
-def _penalize_proxy(
-    proxy: Proxy | None, reason: str, threshold: int, *, auto_disable: bool = True
-) -> None:
-    if proxy is None:
-        return
-    proxy.failed_count += 1
-    proxy.last_checked_at = _utcnow()
-    # With health-checking off, connectivity is managed externally — count the
-    # failure but never park the proxy (it also won't be auto-resurrected).
-    if auto_disable and proxy.failed_count >= threshold:
-        proxy.status = ProxyStatus.DISABLED.value
-        proxy.disabled_reason = reason
-
-
-def _reward_proxy(proxy: Proxy | None) -> None:
-    if proxy is None:
-        return
-    if proxy.failed_count:
-        proxy.failed_count = 0
-    proxy.last_used_at = _utcnow()
-
-
 def _reward_key(key: ApiKey) -> None:
     """Reset a rate-limited key to active when a request succeeds."""
     if key.status == KeyStatus.RATE_LIMITED.value:
@@ -403,7 +375,6 @@ async def dispatch(
 async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchResult:
     settings = get_settings()
     max_retries = max(1, settings_store.get_int("max_retries", 6))
-    proxy_threshold = max(1, settings_store.get_int("max_proxy_failures", 3))
     connect_timeout = float(settings_store.get_int("connect_timeout_seconds", 15))
     request_timeout = float(settings_store.get_int("request_timeout_seconds", 300))
     stream_idle = float(settings_store.get_int("stream_idle_timeout_seconds", 120))
@@ -429,135 +400,154 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     last_ctx: dict[str, Any] = {}
     last_outcome: _Attempt | None = None
 
-    providers = await select_providers(session, req.model)
-    if not providers:
+    # The inbound model must be an *exposed* model; raw upstream ids
+    # (``slug/model``) are never accepted here (rejected earlier by the gateway).
+    exposed = (
+        await session.execute(
+            select(ExposedModel).where(ExposedModel.model_id == req.model)
+        )
+    ).scalar_one_or_none()
+    if exposed is None:
         return DispatchResult(
             status_code=404,
             is_stream=False,
             content=_error_body(
                 req.inbound_style,
-                f"No enabled provider serves model '{req.model}'.",
+                f"No exposed model '{req.model}'.",
                 "model_not_found",
             ),
             model=req.model,
         )
+
     # Proxy switching off (external proxy like mihomo handles egress): every
-    # request goes through a single fixed route and no proxy is ever disabled.
+    # request goes through a single fixed route and no node is ever disabled.
     proxy_switching = settings_store.get_bool("proxy_switching_enabled", True)
-    # When proxy health-checking is off, connectivity is managed externally
-    # (e.g. mihomo): a failing proxy is never auto-disabled (and the resurrector
-    # never re-enables one), so failures are counted but never park a proxy.
-    proxy_health_check = settings_store.get_bool("proxy_health_check_enabled", True)
+    # When node health-checking is off, connectivity is managed externally
+    # (e.g. mihomo): a failing node is never auto-disabled, so failures are
+    # counted but never park a node.
+    node_health_check = settings_store.get_bool("proxy_health_check_enabled", True)
     fixed_routes = (
         None
         if proxy_switching
         else static_routes(settings_store.get_str("static_proxy_url", ""))
     )
-    proxy_pool = await active_proxies(session) if proxy_switching else []
 
-    for provider in providers:
-        # Per-provider outbound routes — honours proxy_mode (all/direct/selected),
-        # unless proxy switching is disabled (then a single fixed route is used).
-        routes = (
-            fixed_routes
-            if fixed_routes is not None
-            else routes_for_provider(provider, proxy_pool)
+    route = await model_routing.resolve_route(session, exposed)
+    if not route.layers:
+        return DispatchResult(
+            status_code=404,
+            is_stream=False,
+            content=_error_body(
+                req.inbound_style,
+                f"Model '{req.model}' has no route configured.",
+                "model_not_found",
+            ),
+            model=req.model,
         )
-        if not routes:
-            last_error = (
-                f"provider '{provider.name}': no available proxy (mode={provider.proxy_mode})"
-            )
-            last_status = 502
-            continue
-        adapter = get_adapter(provider)
-        # Alias routing: pick the upstream model + key pool for this inbound model.
-        upstream_model, key_pool = resolve_model(provider, req.model)
-        keys = select_keys(
-            provider,
-            key_pool,
-            rate_limit_recovery_seconds=rate_limit_recovery,
-            session_key=session_key,
-        )
-        upstream_style = adapter.style
-        timeout_override = provider.timeout_seconds or 0
-        read_timeout = float(timeout_override) if timeout_override else request_timeout
 
-        secret_key = settings.server.secret_key
-
-        for key in keys:
+    # Walk the flow: layers top→bottom are fallback pools; each layer tries up to
+    # ``max_attempts`` entries (weighted-random order); within an entry, keys then
+    # outbound nodes are iterated. The whole flow is capped by ``max_retries``.
+    for layer in route.layers:
+        if attempts >= max_retries:
+            break
+        entries = model_routing.weighted_entries(layer)
+        layer_attempts = max(1, int(layer.max_attempts or 1))
+        for entry in entries[:layer_attempts]:
             if attempts >= max_retries:
                 break
-            try:
-                plaintext = await _resolve_token(session, adapter, key, secret_key)
-            except Exception as exc:
-                # A credential-resolution failure (e.g. a transient network blip
-                # while refreshing a Claude Code / xAI OAuth bundle) is NOT proof
-                # the key is invalid — permanently disabling it here would park a
-                # still-usable key until an operator intervenes. Record it and
-                # move to the next key; a genuinely bad key still gets disabled
-                # via the upstream 401 path.
-                last_error = f"credential resolve failed: {exc}"
-                last_status = 401
-                log.debug("credential_resolve_failed", key_id=key.id, error=str(exc))
-                continue  # next key
-            url, headers, body = _prepare_body(
-                req,
-                adapter,
-                upstream_style,
-                upstream_model,
-                plaintext,
+            provider = entry.provider
+            if provider is None or not provider.enabled:
+                continue
+            adapter = get_adapter(provider)
+            upstream_model = entry.upstream_model or req.model
+            key_pool = entry.key_pool or ""
+
+            # Per-provider outbound routes — from its node group (or the default
+            # group), unless proxy switching is disabled (single fixed route).
+            if fixed_routes is not None:
+                routes = fixed_routes
+            else:
+                group = await routing.provider_routes(session, provider)
+                routes = await routing.group_routes(session, group)
+            if not routes:
+                last_error = (
+                    f"provider '{provider.name}': no available outbound node"
+                )
+                last_status = 502
+                continue
+
+            keys = select_keys(
+                provider,
+                key_pool,
+                rate_limit_recovery_seconds=rate_limit_recovery,
+                session_key=session_key,
             )
+            upstream_style = adapter.style
+            timeout_override = provider.timeout_seconds or 0
+            read_timeout = float(timeout_override) if timeout_override else request_timeout
 
-            oauth_refreshed = False
-            route_attempts = 0
-            route_cursor = _route_start(key.id, len(routes))
-            while attempts < max_retries and route_attempts < len(routes):
-                route, proxy = routes[route_cursor % len(routes)]
-                route_cursor += 1
-                route_attempts += 1
-                attempts += 1
-                outcome = await _attempt(
-                    pool=pool,
-                    adapter=adapter,
-                    route=route,
-                    url=url,
-                    headers=headers,
-                    body=body,
-                    stream=req.stream,
-                    connect_timeout=connect_timeout,
-                    read_timeout=stream_idle if req.stream else read_timeout,
-                    # Non-streaming requests get the total response timeout as a
-                    # hard cap (streams enforce it inside _build_stream).
-                    total_timeout=response_timeout if not req.stream else None,
-                    # Streamed requests through a zero-token-retry provider are
-                    # spooled until the first real content token, so a degenerate
-                    # empty 200 can be retried before anything reaches the client.
-                    spool_first_content=bool(provider.retry_on_zero_token and req.stream),
+            secret_key = settings.server.secret_key
+
+            for key in keys:
+                if attempts >= max_retries:
+                    break
+                try:
+                    plaintext = await _resolve_token(session, adapter, key, secret_key)
+                except Exception as exc:
+                    # A credential-resolution failure (e.g. a transient network blip
+                    # while refreshing a Claude Code / xAI OAuth bundle) is NOT proof
+                    # the key is invalid — permanently disabling it here would park a
+                    # still-usable key until an operator intervenes. Record it and
+                    # move to the next key.
+                    last_error = f"credential resolve failed: {exc}"
+                    last_status = 401
+                    log.debug("credential_resolve_failed", key_id=key.id, error=str(exc))
+                    continue  # next key
+                url, headers, body = _prepare_body(
+                    req,
+                    adapter,
+                    upstream_style,
+                    upstream_model,
+                    plaintext,
                 )
 
-                # Remember this attempt for traceability + the debug trail.
-                last_outcome = outcome
-                last_ctx = {
-                    "provider": provider,
-                    "key": key,
-                    "proxy": proxy,
-                    "upstream_style": upstream_style,
-                    "upstream_model": upstream_model,
-                }
-                # Always record a lightweight attempt summary (for the detail modal).
-                attempt_summaries.append(
-                    _attempt_summary(
-                        attempt=attempts,
-                        provider=provider,
-                        key=key,
+                oauth_refreshed = False
+                for route_hop, node in routes:
+                    if attempts >= max_retries:
+                        break
+                    attempts += 1
+                    outcome = await _attempt(
+                        pool=pool,
                         adapter=adapter,
-                        upstream_model=upstream_model,
-                        outcome=outcome,
+                        route=route_hop,
+                        url=url,
+                        headers=headers,
+                        body=body,
+                        stream=req.stream,
+                        connect_timeout=connect_timeout,
+                        read_timeout=stream_idle if req.stream else read_timeout,
+                        # Non-streaming requests get the total response timeout as a
+                        # hard cap (streams enforce it inside _build_stream).
+                        total_timeout=response_timeout if not req.stream else None,
+                        # Streamed requests through a zero-token-retry provider are
+                        # spooled until the first real content token, so a degenerate
+                        # empty 200 can be retried before anything reaches the client.
+                        spool_first_content=bool(provider.retry_on_zero_token and req.stream),
                     )
-                )
-                if req.debug_enabled:
-                    debug_trail.append(
-                        _trail_entry(
+
+                    # Remember this attempt for traceability + the debug trail.
+                    last_outcome = outcome
+                    last_ctx = {
+                        "provider": provider,
+                        "key": key,
+                        "node": node,
+                        "upstream_style": upstream_style,
+                        "upstream_model": upstream_model,
+                    }
+                    # Always record a lightweight attempt summary (for the detail modal).
+                    attempt_summaries.append(
+                        _attempt_summary(
                             attempt=attempts,
                             provider=provider,
                             key=key,
@@ -566,157 +556,189 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                             outcome=outcome,
                         )
                     )
-
-                if outcome.network_error:
-                    last_error = outcome.error or "network error"
-                    last_status = 502
-                    # PoolTimeout / total-response-timeout are capacity or
-                    # wall-clock issues, NOT a proxy fault. Penalising the proxy
-                    # for these cascades failures: fewer proxies → more timeouts →
-                    # more disabled proxies → collapse.
-                    if outcome.blame_proxy:
-                        _penalize_proxy(
-                            proxy, last_error, proxy_threshold, auto_disable=proxy_health_check
+                    if req.debug_enabled:
+                        debug_trail.append(
+                            _trail_entry(
+                                attempt=attempts,
+                                provider=provider,
+                                key=key,
+                                adapter=adapter,
+                                upstream_model=upstream_model,
+                                outcome=outcome,
+                            )
                         )
-                    await session.flush()
-                    continue  # keep key, next route
 
-                # We have an HTTP response.
-                _reward_proxy(proxy)
-                err_class = adapter.classify(outcome.status_code, outcome.body_json)
+                    if outcome.network_error:
+                        last_error = outcome.error or "network error"
+                        last_status = 502
+                        # PoolTimeout / total-response-timeout are capacity or
+                        # wall-clock issues, NOT a node fault. Penalising the node
+                        # for these cascades failures: fewer nodes → more timeouts →
+                        # more disabled nodes → collapse.
+                        if outcome.blame_proxy and node is not None:
+                            routing.penalize_node(
+                                node, last_error, auto_disable=node_health_check
+                            )
+                        await session.flush()
+                        continue  # keep key, next node
 
-                if err_class is ErrorClass.OK:
-                    # "200 OK + 0 tokens" auto-retry: a 200 that produced nothing
-                    # usable is a degenerate upstream result. Detect it (usage 0
-                    # for non-streaming, or a stream that ended before any real
-                    # content) and retry the next key/provider — the empty reply
-                    # is never delivered to the client.
-                    degenerate = False
-                    if provider.retry_on_zero_token:
-                        degenerate = (
-                            outcome.degenerate_empty
-                            if req.stream
-                            else _extract_usage(outcome.body_json, upstream_style)["total_tokens"]
-                            == 0
+                    # We have an HTTP response.
+                    if node is not None:
+                        routing.reward_node(node)
+                    err_class = adapter.classify(outcome.status_code, outcome.body_json)
+                    # A provider that can *detect* "no quota" (vs a plain rate
+                    # limit) turns a 429 into a permanently-disabled key.
+                    if (
+                        err_class is ErrorClass.RATE_LIMITED
+                        and adapter.detect_no_quota(outcome.status_code, outcome.body_json)
+                    ):
+                        err_class = ErrorClass.INSUFFICIENT_BALANCE
+
+                    if err_class is ErrorClass.OK:
+                        # "200 OK + 0 tokens" auto-retry: a 200 that produced nothing
+                        # usable is a degenerate upstream result. Detect it (usage 0
+                        # for non-streaming, or a stream that ended before any real
+                        # content) and retry the next key/provider — the empty reply
+                        # is never delivered to the client.
+                        degenerate = False
+                        if provider.retry_on_zero_token:
+                            total = _extract_usage(outcome.body_json, upstream_style)[
+                                "total_tokens"
+                            ]
+                            degenerate = (
+                                outcome.degenerate_empty
+                                if req.stream
+                                else total == 0
+                            )
+                        if degenerate:
+                            last_error = "upstream returned 200 OK with 0 tokens"
+                            last_status = 200
+                            key.failed_count += 1
+                            await session.flush()
+                            break  # next key/provider
+                        key.total_requests += 1
+                        key.last_used_at = _utcnow()
+                        if key.failed_count:
+                            key.failed_count = 0
+                        _reward_key(key)
+                        return await _finalise_success(
+                            session=session,
+                            req=req,
+                            provider=provider,
+                            adapter=adapter,
+                            key=key,
+                            node=node,
+                            outcome=outcome,
+                            upstream_model=upstream_model,
+                            attempts=attempts,
+                            debug_attempts=debug_trail,
+                            attempt_summaries=attempt_summaries,
+                            started_at=dispatch_started_at,
+                            response_timeout=response_timeout,
                         )
-                    if degenerate:
-                        last_error = "upstream returned 200 OK with 0 tokens"
-                        last_status = 200
+
+                    if err_class in (ErrorClass.KEY_INVALID, ErrorClass.INSUFFICIENT_BALANCE):
+                        # Claude Code OAuth: a 401 usually means the access token
+                        # expired — force-refresh and retry this key once before
+                        # giving up on it (mirrors the CLI's 401 behaviour).
+                        if (
+                            err_class is ErrorClass.KEY_INVALID
+                            and adapter.refresh_on_invalid_key
+                            and not oauth_refreshed
+                        ):
+                            oauth_refreshed = True
+                            try:
+                                plaintext = await _resolve_token(
+                                    session, adapter, key, secret_key, force_refresh=True
+                                )
+                                url, headers, body = _prepare_body(
+                                    req,
+                                    adapter,
+                                    upstream_style,
+                                    upstream_model,
+                                    plaintext,
+                                )
+                                continue  # retry same key with the refreshed token
+                            except Exception as exc:
+                                last_error = f"oauth refresh failed: {exc}"
+                        status = (
+                            KeyStatus.INVALID
+                            if err_class is ErrorClass.KEY_INVALID
+                            else KeyStatus.INSUFFICIENT_BALANCE
+                        )
+                        _disable_key(key, status, f"HTTP {outcome.status_code}: {err_class}")
+                        last_error = f"key disabled ({err_class})"
+                        last_status = outcome.status_code
+                        await session.flush()
+                        break  # next key
+
+                    if err_class is ErrorClass.RATE_LIMITED:
+                        cooldown = _mark_rate_limited(
+                            key,
+                            retry_after=_parse_retry_after(outcome.resp_headers),
+                            provider_cooldown=provider.rate_limit_cooldown_seconds or 0,
+                            global_cooldown=rate_limit_recovery,
+                            max_cooldown=rate_limit_max_cooldown,
+                        )
+                        last_error = f"rate limited (cooldown {int(cooldown)}s)"
+                        last_status = 429
+                        await session.flush()
+                        break  # next key
+
+                    if err_class is ErrorClass.NOT_FOUND:
+                        # The upstream doesn't serve this model — a *routable*
+                        # failure. Fall through to the next entry/pool instead of
+                        # surfacing a 404 to the client.
+                        last_error = (
+                            f"upstream 404: model '{upstream_model}' not served by "
+                            f"provider '{provider.name}'"
+                        )
+                        last_status = 404
+                        await session.flush()
+                        break  # next key (then next entry)
+
+                    if err_class is ErrorClass.SERVER_ERROR:
                         key.failed_count += 1
+                        last_error = f"upstream {outcome.status_code}"
+                        last_status = outcome.status_code
                         await session.flush()
                         break  # next key/provider
-                    key.total_requests += 1
-                    key.last_used_at = _utcnow()
-                    if key.failed_count:
-                        key.failed_count = 0
-                    _reward_key(key)
-                    return await _finalise_success(
-                        session=session,
-                        req=req,
+
+                    # BAD_REQUEST: the client's request is wrong — return it as-is.
+                    await _log_request(
+                        session,
+                        req,
                         provider=provider,
-                        adapter=adapter,
                         key=key,
-                        proxy=proxy,
-                        outcome=outcome,
+                        node=node,
+                        upstream_style=upstream_style,
                         upstream_model=upstream_model,
+                        status_code=outcome.status_code,
+                        success=False,
                         attempts=attempts,
+                        error=f"client error {outcome.status_code}",
+                        upstream_url=outcome.url,
+                        req_method=outcome.req_method,
+                        req_headers=outcome.req_headers,
+                        resp_headers=outcome.resp_headers,
+                        resp_body=_resp_body_repr(outcome),
                         debug_attempts=debug_trail,
                         attempt_summaries=attempt_summaries,
                         started_at=dispatch_started_at,
-                        response_timeout=response_timeout,
+                        finished_at=_utcnow(),
                     )
-
-                if err_class in (ErrorClass.KEY_INVALID, ErrorClass.INSUFFICIENT_BALANCE):
-                    # Claude Code OAuth: a 401 usually means the access token
-                    # expired — force-refresh and retry this key once before
-                    # giving up on it (mirrors the CLI's 401 behaviour).
-                    if (
-                        err_class is ErrorClass.KEY_INVALID
-                        and adapter.refresh_on_invalid_key
-                        and not oauth_refreshed
-                    ):
-                        oauth_refreshed = True
-                        try:
-                            plaintext = await _resolve_token(
-                                session, adapter, key, secret_key, force_refresh=True
-                            )
-                            url, headers, body = _prepare_body(
-                                req,
-                                adapter,
-                                upstream_style,
-                                upstream_model,
-                                plaintext,
-                            )
-                            route_attempts = 0
-                            continue  # retry same key with the refreshed token
-                        except Exception as exc:
-                            last_error = f"oauth refresh failed: {exc}"
-                    status = (
-                        KeyStatus.INVALID
-                        if err_class is ErrorClass.KEY_INVALID
-                        else KeyStatus.INSUFFICIENT_BALANCE
-                    )
-                    _disable_key(key, status, f"HTTP {outcome.status_code}: {err_class}")
-                    last_error = f"key disabled ({err_class})"
-                    last_status = outcome.status_code
-                    await session.flush()
-                    break  # next key
-
-                if err_class is ErrorClass.RATE_LIMITED:
-                    cooldown = _mark_rate_limited(
-                        key,
-                        retry_after=_parse_retry_after(outcome.resp_headers),
-                        provider_cooldown=provider.rate_limit_cooldown_seconds or 0,
-                        global_cooldown=rate_limit_recovery,
-                        max_cooldown=rate_limit_max_cooldown,
-                    )
-                    last_error = f"rate limited (cooldown {int(cooldown)}s)"
-                    last_status = 429
-                    await session.flush()
-                    break  # next key
-
-                if err_class is ErrorClass.SERVER_ERROR:
-                    key.failed_count += 1
-                    last_error = f"upstream {outcome.status_code}"
-                    last_status = outcome.status_code
-                    await session.flush()
-                    break  # next key/provider
-
-                # BAD_REQUEST: the client's request is wrong — return it as-is.
-                await _log_request(
-                    session,
-                    req,
-                    provider=provider,
-                    key=key,
-                    proxy=proxy,
-                    upstream_style=upstream_style,
-                    upstream_model=upstream_model,
-                    status_code=outcome.status_code,
-                    success=False,
-                    attempts=attempts,
-                    error=f"client error {outcome.status_code}",
-                    upstream_url=outcome.url,
-                    req_method=outcome.req_method,
-                    req_headers=outcome.req_headers,
-                    resp_headers=outcome.resp_headers,
-                    resp_body=_resp_body_repr(outcome),
-                    debug_attempts=debug_trail,
-                    attempt_summaries=attempt_summaries,
-                    started_at=dispatch_started_at,
-                    finished_at=_utcnow(),
-                )
-                return _passthrough_error(req, outcome, upstream_style)
+                    return _passthrough_error(req, outcome, upstream_style)
 
     # Exhausted everything. Attribute the failure to the last provider / key /
-    # route / upstream model actually tried (when any attempt happened) and,
-    # for debug tokens, attach the last upstream response + the full per-attempt
+    # node / upstream model actually tried (when any attempt happened) and, for
+    # debug tokens, attach the last upstream response + the full per-attempt
     # trail — so an "upstream 500" is diagnosable instead of a bare provider "—".
     await _log_request(
         session,
         req,
         provider=last_ctx.get("provider"),
         key=last_ctx.get("key"),
-        proxy=last_ctx.get("proxy"),
+        node=last_ctx.get("node"),
         upstream_style=last_ctx.get("upstream_style"),
         upstream_model=last_ctx.get("upstream_model"),
         status_code=last_status,
@@ -751,11 +773,6 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         attempts=attempts,
         error="upstream_unavailable",
     )
-
-
-def _route_start(seed: int, n: int) -> int:
-    return seed % n if n else 0
-
 
 async def _resolve_token(
     session: Any,
@@ -1313,7 +1330,7 @@ async def _finalise_success(
     provider: Provider,
     adapter: BaseProvider,
     key: ApiKey,
-    proxy: Proxy | None,
+    node: Node | None,
     outcome: _Attempt,
     upstream_model: str,
     attempts: int,
@@ -1334,7 +1351,7 @@ async def _finalise_success(
             provider_id=provider.id,
             provider_name=provider.name,
             key_id=key.id,
-            proxy_id=proxy.id if proxy else None,
+            proxy_id=node.id if node else None,
             model=req.model,
             upstream_model=upstream_model,
             inbound_style=req.inbound_style.value,
@@ -1354,7 +1371,7 @@ async def _finalise_success(
             debug_attempts=debug_attempts if debug else None,
             attempts_summary=attempt_summaries,
             upstream_url=outcome.url if debug else None,
-            proxy_url=proxy.url if proxy and debug else None,
+            proxy_url=node.url if node and debug else None,
             client_ip=req.client_ip,
             started_at=started_at or _utcnow(),
             req_status="pending",
@@ -1406,7 +1423,7 @@ async def _finalise_success(
         req,
         provider=provider,
         key=key,
-        proxy=proxy,
+        node=node,
         upstream_style=upstream_style,
         upstream_model=upstream_model,
         status_code=outcome.status_code,
@@ -1745,7 +1762,7 @@ async def _log_request(
     *,
     provider: Provider | None,
     key: ApiKey | None,
-    proxy: Proxy | None,
+    node: Node | None,
     upstream_style: ApiStyle | None,
     status_code: int,
     success: bool,
@@ -1791,7 +1808,7 @@ async def _log_request(
             provider_id=provider.id if provider else None,
             provider_name=provider.name if provider else None,
             key_id=key.id if key else None,
-            proxy_id=proxy.id if proxy else None,
+            proxy_id=node.id if node else None,
             model=req.model,
             upstream_model=upstream_model,
             inbound_style=req.inbound_style.value,
@@ -1816,7 +1833,7 @@ async def _log_request(
             debug_attempts=debug_attempts if debug else None,
             attempts_summary=attempt_summaries,
             upstream_url=upstream_url,
-            proxy_url=proxy.url if proxy and debug else None,
+            proxy_url=node.url if node and debug else None,
             client_ip=req.client_ip,
             started_at=started_at or now,
             finished_at=finished_at or now,

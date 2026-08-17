@@ -8,7 +8,8 @@ import { Dashboard } from "./pages/Dashboard";
 import { Providers } from "./pages/Providers";
 import { Models } from "./pages/Models";
 import { ProviderKeys } from "./pages/ProviderKeys";
-import { Proxies } from "./pages/Proxies";
+import { Nodes } from "./pages/Nodes";
+import { ModelRoute } from "./pages/ModelRoute";
 import { Tokens } from "./pages/Tokens";
 import { Users } from "./pages/Users";
 import { RoleGroups } from "./pages/RoleGroups";
@@ -94,10 +95,18 @@ export function App() {
           }
         />
         <Route
-          path="/proxies"
+          path="/nodes"
           element={
             <Protected staff>
-              <Proxies />
+              <Nodes />
+            </Protected>
+          }
+        />
+        <Route
+          path="/models/:modelId/route"
+          element={
+            <Protected staff>
+              <ModelRoute />
             </Protected>
           }
         />

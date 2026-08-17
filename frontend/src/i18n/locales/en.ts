@@ -61,7 +61,7 @@ const en = {
     dashboard: "Dashboard",
     providers: "Providers",
     models: "Models",
-    proxies: "Proxies",
+    nodes: "Nodes & Groups",
     tokens: "Tokens",
     users: "Users",
     roleGroups: "Role Groups",

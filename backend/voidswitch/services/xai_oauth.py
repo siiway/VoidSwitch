@@ -53,7 +53,7 @@ from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger
 from voidswitch.core.security import decrypt_secret, encrypt_secret
 from voidswitch.models.db import ApiKey, RequestLog
-from voidswitch.services import refresh_context, settings_store
+from voidswitch.services import refresh_context
 from voidswitch.services.network import Route, get_pool
 
 log = get_logger("xai_oauth")
@@ -160,17 +160,12 @@ def _near_expiry(bundle: dict[str, Any]) -> bool:
 
 
 async def _select_routes(session: AsyncSession | None) -> list[Route]:
-    """Outbound routes for OAuth calls, matching normal upstream egress settings."""
-    from voidswitch.services.selector import static_routes
+    """Outbound routes for OAuth calls (System node group; degrades to direct)."""
+    from voidswitch.services import routing
 
-    if not settings_store.get_bool("proxy_switching_enabled", True):
-        return [route for route, _ in static_routes(settings_store.get_str("static_proxy_url", ""))]
     if session is None:
         return [Route()]
-    # Imported lazily to avoid any import cycle through the selector.
-    from voidswitch.services.selector import select_routes
-
-    return [route for route, _ in await select_routes(session)]
+    return [route for route, _ in await routing.system_routes(session)]
 
 
 def _short_reason(resp: httpx.Response) -> str:

@@ -10,7 +10,7 @@ VoidSwitch enforces three tiers on the backend and reflects them in the UI.
 | Tier | Roles | Scope |
 | ---- | ----- | ----- |
 | **Member** | member | Only their own resources (their own tokens, their own logs/usage). |
-| **Staff** | owner, co-owner, admin | Day-to-day admin surfaces: providers, keys, proxies, models, role groups, user list, logs, settings, and publishing announcements. |
+| **Staff** | owner, co-owner, admin | Day-to-day admin surfaces: providers, keys, nodes / node groups, models, role groups, user list, logs, settings, and publishing announcements. |
 | **Owner** | owner, co-owner | Sensitive operations on top of staff. |
 
 ### Owner-only (sensitive) operations
@@ -42,7 +42,7 @@ VoidSwitch admin), and other teams never grant tiers (they can still grant [role
 | ---- | ---- | ----------- |
 | [Providers](/en/admin/providers) | Staff | Add upstream platforms and their models. |
 | [Upstream keys](/en/admin/keys) | Staff | Load and manage each provider's API keys. |
-| [Proxies](/en/admin/proxies) | Staff | Configure egress proxies. |
+| [Nodes & Node Groups](/en/admin/proxies) | Staff | Configure egress nodes and node groups. |
 | [Models](/en/admin/models) | Staff | Manage the model catalog and access. |
 | [Role groups](/en/admin/role-groups) | Staff | Map team roles to model access. |
 | [Users](/en/admin/users) | Staff/Owner | View users; grant admin / disable (owner). |

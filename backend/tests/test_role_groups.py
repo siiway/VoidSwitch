@@ -6,7 +6,7 @@ import pytest
 from voidswitch.core import auth
 from voidswitch.core.config import get_settings
 from voidswitch.models.db import (
-    ModelEntry,
+    ExposedModel,
     RoleGroup,
     RoleGroupMapping,
     User,
@@ -103,8 +103,8 @@ async def test_user_can_access_model(db):
         session.add(group)
         await session.flush()
         gid = group.id
-        session.add(ModelEntry(model_id="m-open", allowed_role_group_ids=[gid]))
-        session.add(ModelEntry(model_id="m-locked", allowed_role_group_ids=[]))
+        session.add(ExposedModel(model_id="m-open", allowed_role_group_ids=[gid]))
+        session.add(ExposedModel(model_id="m-locked", allowed_role_group_ids=[]))
         mod = User(sub="mod", role="admin")
         member_in = User(sub="memin", role="member")
         member_out = User(sub="memout", role="member")

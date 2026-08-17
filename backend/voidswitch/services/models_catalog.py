@@ -1,88 +1,54 @@
-"""Platform-wide model catalog.
+"""Exposed model catalog.
 
-The *available* models are the union of every enabled provider's model ids
-(explicit names plus alias-route aliases, wildcards excluded). On top of that
-union we layer optional per-model metadata stored in the ``models`` table — a
-description and a custom OpenCode model config. This module merges the two and
-keeps the metadata table in sync with what providers actually serve.
+The public catalog is the set of :class:`ExposedModel` rows — the only ids
+clients ever see. Upstream ids (``slug/model``) are internal: they appear only
+as route-pool refs and are never advertised. This module lists exposed models,
+derives the set of currently-served upstream ids from providers (for the
+"expose everything 1:1" sync), and cleans up exposed models with no reachable
+upstream.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from fnmatch import fnmatch
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.models.db import ModelEntry, Provider
-from voidswitch.services.selector import provider_serves_model, routed_upstreams
+from voidswitch.models.db import ExposedModel, Provider, RouteLayer, RoutePoolEntry
+from voidswitch.services import model_routing
+
+_glob_chars = ("*", "?", "[")
 
 
-@dataclass(slots=True)
-class CatalogItem:
-    """One model id merged with its metadata + the providers serving it."""
-
-    model_id: str
-    entry: ModelEntry | None
-    providers: list[str]
-
-    @property
-    def served(self) -> bool:
-        return bool(self.providers)
-
-    @property
-    def registered(self) -> bool:
-        return self.entry is not None
-
-    @property
-    def enabled(self) -> bool:
-        return self.entry.enabled if self.entry is not None else True
-
-    @property
-    def mapped_id(self) -> str | None:
-        return self.entry.mapped_id if self.entry is not None else None
-
-    @property
-    def public_id(self) -> str:
-        """The id clients see / must call: the mapped alias if set, else the raw id."""
-        mapped = self.mapped_id
-        return mapped if mapped else self.model_id
+def _is_glob(pattern: str) -> bool:
+    return any(ch in pattern for ch in _glob_chars)
 
 
-def served_model_ids(providers: list[Provider]) -> set[str]:
-    """Explicit model ids (and alias-route aliases) served by the providers.
+def served_upstream_ids(providers: list[Provider]) -> set[str]:
+    """Upstream model ids currently served by the providers (explicit names only).
 
-    Wildcards (``*``) are skipped — they match anything but name nothing. A raw
-    model id that an alias route hides behind itself (its ``upstream``) is
-    skipped too: only the alias is advertised, never the upstream id.
+    Wildcards match anything but name nothing, so they're excluded here — a
+    globbed provider contributes no concrete upstream id to the catalog.
     """
     ids: set[str] = set()
     for provider in providers:
-        hidden = routed_upstreams(provider)
         for name in provider.models or []:
-            if isinstance(name, str) and name and name != "*" and name not in hidden:
+            if isinstance(name, str) and name and not _is_glob(name):
                 ids.add(name)
-        for route in provider.model_routes or []:
-            if isinstance(route, dict):
-                alias = route.get("alias")
-                if isinstance(alias, str) and alias:
-                    ids.add(alias)
     return ids
 
 
-def _hidden_upstreams(providers: list[Provider]) -> set[str]:
-    """Upstream ids hidden behind an alias route on *some* provider but not
-    served plainly by *any* provider."""
-    served = served_model_ids(providers)
-    hidden: set[str] = set()
-    for provider in providers:
-        hidden |= routed_upstreams(provider)
-    return hidden - served
-
-
 def providers_serving(providers: list[Provider], model_id: str) -> list[str]:
-    """Names of the providers that serve ``model_id`` (honours wildcards/routes)."""
-    return [p.name for p in providers if provider_serves_model(p, model_id)]
+    """Names of providers whose ``models`` list matches ``model_id``."""
+    return [
+        p.name
+        for p in providers
+        if any(
+            pattern == "*" or pattern == model_id or fnmatch(model_id, pattern)
+            for pattern in (p.models or [])
+        )
+    ]
 
 
 async def _enabled_providers(session: AsyncSession) -> list[Provider]:
@@ -94,99 +60,103 @@ async def _enabled_providers(session: AsyncSession) -> list[Provider]:
     return list(rows)
 
 
-async def build_catalog(session: AsyncSession) -> list[CatalogItem]:
-    """Every known model id (served + registered), merged with metadata."""
-    providers = await _enabled_providers(session)
-    entries = {e.model_id: e for e in (await session.execute(select(ModelEntry))).scalars().all()}
-
-    # A stale metadata row for an upstream id that is now hidden behind an alias
-    # route (and served by nobody under its raw name) should not resurface in the
-    # catalog — only its alias is advertised. The row stays deletable.
-    hidden = _hidden_upstreams(providers)
-    all_ids = served_model_ids(providers) | (set(entries) - hidden)
-    items = [
-        CatalogItem(
-            model_id=mid,
-            entry=entries.get(mid),
-            providers=providers_serving(providers, mid),
-        )
-        for mid in all_ids
-    ]
-    # Stable, human-friendly ordering.
-    items.sort(key=lambda i: i.model_id.lower())
-    return items
+async def upstream_refs(session: AsyncSession, exposed: ExposedModel) -> list[str]:
+    """Human-facing ``slug/model`` strings reachable through a model's route."""
+    route = exposed.route
+    if route is None:
+        return []
+    refs: list[str] = []
+    seen: set[tuple[int | None, str]] = set()
+    for layer in route.layers:
+        for entry in layer.entries:
+            key = (entry.provider_id, entry.upstream_model)
+            if key in seen:
+                continue
+            seen.add(key)
+            provider = entry.provider
+            if provider is None:
+                continue
+            slug = provider.slug or provider.name
+            refs.append(f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug)
+    return refs
 
 
-async def mapping_tables(session: AsyncSession) -> tuple[dict[str, str], set[str]]:
-    """Return the gateway's model-aliasing tables.
-
-    * ``alias_to_source`` — public alias → the real (upstream) model id.
-    * ``hidden_sources``  — real ids that have an alias, so they are no longer
-      callable under their original name (only via the alias).
-    """
-    result = await session.execute(
-        select(ModelEntry.model_id, ModelEntry.mapped_id).where(ModelEntry.mapped_id.is_not(None))
-    )
-    rows = result.all()
-    alias_to_source: dict[str, str] = {}
-    hidden_sources: set[str] = set()
-    for model_id, mapped_id in rows:
-        if not mapped_id:
-            continue
-        alias_to_source[mapped_id] = model_id
-        hidden_sources.add(model_id)
-    return alias_to_source, hidden_sources
-
-
-async def hidden_model_ids(session: AsyncSession) -> set[str]:
-    """Model ids not callable under their raw name.
-
-    Combines the metadata-alias hiding (``mapping_tables``) with route-hiding: a
-    raw id an alias route hides behind itself on *every* provider that could serve
-    it is not advertised, so it must be rejected at the gateway too.
-    """
-    _, hidden = await mapping_tables(session)
-    providers = await _enabled_providers(session)
-    return hidden | _hidden_upstreams(providers)
-
-
-async def clean_unserved(session: AsyncSession) -> tuple[int, list[str]]:
-    """Delete metadata rows for model ids no provider serves.
-
-    Returns ``(deleted_count, deleted_model_ids)``. Only touches rows whose
-    ``model_id`` is absent from ``served_model_ids()``.
-    """
-    providers = await _enabled_providers(session)
-    served = served_model_ids(providers)
-    entries = (await session.execute(select(ModelEntry))).scalars().all()
-    unserved = [e for e in entries if e.model_id not in served]
-    ids: list[str] = []
-    for entry in unserved:
-        ids.append(entry.model_id)
-        await session.delete(entry)
-    if ids:
-        await session.flush()
-    return len(ids), sorted(ids)
+async def build_catalog(session: AsyncSession) -> list[ExposedModel]:
+    """Every exposed model, ordered stably (by public id)."""
+    rows = (await session.execute(select(ExposedModel))).scalars().all()
+    return sorted(rows, key=lambda m: (m.model_id or "").lower())
 
 
 async def sync_from_providers(
     session: AsyncSession, *, added_by: int | None = None, added_by_name: str | None = None
 ) -> tuple[int, int]:
-    """Create metadata rows for any served model id that lacks one.
+    """Auto-expose every currently-served upstream id with a 1:1 passthrough route.
 
-    Returns ``(added, total)`` where ``total`` is the number of metadata rows
-    after the sync. Existing rows are left untouched (descriptions / configs are
-    never overwritten), so this is safe to run repeatedly.
+    For each served upstream id without an exposed model, create an exposed model
+    and a default route: one layer, one pool entry per serving provider
+    (weighted by the provider's priority/weight), upstream_model = the id. This
+    preserves the old "catalog = union of provider models" behaviour as a
+    starting point; operators then reshape the routes as they like.
+    Returns ``(added, total)``.
     """
     providers = await _enabled_providers(session)
     existing = set(
-        (await session.execute(select(ModelEntry.model_id))).scalars().all()
+        (await session.execute(select(ExposedModel.model_id))).scalars().all()
     )
-    missing = served_model_ids(providers) - existing
-    for model_id in sorted(missing):
-        session.add(
-            ModelEntry(model_id=model_id, added_by=added_by, added_by_name=added_by_name)
+    served = served_upstream_ids(providers)
+    missing = sorted(served - existing)
+    for model_id in missing:
+        entry = ExposedModel(
+            model_id=model_id, added_by=added_by, added_by_name=added_by_name
         )
-    if missing:
+        session.add(entry)
         await session.flush()
+        route = await model_routing.get_or_create_route(session, entry)
+        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
+        session.add(layer)
+        await session.flush()
+        for provider in providers:
+            if not any(
+                pattern == "*" or pattern == model_id or fnmatch(model_id, pattern)
+                for pattern in (provider.models or [])
+            ):
+                continue
+            session.add(
+                RoutePoolEntry(
+                    layer_id=layer.id,
+                    provider_id=provider.id,
+                    upstream_model=model_id,
+                    weight=max(1, provider.weight or 1),
+                )
+            )
+    await session.flush()
     return len(missing), len(existing) + len(missing)
+
+
+async def clean_unserved(session: AsyncSession) -> tuple[int, list[str]]:
+    """Delete exposed models whose route resolves to no enabled upstream.
+
+    Returns ``(deleted_count, deleted_model_ids)``.
+    """
+    providers_by_id = {p.id: p for p in await _enabled_providers(session)}
+    rows = (await session.execute(select(ExposedModel))).scalars().all()
+    removed: list[str] = []
+    for exposed in rows:
+        route = exposed.route
+        if route is None:
+            removed.append(exposed.model_id)
+            await session.delete(exposed)
+            continue
+        usable = any(
+            entry.enabled
+            and entry.provider_id is not None
+            and providers_by_id.get(entry.provider_id) is not None
+            for layer in route.layers
+            for entry in layer.entries
+        )
+        if not usable:
+            removed.append(exposed.model_id)
+            await session.delete(exposed)
+    if removed:
+        await session.flush()
+    return len(removed), sorted(removed)

@@ -893,65 +893,53 @@ async def test_xai_oauth_complete_login_rejections():
     assert xai_oauth._login_states.peek(state) is None
 
 
-async def test_routes_for_provider_proxy_modes():
-    from voidswitch.constants import ProxyMode
-    from voidswitch.models.db import Proxy
-    from voidswitch.services.selector import routes_for_provider
+async def test_node_group_routes_rank_and_direct_fallback():
+    from voidswitch.constants import NodeType
+    from voidswitch.models.db import Node
+    from voidswitch.services import routing
 
-    p1 = Proxy(url="http://a:1", status="active")
-    p1.id = 1
-    p2 = Proxy(url="http://b:2", status="active")
-    p2.id = 2
-    pool = [p1, p2]
+    def _node(nid: int, *, failed: int = 0, ewma: float | None = None, weight: int = 1) -> Node:
+        n = Node(
+            url=f"http://n{nid}:1",
+            type="http",
+            status="active",
+            failed_count=failed,
+            latency_ewma=ewma,
+            weight=weight,
+        )
+        n.id = nid
+        return n
 
-    # all → whole pool (both proxies, no direct).
-    routes = routes_for_provider(Provider(name="x", proxy_mode=ProxyMode.ALL.value), pool)
-    assert [pr.id for _, pr in routes if pr] == [1, 2]
+    # An empty / missing group always yields a single direct route (no 502, no
+    # "no route available" — an empty group = direct).
+    routes = await routing.group_routes(None, None)
+    assert len(routes) == 1
+    route, node = routes[0]
+    assert node is None and route.proxy_url is None
 
-    # all with empty pool → single direct route.
-    routes = routes_for_provider(Provider(name="x", proxy_mode=ProxyMode.ALL.value), [])
-    assert routes == [(routes[0][0], None)] and routes[0][0].proxy_url is None
+    # Ranking: lowest EWMA latency first; failures then dominate; weight breaks ties.
+    ranked = routing.rank_nodes([_node(1, ewma=50), _node(2, ewma=10), _node(3, failed=5)])
+    assert [n.id for n in ranked] == [2, 1, 3]
+    ranked = routing.rank_nodes([_node(1, weight=1), _node(2, weight=9)])
+    assert [n.id for n in ranked] == [2, 1]
 
-    # direct → always direct, ignores the pool.
-    routes = routes_for_provider(Provider(name="x", proxy_mode=ProxyMode.DIRECT.value), pool)
-    assert len(routes) == 1 and routes[0][1] is None and routes[0][0].proxy_url is None
-
-    # selected → only the assigned proxy, no direct fallback.
-    prov = Provider(name="x", proxy_mode=ProxyMode.SELECTED.value, proxy_ids=[2])
-    routes = routes_for_provider(prov, pool)
-    assert [pr.id for _, pr in routes if pr] == [2]
-    assert routes[0][0].proxy_url == "http://b:2"
-
-    # selected with no active assigned proxy → empty (caller skips the provider).
-    prov = Provider(name="x", proxy_mode=ProxyMode.SELECTED.value, proxy_ids=[99])
-    assert routes_for_provider(prov, pool) == []
+    # node_route: http → proxy_url; direct/empty URL → no proxy.
+    assert routing.node_route(_node(1, ewma=0)).proxy_url == "http://n1:1"
+    direct = Node(url="", type=NodeType.DIRECT.value, status="active")
+    assert routing.node_route(direct).proxy_url is None
 
 
-async def test_model_routes_and_key_pools():
-    from voidswitch.models.db import ApiKey
-    from voidswitch.services.selector import (
-        provider_serves_model,
-        resolve_model,
-        select_keys,
-    )
+async def test_key_pool_selection_and_route_entries():
+    import random
 
-    prov = Provider(
-        name="ds",
-        type="deepseek",
-        models=["deepseek-v4-flash"],
-        model_map={},
-        model_routes=[
-            {"alias": "deepseek-v4-flash-lkd", "upstream": "deepseek-v4-flash", "pool": "leaked"},
-            {"alias": "deepseek-v4-flash", "upstream": "deepseek-v4-flash", "pool": "members"},
-        ],
-    )
-    # An alias is served even if it isn't in `models`.
-    assert provider_serves_model(prov, "deepseek-v4-flash-lkd")
-    # Route resolution → (upstream, pool).
-    assert resolve_model(prov, "deepseek-v4-flash-lkd") == ("deepseek-v4-flash", "leaked")
-    assert resolve_model(prov, "deepseek-v4-flash") == ("deepseek-v4-flash", "members")
-    # No route → unchanged model, no pool.
-    assert resolve_model(prov, "other") == ("other", "")
+    from voidswitch.models.db import ApiKey, ExposedModel, Provider, RouteLayer, RoutePoolEntry
+    from voidswitch.services.model_routing import build_opencode_config, weighted_entries
+    from voidswitch.services.selector import select_keys
+
+    # Key-pool selection: a route entry's key_pool restricts dispatch to keys
+    # carrying that tag; an empty pool uses every active key regardless.
+    prov = Provider(name="ds", type="deepseek", models=["deepseek-v4-flash"])
+    prov.id = 5
 
     def _key(h: str, pool: str) -> ApiKey:
         return ApiKey(
@@ -969,6 +957,37 @@ async def test_model_routes_and_key_pools():
     assert [k.key_hash for k in select_keys(prov, "leaked")] == ["leaked-1"]
     assert [k.key_hash for k in select_keys(prov, "members")] == ["member-1"]
     assert {k.key_hash for k in select_keys(prov, "")} == {"leaked-1", "member-1"}
+
+    # weighted_entries: disabled entries and missing/disabled providers are
+    # dropped up front; the remainder is emitted in a non-repeating order.
+    provider = Provider(name="p", type="openai", enabled=True, models=["*"])
+    provider.id = 9
+    layer = RouteLayer(position=0, max_attempts=2)
+    e1 = RoutePoolEntry(layer=layer, provider_id=9, upstream_model="m1", weight=1, enabled=True)
+    e1.provider = provider
+    e2 = RoutePoolEntry(layer=layer, provider_id=9, upstream_model="m2", weight=1, enabled=True)
+    e2.provider = provider
+    disabled = RoutePoolEntry(layer=layer, provider_id=9, upstream_model="m3", weight=1, enabled=False)
+    disabled.provider = provider
+    layer.entries = [e1, e2, disabled]
+    ordered = weighted_entries(layer, rng=random.Random(0))
+    assert {e.upstream_model for e in ordered} == {"m1", "m2"}
+    assert len(ordered) == 2
+    assert disabled not in ordered
+
+    # build_opencode_config precedence: structured fields > custom config >
+    # models.dev placeholder.
+    exposed = ExposedModel(
+        model_id="x",
+        display_name="Named",
+        opencode_config={"name": "cfg", "limit": {"context": 32768}},
+        limit_context=131072,
+        reasoning=True,
+    )
+    config = build_opencode_config(exposed, {"name": "registry", "limit": {"context": 100}})
+    assert config["name"] == "Named"  # display_name beats both
+    assert config["limit"]["context"] == 131072  # structured field wins
+    assert config["reasoning"] is True
 
 
 async def test_key_select_modes():
@@ -1157,67 +1176,51 @@ async def test_session_key_precedence():
     assert _session_key(_req(session_id="x")) != _session_key(_req(token_id=6, session_id="x"))
 
 
-async def test_route_upstream_hidden_from_catalog_and_dispatch():
-    from voidswitch.services.models_catalog import served_model_ids
-    from voidswitch.services.selector import provider_serves_model
+async def test_served_upstream_ids_ignore_wildcards_and_serve_checks():
+    from voidswitch.models.db import Provider
+    from voidswitch.services.models_catalog import providers_serving, served_upstream_ids
 
-    # Raw upstreams put behind alias routes: only the aliases are advertised /
-    # callable, never the bare upstream id.
+    # Only concrete upstream names become served ids; wildcards match but name
+    # nothing (so the public catalog is never polluted by "*").
     prov = Provider(
         name="ds",
         type="deepseek",
-        models=["deepseek-v4-flash", "deepseek-v4-pro"],
-        model_map={},
-        model_routes=[
-            {"alias": "deepseek-v4-flash-lkd", "upstream": "deepseek-v4-flash", "pool": "lkd"},
-            {"alias": "deepseek-v4-pro-lkd", "upstream": "deepseek-v4-pro", "pool": "lkd"},
-        ],
+        models=["deepseek-v4-flash", "deepseek-v4-pro", "*"],
     )
-    assert served_model_ids([prov]) == {"deepseek-v4-flash-lkd", "deepseek-v4-pro-lkd"}
-    assert provider_serves_model(prov, "deepseek-v4-flash-lkd")
-    assert not provider_serves_model(prov, "deepseek-v4-flash")
-    assert not provider_serves_model(prov, "deepseek-v4-pro")
+    assert served_upstream_ids([prov]) == {"deepseek-v4-flash", "deepseek-v4-pro"}
+    assert set(providers_serving([prov], "deepseek-v4-flash")) == {"ds"}
+    assert set(providers_serving([prov], "anything-at-all")) == {"ds"}
 
-    # A model id that is itself a route alias stays served even if another route
-    # uses it as an upstream.
-    prov.model_routes = [
-        {"alias": "deepseek-v4-flash-lkd", "upstream": "deepseek-v4-flash", "pool": "lkd"},
-        {"alias": "deepseek-v4-flash", "upstream": "deepseek-v4-flash", "pool": "members"},
-    ]
-    assert provider_serves_model(prov, "deepseek-v4-flash")
-    assert served_model_ids([prov]) == {
-        "deepseek-v4-flash-lkd",
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-    }
+    narrow = Provider(name="x", type="openai", models=["exact"])
+    assert providers_serving([narrow], "exact") == ["x"]
+    assert providers_serving([narrow], "other") == []
 
 
-async def test_deleting_proxy_scrubs_provider_references(db):
+async def test_deleting_node_group_scrubs_provider_references(db):
     from starlette.requests import Request
-    from voidswitch.api.admin.proxies import delete_proxy
-    from voidswitch.models.db import Provider, Proxy, User
+    from voidswitch.api.admin.nodes import delete_node_group
+    from voidswitch.models.db import NodeGroup, Provider, User
 
     request = Request({"type": "http", "client": ("test", 0), "headers": []})
 
     async with db.session() as session:
-        proxy = Proxy(url="http://gone:1", status="active")
-        session.add(proxy)
-        prov = Provider(name="p", type="openai", proxy_mode="selected")
+        group = NodeGroup(name="Custom")
+        session.add(group)
+        prov = Provider(name="p", type="openai", models=["*"])
         session.add(prov)
         await session.flush()
-        pid, provider_id = proxy.id, prov.id
-        prov.proxy_ids = [pid, 999]  # 999 is an already-dangling ref
+        group_id, provider_id = group.id, prov.id
+        prov.node_group_id = group_id
         await session.flush()
 
     async with db.session() as session:
-        await delete_proxy(
-            pid, request=request, session=session, user=User(sub="admin", role="owner")
+        await delete_node_group(
+            group_id, request=request, session=session, user=User(sub="admin", role="owner")
         )
 
     async with db.session() as session:
         prov = await session.get(Provider, provider_id)
-        assert pid not in prov.proxy_ids  # the deleted proxy is scrubbed
-        assert prov.proxy_ids == [999]  # other entries are left untouched
+        assert prov.node_group_id is None  # reset back to the default group
 
 
 async def test_adapter_catalog_nonempty():
@@ -1872,8 +1875,11 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
 
         assert "retry_on_zero_token" in cols
         assert "drop_opencode_identity_block" in cols
-        assert {"users", "models", "api_keys", "request_logs"} <= tables
-        assert ver == "0001_baseline"
+        assert {
+            "users", "exposed_models", "routes", "route_layers", "route_pool_entries",
+            "providers", "api_keys", "node_groups", "node_group_members", "request_logs",
+        } <= tables
+        assert ver == "6151bc02069f"  # the current head (baseline + routing rewrite)
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()

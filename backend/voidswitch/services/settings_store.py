@@ -88,6 +88,14 @@ def get_int(key: str, default: int = 0) -> int:
         return default
 
 
+def get_float(key: str, default: float = 0.0) -> float:
+    value = get_cached(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def get_bool(key: str, default: bool = False) -> bool:
     value = get_cached(key, default)
     if isinstance(value, bool):

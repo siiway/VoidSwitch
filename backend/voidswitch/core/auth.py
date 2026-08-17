@@ -37,7 +37,6 @@ from voidswitch.core.security import (
 from voidswitch.models.db import User, VoidToken
 from voidswitch.services import settings_store
 from voidswitch.services.network import get_pool
-from voidswitch.services.selector import static_routes
 
 log = get_logger("auth")
 
@@ -171,7 +170,26 @@ class PrismIdentity:
 
 
 async def _oauth_client() -> httpx.AsyncClient:
-    route, _ = static_routes(settings_store.get_str("static_proxy_url", ""))[0]
+    """A pooled outbound client routed through the System node group.
+
+    System requests (Prism OAuth exchange, userinfo, teams) always use the
+    System group; an empty System group degrades to direct so login can never be
+    bricked by a routing mistake. With routing disabled, falls back to the single
+    static route without touching the database.
+    """
+    from voidswitch.core.database import get_database
+    from voidswitch.services import routing
+    from voidswitch.services.selector import static_routes
+
+    if not settings_store.get_bool("proxy_switching_enabled", True):
+        static = settings_store.get_str("static_proxy_url", "")
+        route, _ = static_routes(static)[0]
+        return await get_pool().get(route, connect_timeout=15.0, read_timeout=30.0)
+
+    db = get_database()
+    async with db.session() as session:
+        routes = await routing.system_routes(session)
+    route, _ = routes[0]
     return await get_pool().get(route, connect_timeout=15.0, read_timeout=30.0)
 
 

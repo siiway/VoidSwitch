@@ -68,22 +68,29 @@ class LoginTokenWithSecret(LoginTokenStatus):
 
 
 class ModelRoute(BaseModel):
-    """Maps an inbound model alias to an upstream model + key pool."""
+    """Maps an inbound model alias to an upstream model + key pool.
+
+    Retained for dashboard/schema compatibility; the explicit route-flowchart
+    tables (Route/Layer/PoolEntry) are authoritative for dispatch now.
+    """
 
     alias: str
     upstream: str = ""  # "" → send the alias name unchanged
     pool: str = ""  # "" → use any key; else only keys tagged with this pool
 
 
+    models_dev_id: str | None = None
+
+
 class ProviderBase(BaseModel):
     name: str
     type: str = "openai"
+    slug: str = ""
     base_url: str = ""
     enabled: bool = True
     priority: int = 100
     weight: int = 1
     models: list[str] = Field(default_factory=list)
-    model_map: dict[str, str] = Field(default_factory=dict)
     balance_url: str | None = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: int = 0
@@ -91,12 +98,8 @@ class ProviderBase(BaseModel):
     retry_on_zero_token: bool = False
     # claude-code only: drop the whole "You are OpenCode…" system block.
     drop_opencode_identity_block: bool = False
-    # Outbound routing: "all" | "direct" | "selected" (see constants.ProxyMode).
-    proxy_mode: str = "all"
-    # Proxy IDs used when proxy_mode == "selected".
-    proxy_ids: list[int] = Field(default_factory=list)
-    # Alias → upstream model + key-pool routes.
-    model_routes: list[ModelRoute] = Field(default_factory=list)
+    # Outbound node group this provider's upstream requests use; null = default.
+    node_group_id: int | None = None
     # Key selection: "round_robin" | "random" | "fallback" |
     # "pinned_round_robin" | "pinned_random" (see constants.KeySelectMode).
     key_select_mode: str = "round_robin"
@@ -112,20 +115,18 @@ class ProviderCreate(ProviderBase):
 class ProviderUpdate(BaseModel):
     name: str | None = None
     type: str | None = None
+    slug: str | None = None
     base_url: str | None = None
     enabled: bool | None = None
     priority: int | None = None
     weight: int | None = None
     models: list[str] | None = None
-    model_map: dict[str, str] | None = None
     balance_url: str | None = None
     extra_headers: dict[str, str] | None = None
     timeout_seconds: int | None = None
     retry_on_zero_token: bool | None = None
     drop_opencode_identity_block: bool | None = None
-    proxy_mode: str | None = None
-    proxy_ids: list[int] | None = None
-    model_routes: list[ModelRoute] | None = None
+    node_group_id: int | None = None
     key_select_mode: str | None = None
     rate_limit_cooldown_seconds: int | None = None
 
@@ -186,42 +187,45 @@ class ProviderKeyApiSecret(ProviderKeyApiOut):
 
 
 class ModelOut(BaseModel):
-    """A single model id in the catalog, merged with any stored metadata."""
+    """A single *exposed* model id in the catalog, merged with metadata.
+
+    Upstreams are reached through the model's route flow and are never advertised
+    - ``upstreams`` is a staff-only diagnostic of the reachable ``slug/model``
+    refs.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
-    # Numeric id of the backing metadata row, or null when the model is only
-    # served by a provider and has no metadata row yet.
-    id: int | None = None
+    id: int
     model_id: str
-    # Public alias; when set, this is the only id clients see / may call.
-    mapped_id: str | None = None
-    # The id clients actually see (``mapped_id`` if set, else ``model_id``).
-    public_id: str
     display_name: str | None = None
     description: str | None = None
     opencode_config: dict = Field(default_factory=dict)
     enabled: bool = True
     # Role groups allowed to call this model (moderator implicitly always allowed
-    # and never listed here). Empty → moderators only.
+    # and never listed here). Empty - moderators only.
     allowed_role_group_ids: list[int] = Field(default_factory=list)
-    # Names of enabled providers that currently serve this model.
-    providers: list[str] = Field(default_factory=list)
-    # True when at least one enabled provider serves it right now.
-    served: bool = False
-    # True when a metadata row exists for it.
-    registered: bool = False
+    # Structured metadata (override opencode_config for downstream config).
+    limit_context: int | None = None
+    limit_input: int | None = None
+    limit_output: int | None = None
+    reasoning: bool | None = None
+    capabilities: dict = Field(default_factory=dict)
+    modalities: dict = Field(default_factory=dict)
+    # models.dev mapping.
+    models_dev_id: str | None = None
+    models_dev_synced_at: dt.datetime | None = None
+    # Staff-visible upstream refs reachable through the route (slug/model).
+    upstreams: list[str] = Field(default_factory=list)
     added_by_name: str | None = None
     created_at: dt.datetime | None = None
     updated_at: dt.datetime | None = None
 
 
 class ModelUpsert(BaseModel):
-    """Create or update the metadata for one model id."""
+    """Create or update the metadata for one exposed model id."""
 
     model_id: str
-    # Send "" to clear an existing mapping; omit (null) to leave it unchanged.
-    mapped_id: str | None = None
     # Send "" to clear; omit (null) to leave it unchanged.
     display_name: str | None = None
     description: str | None = None
@@ -230,6 +234,72 @@ class ModelUpsert(BaseModel):
     # Role groups allowed to call this model (moderator is always allowed and is
     # never listed). Omit (null) to leave unchanged; send [] for "moderators only".
     allowed_role_group_ids: list[int] | None = None
+    limit_context: int | None = None
+    limit_input: int | None = None
+    limit_output: int | None = None
+    reasoning: bool | None = None
+    capabilities: dict | None = None
+    modalities: dict | None = None
+    # ""/null clears the models.dev mapping.
+    models_dev_id: str | None = None
+
+
+class RouteEntryIn(BaseModel):
+    """One upstream ref inside a route layer pool."""
+
+    provider_id: int
+    upstream_model: str = ""
+    weight: int = 1
+    enabled: bool = True
+    key_pool: str = ""
+
+
+class RouteLayerIn(BaseModel):
+    position: int = 0
+    max_attempts: int = 1
+    entries: list[RouteEntryIn] = Field(default_factory=list)
+
+
+class RouteUpdate(BaseModel):
+    """Replaces the full flowchart (ordered layers) of one exposed model."""
+
+    layers: list[RouteLayerIn] = Field(default_factory=list)
+
+
+class RouteEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    provider_id: int | None = None
+    provider_name: str | None = None
+    provider_slug: str | None = None
+    upstream_model: str = ""
+    weight: int = 1
+    enabled: bool = True
+    key_pool: str = ""
+
+
+class RouteLayerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    position: int = 0
+    max_attempts: int = 1
+    entries: list[RouteEntryOut] = Field(default_factory=list)
+
+
+class RouteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    exposed_model_id: int
+    layers: list[RouteLayerOut] = Field(default_factory=list)
+
+
+class ModelWithRouteOut(ModelOut):
+    """An exposed model plus its resolved route flowchart (staff editor view)."""
+
+    route: RouteOut | None = None
 
 
 class ModelBatchUpdate(BaseModel):
@@ -397,43 +467,102 @@ class ClaudeOAuthComplete(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Proxies
+# Proxies → Nodes & Node groups (outbound routing system)
 # --------------------------------------------------------------------------- #
 
 
-class ProxyCreate(BaseModel):
-    # Accept newline-separated proxy URLs for batch input.
+class NodeCreate(BaseModel):
     urls: list[str]
+    type: str = "http"  # direct | http | socks5 | agent
     local_address: str | None = None
     weight: int = 1
     note: str | None = None
+    # Agent-node credential (never returned). For proxy nodes credentials live in
+    # the URL (http://user:pass@host:port).
+    token: str | None = None
 
 
-class ProxyUpdate(BaseModel):
+class NodeUpdate(BaseModel):
     url: str | None = None
+    type: str | None = None
     local_address: str | None = None
     enabled: bool | None = None
     status: str | None = None
     weight: int | None = None
     note: str | None = None
+    token: str | None = None
 
 
-class ProxyOut(BaseModel):
+class NodeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     url: str
+    type: str = "http"
     local_address: str | None = None
     enabled: bool
     status: str
     failed_count: int
     weight: int
     latency_ms: float | None = None
+    latency_ewma: float | None = None
     note: str | None = None
     disabled_reason: str | None = None
     last_used_at: dt.datetime | None = None
     last_checked_at: dt.datetime | None = None
     created_at: dt.datetime
+    token_preview: str | None = None
+
+
+class NodeGroupMemberIn(BaseModel):
+    """One group contents item: a direct node OR an inherited group (not both)."""
+
+    node_id: int | None = None
+    source_group_id: int | None = None
+    weight: int = 1
+
+
+class NodeGroupCreate(BaseModel):
+    name: str
+    description: str | None = None
+    probe_url: str | None = None
+    probe_interval_seconds: int = 0
+    members: list[NodeGroupMemberIn] = Field(default_factory=list)
+
+
+class NodeGroupUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    probe_url: str | None = None
+    probe_interval_seconds: int | None = None
+
+
+class NodeGroupMemberOut(BaseModel):
+    node_id: int | None = None
+    source_group_id: int | None = None
+    weight: int = 1
+    # Convenience projection for the UI.
+    node_url: str | None = None
+    node_status: str | None = None
+    node_latency_ms: float | None = None
+    source_group_name: str | None = None
+    source_group_is_system: bool = False
+
+
+class NodeGroupOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    slug: str | None = None
+    name: str
+    description: str | None = None
+    probe_url: str | None = None
+    probe_interval_seconds: int = 0
+    is_system: bool = False
+    member_count: int = 0
+    members: list[NodeGroupMemberOut] = Field(default_factory=list)
+    created_at: dt.datetime
+    updated_at: dt.datetime
 
 
 # --------------------------------------------------------------------------- #

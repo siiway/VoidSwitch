@@ -16,7 +16,8 @@ from voidswitch.services import settings_store
 pytestmark = pytest.mark.asyncio
 
 
-async def test_oauth_client_uses_static_proxy(monkeypatch):
+async def test_oauth_client_uses_system_routes_off_falls_to_static(db, monkeypatch):
+    """With routing off, the OAuth client uses the static proxy route."""
     seen = {}
 
     class Pool:
@@ -26,7 +27,10 @@ async def test_oauth_client_uses_static_proxy(monkeypatch):
             seen["read_timeout"] = read_timeout
             return object()
 
-    monkeypatch.setattr(settings_store, "get_str", lambda key, default="": "http://proxy:7890")
+    monkeypatch.setattr(settings_store, "get_bool", lambda key, default=True: False)
+    monkeypatch.setattr(
+        settings_store, "get_str", lambda key, default="": "http://proxy:7890"
+    )
     monkeypatch.setattr(auth, "get_pool", lambda: Pool())
 
     await auth._oauth_client()

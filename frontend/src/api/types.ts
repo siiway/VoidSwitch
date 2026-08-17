@@ -26,21 +26,19 @@ export interface Provider {
   id: number;
   uuid?: string | null;
   name: string;
+  slug: string;
   type: string;
   base_url: string;
   enabled: boolean;
   priority: number;
   weight: number;
   models: string[];
-  model_map: Record<string, string>;
   balance_url?: string | null;
   extra_headers: Record<string, string>;
   timeout_seconds: number;
   retry_on_zero_token: boolean;
   drop_opencode_identity_block: boolean;
-  proxy_mode: ProxyMode;
-  proxy_ids: number[];
-  model_routes: ModelRoute[];
+  node_group_id: number | null;
   key_select_mode: KeySelectMode;
   rate_limit_cooldown_seconds: number;
   created_at: string;
@@ -67,8 +65,6 @@ export interface ProviderKeyApi {
   token?: string;
 }
 
-export type ProxyMode = "all" | "direct" | "selected";
-
 export type KeySelectMode =
   | "round_robin"
   | "random"
@@ -76,11 +72,7 @@ export type KeySelectMode =
   | "pinned_round_robin"
   | "pinned_random";
 
-export interface ModelRoute {
-  alias: string;
-  upstream: string;
-  pool: string;
-}
+export type NodeType = "direct" | "http" | "socks5" | "agent";
 
 export interface ApiKey {
   id: number;
@@ -120,20 +112,48 @@ export interface AuthImportResult {
   keys: ApiKey[];
 }
 
-export interface Proxy {
+export interface Node {
   id: number;
   url: string;
+  type: NodeType;
   local_address?: string | null;
   enabled: boolean;
   status: string;
   failed_count: number;
   weight: number;
   latency_ms?: number | null;
+  latency_ewma?: number | null;
   note?: string | null;
   disabled_reason?: string | null;
   last_used_at?: string | null;
   last_checked_at?: string | null;
   created_at: string;
+  token_preview?: string | null;
+}
+
+export interface NodeGroupMember {
+  node_id?: number | null;
+  source_group_id?: number | null;
+  weight: number;
+  node_url?: string | null;
+  node_status?: string | null;
+  node_latency_ms?: number | null;
+  source_group_name?: string | null;
+  source_group_is_system?: boolean;
+}
+
+export interface NodeGroup {
+  id: number;
+  slug?: string | null;
+  name: string;
+  description?: string | null;
+  probe_url?: string | null;
+  probe_interval_seconds: number;
+  is_system: boolean;
+  member_count: number;
+  members: NodeGroupMember[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface VoidToken {
@@ -164,20 +184,59 @@ export interface VoidTokenWithSecret extends VoidToken {
 export interface ModelEntry {
   id: number | null;
   model_id: string;
-  mapped_id?: string | null;
-  public_id: string;
   display_name?: string | null;
   description?: string | null;
   opencode_config: Record<string, unknown>;
   enabled: boolean;
   // Role groups allowed to call this model (moderator always allowed, not listed).
   allowed_role_group_ids: number[];
-  providers: string[];
-  served: boolean;
-  registered: boolean;
+  // Structured metadata (overrides opencode_config for downstream config).
+  limit_context?: number | null;
+  limit_input?: number | null;
+  limit_output?: number | null;
+  reasoning?: boolean | null;
+  capabilities: Record<string, unknown>;
+  modalities: Record<string, unknown>;
+  models_dev_id?: string | null;
+  models_dev_synced_at?: string | null;
+  // Staff-visible upstream refs reachable through the route (slug/model).
+  upstreams: string[];
   added_by_name?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface RoutePoolEntry {
+  id?: number;
+  provider_id?: number | null;
+  provider_name?: string | null;
+  provider_slug?: string | null;
+  upstream_model: string;
+  weight: number;
+  enabled: boolean;
+  key_pool: string;
+}
+
+export interface RouteLayer {
+  id?: number;
+  position: number;
+  max_attempts: number;
+  entries: RoutePoolEntry[];
+}
+
+export interface Route {
+  id?: number;
+  exposed_model_id: number;
+  layers: RouteLayer[];
+}
+
+export interface ModelWithRoute extends ModelEntry {
+  route?: Route | null;
+}
+
+export interface ModelsDevSearchResult {
+  results: Record<string, unknown>[];
+  synced: boolean;
 }
 
 // Role groups ("身份组").

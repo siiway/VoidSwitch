@@ -4,7 +4,7 @@ layout: home
 hero:
   name: VoidSwitch
   text: LLM API Gateway
-  tagline: One endpoint for every model — resilient key and proxy failover, OpenAI ⇄ Anthropic conversion, and a self-service dashboard.
+  tagline: One endpoint for every model — resilient key and node failover, OpenAI ⇄ Anthropic conversion, and a self-service dashboard.
   actions:
     - theme: brand
       text: Quick Start
@@ -18,7 +18,7 @@ hero:
 
 features:
   - title: One endpoint, many providers
-    details: Point the OpenAI SDK, the Anthropic SDK, or Claude Code at a single URL. VoidSwitch picks the provider, rotates keys, and fails over proxies for you.
+    details: Point the OpenAI SDK, the Anthropic SDK, or Claude Code at a single URL. VoidSwitch picks the provider, rotates keys, and fails over nodes for you.
   - title: Self-service keys
     details: Create your own long-lived vs-… tokens, set a per-token model allowlist and rate limits, and rotate or revoke them at any time.
   - title: OpenAI ⇄ Anthropic
@@ -32,7 +32,7 @@ features:
 VoidSwitch is a **multi-provider LLM API reverse proxy**. It accepts OpenAI Chat
 Completions, OpenAI Responses, and Anthropic-format traffic on a single endpoint,
 converts between them, and forwards requests to any upstream provider that can
-serve the model — while handling key rotation, proxy failover, and per-user quotas.
+serve the model — while handling key rotation, node failover, and per-user quotas.
 
 This documentation is **public** and anyone can read it; it is available in both 中文 and English, switchable with the language menu in the top-right corner of the page.
 

@@ -39,9 +39,15 @@ class KeyStatus(StrEnum):
     DISABLED = "disabled"
 
 
-class ProxyStatus(StrEnum):
+class NodeStatus(StrEnum):
+    """Status of an outbound node (replaces the old ``ProxyStatus``)."""
+
     ACTIVE = "active"
     DISABLED = "disabled"
+
+
+# Kept as an alias so old references / stored values keep working.
+ProxyStatus = NodeStatus
 
 
 class ApiStyle(StrEnum):
@@ -70,12 +76,13 @@ SESSION_HEADER = "x-voidswitch-session"
 UPSTREAM_UNAVAILABLE_STATUS = 543
 
 
-class ProxyMode(StrEnum):
-    """How a provider chooses its outbound route."""
+class NodeType(StrEnum):
+    """How a node reaches the internet."""
 
-    ALL = "all"  # use any active proxy (global pool), direct only if none exist
-    DIRECT = "direct"  # never use a proxy — always connect directly
-    SELECTED = "selected"  # only the proxies assigned in Provider.proxy_ids
+    DIRECT = "direct"  # 直连 — no proxy, no URL
+    HTTP = "http"  # HTTP/HTTPS forward proxy
+    SOCKS5 = "socks5"  # SOCKS5 forward proxy
+    AGENT = "agent"  # a voidswitch-agent relay (custom protocol)
 
 
 class KeySelectMode(StrEnum):
@@ -169,15 +176,34 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # open at once. Extra connections beyond this are rejected with 429.
     "log_stream_max_connections": 2,
     # Proxy switching. When False the gateway stops rotating/failover over the
-    # proxy pool: every upstream request goes through ``static_proxy_url`` (or, if
+    # node pool: every upstream request goes through ``static_proxy_url`` (or, if
     # that is empty, directly / via the process HTTP(S)_PROXY env vars), and a
-    # proxy is never auto-disabled on failure. Use this when an external proxy
+    # node is never auto-disabled on failure. Use this when an external proxy
     # (e.g. mihomo) already handles egress routing.
     "proxy_switching_enabled": True,
     # The single proxy URL used for every request when proxy switching is off.
     # Empty → connect directly, falling back to the HTTP_PROXY/HTTPS_PROXY/
     # ALL_PROXY environment variables when present.
     "static_proxy_url": "",
+    # Node groups.
+    # URL probed by idle node-health checks when a group doesn't override it.
+    "node_default_probe_url": "https://api.openai.com/v1/models",
+    # Idle probe interval (seconds) when a group doesn't override it.
+    "node_probe_interval_seconds": 120,
+    # Node dynamic-ranking weights: score = alpha·ewma_latency_ms +
+    # beta·failed_count + gamma·threshold-proximity penalty. Nodes are tried in
+    # ascending score order; ``weight`` only spreads picks when scores tie.
+    "node_rank_alpha": 1.0,
+    "node_rank_beta": 100.0,
+    "node_rank_gamma": 1000.0,
+    # How long (seconds) a node's EWMA latency halves when idling without
+    # measurements — keeps a formerly-slow node able to recover.
+    "node_rank_ewma_half_life_seconds": 300,
+    # models.dev catalog sync. The registry is pulled from
+    # https://models.dev/api.json and used as *placeholder* metadata for exposed
+    # models that were matched to a models.dev model id (never overwriting
+    # explicitly filled fields). 0 = disabled.
+    "models_dev_sync_interval_minutes": 1440,
     # How many announcements to show inline on the dashboard's home panel before
     # the "view all" action is needed to open the rest. 0 = show none inline
     # (only the full-list dialog). The login popup always shows recent ones.
