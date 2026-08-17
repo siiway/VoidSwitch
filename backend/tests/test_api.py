@@ -692,6 +692,94 @@ async def test_request_log_stream_pushes_new_rows(db, seeded):
     await events.aclose()
 
 
+async def test_request_log_stream_does_not_flood_history_on_connect(db, seeded):
+    """Connecting a live stream must NOT re-push pre-existing (historical) rows
+    — only rows strictly newer than ``after_id`` are delivered."""
+    import asyncio
+    import json as _json
+
+    from voidswitch.api.admin.logs import (
+        _request_log_filters,
+        _stream_request_log_events,
+    )
+    from voidswitch.models.db import RequestLog
+    from voidswitch.services.dispatcher import _utcnow
+
+    # A batch of "old" rows that already existed before the stream connects.
+    async with db.session() as session:
+        for _ in range(5):
+            session.add(
+                RequestLog(
+                    user_sub="user-1", model="deepseek-chat", success=True,
+                    req_status="completed", finished_at=_utcnow(),
+                )
+            )
+        await session.commit()
+
+    owner = await _load_user(db, "user-1")
+    filters = _request_log_filters(owner)
+
+    # Stream opens "after" all existing rows → nothing historical may be pushed.
+    events = _stream_request_log_events(db, filters, "user-1", poll_seconds=0.05)
+    # One fresh row written after connect is the only thing delivered.
+    async with db.session() as session:
+        session.add(RequestLog(user_sub="user-1", model="deepseek-chat", success=True))
+        await session.commit()
+    first = await asyncio.wait_for(events.__anext__(), timeout=2)
+    payload = _json.loads(first[len("data: "):])
+    assert payload["model"] == "deepseek-chat"
+    await events.aclose()
+
+
+async def test_request_log_stream_repushes_pending_row_on_finalise(db, seeded):
+    """A row pushed while ``pending`` is re-pushed once it finalises, so the
+    client's status/duration update live — but no other rows are affected."""
+    import asyncio
+    import json as _json
+
+    from sqlalchemy import select as _select
+    from voidswitch.api.admin.logs import (
+        _request_log_filters,
+        _stream_request_log_events,
+    )
+    from voidswitch.models.db import RequestLog
+    from voidswitch.services.dispatcher import _utcnow
+
+    async with db.session() as session:
+        # A row that will be pending when the stream first sees it.
+        session.add(
+            RequestLog(
+                user_sub="user-1", model="deepseek-chat", success=True,
+                req_status="pending", finished_at=None,
+            )
+        )
+        await session.commit()
+
+    owner = await _load_user(db, "user-1")
+    filters = _request_log_filters(owner)
+    events = _stream_request_log_events(db, filters, "user-1", poll_seconds=0.05)
+
+    first = await asyncio.wait_for(events.__anext__(), timeout=2)
+    payload = _json.loads(first[len("data: "):])
+    assert payload["req_status"] == "pending"
+
+    # Finalise the pending row while the stream is open → re-pushed.
+    async with db.session() as session:
+        row = (
+            await session.execute(
+                _select(RequestLog).where(RequestLog.req_status == "pending")
+            )
+        ).scalars().one()
+        row.req_status = "completed"
+        row.finished_at = _utcnow()
+        await session.commit()
+    second = await asyncio.wait_for(events.__anext__(), timeout=2)
+    payload = _json.loads(second[len("data: "):])
+    assert payload["req_status"] == "completed"
+
+    await events.aclose()
+
+
 async def test_request_log_stream_scopes_members_and_honours_filters(db, seeded):
     """The stream honours server-side filters: a non-matching model is never
     pushed, and member traffic is scoped to the caller."""

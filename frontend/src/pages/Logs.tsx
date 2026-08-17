@@ -902,13 +902,12 @@ function RequestLogs({
     return () => window.clearTimeout(id);
   }, [liveNotice]);
 
-  // The table shows live rows above the loaded page (they are the newest by
-  // construction), deduped against any overlap with the fetched page.
+  // While live is connected, show ONLY the rows pushed since connect (newest
+  // first) — the pre-existing page is stale by definition and would otherwise
+  // sit under the live rows. When disconnected, fall back to the fetched page.
   const allRows = useMemo(() => {
-    const live = liveEnabled ? liveRows : [];
-    const liveIds = new Set(live.map((r) => r.id));
-    const fetched = logs.data?.items ?? [];
-    return [...live, ...fetched.filter((r) => !liveIds.has(r.id))];
+    if (liveEnabled) return liveRows;
+    return logs.data?.items ?? [];
   }, [liveEnabled, liveRows, logs.data]);
 
   // Re-render every second while the live stream is connected and any row is

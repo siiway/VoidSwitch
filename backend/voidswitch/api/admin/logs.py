@@ -682,7 +682,6 @@ async def request_log_stream(
             get_database(), filters, user.sub, after_id=after_id
         ):
             yield event
-
     return StreamingResponse(
         _stream(),
         media_type="text/event-stream",
@@ -710,14 +709,16 @@ async def _stream_request_log_events(
     comment when the stream is otherwise idle. Runs until cancelled; the
     per-user stream slot is released on exit.
 
-    Also re-pushes rows that were previously sent as ``pending`` once they
+    Also re-pushes rows that this stream previously sent as ``pending`` once they
     finalise (``finished_at`` is set), so the client's duration and status
-    update live without a manual refresh.
+    update live without a manual refresh. Historical rows already present at
+    connect time (``<= after_id``) are never re-pushed — only rows the stream
+    itself observed being created are watched for finalisation.
     """
     last_id = after_id
-    # Track ids of rows we have already pushed in their final form (non-pending
-    # with a finished_at), so we don't re-push them on every poll.
-    finalised_ids: set[int] = set()
+    # Ids of rows this stream pushed while they were still pending — the only
+    # rows that need re-pushing when they finalise.
+    watched_pending: set[int] = set()
     last_sent = time.monotonic()
     try:
         while True:
@@ -733,16 +734,14 @@ async def _stream_request_log_events(
                     for clause in filters:
                         stmt = stmt.where(clause)
                     rows = (await session.execute(stmt)).scalars().all()
-                    # Rows that have been finalised since the last poll (were
-                    # pending, now have a finished_at). Only query when there
-                    # might be candidates — the last_id window is bounded.
+
+                    # Rows we watched as pending that have since finalised.
                     update_rows: list[RequestLog] = []
-                    if last_id > after_id and finalised_ids:
+                    if watched_pending:
                         update_stmt = (
                             select(RequestLog)
                             .where(
-                                RequestLog.id <= last_id,
-                                RequestLog.id.notin_(list(finalised_ids)),
+                                RequestLog.id.in_(list(watched_pending)),
                                 RequestLog.finished_at.isnot(None),
                                 RequestLog.req_status != "pending",
                             )
@@ -754,11 +753,13 @@ async def _stream_request_log_events(
                         update_rows = (await session.execute(update_stmt)).scalars().all()
 
                     all_rows = rows + [r for r in update_rows if r.id not in {rr.id for rr in rows}]
-                    # Mark every pushed row that is definitively finalised so
-                    # we never query for it again.
+                    # Newly-created pending rows enter the watchlist; finalised
+                    # ones leave it so we never query for them again.
                     for r in all_rows:
-                        if r.finished_at is not None and r.req_status != "pending":
-                            finalised_ids.add(r.id)
+                        if r.req_status == "pending":
+                            watched_pending.add(r.id)
+                        else:
+                            watched_pending.discard(r.id)
                     if all_rows:
                         items = await _resolve_request_log_rows(session, all_rows)
                 if all_rows:
