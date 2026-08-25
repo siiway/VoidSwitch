@@ -1,6 +1,6 @@
 [project]
 name = "voidswitch"
-version = "0.2.1"
+version = "0.2.2"
 description = "VoidSwitch — production-grade multi-provider LLM API reverse proxy with proxy/key failover."
 readme = "README.md"
 requires-python = ">=3.13"

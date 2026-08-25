@@ -27,6 +27,7 @@ from voidswitch.models.schemas import (
     NodeCreate,
     NodeGroupCreate,
     NodeGroupMemberIn,
+    NodeGroupMemberOut,
     NodeGroupOut,
     NodeGroupUpdate,
     NodeOut,
@@ -56,28 +57,30 @@ def _token_preview(raw: str) -> str:
 async def list_nodes(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
-) -> list[Node]:
+) -> list[NodeOut]:
     rows = (await session.execute(select(Node).order_by(Node.id))).scalars().all()
     owner = is_owner(user)
-    rows = [
-        _with_token_preview(n, show=owner)
-        for n in rows
-    ]
-    return rows
+    return [_with_token_preview(n, show=owner) for n in rows]
 
 
-def _with_token_preview(node: Node, *, show: bool) -> Node:
+def _with_token_preview(node: Node, *, show: bool) -> NodeOut:
+    """A ``NodeOut`` carrying the token preview for agent nodes.
+
+    Builds a schema object rather than stuffing a transient attribute onto the
+    ORM ``Node`` (which is not a model field and confuses type-checkers).
+    """
+    out = NodeOut.model_validate(node)
     if show and node.token_ciphertext:
         try:
             plaintext = decrypt_secret(
                 node.token_ciphertext, secret=get_settings().server.secret_key
             )
-            node.token_preview = _token_preview(plaintext)
+            out.token_preview = _token_preview(plaintext)
         except Exception:
-            node.token_preview = "***"
+            out.token_preview = "***"
     elif node.token_ciphertext:
-        node.token_preview = "•••"
-    return node
+        out.token_preview = "•••"
+    return out
 
 
 @router.post("", response_model=list[NodeOut], status_code=status.HTTP_201_CREATED)
@@ -86,7 +89,7 @@ async def add_nodes(
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
-) -> list[Node]:
+) -> list[NodeOut]:
     if body.type not in _VALID_TYPES:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -140,7 +143,7 @@ async def update_node(
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
-) -> Node:
+) -> NodeOut:
     node = await session.get(Node, node_id)
     if node is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found.")
@@ -207,13 +210,11 @@ async def probe_node(
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
-) -> Node:
+) -> NodeOut:
     node = await session.get(Node, node_id)
     if node is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found.")
-    probe_url = settings_store.get_str(
-        "node_default_probe_url", "https://api.openai.com/v1/models"
-    )
+    probe_url = settings_store.get_str("node_default_probe_url", "https://api.openai.com/v1/models")
     route = routing.node_route(node)
     ok, latency, _status, error = await probe_route(route, probe_url)
     node.last_checked_at = dt.datetime.now(dt.UTC)
@@ -244,24 +245,32 @@ async def probe_node(
 # --------------------------------------------------------------------------- #
 
 
-async def _member_projection(session: AsyncSession, group: NodeGroup) -> NodeGroup:
+async def _member_projection(session: AsyncSession, group: NodeGroup) -> NodeGroupOut:
+    """Project a group (with its resolved members) into the response schema.
+
+    Builds a plain ``NodeGroupOut`` rather than mutating the ORM object — the
+    ``members`` relationship must stay a collection of ORM ``NodeGroupMember``
+    rows (assigning pydantic models to it breaks SQLAlchemy's instrumentation).
+    """
     groups_by_id = {
         g.id: g
-        for g in (
-            await session.execute(select(NodeGroup).where(NodeGroup.id != group.id))
-        ).scalars().all()
+        for g in (await session.execute(select(NodeGroup).where(NodeGroup.id != group.id)))
+        .scalars()
+        .all()
     }
     nodes_by_id = {
         n.id: n
         for n in (
             await session.execute(
-                select(Node).where(Node.id.in_(
-                    [m.node_id for m in group.members if m.node_id is not None] or [0]
-                ))
+                select(Node).where(
+                    Node.id.in_([m.node_id for m in group.members if m.node_id is not None] or [0])
+                )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
-    out: list = []
+    members: list[NodeGroupMemberOut] = []
     for member in group.members:
         item = {
             "node_id": member.node_id,
@@ -284,24 +293,31 @@ async def _member_projection(session: AsyncSession, group: NodeGroup) -> NodeGro
             if src is not None:
                 item["source_group_name"] = src.name
                 item["source_group_is_system"] = src.is_system
-        out.append(item)
-    from voidswitch.models.schemas import NodeGroupMemberOut
-
-    group.member_count = len(out)
-    group.members = [NodeGroupMemberOut(**i) for i in out]  # type: ignore[assignment]
-    return group
+        members.append(NodeGroupMemberOut(**item))
+    return NodeGroupOut(
+        id=group.id,
+        slug=group.slug,
+        name=group.name,
+        description=group.description,
+        probe_url=group.probe_url,
+        probe_interval_seconds=group.probe_interval_seconds,
+        is_system=group.is_system,
+        member_count=len(members),
+        members=members,
+        created_at=group.created_at,
+        updated_at=group.updated_at,
+    )
 
 
 @groups_router.get("", response_model=list[NodeGroupOut])
 async def list_node_groups(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_staff),
-) -> list[NodeGroup]:
+) -> list[NodeGroupOut]:
     groups = (await session.execute(select(NodeGroup).order_by(NodeGroup.id))).scalars().all()
-    result: list[NodeGroup] = []
+    result: list[NodeGroupOut] = []
     for g in groups:
-        await _member_projection(session, g)
-        result.append(g)
+        result.append(await _member_projection(session, g))
     return result
 
 
@@ -333,11 +349,7 @@ async def _validate_members(
                 "A group cannot inherit from itself.",
             )
         found = set(
-            (
-                await session.execute(
-                    select(NodeGroup.id).where(NodeGroup.id.in_(src_ids))
-                )
-            )
+            (await session.execute(select(NodeGroup.id).where(NodeGroup.id.in_(src_ids))))
             .scalars()
             .all()
         )
@@ -378,7 +390,7 @@ async def create_node_group(
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
-) -> NodeGroup:
+) -> NodeGroupOut:
     existing = (
         await session.execute(select(NodeGroup).where(NodeGroup.name == body.name))
     ).scalar_one_or_none()
@@ -414,6 +426,8 @@ async def create_node_group(
         ip=request.client.host if request.client else None,
     )
     group = await session.get(NodeGroup, group.id)
+    if group is None:  # pragma: no cover - just written above
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node group not found.")
     return await _member_projection(session, group)
 
 
@@ -424,7 +438,7 @@ async def update_node_group(
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
-) -> NodeGroup:
+) -> NodeGroupOut:
     group = await session.get(NodeGroup, group_id)
     if group is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Node group not found.")
@@ -465,7 +479,7 @@ async def set_node_group_members(
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
-) -> NodeGroup:
+) -> NodeGroupOut:
     group = await session.get(NodeGroup, group_id)
     if group is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Node group not found.")
@@ -498,6 +512,8 @@ async def set_node_group_members(
         ip=request.client.host if request.client else None,
     )
     group = await session.get(NodeGroup, group_id)
+    if group is None:  # pragma: no cover - guarded above
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node group not found.")
     return await _member_projection(session, group)
 
 

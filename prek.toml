@@ -1,0 +1,27 @@
+# prek (pre-commit-compatible git hooks) — see https://prek.j178.dev
+#
+#   prek install --prepare-hooks   # install hook shims + prepare environments
+#   prek run --all-files           # run once across the repo
+#
+repos = [
+  { repo = "local", hooks = [
+    { id = "i18n-keys", name = "i18n keys present in en.ts & zh.ts",
+      language = "system", entry = "python3 scripts/check_i18n_keys.py",
+      pass_filenames = false, files = "frontend/src/.*\\.tsx?$" },
+    # Backend Python gates (ruff check --fix → ruff format → ty). The ruff
+    # hooks autofix in place and re-stage the files (via scripts/ruff_fix.sh),
+    # so a fix is treated as success and committed with the change. ty is a
+    # pure check — run `uv run --project backend ty check` and fix manually.
+    { id = "ruff-check", name = "ruff check --fix (backend)",
+      language = "system",
+      entry = "scripts/ruff_fix.sh check",
+      files = "backend/.*\\.py$" },
+    { id = "ruff-format", name = "ruff format (backend)",
+      language = "system",
+      entry = "scripts/ruff_fix.sh format",
+      files = "backend/.*\\.py$" },
+    { id = "ty-check", name = "ty check (backend)",
+      language = "system", entry = "uv run --project backend ty check",
+      files = "backend/.*\\.py$" },
+  ] },
+]
