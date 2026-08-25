@@ -1,7 +1,12 @@
 # VoidSwitch — gateway + dashboard on one origin (Python backend).
 #
-#   docker compose up -d        # build + start
+#   docker compose up -d        # pull images from GHCR + start
 #   docker compose logs -f      # follow logs
+#
+# Images are pulled from the GHCR registry. To build them from source instead,
+# merge the self-build override and rebuild:
+#
+#   docker compose -f compose.yaml -f compose-build.override.yaml up -d --build
 #
 # This file runs the **Python** gateway (the root Dockerfile). For the Go rewrite
 # use `docker compose -f compose-go.yaml up -d` instead.
@@ -14,29 +19,13 @@
 # in the Prism OAuth credentials (and your public base URL when deployed behind a
 # domain). The gateway reads VOIDSWITCH_* vars natively; see backend/config.example.yaml
 # for the full set.
+#
+# To pin a specific image tag (default: latest) set VS_IMAGE_TAG in .env, e.g.
+# VS_IMAGE_TAG=v1.2.3
 services:
   voidswitch:
     container_name: voidswitch
-    build:
-      # Context is the repo root so the OpenCode plugin source is bundled and the
-      # /install endpoint works. See the Dockerfile header for why. (The usage
-      # docs are a separate public VitePress site — see docs/ and the Deploy docs
-      # workflow — and are no longer built into this image.)
-      context: .
-      dockerfile: Dockerfile
-      args:
-        # Proxy for build-time downloads (uv/pip). Set these in .env or the shell;
-        # blank = direct. They are Docker's predefined proxy args, so RUN steps pick
-        # them up automatically and they are never baked into the image.
-        # NOTE: pulling the FROM base images is done by the daemon, not the build —
-        # configure that separately (systemd drop-in / daemon proxy).
-        HTTP_PROXY: "${HTTP_PROXY:-}"
-        HTTPS_PROXY: "${HTTPS_PROXY:-}"
-        NO_PROXY: "${NO_PROXY:-}"
-        http_proxy: "${http_proxy:-}"
-        https_proxy: "${https_proxy:-}"
-        no_proxy: "${no_proxy:-}"
-    image: voidswitch:latest
+    image: ghcr.io/siiway/voidswitch:${VS_IMAGE_TAG:-latest}
     restart: unless-stopped
     # Internal only — the dashboard service is the front door and proxies to this
     # over the compose network. Add a `ports:` mapping here only for debugging.
@@ -90,18 +79,7 @@ services:
       - vs-network
 
   dashboard:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        # bun install needs the proxy too (see the voidswitch service for notes).
-        HTTP_PROXY: "${HTTP_PROXY:-}"
-        HTTPS_PROXY: "${HTTPS_PROXY:-}"
-        NO_PROXY: "${NO_PROXY:-}"
-        http_proxy: "${http_proxy:-}"
-        https_proxy: "${https_proxy:-}"
-        no_proxy: "${no_proxy:-}"
-    image: voidswitch-dashboard:latest
+    image: ghcr.io/siiway/voidswitch-dashboard:${VS_IMAGE_TAG:-latest}
     restart: unless-stopped
     # The single public origin: serves the SPA and proxies the API to voidswitch.
     # Point Cloudflare Tunnel / your reverse proxy here.

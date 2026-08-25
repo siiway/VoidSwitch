@@ -1,0 +1,36 @@
+# VoidSwitch self-build override — merge this with compose.yaml to build images
+# from source instead of pulling from GHCR:
+#
+#   docker compose -f compose.yaml -f compose-build.override.yaml up -d --build
+#
+# The build context is the repo root so the OpenCode plugin source is bundled
+# and the /install endpoint works. See the Dockerfile header for details.
+services:
+  voidswitch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Proxy for build-time downloads (uv/pip). Set these in .env or the shell;
+        # blank = direct. They are Docker's predefined proxy args, so RUN steps
+        # pick them up automatically and are never baked into the image.
+        # NOTE: pulling the FROM base images is done by the daemon, not the build
+        # — configure that separately (systemd drop-in / daemon proxy).
+        HTTP_PROXY: "${HTTP_PROXY:-}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-}"
+        NO_PROXY: "${NO_PROXY:-}"
+        http_proxy: "${http_proxy:-}"
+        https_proxy: "${https_proxy:-}"
+        no_proxy: "${no_proxy:-}"
+
+  dashboard:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: "${HTTP_PROXY:-}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-}"
+        NO_PROXY: "${NO_PROXY:-}"
+        http_proxy: "${http_proxy:-}"
+        https_proxy: "${https_proxy:-}"
+        no_proxy: "${no_proxy:-}"
