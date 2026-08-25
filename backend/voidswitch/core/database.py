@@ -113,13 +113,23 @@ async def run_migrations() -> None:
     a running FastAPI lifespan). The first migration (``0001_baseline``) both
     creates a fresh schema and heals pre-Alembic databases, so this is safe on
     every boot.
-    """
 
+    A failed migration is logged here with the full traceback (structlog writes
+    straight to stderr, independent of Alembic's fileConfig logger juggling) and
+    then re-raised so the app refuses to start on a broken schema.
+    """
+    from voidswitch.core.logging import get_logger
+
+    log = get_logger("database")
     db = get_database()
     cfg = _alembic_config()
 
-    async with db.engine.connect() as conn:
-        await conn.run_sync(_upgrade_head, cfg)
+    try:
+        async with db.engine.connect() as conn:
+            await conn.run_sync(_upgrade_head, cfg)
+    except Exception:
+        log.exception("migration_failed")
+        raise
 
 
 def _upgrade_head(sync_conn: Any, cfg: Any) -> None:

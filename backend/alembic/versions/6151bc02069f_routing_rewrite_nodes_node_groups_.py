@@ -14,10 +14,20 @@ migrated to preserve behaviour:
 * every ``models`` (ModelEntry) row → an ``exposed_models`` row with a 1:1
   passthrough route (one layer, one weighted entry per serving provider).
 
-The tables are created idempotently (``CREATE TABLE IF NOT EXISTS`` is expressed
-through Alembic's checkfirst on batch ``create_table`` mirroring create_all), so
-this is safe on a fresh database and on an existing production install.
+The tables are created idempotently (guarded by existence checks), so this is
+safe on a fresh database and on an existing production install.
+
+Postgres notes: this migration is SQLite- and PostgreSQL-correct. Booleans are
+bound as ``TRUE``/``FALSE`` (never ``0``/``1``), inserted ids come back via
+``RETURNING id`` (never ``cursor.lastrowid``, which Postgres leaves unset), and
+the ``slug`` unique index is created only after the per-provider slugs are
+backfilled (otherwise all existing providers would share ``''`` and violate the
+index).
 """
+from __future__ import annotations
+
+import datetime as dt
+import json
 from typing import Sequence, Union
 
 import sqlalchemy as sa
@@ -27,6 +37,12 @@ revision: str = "6151bc02069f"
 down_revision: Union[str, Sequence[str], None] = "0001_baseline"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+# Fallback timestamp for legacy rows missing created_at/updated_at. Bound as a
+# real datetime (never a string): asyncpg rejects string binds for DateTime
+# columns, and the whole migration must be portable across SQLite (aiosqlite)
+# and Postgres (asyncpg/psycopg).
+_FALLBACK_TS = dt.datetime(2026, 8, 17, tzinfo=dt.UTC)
 
 
 def _has_table(conn, name: str) -> bool:
@@ -130,8 +146,8 @@ def upgrade() -> None:
             sa.Column("limit_input", sa.Integer(), nullable=True),
             sa.Column("limit_output", sa.Integer(), nullable=True),
             sa.Column("reasoning", sa.Boolean(), nullable=True),
-            sa.Column("capabilities", sa.JSON(), nullable=True),
-            sa.Column("modalities", sa.JSON(), nullable=True),
+            sa.Column("capabilities", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("modalities", sa.JSON(), nullable=False, server_default="{}"),
             sa.Column("models_dev_id", sa.String(length=255), nullable=True),
             sa.Column("models_dev_synced_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("added_by", sa.Integer(), nullable=True),
@@ -197,13 +213,11 @@ def upgrade() -> None:
             "providers",
             sa.Column("slug", sa.String(length=120), nullable=False, server_default=""),
         )
-        op.create_index("ix_providers_slug", "providers", ["slug"], unique=True)
     if "node_group_id" not in pcols:
         op.add_column(
             "providers",
             sa.Column("node_group_id", sa.Integer(), nullable=True),
         )
-        op.create_index("ix_providers_node_group_id", "providers", ["node_group_id"])
 
     # ------------------------------------------------------------------ #
     # 3. Seed default + system node groups (idempotent)
@@ -212,19 +226,19 @@ def upgrade() -> None:
         sa.text(
             "INSERT INTO node_groups (slug, name, is_system, probe_interval_seconds, "
             "created_at, updated_at) "
-            "SELECT 'default', 'Default', 0, 0, :now, :now "
+            "SELECT 'default', 'Default', FALSE, 0, :now, :now "
             "WHERE NOT EXISTS (SELECT 1 FROM node_groups WHERE slug = 'default')"
         ),
-        {"now": "2026-08-17T00:00:00"},
+        {"now": _FALLBACK_TS},
     )
     conn.execute(
         sa.text(
             "INSERT INTO node_groups (slug, name, is_system, probe_interval_seconds, "
             "created_at, updated_at) "
-            "SELECT 'system', 'System', 1, 0, :now, :now "
+            "SELECT 'system', 'System', TRUE, 0, :now, :now "
             "WHERE NOT EXISTS (SELECT 1 FROM node_groups WHERE slug = 'system')"
         ),
-        {"now": "2026-08-17T00:00:00"},
+        {"now": _FALLBACK_TS},
     )
 
     # ------------------------------------------------------------------ #
@@ -242,21 +256,21 @@ def upgrade() -> None:
                     "last_checked_at, created_at, updated_at FROM proxies"
                 )
             ).fetchall()
-            node_id_new: dict[int, int] = {}
             for r in rows:
                 _id, url, local, enabled, status, failed, weight, lat, note, reason, lu, lc, ca, ua = r
-                res = conn.execute(
+                new_id = conn.execute(
                     sa.text(
                         "INSERT INTO nodes (url, type, local_address, enabled, status, "
                         "failed_count, weight, latency_ms, note, disabled_reason, "
                         "last_used_at, last_checked_at, created_at, updated_at) "
                         "VALUES (:url, 'http', :local, :enabled, :status, :failed, "
-                        ":weight, :lat, :note, :reason, :lu, :lc, :ca, :ua)"
+                        ":weight, :lat, :note, :reason, :lu, :lc, :ca, :ua) "
+                        "RETURNING id"
                     ),
                     {
                         "url": url or "",
                         "local": local,
-                        "enabled": 1 if enabled else 0,
+                        "enabled": bool(enabled),
                         "status": status or "active",
                         "failed": failed or 0,
                         "weight": weight or 1,
@@ -265,12 +279,10 @@ def upgrade() -> None:
                         "reason": reason,
                         "lu": lu,
                         "lc": lc,
-                        "ca": ca or "2026-08-17T00:00:00",
-                        "ua": ua or "2026-08-17T00:00:00",
+                        "ca": ca or _FALLBACK_TS,
+                        "ua": ua or _FALLBACK_TS,
                     },
-                )
-                new_id = int(res.lastrowid)
-                node_id_new[int(_id)] = new_id
+                ).scalar_one()
                 conn.execute(
                     sa.text(
                         "INSERT INTO node_group_members (group_id, node_id, weight) "
@@ -280,7 +292,7 @@ def upgrade() -> None:
                 )
 
     # ------------------------------------------------------------------ #
-    # 5. Provider slugs (idempotent — backfill only where empty)
+    # 5. Provider slugs (idempotent — backfill where empty, then unique index)
     # ------------------------------------------------------------------ #
     provs = conn.execute(
         sa.text(
@@ -316,6 +328,13 @@ def upgrade() -> None:
             {"s": cand[:64], "i": pid},
         )
 
+    # Unique index only now — every provider has a distinct slug.
+    existing_indexes = {i["name"] for i in conn.dialect.get_indexes(conn, "providers")}
+    if "ix_providers_slug" not in existing_indexes:
+        op.create_index("ix_providers_slug", "providers", ["slug"], unique=True)
+    if "ix_providers_node_group_id" not in existing_indexes:
+        op.create_index("ix_providers_node_group_id", "providers", ["node_group_id"])
+
     # ------------------------------------------------------------------ #
     # 6. Migrate models (ModelEntry) → exposed_models + 1:1 route
     # ------------------------------------------------------------------ #
@@ -329,47 +348,48 @@ def upgrade() -> None:
         ).fetchall()
         for r in entry_rows:
             _id, model_id, disp, desc, ocfg, enabled, allowed, added_by, added_by_name, ca, ua = r
-            created = conn.execute(
+            exposed_id = conn.execute(
                 sa.text(
                     "INSERT INTO exposed_models (model_id, display_name, description, "
-                    "opencode_config, enabled, allowed_role_group_ids, added_by, "
-                    "added_by_name, created_at, updated_at) "
-                    "VALUES (:m, :d, :desc, :ocfg, :e, :a, :ab, :abn, :ca, :ua)"
+                    "opencode_config, enabled, allowed_role_group_ids, capabilities, "
+                    "modalities, added_by, added_by_name, created_at, updated_at) "
+                    "VALUES (:m, :d, :desc, :ocfg, :e, :a, '{}', '{}', :ab, :abn, :ca, :ua) "
+                    "RETURNING id"
                 ),
                 {
                     "m": model_id,
                     "d": disp,
                     "desc": desc,
-                    "ocfg": ocfg if ocfg is not None else "{}",
-                    "e": 1 if enabled else 0,
-                    "a": allowed if allowed is not None else "[]",
+                    # JSONB comes back as a Python dict/list; a raw text() bind
+                    # can't adapt it, so serialise to a JSON string (Postgres
+                    # casts text → jsonb, SQLite stores the text).
+                    "ocfg": json.dumps(ocfg) if ocfg is not None else "{}",
+                    "e": bool(enabled),
+                    "a": json.dumps(allowed) if allowed is not None else "[]",
                     "ab": added_by,
                     "abn": added_by_name,
-                    "ca": ca or "2026-08-17T00:00:00",
-                    "ua": ua or "2026-08-17T00:00:00",
+                    "ca": ca or _FALLBACK_TS,
+                    "ua": ua or _FALLBACK_TS,
                 },
-            )
-            exposed_id = int(created.lastrowid)
-            route_res = conn.execute(
+            ).scalar_one()
+            route_id = conn.execute(
                 sa.text(
                     "INSERT INTO routes (exposed_model_id, created_at, updated_at) "
-                    "VALUES (:e, :now, :now)"
+                    "VALUES (:e, :now, :now) RETURNING id"
                 ),
-                {"e": exposed_id, "now": "2026-08-17T00:00:00"},
-            )
-            route_id = int(route_res.lastrowid)
-            layer_res = conn.execute(
+                {"e": exposed_id, "now": _FALLBACK_TS},
+            ).scalar_one()
+            layer_id = conn.execute(
                 sa.text(
                     "INSERT INTO route_layers (route_id, position, max_attempts) "
-                    "VALUES (:r, 0, 1)"
+                    "VALUES (:r, 0, 1) RETURNING id"
                 ),
                 {"r": route_id},
-            )
-            layer_id = int(layer_res.lastrowid)
+            ).scalar_one()
             # One weighted entry per serving provider.
             servs = conn.execute(
                 sa.text(
-                    "SELECT id, name, weight, models FROM providers WHERE enabled = 1"
+                    "SELECT id, name, weight, models FROM providers WHERE enabled"
                 )
             ).fetchall()
             from fnmatch import fnmatch
@@ -385,29 +405,36 @@ def upgrade() -> None:
                     sa.text(
                         "INSERT INTO route_pool_entries (layer_id, provider_id, "
                         "upstream_model, weight, enabled, key_pool) "
-                        "VALUES (:l, :p, :um, :w, 1, '')"
+                        "VALUES (:l, :p, :um, :w, TRUE, '')"
                     ),
                     {"l": layer_id, "p": pid, "um": model_id, "w": max(1, pweight or 1)},
                 )
 
     # ------------------------------------------------------------------ #
-    # 7. Drop the old provider proxy columns (data already migrated)
+    # 7. Drop the old provider proxy columns (guarded — fresh DBs lack them)
     # ------------------------------------------------------------------ #
+    pcols = _columns(conn, "providers")
     with op.batch_alter_table("providers", schema=None) as batch_op:
-        batch_op.drop_column("proxy_mode")
-        batch_op.drop_column("proxy_ids")
+        if "proxy_mode" in pcols:
+            batch_op.drop_column("proxy_mode")
+        if "proxy_ids" in pcols:
+            batch_op.drop_column("proxy_ids")
 
 
 def downgrade() -> None:
     """Best-effort reverse: restore providers' proxy columns and drop the new
     tables. Data loss is inherent on downgrade (no reverse mapping exists)."""
+    conn = op.get_bind()
+    pcols = _columns(conn, "providers")
     with op.batch_alter_table("providers", schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column("proxy_mode", sa.String(length=16), server_default="all", nullable=False)
-        )
-        batch_op.add_column(
-            sa.Column("proxy_ids", sa.JSON(), server_default="[]", nullable=False)
-        )
+        if "proxy_mode" not in pcols:
+            batch_op.add_column(
+                sa.Column("proxy_mode", sa.String(length=16), server_default="all", nullable=False)
+            )
+        if "proxy_ids" not in pcols:
+            batch_op.add_column(
+                sa.Column("proxy_ids", sa.JSON(), server_default="[]", nullable=False)
+            )
     op.drop_table("models_dev_cache")
     op.drop_table("route_pool_entries")
     op.drop_table("route_layers")

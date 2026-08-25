@@ -37,7 +37,11 @@ from voidswitch.models.db import Base  # noqa: E402
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # ``disable_existing_loggers=False`` is critical: with the default True,
+    # Alembic's fileConfig would disable every logger not named in alembic.ini —
+    # including uvicorn's — so a migration failure inside the app's lifespan
+    # would never print a traceback (the container silently restarts forever).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

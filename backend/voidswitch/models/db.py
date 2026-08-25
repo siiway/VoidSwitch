@@ -168,8 +168,12 @@ class ExposedModel(Base, TimestampMixin):
     limit_output: Mapped[int | None] = mapped_column(Integer, default=None)
     reasoning: Mapped[bool | None] = mapped_column(Boolean, default=None)
     # Capabilities {"text","image","audio","tool"} booleans + modalities JSON.
-    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    modalities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, server_default="{}"
+    )
+    modalities: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, server_default="{}"
+    )
     # models.dev mapping: the matched registry id + when it was last synced.
     models_dev_id: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
     models_dev_synced_at: Mapped[dt.datetime | None] = mapped_column(
