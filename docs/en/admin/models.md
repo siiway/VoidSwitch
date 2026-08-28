@@ -21,6 +21,18 @@ that upstream key.
 
 Route flowcharts are edited on a **dedicated page**: top model → layer pools → upstreams.
 
+## Creating models
+
+Staff can click **Create model** to register a new `model_id` (leave the display name
+empty and a placeholder is auto-generated from the `model_id`). Optionally, pick a
+**provider + upstream model** to pre-fill the first route layer. A category can be
+assigned at creation time.
+
+Categories group models (e.g. "Coding", "Writing"). The **Models** page supports
+filtering by category; models without a category are **Uncategorized**. Provider
+passthrough models appear under their provider's name as a virtual category with a
+**Provider** badge.
+
 ## Per-exposed-model metadata
 
 For any exposed model, staff can set:
@@ -45,8 +57,8 @@ Structured fields **>** custom `opencode_config` **>** models.dev placeholder **
 
 ## Bulk edit
 
-Apply the same change to multiple models at once — description, enabled state, allowed role groups, or
-OpenCode config.
+Apply the same change to multiple models at once — description, enabled state, allowed role groups,
+OpenCode config, capabilities, reasoning, limits, or category.
 You can first filter by search, provider, availability status, or role group, then check **Select current
 filter results**. After clearing the filter, the selected models stay selected; click **Clear selection** when
 you need to start over.
@@ -63,11 +75,12 @@ For OpenCode config, choose:
 
 ## Sync from providers
 
-**Sync from providers** (the button on the Models page, `POST /api/models/sync`) ingests the upstream
-models currently served by enabled providers and **reshapes the shared catalog**. This is a **staff-only**
-operation; members do not see the button.
-(OpenCode's `/sync-models` command — `POST /v1/models/sync` — is open to **all members** and aligns the
-plugin's list with the exposed models you **can currently call**; it never touches the shared catalog.)
+Previously the Models page had a **Sync from providers** button (`POST /api/models/sync`)
+that ingested the upstream models currently served by enabled providers and reshaped the
+shared catalog. The button has been removed — use **Create model** to manually expose models.
+(OpenCode's `/sync-models` command — `POST /v1/models/sync` — is open to **all members** and
+aligns the plugin's list with the exposed models you **can currently call**; it never touches
+the shared catalog.)
 
 **Clean up unserved** removes metadata rows no longer served by any upstream model (staff-only).
 

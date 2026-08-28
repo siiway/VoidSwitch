@@ -27,6 +27,7 @@ import {
 } from "@fluentui/react-components";
 import {
   AddRegular,
+  ArrowDownRegular,
   ArrowLeftRegular,
   ArrowRightRegular,
   ArrowSwapRegular,
@@ -61,7 +62,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
-import { PasswordInput } from "../components/PasswordInput";
+
 import { KeyRevealDialog } from "../components/KeyRevealDialog";
 
 type TK = keyof Translations;
@@ -73,14 +74,15 @@ interface FormState {
   type: string;
   base_url: string;
   models: string;
-  priority: number;
-  weight: number;
   enabled: boolean;
   drop_opencode_identity_block: boolean;
   retry_on_zero_token: boolean;
   node_group_id: number | null;
+  node_group_direct: boolean;
   key_select_mode: KeySelectMode;
   rate_limit_cooldown_seconds: number;
+  passthrough_enabled: boolean;
+  passthrough_models: string;
   initial_keys: string;
   initial_keys_pool: string;
 }
@@ -91,14 +93,15 @@ const EMPTY: FormState = {
   type: "openai",
   base_url: "",
   models: "",
-  priority: 100,
-  weight: 1,
   enabled: true,
   drop_opencode_identity_block: false,
   retry_on_zero_token: false,
   node_group_id: null,
+  node_group_direct: false,
   key_select_mode: "round_robin",
   rate_limit_cooldown_seconds: 0,
+  passthrough_enabled: false,
+  passthrough_models: "",
   initial_keys: "",
   initial_keys_pool: "",
 };
@@ -171,14 +174,15 @@ export function Providers() {
       type: p.type,
       base_url: p.base_url,
       models: p.models.join("\n"),
-      priority: p.priority,
-      weight: p.weight,
       enabled: p.enabled,
       drop_opencode_identity_block: p.drop_opencode_identity_block,
       retry_on_zero_token: p.retry_on_zero_token,
       node_group_id: p.node_group_id ?? null,
+      node_group_direct: false,
       key_select_mode: p.key_select_mode ?? "round_robin",
       rate_limit_cooldown_seconds: p.rate_limit_cooldown_seconds ?? 0,
+      passthrough_enabled: p.passthrough_enabled ?? false,
+      passthrough_models: (p.passthrough_models ?? []).join("\n"),
       initial_keys: "",
       initial_keys_pool: "",
     });
@@ -326,8 +330,6 @@ export function Providers() {
       type: form.type,
       base_url: form.base_url,
       models,
-      priority: form.priority,
-      weight: form.weight,
       enabled: form.enabled,
       drop_opencode_identity_block: form.drop_opencode_identity_block,
       retry_on_zero_token: form.retry_on_zero_token,
@@ -337,6 +339,11 @@ export function Providers() {
         0,
         form.rate_limit_cooldown_seconds,
       ),
+      passthrough_enabled: form.passthrough_enabled,
+      passthrough_models: form.passthrough_models
+        .split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter(Boolean),
     };
     setSaving(true);
     try {
@@ -471,6 +478,25 @@ export function Providers() {
     }
   }
 
+  const systemGroup = (nodeGroups.data ?? []).find((g) => g.is_system);
+  const nodeGroupKey = (() => {
+    if (!form) return "default";
+    if (form.node_group_direct) return "direct";
+    if (form.node_group_id === null) return "default";
+    if (form.node_group_id === systemGroup?.id) return "system";
+    return String(form.node_group_id);
+  })();
+  const nodeGroupLabel = (() => {
+    if (nodeGroupKey === "default") return t("providers.nodeGroupDefault" as TK);
+    if (nodeGroupKey === "system") return t("providers.nodeGroupSystem" as TK);
+    if (nodeGroupKey === "direct") return t("providers.nodeGroupDirect" as TK);
+    const g = (nodeGroups.data ?? []).find((gg) => String(gg.id) === nodeGroupKey);
+    return g?.name ?? `#${nodeGroupKey}`;
+  })();
+  const visibleGroups = (nodeGroups.data ?? []).filter(
+    (g) => g.slug !== "default" && g.slug !== "system",
+  );
+
   return (
     <div>
       <PageHeader
@@ -597,7 +623,6 @@ export function Providers() {
                 <TableHeaderCell>{t("providers.baseUrl" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{t("providers.keys" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{t("providers.addedBy" as TK)}</TableHeaderCell>
-                <TableHeaderCell>{t("providers.priority" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{t("providers.status" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{t("providers.actions" as TK)}</TableHeaderCell>
               </TableRow>
@@ -616,7 +641,6 @@ export function Providers() {
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {p.added_by_name ?? "—"}
                 </TableCell>
-                <TableCell>{p.priority}</TableCell>
                 <TableCell>
                   {canEdit(p) ? (
                     <Tooltip
@@ -793,15 +817,15 @@ export function Providers() {
                   }
                 />
               </Field>
-              <div>
-                <Button
-                  size="small"
-                  appearance="subtle"
-                  onClick={() => setFetchOpen(true)}
-                >
-                  {t("providers.fetchModels" as TK)}
-                </Button>
-              </div>
+              <Button
+                icon={fetchOpen ? <ArrowDownRegular /> : <ArrowRightRegular />}
+                appearance="subtle"
+                style={{ justifyContent: "flex-start", width: "100%" }}
+                onClick={() => setFetchOpen((o) => !o)}
+                aria-expanded={fetchOpen}
+              >
+                {t("providers.fetchModels" as TK)}
+              </Button>
               <div style={{ display: fetchOpen ? "block" : "none" }}>
                 <div
                   style={{
@@ -814,18 +838,9 @@ export function Providers() {
                     background: tokens.colorNeutralBackground2,
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontWeight: 600 }}>
+                  <span style={{ fontWeight: 600 }}>
                       {t("providers.fetchModelsTitle" as TK)}
                     </span>
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      onClick={() => setFetchOpen(false)}
-                    >
-                      {t("common.close" as TK)}
-                    </Button>
-                  </div>
                   {form?.base_url?.includes("api.cloudflare.com") ? (
                     <div style={{ 
                       padding: 12, 
@@ -892,10 +907,11 @@ export function Providers() {
                     </Field>
                   </div>
                   <Field label={t("providers.fetchTokenLabel" as TK)} hint={t("providers.fetchTokenHint" as TK)}>
-                    <PasswordInput
+                    <Input
+                      type="text"
+                      autoComplete="off"
                       value={fetchToken}
                       placeholder="sk-…"
-                      autoComplete="current-password"
                       onChange={(_, d) => setFetchToken(d.value)}
                     />
                   </Field>
@@ -1018,7 +1034,15 @@ export function Providers() {
               >
                 <Input
                   value={form?.slug ?? ""}
-                  placeholder={t("providers.slugPlaceholder" as TK)}
+                  placeholder={
+                    form?.slug?.trim()
+                      ? ""
+                      : form?.name
+                          ?.toLowerCase()
+                          .replace(/[^a-z0-9-_]/g, "-")
+                          .replace(/-+/g, "-")
+                          .replace(/^-+|-+$/g, "") || t("providers.slugPlaceholder" as TK)
+                  }
                   onChange={(_, d) => {
                     const val = d.value
                       .toLowerCase()
@@ -1026,50 +1050,39 @@ export function Providers() {
                       .replace(/-+/g, "-");
                     setForm((f) => (f ? { ...f, slug: val } : f));
                   }}
-                  onBlur={() => {
-                    if (form && !form.slug.trim() && form.name.trim()) {
-                      const val = form.name
-                        .toLowerCase()
-                        .replace(/[^a-z0-9-_]/g, "-")
-                        .replace(/-+/g, "-")
-                        .replace(/^-+|-+$/g, "");
-                      setForm((f) => (f ? { ...f, slug: val } : f));
-                    }
-                  }}
                 />
               </Field>
               <Field
                 label={t("providers.nodeGroup" as TK)}
-                hint={t("providers.nodeGroupHint" as TK)}
               >
                 <Dropdown
                   placeholder={t("providers.nodeGroupDefault" as TK)}
-                  value={
-                    form?.node_group_id != null
-                      ? (nodeGroups.data ?? []).find(
-                          (g) => g.id === form.node_group_id,
-                        )?.name ?? `#${form.node_group_id}`
-                      : t("providers.nodeGroupDefault" as TK)
-                  }
-                  selectedOptions={
-                    form?.node_group_id != null
-                      ? [String(form.node_group_id)]
-                      : []
-                  }
-                  onOptionSelect={(_, d) =>
-                    setForm((f) =>
-                      f
-                        ? {
-                            ...f,
-                            node_group_id: d.optionValue
-                              ? Number(d.optionValue)
-                              : null,
-                          }
-                        : f,
-                    )
-                  }
+                  value={nodeGroupLabel}
+                  selectedOptions={[nodeGroupKey]}
+                  onOptionSelect={(_, d) => {
+                    const v = d.optionValue ?? "default";
+                    if (v === "default") {
+                      setForm((f) => (f ? { ...f, node_group_id: null, node_group_direct: false } : f));
+                    } else if (v === "system") {
+                      setForm((f) => (f ? { ...f, node_group_id: systemGroup?.id ?? null, node_group_direct: false } : f));
+                    } else if (v === "direct") {
+                      setForm((f) => (f ? { ...f, node_group_id: null, node_group_direct: true } : f));
+                    } else {
+                      const n = Number(v);
+                      setForm((f) => (f ? { ...f, node_group_id: Number.isNaN(n) ? null : n, node_group_direct: false } : f));
+                    }
+                  }}
                 >
-                  {(nodeGroups.data ?? []).map((g) => (
+                  <Option value="default" text={t("providers.nodeGroupDefault" as TK)}>
+                    {t("providers.nodeGroupDefault" as TK)}
+                  </Option>
+                  <Option value="system" text={t("providers.nodeGroupSystem" as TK)}>
+                    {t("providers.nodeGroupSystem" as TK)}
+                  </Option>
+                  <Option value="direct" text={t("providers.nodeGroupDirect" as TK)}>
+                    {t("providers.nodeGroupDirect" as TK)}
+                  </Option>
+                  {visibleGroups.map((g) => (
                     <Option key={g.id} value={String(g.id)} text={g.name}>
                       {g.name}
                       {g.is_system ? ` (${t("nodes.systemBadge" as TK)})` : ""}
@@ -1077,33 +1090,6 @@ export function Providers() {
                   ))}
                 </Dropdown>
               </Field>
-              <div style={{ display: "flex", gap: 12 }}>
-                <Field label={t("providers.priorityHint" as TK)}>
-                  <SpinButton
-                    value={form?.priority ?? 100}
-                    onChange={(_, d) => {
-                      const next =
-                        d.value ??
-                        (d.displayValue ? Number(d.displayValue) : undefined);
-                      if (next != null && !Number.isNaN(next))
-                        setForm((f) => (f ? { ...f, priority: next } : f));
-                    }}
-                  />
-                </Field>
-                <Field label={t("providers.weight" as TK)}>
-                  <SpinButton
-                    value={form?.weight ?? 1}
-                    min={1}
-                    onChange={(_, d) => {
-                      const next =
-                        d.value ??
-                        (d.displayValue ? Number(d.displayValue) : undefined);
-                      if (next != null && !Number.isNaN(next))
-                        setForm((f) => (f ? { ...f, weight: next } : f));
-                    }}
-                  />
-                </Field>
-              </div>
               <Switch
                 label={t("common.enabled" as TK)}
                 checked={form?.enabled ?? true}
@@ -1189,6 +1175,33 @@ export function Providers() {
                   }
                 />
               </Field>
+              <Field label={t("providers.passthroughEnabled" as TK)}>
+                <Switch
+                  checked={form?.passthrough_enabled ?? false}
+                  onChange={(_, d) =>
+                    setForm((f) =>
+                      f ? { ...f, passthrough_enabled: d.checked } : f,
+                    )
+                  }
+                />
+              </Field>
+              {form?.passthrough_enabled && (
+                <Field
+                  label={t("providers.passthroughModels" as TK)}
+                  hint={t("providers.passthroughModelsHint" as TK)}
+                >
+                  <Textarea
+                    value={form?.passthrough_models ?? ""}
+                    rows={4}
+                    placeholder={t("providers.passthroughModelsPlaceholder" as TK)}
+                    onChange={(_, d) =>
+                      setForm((f) =>
+                        f ? { ...f, passthrough_models: d.value } : f,
+                      )
+                    }
+                  />
+                </Field>
+              )}
               {!form?.id && (
                 <>
                   <Field
@@ -1228,6 +1241,7 @@ export function Providers() {
                 appearance="primary"
                 disabled={saving || !form?.name}
                 onClick={save}
+                data-shortcut={form?.id ? "save" : "apply"}
               >
                 {form?.id ? t("common.save" as TK) : t("common.create" as TK)}
               </Button>
@@ -1254,30 +1268,28 @@ export function Providers() {
                 minWidth: 360,
               }}
             >
-              {keyPickerLoading ? (
-                <div style={{ display: "flex", justifyContent: "center", padding: 16 }}>
-                  <Spinner size="small" />
-                </div>
-              ) : keyPickerKeys.length === 0 ? (
+              <div style={{ display: keyPickerLoading ? "flex" : "none", justifyContent: "center", padding: 16 }}>
+                <Spinner size="small" />
+              </div>
+              <div style={{ display: !keyPickerLoading && keyPickerKeys.length === 0 ? "block" : "none" }}>
                 <Text style={{ color: tokens.colorNeutralForeground3 }}>
                   {t("providers.useExistingKeyNoKeys" as TK)}
                 </Text>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  {keyPickerKeys.map((k) => (
-                    <Button
-                      key={k.id}
-                      appearance="subtle"
-                      style={{ justifyContent: "flex-start" }}
-                      onClick={() => selectKeyForFetch(k.id)}
-                    >
-                      {t("providers.useExistingKeyNum" as TK).replace("{index}", String(k.index))}
-                      {k.pool ? ` · ${k.pool}` : ""}
-                      {k.note ? ` · ${k.note}` : ""}
-                    </Button>
-                  ))}
-                </div>
-              )}
+              </div>
+              <div style={{ display: !keyPickerLoading && keyPickerKeys.length > 0 ? "flex" : "none", flexDirection: "column" }}>
+                {keyPickerKeys.map((k) => (
+                  <Button
+                    key={k.id}
+                    appearance="subtle"
+                    style={{ justifyContent: "flex-start" }}
+                    onClick={() => selectKeyForFetch(k.id)}
+                  >
+                    {t("providers.useExistingKeyNum" as TK).replace("{index}", String(k.index))}
+                    {k.pool ? ` · ${k.pool}` : ""}
+                    {k.note ? ` · ${k.note}` : ""}
+                  </Button>
+                ))}
+              </div>
             </DialogContent>
             <DialogActions>
               <Button

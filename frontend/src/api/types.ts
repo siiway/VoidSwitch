@@ -30,8 +30,6 @@ export interface Provider {
   type: string;
   base_url: string;
   enabled: boolean;
-  priority: number;
-  weight: number;
   models: string[];
   balance_url?: string | null;
   extra_headers: Record<string, string>;
@@ -53,6 +51,8 @@ export interface Provider {
   added_by_name?: string | null;
   key_api_enabled: boolean;
   key_api_token_preview?: string | null;
+  passthrough_enabled: boolean;
+  passthrough_models: string[];
 }
 
 // Per-provider key-management API credential (owner-only).
@@ -204,6 +204,21 @@ export interface ModelEntry {
   added_by_name?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  // Category this model belongs to (null = uncategorised).
+  category_id?: number | null;
+  category_name?: string | null;
+  category_slug?: string | null;
+  // True when this is a virtual passthrough model entry (not a real ExposedModel).
+  provider?: boolean;
+}
+
+export interface ModelCategory {
+  id: number;
+  name: string;
+  slug: string;
+  position: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface RoutePoolEntry {

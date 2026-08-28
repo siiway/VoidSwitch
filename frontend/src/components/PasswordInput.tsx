@@ -17,7 +17,7 @@ type TK = keyof Translations;
 
 export function PasswordInput(props: Omit<InputProps, "type">) {
   const { t } = useTranslation();
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(true);
   const label = visible
     ? t("common.hidePassword" as TK)
     : t("common.showPassword" as TK);
@@ -26,6 +26,7 @@ export function PasswordInput(props: Omit<InputProps, "type">) {
     <Input
       {...props}
       type={visible ? "text" : "password"}
+      autoComplete="off"
       contentAfter={
         <Tooltip content={label} relationship="label">
           <Button

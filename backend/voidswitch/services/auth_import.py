@@ -208,11 +208,7 @@ def _parse_sub2api_account(acc: dict[Any, Any]) -> ParsedAccount | SkippedAccoun
     atype = (_str(acc.get("type")) or "").lower()
     creds = acc.get("credentials")
     creds = creds if isinstance(creds, dict) else {}
-    label = (
-        _str(acc.get("name"))
-        or _str(acc.get("email"))
-        or _str(creds.get("email"))
-    )
+    label = _str(acc.get("name")) or _str(acc.get("email")) or _str(creds.get("email"))
 
     # Grok's console adapter authenticates with the raw SSO cookie token, not an
     # xAI OAuth bundle. Prefer it whenever the export carries one (regardless of
@@ -227,9 +223,7 @@ def _parse_sub2api_account(acc: dict[Any, Any]) -> ParsedAccount | SkippedAccoun
         refresh = _extract_refresh(creds, acc)
         access = _str(creds.get("access_token"))
         if refresh or access:
-            secret = _build_bundle(
-                access, refresh, _to_epoch_seconds(creds.get("expires_at"))
-            )
+            secret = _build_bundle(access, refresh, _to_epoch_seconds(creds.get("expires_at")))
             return ParsedAccount("sub2api", platform, "oauth", secret, True, label)
         if atype == "oauth":
             return SkippedAccount(
@@ -300,10 +294,7 @@ def _parse_cpa_account(obj: dict[Any, Any]) -> ParsedAccount | SkippedAccount:
     access = _str(obj.get("access_token"))
     if access:
         expiry = (
-            obj.get("expired")
-            or obj.get("expire")
-            or obj.get("expires")
-            or obj.get("expires_at")
+            obj.get("expired") or obj.get("expire") or obj.get("expires") or obj.get("expires_at")
         )
         secret = _build_bundle(access, obj.get("refresh_token"), _to_epoch_seconds(expiry))
         return ParsedAccount("cpa", platform, "oauth", secret, True, label)
@@ -430,9 +421,7 @@ async def import_credentials(
     existing_hashes = {
         h
         for (h,) in (
-            await session.execute(
-                select(ApiKey.key_hash).where(ApiKey.provider_id == provider.id)
-            )
+            await session.execute(select(ApiKey.key_hash).where(ApiKey.provider_id == provider.id))
         ).all()
     }
     max_order = (

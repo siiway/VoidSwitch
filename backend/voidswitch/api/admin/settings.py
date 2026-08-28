@@ -183,6 +183,7 @@ async def test_static_proxy(
             follow_redirects=False,
         ) as client:
             import time
+
             start = time.monotonic()
             r = await client.get(probe_url)
             latency_ms = (time.monotonic() - start) * 1000.0
@@ -193,14 +194,25 @@ async def test_static_proxy(
                 "error": None,
             }
     except httpx.ProxyError as exc:
-        return {"ok": False, "status_code": None, "latency_ms": None,
-                "error": f"Proxy error: {exc}"}
+        return {
+            "ok": False,
+            "status_code": None,
+            "latency_ms": None,
+            "error": f"Proxy error: {exc}",
+        }
     except httpx.ConnectError as exc:
-        return {"ok": False, "status_code": None, "latency_ms": None,
-                "error": f"Connect error: {exc}"}
+        return {
+            "ok": False,
+            "status_code": None,
+            "latency_ms": None,
+            "error": f"Connect error: {exc}",
+        }
     except httpx.TimeoutException as exc:
-        return {"ok": False, "status_code": None, "latency_ms": None,
-                "error": f"Timeout: {exc}"}
+        return {"ok": False, "status_code": None, "latency_ms": None, "error": f"Timeout: {exc}"}
     except Exception as exc:
-        return {"ok": False, "status_code": None, "latency_ms": None,
-                "error": f"{type(exc).__name__}: {exc}"}
+        return {
+            "ok": False,
+            "status_code": None,
+            "latency_ms": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }

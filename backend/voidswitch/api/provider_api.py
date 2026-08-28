@@ -175,9 +175,7 @@ async def reorder_keys(
     session: AsyncSession = Depends(get_session),
 ) -> list[ApiKey]:
     """Persist a new drag-sorted order for this provider's keys."""
-    return await keymgmt.reorder_keys(
-        session, provider, body, actor=_actor(provider, request)
-    )
+    return await keymgmt.reorder_keys(session, provider, body, actor=_actor(provider, request))
 
 
 @subapp.post("/keys/refresh-balance", response_model=list[ApiKeyOut], tags=["batch"])

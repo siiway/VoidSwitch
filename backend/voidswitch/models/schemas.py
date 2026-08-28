@@ -78,7 +78,6 @@ class ModelRoute(BaseModel):
     upstream: str = ""  # "" → send the alias name unchanged
     pool: str = ""  # "" → use any key; else only keys tagged with this pool
 
-
     models_dev_id: str | None = None
 
 
@@ -88,8 +87,6 @@ class ProviderBase(BaseModel):
     slug: str = ""
     base_url: str = ""
     enabled: bool = True
-    priority: int = 100
-    weight: int = 1
     models: list[str] = Field(default_factory=list)
     balance_url: str | None = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
@@ -106,6 +103,10 @@ class ProviderBase(BaseModel):
     # Cooldown (seconds) for a key rate-limited by this provider when the 429 has
     # no Retry-After header. 0 = use the global rate_limit_recovery_seconds.
     rate_limit_cooldown_seconds: int = 0
+    # Passthrough: when enabled, this provider's models are directly available to
+    # users as ``slug/exposed-model-id`` without going through the route system.
+    passthrough_enabled: bool = False
+    passthrough_models: list[str] = Field(default_factory=list)
 
 
 class ProviderCreate(ProviderBase):
@@ -118,8 +119,6 @@ class ProviderUpdate(BaseModel):
     slug: str | None = None
     base_url: str | None = None
     enabled: bool | None = None
-    priority: int | None = None
-    weight: int | None = None
     models: list[str] | None = None
     balance_url: str | None = None
     extra_headers: dict[str, str] | None = None
@@ -129,6 +128,8 @@ class ProviderUpdate(BaseModel):
     node_group_id: int | None = None
     key_select_mode: str | None = None
     rate_limit_cooldown_seconds: int | None = None
+    passthrough_enabled: bool | None = None
+    passthrough_models: list[str] | None = None
 
 
 class ProviderOut(ProviderBase):
@@ -159,6 +160,8 @@ class ProviderOut(ProviderBase):
     # here — only whether it's enabled and a short non-secret preview.
     key_api_enabled: bool = False
     key_api_token_preview: str | None = None
+    passthrough_enabled: bool = False
+    passthrough_models: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -179,6 +182,32 @@ class ProviderKeyApiSecret(ProviderKeyApiOut):
     """Returned on enable / rotate / reveal — carries the plaintext token."""
 
     token: str
+
+
+# --------------------------------------------------------------------------- #
+# Model categories
+# --------------------------------------------------------------------------- #
+
+
+class ModelCategoryCreate(BaseModel):
+    name: str
+    position: int = 0
+
+
+class ModelCategoryUpdate(BaseModel):
+    name: str | None = None
+    position: int | None = None
+
+
+class ModelCategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    slug: str
+    position: int
+    created_at: dt.datetime
+    updated_at: dt.datetime
 
 
 # --------------------------------------------------------------------------- #
@@ -220,6 +249,12 @@ class ModelOut(BaseModel):
     added_by_name: str | None = None
     created_at: dt.datetime | None = None
     updated_at: dt.datetime | None = None
+    # Category this model belongs to (null = uncategorised).
+    category_id: int | None = None
+    category_name: str | None = None
+    category_slug: str | None = None
+    # True when this is a virtual passthrough model entry (not a real ExposedModel).
+    provider: bool = False
 
 
 class ModelUpsert(BaseModel):
@@ -242,6 +277,7 @@ class ModelUpsert(BaseModel):
     modalities: dict | None = None
     # ""/null clears the models.dev mapping.
     models_dev_id: str | None = None
+    category_id: int | None = None
 
 
 class RouteEntryIn(BaseModel):
@@ -473,13 +509,7 @@ class ClaudeOAuthComplete(BaseModel):
 
 class NodeCreate(BaseModel):
     urls: list[str]
-    type: str = "http"  # direct | http | socks5 | agent
-    local_address: str | None = None
-    weight: int = 1
     note: str | None = None
-    # Agent-node credential (never returned). For proxy nodes credentials live in
-    # the URL (http://user:pass@host:port).
-    token: str | None = None
 
 
 class NodeUpdate(BaseModel):

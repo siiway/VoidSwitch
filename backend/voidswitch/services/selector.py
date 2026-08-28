@@ -249,9 +249,7 @@ def select_keys(
         active = [k for k in active if (k.pool or "") == pool]
         recovered = [k for k in recovered if (k.pool or "") == pool]
 
-    return _ordered_candidates(
-        provider, active, recovered, pool=pool, session_key=session_key
-    )
+    return _ordered_candidates(provider, active, recovered, pool=pool, session_key=session_key)
 
 
 # Process HTTP(S) proxy env vars consulted (in order) when proxy switching is

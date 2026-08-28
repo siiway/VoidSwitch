@@ -135,6 +135,17 @@ class VoidToken(Base, TimestampMixin):
         return f"{label}#{user.id}" if label else None
 
 
+class ModelCategory(Base, TimestampMixin):
+    """A category grouping exposed models together for the catalog UI."""
+
+    __tablename__ = "model_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True, default="")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class ExposedModel(Base, TimestampMixin):
     """An *exposed* model — the only model ids clients ever see or call.
 
@@ -168,12 +179,8 @@ class ExposedModel(Base, TimestampMixin):
     limit_output: Mapped[int | None] = mapped_column(Integer, default=None)
     reasoning: Mapped[bool | None] = mapped_column(Boolean, default=None)
     # Capabilities {"text","image","audio","tool"} booleans + modalities JSON.
-    capabilities: Mapped[dict[str, Any]] = mapped_column(
-        JSON, default=dict, server_default="{}"
-    )
-    modalities: Mapped[dict[str, Any]] = mapped_column(
-        JSON, default=dict, server_default="{}"
-    )
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    modalities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     # models.dev mapping: the matched registry id + when it was last synced.
     models_dev_id: Mapped[str | None] = mapped_column(String(255), default=None, index=True)
     models_dev_synced_at: Mapped[dt.datetime | None] = mapped_column(
@@ -182,11 +189,18 @@ class ExposedModel(Base, TimestampMixin):
     # Who first registered metadata for this model (id + display-name snapshot).
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Optional category this model is grouped under (null = uncategorised).
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("model_categories.id", ondelete="SET NULL"), default=None, index=True
+    )
 
     route: Mapped[Route | None] = relationship(
-        back_populates="exposed_model", cascade="all, delete-orphan",
-        uselist=False, lazy="selectin",
+        back_populates="exposed_model",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
     )
+    category: Mapped[ModelCategory | None] = relationship(lazy="joined")
 
 
 class Route(Base, TimestampMixin):
@@ -204,9 +218,7 @@ class Route(Base, TimestampMixin):
         ForeignKey("exposed_models.id", ondelete="CASCADE"), unique=True, index=True
     )
 
-    exposed_model: Mapped[ExposedModel] = relationship(
-        back_populates="route", lazy="selectin"
-    )
+    exposed_model: Mapped[ExposedModel] = relationship(back_populates="route", lazy="selectin")
     layers: Mapped[list[RouteLayer]] = relationship(
         back_populates="route",
         cascade="all, delete-orphan",
@@ -226,9 +238,7 @@ class RouteLayer(Base):
     __tablename__ = "route_layers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    route_id: Mapped[int] = mapped_column(
-        ForeignKey("routes.id", ondelete="CASCADE"), index=True
-    )
+    route_id: Mapped[int] = mapped_column(ForeignKey("routes.id", ondelete="CASCADE"), index=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=1)
 
@@ -274,9 +284,7 @@ class Provider(Base, TimestampMixin):
     # Stable public identifier, independent of the autoincrement primary key.
     # Used by the mounted provider key-management API so external integrations
     # reference a provider by an opaque, non-guessable id.
-    uuid: Mapped[str] = mapped_column(
-        String(36), unique=True, index=True, default=_new_uuid
-    )
+    uuid: Mapped[str] = mapped_column(String(36), unique=True, index=True, default=_new_uuid)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     # Stable internal slug applied to this provider's upstream model ids
     # ("slug/model"), used as the internal model index — never advertised.
@@ -341,6 +349,12 @@ class Provider(Base, TimestampMixin):
     )
     key_api_token_ciphertext: Mapped[str | None] = mapped_column(Text, default=None)
     key_api_token_preview: Mapped[str | None] = mapped_column(String(48), default=None)
+    # Passthrough: when enabled, this provider's models are directly available to
+    # users as ``slug/exposed-model-id`` without going through the route system.
+    passthrough_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Whitelist of passthrough model ids: each entry is a string like "model-id",
+    # "model-id @ pool", "exposed-id => model-id", or "exposed-id => model-id @ pool".
+    passthrough_models: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     keys: Mapped[list[ApiKey]] = relationship(
         back_populates="provider", cascade="all, delete-orphan", lazy="selectin"
@@ -417,9 +431,7 @@ class Node(Base, TimestampMixin):
     # Bind outbound sockets to this local source IP (httpx local_address).
     local_address: Mapped[str | None] = mapped_column(String(64), default=None)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    status: Mapped[str] = mapped_column(
-        String(32), default=NodeStatus.ACTIVE.value, index=True
-    )
+    status: Mapped[str] = mapped_column(String(32), default=NodeStatus.ACTIVE.value, index=True)
     failed_count: Mapped[int] = mapped_column(Integer, default=0)
     weight: Mapped[int] = mapped_column(Integer, default=1)
     latency_ms: Mapped[float | None] = mapped_column(Float, default=None)
@@ -584,14 +596,10 @@ class RoleGroupMembership(Base):
     """
 
     __tablename__ = "role_group_memberships"
-    __table_args__ = (
-        UniqueConstraint("user_id", "role_group_id", name="uq_user_group"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "role_group_id", name="uq_user_group"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     role_group_id: Mapped[int] = mapped_column(
         ForeignKey("role_groups.id", ondelete="CASCADE"), index=True
     )
@@ -756,9 +764,7 @@ class UsageDaily(Base):
     """
 
     __tablename__ = "usage_daily"
-    __table_args__ = (
-        UniqueConstraint("user_sub", "day", name="uq_usage_daily_user_day"),
-    )
+    __table_args__ = (UniqueConstraint("user_sub", "day", name="uq_usage_daily_user_day"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_sub: Mapped[str] = mapped_column(String(255), default="", index=True)

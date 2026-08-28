@@ -39,6 +39,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "../api/client";
+import { useShortcuts } from "../lib/useShortcuts";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { LANGUAGES } from "../i18n";
@@ -94,7 +95,7 @@ const SECTIONS: NavSection[] = [
         scope: "staff",
       },
       { to: "/models", label: "Models", labelKey: "nav.models", icon: <CubeRegular />, scope: "member" },
-      { to: "/nodes", label: "Nodes & Groups", labelKey: "nav.nodes", icon: <CloudRegular />, scope: "staff" },
+      { to: "/nodes", label: "Nodes", labelKey: "nav.nodes", icon: <CloudRegular />, scope: "staff" },
       { to: "/tokens", label: "Tokens", labelKey: "nav.tokens", icon: <KeyRegular />, scope: "owner" },
     ],
   },
@@ -354,6 +355,7 @@ export function Layout() {
   const { mode, scheme, setMode } = useTheme();
   const { t, i18n } = useTranslation();
   const location = useLocation();
+  useShortcuts();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isNarrow, setIsNarrow] = useState(

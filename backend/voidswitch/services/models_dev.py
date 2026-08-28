@@ -11,6 +11,7 @@ a single background pull and search never hits the network.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 
 import httpx
 from sqlalchemy import select
@@ -43,7 +44,7 @@ async def fetch_registry() -> dict[str, dict]:
     a plain public catalog pull; failures are logged and return empty)."""
     try:
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=_FETCH_TIMEOUT)
+            timeout=httpx.Timeout(connect=10.0, read=_FETCH_TIMEOUT, write=10.0, pool=10.0)
         ) as client:
             resp = await client.get(_REGISTRY_URL, follow_redirects=True)
             if resp.status_code != 200:
@@ -65,8 +66,7 @@ async def sync_now(session: AsyncSession) -> int:
         return 0
     now = _now()
     existing = {
-        row.id: row
-        for row in (await session.execute(select(ModelsDevCache))).scalars().all()
+        row.id: row for row in (await session.execute(select(ModelsDevCache))).scalars().all()
     }
     for mid, entry in registry.items():
         row = existing.get(mid)
@@ -83,9 +83,7 @@ async def get_model(session: AsyncSession, model_id: str | None) -> dict | None:
     if not model_id:
         return None
     row = (
-        await session.execute(
-            select(ModelsDevCache).where(ModelsDevCache.id == model_id)
-        )
+        await session.execute(select(ModelsDevCache).where(ModelsDevCache.id == model_id))
     ).scalar_one_or_none()
     return row.data if row is not None else None
 
@@ -103,7 +101,7 @@ def _score(q: str, mid: str, name: str) -> int:
     return 0
 
 
-def search_cached(rows: list[ModelsDevCache], query: str, limit: int = 50) -> list[dict]:
+def search_cached(rows: Sequence[ModelsDevCache], query: str, limit: int = 50) -> list[dict]:
     """Local relevance search over cached registry entries."""
     q = (query or "").strip()
     if not q:

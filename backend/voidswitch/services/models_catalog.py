@@ -53,9 +53,7 @@ def providers_serving(providers: list[Provider], model_id: str) -> list[str]:
 
 async def _enabled_providers(session: AsyncSession) -> list[Provider]:
     rows = (
-        (await session.execute(select(Provider).where(Provider.enabled.is_(True))))
-        .scalars()
-        .all()
+        (await session.execute(select(Provider).where(Provider.enabled.is_(True)))).scalars().all()
     )
     return list(rows)
 
@@ -100,15 +98,11 @@ async def sync_from_providers(
     Returns ``(added, total)``.
     """
     providers = await _enabled_providers(session)
-    existing = set(
-        (await session.execute(select(ExposedModel.model_id))).scalars().all()
-    )
+    existing = set((await session.execute(select(ExposedModel.model_id))).scalars().all())
     served = served_upstream_ids(providers)
     missing = sorted(served - existing)
     for model_id in missing:
-        entry = ExposedModel(
-            model_id=model_id, added_by=added_by, added_by_name=added_by_name
-        )
+        entry = ExposedModel(model_id=model_id, added_by=added_by, added_by_name=added_by_name)
         session.add(entry)
         await session.flush()
         route = await model_routing.get_or_create_route(session, entry)
@@ -126,7 +120,7 @@ async def sync_from_providers(
                     layer_id=layer.id,
                     provider_id=provider.id,
                     upstream_model=model_id,
-                    weight=max(1, provider.weight or 1),
+                    weight=1,
                 )
             )
     await session.flush()

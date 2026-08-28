@@ -44,31 +44,24 @@ async def run_node_resurrector() -> None:
         if not nodes:
             return
         # Group lookup map + the group each node belongs to (for its probe URL).
-        groups = {
-            g.id: g
-            for g in (await session.execute(select(NodeGroup))).scalars().all()
-        }
+        groups = {g.id: g for g in (await session.execute(select(NodeGroup))).scalars().all()}
         # Build group_id -> list[(node, probe group)] in-memory via collect.
         index = await routing.load_group_index(session)
-        node_group_probe: dict[int, tuple[NodeGroup, NodeGroup]] = {}
+        node_group_probe: dict[int, tuple[NodeGroup, NodeGroup | Node]] = {}
         for g in groups.values():
             for member in g.members or []:
                 if member.node is not None:
-                    node_group_probe.setdefault(
-                        member.node.id, (g, member.node)
-                    )
+                    node_group_probe.setdefault(member.node.id, (g, member.node))
                 elif member.source_group_id is not None:
                     src = index.get(member.source_group_id)
                     if src is not None:
-                        for sub in (routing.collect_group_nodes(
-                            src, all_groups=index
-                        ) or {}).values():
+                        for sub in (
+                            routing.collect_group_nodes(src, all_groups=index) or {}
+                        ).values():
                             node_group_probe.setdefault(sub.id, (src, src))
 
         for node in nodes:
-            group, _probe_group = node_group_probe.get(
-                node.id, (None, None)
-            )
+            group, _probe_group = node_group_probe.get(node.id, (None, None))
             await _probe_node(session, node, group)
 
 

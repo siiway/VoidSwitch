@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 from urllib.parse import urljoin, urlparse
 
@@ -49,6 +50,25 @@ log = get_logger("admin.providers")
 router = APIRouter(prefix="/api/admin/providers", tags=["admin:providers"])
 
 _KEY_SELECT_MODES = {m.value for m in KeySelectMode}
+
+_PASSTHROUGH_MODEL_RE = re.compile(
+    r"^(?P<exposed>[^\s@]+?)(?:\s*=>\s*(?P<upstream>[^\s@]+?))?(?:\s*@\s*(?P<pool>\S+))?$"
+)
+
+
+def _parse_passthrough_entry(entry: str) -> dict[str, str]:
+    """Parse a passthrough whitelist entry into its components.
+
+    Returns a dict with keys: ``exposed`` (the public id), ``upstream`` (defaults
+    to ``exposed`` when there is no ``=>`` remap), and ``pool`` ("" when no @pool).
+    """
+    m = _PASSTHROUGH_MODEL_RE.match(entry.strip())
+    if m is None:
+        return {"exposed": entry.strip(), "upstream": entry.strip(), "pool": ""}
+    exposed = (m.group("exposed") or "").strip()
+    upstream = (m.group("upstream") or exposed).strip()
+    pool = (m.group("pool") or "").strip()
+    return {"exposed": exposed, "upstream": upstream, "pool": pool}
 
 
 def _slugify(name: str) -> str:
@@ -138,9 +158,7 @@ def _fetch_models_url(base_url: str, path: str) -> str:
     return url
 
 
-def _to_out(
-    provider: Provider, *, redact: bool = False, show_key_api: bool = False
-) -> ProviderOut:
+def _to_out(provider: Provider, *, redact: bool = False, show_key_api: bool = False) -> ProviderOut:
     out = ProviderOut.model_validate(provider)
     out.key_count = len(provider.keys)
     out.active_key_count = sum(1 for k in provider.keys if k.status == KeyStatus.ACTIVE.value)
@@ -169,9 +187,7 @@ def _ensure_can_edit(user: User, provider: Provider) -> None:
     """Staff edit any provider; members only the ones they added."""
     if is_staff(user) or provider.added_by == user.id:
         return
-    raise HTTPException(
-        status.HTTP_403_FORBIDDEN, "You can only modify providers you added."
-    )
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only modify providers you added.")
 
 
 @router.get("", response_model=list[ProviderOut])
@@ -179,15 +195,9 @@ async def list_providers(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
 ) -> list[ProviderOut]:
-    rows = (
-        (await session.execute(select(Provider).order_by(Provider.priority, Provider.id)))
-        .scalars()
-        .all()
-    )
+    rows = (await session.execute(select(Provider).order_by(Provider.id))).scalars().all()
     show_key_api = is_owner(user)
-    return [
-        _to_out(p, redact=not is_owner(user), show_key_api=show_key_api) for p in rows
-    ]
+    return [_to_out(p, redact=not is_owner(user), show_key_api=show_key_api) for p in rows]
 
 
 @router.post("", response_model=ProviderOut, status_code=status.HTTP_201_CREATED)
@@ -218,8 +228,6 @@ async def create_provider(
         slug=slug,
         base_url=base_url,
         enabled=body.enabled,
-        priority=body.priority,
-        weight=body.weight,
         models=models,
         balance_url=body.balance_url,
         extra_headers=body.extra_headers,
@@ -230,6 +238,8 @@ async def create_provider(
         rate_limit_cooldown_seconds=max(0, body.rate_limit_cooldown_seconds),
         added_by=user.id,
         added_by_name=actor_display_name(user),
+        passthrough_enabled=body.passthrough_enabled,
+        passthrough_models=list(body.passthrough_models or []),
     )
     session.add(provider)
     await session.flush()
@@ -424,7 +434,10 @@ async def enable_key_api(
     """
     provider = await _get_provider_or_404(session, provider_id)
     return await _mint_key_api(
-        provider, session, actor=actor, request=request,
+        provider,
+        session,
+        actor=actor,
+        request=request,
         action=AuditAction.PROVIDER_KEY_API_ENABLE.value,
     )
 
@@ -439,7 +452,10 @@ async def rotate_key_api(
     """Owner-only: generate a new token, invalidating the previous one."""
     provider = await _get_provider_or_404(session, provider_id)
     return await _mint_key_api(
-        provider, session, actor=actor, request=request,
+        provider,
+        session,
+        actor=actor,
+        request=request,
         action=AuditAction.PROVIDER_KEY_API_ROTATE.value,
     )
 
@@ -532,13 +548,15 @@ async def fetch_models_keys(
         preview = key.key_preview or ""
         if preview.startswith("{") or preview.startswith("["):
             continue
-        result.append({
-            "id": key.id,
-            "index": idx,
-            "note": key.note or "",
-            "pool": key.pool or "",
-            "status": key.status,
-        })
+        result.append(
+            {
+                "id": key.id,
+                "index": idx,
+                "note": key.note or "",
+                "pool": key.pool or "",
+                "status": key.status,
+            }
+        )
     return result
 
 

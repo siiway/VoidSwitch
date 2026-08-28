@@ -52,9 +52,7 @@ async def ensure_seeded_groups(session: AsyncSession) -> None:
         (DEFAULT_GROUP_SLUG, "Default", False),
         (SYSTEM_GROUP_SLUG, "System", True),
     ):
-        exists = (
-            await session.execute(select(NodeGroup.id).where(NodeGroup.slug == slug))
-        ).first()
+        exists = (await session.execute(select(NodeGroup.id).where(NodeGroup.slug == slug))).first()
         if exists is None:
             session.add(NodeGroup(slug=slug, name=name, is_system=is_system))
     await session.flush()
@@ -62,9 +60,7 @@ async def ensure_seeded_groups(session: AsyncSession) -> None:
 
 async def _group_by_slug(session: AsyncSession, slug: str) -> NodeGroup | None:
     return (
-        await session.execute(
-            select(NodeGroup).where(NodeGroup.slug == slug)
-        )
+        await session.execute(select(NodeGroup).where(NodeGroup.slug == slug))
     ).scalar_one_or_none()
 
 
@@ -114,9 +110,7 @@ def collect_group_nodes(
             src = all_groups.get(member.source_group_id)
             if src is None:
                 continue
-            sub = collect_group_nodes(
-                src, all_groups=all_groups, _path=path | {group.id}
-            )
+            sub = collect_group_nodes(src, all_groups=all_groups, _path=path | {group.id})
             for nid, node in sub.items():
                 nodes.setdefault(nid, node)
     return nodes
@@ -124,9 +118,7 @@ def collect_group_nodes(
 
 async def load_group_index(session: AsyncSession) -> dict[int, NodeGroup]:
     """All groups (with members eagerly loaded) by id, for recursive expansion."""
-    groups = (
-        (await session.execute(select(NodeGroup))).scalars().all()
-    )
+    groups = (await session.execute(select(NodeGroup))).scalars().all()
     return {g.id: g for g in groups}
 
 
@@ -147,11 +139,7 @@ async def group_nodes(
     nodes = collect_group_nodes(group, all_groups=index)
     ordered = list(nodes.values())
     if only_enabled:
-        ordered = [
-            n
-            for n in ordered
-            if n.enabled and n.status == NodeStatus.ACTIVE.value
-        ]
+        ordered = [n for n in ordered if n.enabled and n.status == NodeStatus.ACTIVE.value]
     return ordered
 
 
@@ -171,9 +159,7 @@ def rank_nodes(nodes: Iterable[Node]) -> list[Node]:
     alpha = max(0.0, settings_store.get_float("node_rank_alpha", 1.0))
     beta = max(0.0, settings_store.get_float("node_rank_beta", 100.0))
     gamma = max(0.0, settings_store.get_float("node_rank_gamma", 1000.0))
-    threshold = max(
-        1, settings_store.get_int("max_proxy_failures", 3)
-    )
+    threshold = max(1, settings_store.get_int("max_proxy_failures", 3))
 
     def _score(n: Node) -> float:
         ewma = n.latency_ewma if n.latency_ewma is not None else 0.0
@@ -191,9 +177,7 @@ def update_node_latency(node: Node, latency_ms: float) -> None:
     node.last_used_at = now
     node.latency_ms = round(latency_ms, 1)
     prev = node.latency_ewma
-    node.latency_ewma = (
-        latency_ms if prev is None else prev + _EWMA_ALPHA * (latency_ms - prev)
-    )
+    node.latency_ewma = latency_ms if prev is None else prev + _EWMA_ALPHA * (latency_ms - prev)
 
 
 def penalize_node(node: Node, reason: str, *, auto_disable: bool = True) -> None:
@@ -340,9 +324,7 @@ async def system_routes(session: AsyncSession) -> list[tuple[Route, Node | None]
         # Routing off → single fixed route (static proxy / env / direct).
         from voidswitch.services.selector import static_routes
 
-        return static_routes(
-            settings_store.get_str("static_proxy_url", "")
-        )
+        return static_routes(settings_store.get_str("static_proxy_url", ""))
     system = await _group_by_slug(session, SYSTEM_GROUP_SLUG)
     return await group_routes(session, system)
 

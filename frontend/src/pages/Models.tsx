@@ -22,8 +22,8 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
+  AddRegular,
   ArrowRoutingRegular,
-  ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
   PeopleTeamRegular,
@@ -36,12 +36,14 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
+  ModelCategory,
   ModelEntry,
-  ModelSyncResult,
   ModelsDevSearchResult,
+  Provider,
   RoleGroup,
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
+import { getBrandIcon } from "../components/brand_icons";
 import {
   ErrorText,
   Loading,
@@ -127,6 +129,17 @@ interface EditState {
   modalities_input: string;
   modalities_output: string;
   models_dev_id: string;
+  category_id: string;
+}
+
+interface CreateState {
+  model_id: string;
+  display_name: string;
+  description: string;
+  enabled: boolean;
+  provider_id: string;
+  upstream_model: string;
+  category_id: string;
 }
 
 type BatchEnabled = "unchanged" | "enabled" | "disabled";
@@ -166,6 +179,102 @@ function intOrEmpty(value: string): number | null {
   return Number.isNaN(n) ? null : Math.max(0, Math.floor(n));
 }
 
+// Brand-aware title-casing for the display-name placeholder, e.g.
+// "claude-fable-5" -> "Claude Fable 5", "deepseek-v4-flash" -> "DeepSeek v4 Flash".
+const BRAND_TITLES: Record<string, string> = {
+  deepseek: "DeepSeek",
+  openai: "OpenAI",
+  gpt: "GPT",
+  claude: "Claude",
+  anthropic: "Anthropic",
+  gemini: "Gemini",
+  google: "Google",
+  qwen: "Qwen",
+  kimi: "Kimi",
+  moonshot: "Moonshot",
+  glm: "GLM",
+  zhipu: "Zhipu",
+  grok: "Grok",
+  mistral: "Mistral",
+  llama: "Llama",
+  meta: "Meta",
+  minimax: "MiniMax",
+  sensenova: "SenseNova",
+  doubao: "Doubao",
+  step: "Step",
+  yi: "Yi",
+};
+
+function titleWord(w: string): string {
+  if (!w) return w;
+  const lower = w.toLowerCase();
+  if (BRAND_TITLES[lower]) return BRAND_TITLES[lower];
+  if (/^\d+$/.test(w)) return w;
+  // version-like token (letter + digits), e.g. "v4" — keep lowercase
+  if (/^[a-z]\d+$/.test(lower) && lower.length <= 4) return lower;
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+export function displayNamePlaceholder(modelId: string): string {
+  return modelId
+    .split(/[-_]+/)
+    .filter((part) => part.length > 0)
+    .map(titleWord)
+    .join(" ");
+}
+
+function providerNameOf(m: ModelEntry): string {
+  const id = m.model_id ?? "";
+  const slash = id.indexOf("/");
+  if (slash > 0) return id.slice(0, slash);
+  const u = (m.upstreams ?? [])[0];
+  if (u) {
+    const s = u.indexOf("/");
+    return s > 0 ? u.slice(0, s) : u;
+  }
+  return "";
+}
+
+function BrandIcon({ modelId }: { modelId: string }) {
+  const { svg, color } = getBrandIcon(modelId);
+  if (svg) {
+    return (
+      <span
+        style={{
+          width: 24,
+          height: 24,
+          flexShrink: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    );
+  }
+  const initials = modelId.slice(0, 2).toUpperCase();
+  return (
+    <span
+      style={{
+        width: 24,
+        height: 24,
+        flexShrink: 0,
+        borderRadius: "50%",
+        background: color,
+        color: "#fff",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 10,
+        fontWeight: 600,
+        fontFamily: "system-ui, sans-serif",
+      }}
+    >
+      {initials}
+    </span>
+  );
+}
+
 export function Models() {
   const { t } = useTranslation();
   type TK = keyof Translations;
@@ -178,13 +287,22 @@ export function Models() {
   const roleGroups = useAsync<RoleGroup[]>(() =>
     isStaff ? api.get("/api/admin/role-groups") : Promise.resolve([]),
   );
+  const categories = useAsync<ModelCategory[]>(
+    () => api.get<ModelCategory[]>("/api/models/categories").catch(() => []),
+    [],
+  );
+  const providers = useAsync<Provider[]>(() =>
+    isStaff ? api.get("/api/admin/providers") : Promise.resolve([]),
+  );
 
   const [search, setSearch] = useState("");
   const [searchField, setSearchField] = useState<SearchField>("all");
   const [filterAvail, setFilterAvail] = useState("all");
   const [filterGroup, setFilterGroup] = useState("all");
+  const [filterCategory, setFilterCategory] = useState("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
+  const [create, setCreate] = useState<CreateState | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [groupEdit, setGroupEdit] = useState<{
@@ -230,7 +348,6 @@ export function Models() {
       setSaving(false);
     }
   }
-  const [syncing, setSyncing] = useState(false);
   const [cleaning, setCleaning] = useState(false);
 
   const [batchOpen, setBatchOpen] = useState(false);
@@ -245,6 +362,21 @@ export function Models() {
   const [batchConfigMode, setBatchConfigMode] = useState<"merge" | "overwrite">(
     "merge",
   );
+  const [batchCapabilitiesOn, setBatchCapabilitiesOn] = useState(false);
+  const [batchCapabilities, setBatchCapabilities] = useState({
+    text: false,
+    image: false,
+    audio: false,
+    tool: false,
+  });
+  const [batchReasoningOn, setBatchReasoningOn] = useState(false);
+  const [batchReasoning, setBatchReasoning] = useState<BatchEnabled>("unchanged");
+  const [batchLimitsOn, setBatchLimitsOn] = useState(false);
+  const [batchLimitContext, setBatchLimitContext] = useState("");
+  const [batchLimitInput, setBatchLimitInput] = useState("");
+  const [batchLimitOutput, setBatchLimitOutput] = useState("");
+  const [batchCategoryOn, setBatchCategoryOn] = useState(false);
+  const [batchCategoryId, setBatchCategoryId] = useState("");
 
   function openBatch() {
     setBatchDescOn(false);
@@ -256,6 +388,16 @@ export function Models() {
     setBatchConfigOn(false);
     setBatchConfig("");
     setBatchConfigMode("merge");
+    setBatchCapabilitiesOn(false);
+    setBatchCapabilities({ text: false, image: false, audio: false, tool: false });
+    setBatchReasoningOn(false);
+    setBatchReasoning("unchanged");
+    setBatchLimitsOn(false);
+    setBatchLimitContext("");
+    setBatchLimitInput("");
+    setBatchLimitOutput("");
+    setBatchCategoryOn(false);
+    setBatchCategoryId("");
     setBatchOpen(true);
   }
 
@@ -297,8 +439,47 @@ export function Models() {
       match = m.allowed_role_group_ids.length === 0;
     else if (match && filterGroup !== "all")
       match = m.allowed_role_group_ids.includes(Number(filterGroup));
+    if (match && filterCategory !== "all") {
+      if (filterCategory === "uncategorized")
+        match = (m.category_id == null) && !m.provider;
+      else if (filterCategory.startsWith("provider:")) {
+        const slug = filterCategory.slice("provider:".length);
+        match = !!m.provider && providerNameOf(m) === slug;
+      } else
+        match = String(m.category_id ?? "") === filterCategory;
+    }
     return match;
   });
+
+  const unserved = items.filter((m) => (m.upstreams ?? []).length === 0);
+  const cleanable = items.filter((m) => (m.upstreams ?? []).length === 0);
+
+  const providerPassthroughSlugs = Array.from(
+    new Set(
+      items.filter((m) => m.provider).map(providerNameOf).filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
+  function categoryFilterLabel(): string {
+    if (filterCategory === "all") return t("models.filterAllCategories" as TK);
+    if (filterCategory === "uncategorized")
+      return t("models.filterUncategorized" as TK);
+    if (filterCategory.startsWith("provider:")) {
+      const slug = filterCategory.slice("provider:".length);
+      return `${slug} · ${t("models.providerBadge" as TK)}`;
+    }
+    const cat = (categories.data ?? []).find(
+      (c) => String(c.id) === filterCategory,
+    );
+    return cat?.name ?? filterCategory;
+  }
+
+  function categoryLabel(catId: string): string {
+    if (!catId) return t("models.filterUncategorized" as TK);
+    const id = Number(catId);
+    const cat = (categories.data ?? []).find((c) => c.id === id);
+    return cat?.name ?? catId;
+  }
 
   function searchFieldLabel(field: SearchField): string {
     switch (field) {
@@ -339,35 +520,6 @@ export function Models() {
   const filteredAllSelected = filtered.length > 0 && filteredSelectedCount === filtered.length;
   const filteredSomeSelected = filteredSelectedCount > 0 && !filteredAllSelected;
 
-  async function sync() {
-    setSyncing(true);
-    try {
-      const r = await api.post<ModelSyncResult>("/api/models/sync");
-      notify(
-        t("models.catalogSynced" as TK),
-        t("models.syncResult" as TK)
-          .replace("{added}", String(r.added))
-          .replace("{total}", String(r.total)),
-        "success",
-      );
-      catalog.reload();
-    } catch (e) {
-      notify(
-        t("providerKeys.syncFailed" as TK),
-        e instanceof Error ? e.message : String(e),
-        "error",
-      );
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  // Exposed models with no resolvable upstream (empty or disabled route) are the
-  // closest client-side signal that "clean" has work to do.
-  const unserved = filtered.filter((m) => (m.upstreams ?? []).length === 0);
-  // For the confirm dialog we look at the whole catalog, not the filtered view.
-  const cleanable = items.filter((m) => (m.upstreams ?? []).length === 0);
-
   async function doClean() {
     if (!cleanable.length) return;
     const ok = await confirm({
@@ -377,7 +529,7 @@ export function Models() {
           "{count}",
           String(cleanable.length),
         ) +
-        "\n\n" +
+        "\n" +
         cleanable.map((m) => `• ${m.model_id}`).join("\n"),
       confirmLabel: t("models.cleanConfirm" as TK),
       tone: "danger",
@@ -437,6 +589,7 @@ export function Models() {
       modalities_input: Number(mods?.input) > 0 ? String(mods.input) : "",
       modalities_output: Number(mods?.output) > 0 ? String(mods.output) : "",
       models_dev_id: m.models_dev_id ?? "",
+      category_id: m.category_id != null ? String(m.category_id) : "",
     });
   }
 
@@ -475,11 +628,66 @@ export function Models() {
     if (li != null) payload.limit_input = li;
     if (lo != null) payload.limit_output = lo;
     if (edit.models_dev_id.trim()) payload.models_dev_id = edit.models_dev_id.trim();
+    if (edit.category_id) payload.category_id = intOrEmpty(edit.category_id);
     setSaving(true);
     try {
       await api.put("/api/models", payload);
       notify(t("models.saved" as TK), edit.model_id, "success");
       setEdit(null);
+      catalog.reload();
+    } catch (e) {
+      notify(
+        t("common.saveFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveCreate() {
+    if (!create) return;
+    const modelId = create.model_id.trim();
+    if (!modelId) {
+      notify(
+        t("models.invalidConfig" as TK),
+        "Model ID is required.",
+        "error",
+      );
+      return;
+    }
+    const payload: Record<string, unknown> = {
+      model_id: modelId,
+      enabled: create.enabled,
+    };
+    if (create.display_name.trim()) payload.display_name = create.display_name.trim();
+    if (create.description.trim()) payload.description = create.description.trim();
+    if (create.category_id) payload.category_id = intOrEmpty(create.category_id);
+    setSaving(true);
+    try {
+      await api.put("/api/models", payload);
+      // If a provider+upstream was picked, create the first route layer.
+      if (create.provider_id && create.upstream_model.trim()) {
+        try {
+          await api.put(`/api/models/${encodeURIComponent(modelId)}/route`, {
+            layers: [{
+              max_attempts: 1,
+              entries: [{
+                provider_id: Number(create.provider_id),
+                upstream_model: create.upstream_model.trim(),
+                weight: 1,
+                enabled: true,
+                key_pool: "",
+              }],
+            }],
+          });
+        } catch {
+          // Route creation failed silently; the model was already created.
+        }
+      }
+      notify(t("models.created" as TK), modelId, "success");
+      setCreate(null);
       catalog.reload();
     } catch (e) {
       notify(
@@ -511,6 +719,27 @@ export function Models() {
       }
       payload.opencode_config = cfg;
       payload.opencode_config_mode = batchConfigMode;
+    }
+    if (batchCapabilitiesOn) {
+      const caps: Record<string, unknown> = {};
+      for (const w of CAP_WORDS) {
+        if (batchCapabilities[w]) caps[w] = true;
+      }
+      payload.capabilities = caps;
+    }
+    if (batchReasoningOn && batchReasoning !== "unchanged")
+      payload.reasoning = batchReasoning === "enabled";
+    if (batchLimitsOn) {
+      const lc = intOrEmpty(batchLimitContext);
+      const li = intOrEmpty(batchLimitInput);
+      const lo = intOrEmpty(batchLimitOutput);
+      if (lc != null) payload.limit_context = lc;
+      if (li != null) payload.limit_input = li;
+      if (lo != null) payload.limit_output = lo;
+    }
+    if (batchCategoryOn) {
+      const cid = intOrEmpty(batchCategoryId);
+      payload.category_id = cid;
     }
     setSaving(true);
     try {
@@ -582,19 +811,23 @@ export function Models() {
               </Tooltip>
             )}
             {isStaff && (
-              <Tooltip
-                content={t("models.syncTooltip" as TK)}
-                relationship="label"
+              <Button
+                appearance="primary"
+                icon={<AddRegular />}
+                onClick={() =>
+                  setCreate({
+                    model_id: "",
+                    display_name: "",
+                    description: "",
+                    enabled: true,
+                    provider_id: "",
+                    upstream_model: "",
+                    category_id: "",
+                  })
+                }
               >
-                <Button
-                  appearance="primary"
-                  icon={<ArrowSyncRegular />}
-                  disabled={syncing}
-                  onClick={sync}
-                >
-                  {syncing ? t("models.syncing" as TK) : t("models.sync" as TK)}
-                </Button>
-              </Tooltip>
+                {t("models.create" as TK)}
+              </Button>
             )}
           </div>
         }
@@ -668,6 +901,27 @@ export function Models() {
           <Option value="available">{t("common.enabled" as TK)}</Option>
           <Option value="hidden">{t("models.unavailableHidden" as TK)}</Option>
         </Dropdown>
+        <Dropdown
+          aria-label={t("models.filterCategory" as TK)}
+          style={{ minWidth: 150 }}
+          selectedOptions={[filterCategory]}
+          value={categoryFilterLabel()}
+          onOptionSelect={(_, d) => setFilterCategory(d.optionValue ?? "all")}
+        >
+          <Option value="all">{t("models.filterAllCategories" as TK)}</Option>
+          <Option value="uncategorized">{t("models.filterUncategorized" as TK)}</Option>
+          {(categories.data ?? []).map((c) => (
+            <Option key={c.id} value={String(c.id)}>{c.name}</Option>
+          ))}
+          {providerPassthroughSlugs.map((slug) => {
+            const label = `${slug} · ${t("models.providerBadge" as TK)}`;
+            return (
+              <Option key={`provider:${slug}`} value={`provider:${slug}`} text={label}>
+                {label}
+              </Option>
+            );
+          })}
+        </Dropdown>
         {isStaff && (
           <Dropdown
             aria-label={t("models.filterGroup" as TK)}
@@ -707,15 +961,18 @@ export function Models() {
             return (
               <div key={m.model_id} className={m.enabled ? styles.card : styles.cardHidden}>
                 <div className={styles.head}>
-                  <div style={{ minWidth: 0 }}>
-                    {m.display_name && (
-                      <Text weight="semibold" block>
-                        {m.display_name}
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", minWidth: 0 }}>
+                    <BrandIcon modelId={m.model_id} />
+                    <div style={{ minWidth: 0 }}>
+                      {m.display_name && (
+                        <Text weight="semibold" block>
+                          {m.display_name}
+                        </Text>
+                      )}
+                      <Text weight={m.display_name ? "regular" : "semibold"} className={styles.modelId}>
+                        {m.model_id}
                       </Text>
-                    )}
-                    <Text weight={m.display_name ? "regular" : "semibold"} className={styles.modelId}>
-                      {m.model_id}
-                    </Text>
+                    </div>
                   </div>
                   {isStaff && (
                     <Checkbox
@@ -751,6 +1008,16 @@ export function Models() {
                   {hasConfig && (
                     <Badge appearance="tint" color="brand">
                       {t("common.customConfig" as TK)}
+                    </Badge>
+                  )}
+                  {m.provider && (
+                    <Badge appearance="tint" color="informative">
+                      {t("models.providerBadge" as TK)}
+                    </Badge>
+                  )}
+                  {m.category_name && !m.provider && (
+                    <Badge appearance="outline" color="brand">
+                      {m.category_name}
                     </Badge>
                   )}
                   {isStaff &&
@@ -837,7 +1104,7 @@ export function Models() {
               >
                 <Input
                   value={edit?.display_name ?? ""}
-                  placeholder={t("models.displayNamePlaceholder" as TK)}
+                  placeholder={displayNamePlaceholder(edit?.model_id ?? "")}
                   onChange={(_, d) =>
                     setEdit((f) => (f ? { ...f, display_name: d.value } : f))
                   }
@@ -851,6 +1118,22 @@ export function Models() {
                     setEdit((f) => (f ? { ...f, description: d.value } : f))
                   }
                 />
+              </Field>
+              <Field label={t("models.category" as TK)}>
+                <Dropdown
+                  value={categoryLabel(edit?.category_id ?? "")}
+                  selectedOptions={[edit?.category_id ?? ""]}
+                  onOptionSelect={(_, d) =>
+                    setEdit((f) =>
+                      f ? { ...f, category_id: (d.optionValue ?? "") } : f,
+                    )
+                  }
+                >
+                  <Option value="">{t("models.filterUncategorized" as TK)}</Option>
+                  {(categories.data ?? []).map((c) => (
+                    <Option key={c.id} value={String(c.id)}>{c.name}</Option>
+                  ))}
+                </Dropdown>
               </Field>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <Field label={t("models.limitContext" as TK)}>
@@ -965,7 +1248,7 @@ export function Models() {
               <Button appearance="secondary" onClick={() => setEdit(null)}>
                 {t("common.cancel" as TK)}
               </Button>
-              <Button appearance="primary" disabled={saving} onClick={saveEdit}>
+              <Button appearance="primary" disabled={saving} onClick={saveEdit} data-shortcut="save">
                 {t("common.save" as TK)}
               </Button>
             </DialogActions>
@@ -1109,13 +1392,242 @@ export function Models() {
                   </Text>
                 </div>
               ) : null}
+
+              <Checkbox
+                checked={batchCapabilitiesOn}
+                onChange={(_, d) => setBatchCapabilitiesOn(!!d.checked)}
+                label={t("models.batchCapabilitiesLabel" as TK)}
+              />
+              {batchCapabilitiesOn ? (
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  {CAP_WORDS.map((w) => (
+                    <Checkbox
+                      key={w}
+                      label={w}
+                      checked={batchCapabilities[w]}
+                      onChange={(_, d) =>
+                        setBatchCapabilities((prev) => ({
+                          ...prev,
+                          [w]: !!d.checked,
+                        }))
+                      }
+                    />
+                  ))}
+                </div>
+              ) : null}
+
+              <Checkbox
+                checked={batchReasoningOn}
+                onChange={(_, d) => setBatchReasoningOn(!!d.checked)}
+                label={t("models.batchReasoningLabel" as TK)}
+              />
+              {batchReasoningOn ? (
+                <Dropdown
+                  value={
+                    batchReasoning === "unchanged"
+                      ? t("models.batchUnchanged" as TK)
+                      : batchReasoning === "enabled"
+                        ? t("models.batchAvailable" as TK)
+                        : t("models.batchHidden" as TK)
+                  }
+                  selectedOptions={[batchReasoning]}
+                  onOptionSelect={(_, d) =>
+                    setBatchReasoning(
+                      (d.optionValue as BatchEnabled) ?? "unchanged",
+                    )
+                  }
+                >
+                  <Option value="unchanged">{t("models.batchUnchanged" as TK)}</Option>
+                  <Option value="enabled">{t("models.batchAvailable" as TK)}</Option>
+                  <Option value="disabled">{t("models.batchHidden" as TK)}</Option>
+                </Dropdown>
+              ) : null}
+
+              <Checkbox
+                checked={batchLimitsOn}
+                onChange={(_, d) => setBatchLimitsOn(!!d.checked)}
+                label={t("models.batchLimitsLabel" as TK)}
+              />
+              {batchLimitsOn ? (
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <Field label={t("models.limitContext" as TK)}>
+                    <Input
+                      type="number"
+                      value={batchLimitContext}
+                      placeholder="200000"
+                      style={{ width: 140 }}
+                      onChange={(_, d) => setBatchLimitContext(d.value)}
+                    />
+                  </Field>
+                  <Field label={t("models.limitInput" as TK)}>
+                    <Input
+                      type="number"
+                      value={batchLimitInput}
+                      style={{ width: 140 }}
+                      onChange={(_, d) => setBatchLimitInput(d.value)}
+                    />
+                  </Field>
+                  <Field label={t("models.limitOutput" as TK)}>
+                    <Input
+                      type="number"
+                      value={batchLimitOutput}
+                      style={{ width: 140 }}
+                      onChange={(_, d) => setBatchLimitOutput(d.value)}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+
+              <Checkbox
+                checked={batchCategoryOn}
+                onChange={(_, d) => setBatchCategoryOn(!!d.checked)}
+                label={t("models.batchCategoryLabel" as TK)}
+              />
+              {batchCategoryOn ? (
+                <Dropdown
+                  value={categoryLabel(batchCategoryId)}
+                  selectedOptions={[batchCategoryId]}
+                  onOptionSelect={(_, d) =>
+                    setBatchCategoryId(d.optionValue ?? "")
+                  }
+                >
+                  <Option value="">{t("models.filterUncategorized" as TK)}</Option>
+                  {(categories.data ?? []).map((c) => (
+                    <Option key={c.id} value={String(c.id)}>{c.name}</Option>
+                  ))}
+                </Dropdown>
+              ) : null}
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setBatchOpen(false)}>
                 {t("common.cancel" as TK)}
               </Button>
-              <Button appearance="primary" disabled={saving} onClick={saveBatch}>
+              <Button appearance="primary" disabled={saving} onClick={saveBatch} data-shortcut="apply">
                 {t("common.apply" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={create !== null} onOpenChange={(_, d) => !d.open && setCreate(null)}>
+        <DialogSurface style={{ maxWidth: 560 }}>
+          <DialogBody>
+            <DialogTitle>{t("models.createTitle" as TK)}</DialogTitle>
+            <DialogContent
+              style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 8 }}
+            >
+              <Field label={t("models.modelId" as TK)}>
+                <Input
+                  value={create?.model_id ?? ""}
+                  placeholder={t("models.modelIdPlaceholder" as TK)}
+                  onChange={(_, d) =>
+                    setCreate((f) =>
+                      f ? { ...f, model_id: d.value } : f,
+                    )
+                  }
+                />
+              </Field>
+              <Field
+                label={t("models.displayName" as TK)}
+                hint={t("models.displayNameHint" as TK)}
+              >
+                <Input
+                  value={create?.display_name ?? ""}
+                  placeholder={displayNamePlaceholder(create?.model_id ?? "")}
+                  onChange={(_, d) =>
+                    setCreate((f) =>
+                      f ? { ...f, display_name: d.value } : f,
+                    )
+                  }
+                />
+              </Field>
+              <Field label={t("models.description" as TK)}>
+                <Textarea
+                  value={create?.description ?? ""}
+                  rows={2}
+                  onChange={(_, d) =>
+                    setCreate((f) =>
+                      f ? { ...f, description: d.value } : f,
+                    )
+                  }
+                />
+              </Field>
+              <Field label={t("models.category" as TK)}>
+                <Dropdown
+                  value={categoryLabel(create?.category_id ?? "")}
+                  selectedOptions={[create?.category_id ?? ""]}
+                  onOptionSelect={(_, d) =>
+                    setCreate((f) =>
+                      f ? { ...f, category_id: (d.optionValue ?? "") } : f,
+                    )
+                  }
+                >
+                  <Option value="">{t("models.filterUncategorized" as TK)}</Option>
+                  {(categories.data ?? []).map((c) => (
+                    <Option key={c.id} value={String(c.id)}>{c.name}</Option>
+                  ))}
+                </Dropdown>
+              </Field>
+              <div
+                style={{
+                  border: `1px solid ${tokens.colorNeutralStroke2}`,
+                  borderRadius: 8,
+                  padding: 12,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  background: tokens.colorNeutralBackground2,
+                }}
+              >
+                <Text size={200} className={styles.dim}>
+                  {t("models.providerPickerHint" as TK)}
+                </Text>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                  <Field label={t("models.pickProvider" as TK)} style={{ flex: "1 1 180px" }}>
+                    <Dropdown
+                      value={
+                        create?.provider_id
+                          ? (providers.data ?? []).find(
+                              (p) => String(p.id) === create.provider_id,
+                            )?.slug ?? t("models.pickProvider" as TK)
+                          : t("models.pickProvider" as TK)
+                      }
+                      selectedOptions={[create?.provider_id ?? ""]}
+                      onOptionSelect={(_, d) =>
+                        setCreate((f) =>
+                          f ? { ...f, provider_id: (d.optionValue ?? "") } : f,
+                        )
+                      }
+                    >
+                      <Option value="">{t("models.pickProvider" as TK)}</Option>
+                      {(providers.data ?? []).map((p) => (
+                        <Option key={p.id} value={String(p.id)}>
+                          {p.slug || p.name}
+                        </Option>
+                      ))}
+                    </Dropdown>
+                  </Field>
+                  <Field label={t("models.upstreamModel" as TK)} style={{ flex: "1 1 180px" }}>
+                    <Input
+                      value={create?.upstream_model ?? ""}
+                      placeholder={t("models.upstreamPlaceholder" as TK)}
+                      onChange={(_, d) =>
+                        setCreate((f) =>
+                          f ? { ...f, upstream_model: d.value } : f,
+                        )
+                      }
+                    />
+                  </Field>
+                </div>
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setCreate(null)}>
+                {t("common.cancel" as TK)}
+              </Button>
+              <Button appearance="primary" disabled={saving} onClick={saveCreate} data-shortcut="apply">
+                {t("common.create" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -1182,7 +1694,7 @@ export function Models() {
               <Button appearance="secondary" onClick={() => setGroupEdit(null)}>
                 {t("common.cancel" as TK)}
               </Button>
-              <Button appearance="primary" disabled={saving} onClick={saveGroups}>
+              <Button appearance="primary" disabled={saving} onClick={saveGroups} data-shortcut="save">
                 {t("common.save" as TK)}
               </Button>
             </DialogActions>

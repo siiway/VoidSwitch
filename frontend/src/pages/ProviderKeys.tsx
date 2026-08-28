@@ -59,7 +59,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
-import { PasswordInput } from "../components/PasswordInput";
+
 
 /** Render a key's stored balance blob into a short human string. */
 function formatBalance(balance: Record<string, unknown> | undefined): string {
@@ -108,6 +108,7 @@ export function ProviderKeys() {
   // a drag (or the top/bottom menu) persists the new order to the backend.
   const [rows, setRows] = useState<ApiKey[]>([]);
   const [dragId, setDragId] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [reordering, setReordering] = useState(false);
   useEffect(() => {
     setRows(keys.data ?? []);
@@ -1036,7 +1037,7 @@ export function ProviderKeys() {
               <Input value={cfAccountId} onChange={(_, d) => setCfAccountId(d.value)} />
             </Field>
             <Field label={t("providerKeys.apiToken" as TK)}>
-              <PasswordInput value={cfToken} onChange={(_, d) => setCfToken(d.value)} autoComplete="current-password" />
+              <Input type="text" autoComplete="off" value={cfToken} onChange={(_, d) => setCfToken(d.value)} />
             </Field>
             <Field label={t("providerKeys.commentOpt" as TK)}>
               <Input value={cfComment} onChange={(_, d) => setCfComment(d.value)} />
@@ -1182,6 +1183,7 @@ export function ProviderKeys() {
         appearance="primary"
         disabled={adding || !bulk.trim()}
         onClick={addKeys}
+        data-shortcut="apply"
         style={{ marginBottom: 24 }}
       >
         {t("providerKeys.add" as TK)}
@@ -1238,14 +1240,26 @@ export function ProviderKeys() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((k) => (
+            {rows.map((k, idx) => (
               <TableRow
                 key={k.id}
                 onDragOver={(e) => {
-                  if (isStaff && dragId != null) e.preventDefault();
+                  if (isStaff && dragId != null) {
+                    e.preventDefault();
+                    setDragOverIdx(idx);
+                  }
                 }}
-                onDrop={() => isStaff && onDropRow(k.id)}
-                style={dragId === k.id ? { opacity: 0.4 } : undefined}
+                onDragLeave={() => setDragOverIdx(null)}
+                onDrop={() => {
+                  setDragOverIdx(null);
+                  if (isStaff) onDropRow(k.id);
+                }}
+                style={{
+                  ...(dragId === k.id ? { opacity: 0.4 } : undefined),
+                  ...(dragId != null && dragOverIdx === idx
+                    ? { borderTop: `2px solid ${tokens.colorBrandForeground1}` }
+                    : undefined),
+                }}
               >
                 {isStaff && (
                   <TableCell style={{ width: 44 }}>
@@ -1520,6 +1534,7 @@ export function ProviderKeys() {
                 appearance="primary"
                 disabled={editBusy}
                 onClick={saveEdit}
+                data-shortcut="save"
               >
                 {t("common.save" as TK)}
               </Button>

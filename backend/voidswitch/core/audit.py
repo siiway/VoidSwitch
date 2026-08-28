@@ -108,6 +108,11 @@ class AuditAction(StrEnum):
     MODEL_CLEAN_UNSERVED = "model.clean_unserved"
     MODEL_DELETE = "model.delete"
 
+    # Model categories
+    MODEL_CATEGORY_CREATE = "model_category.create"
+    MODEL_CATEGORY_UPDATE = "model_category.update"
+    MODEL_CATEGORY_DELETE = "model_category.delete"
+
     # Users & settings
     USER_UPDATE = "user.update"
     SETTINGS_UPDATE = "settings.update"

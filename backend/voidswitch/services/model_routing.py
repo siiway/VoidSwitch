@@ -96,13 +96,9 @@ def build_opencode_config(exposed: ExposedModel, models_dev_entry: dict | None) 
     if exposed.reasoning is not None:
         config["reasoning"] = exposed.reasoning
     if exposed.capabilities:
-        config["capabilities"] = _deep_merge(
-            config.get("capabilities") or {}, exposed.capabilities
-        )
+        config["capabilities"] = _deep_merge(config.get("capabilities") or {}, exposed.capabilities)
     if exposed.modalities:
-        config["modalities"] = _deep_merge(
-            config.get("modalities") or {}, exposed.modalities
-        )
+        config["modalities"] = _deep_merge(config.get("modalities") or {}, exposed.modalities)
     return config
 
 
@@ -113,11 +109,7 @@ def weighted_entries(layer: RouteLayer, rng: random.Random | None = None) -> lis
     pool only ever contains upstreams that could actually serve a request.
     """
     entries = [
-        e
-        for e in layer.entries
-        if e.enabled
-        and e.provider is not None
-        and e.provider.enabled
+        e for e in layer.entries if e.enabled and e.provider is not None and e.provider.enabled
     ]
     if len(entries) <= 1:
         return entries
@@ -132,14 +124,10 @@ def weighted_entries(layer: RouteLayer, rng: random.Random | None = None) -> lis
     return ordered
 
 
-async def get_or_create_route(
-    session: AsyncSession, exposed_model: ExposedModel
-) -> Route:
+async def get_or_create_route(session: AsyncSession, exposed_model: ExposedModel) -> Route:
     """A model's route, creating an empty one if missing (idempotent)."""
     route = (
-        await session.execute(
-            select(Route).where(Route.exposed_model_id == exposed_model.id)
-        )
+        await session.execute(select(Route).where(Route.exposed_model_id == exposed_model.id))
     ).scalar_one_or_none()
     if route is not None:
         return route
@@ -149,9 +137,7 @@ async def get_or_create_route(
     return route
 
 
-async def resolve_route(
-    session: AsyncSession, exposed_model: ExposedModel
-) -> Route:
+async def resolve_route(session: AsyncSession, exposed_model: ExposedModel) -> Route:
     """Load the dispatch plan for an exposed model with providers (keys loaded).
 
     Providers referenced by pool entries are loaded through a dedicated query so
@@ -161,17 +147,14 @@ async def resolve_route(
     """
     route = await get_or_create_route(session, exposed_model)
     provider_ids = {
-        e.provider_id
-        for layer in route.layers
-        for e in layer.entries
-        if e.provider_id is not None
+        e.provider_id for layer in route.layers for e in layer.entries if e.provider_id is not None
     }
     if provider_ids:
         rows = (
-            await session.execute(
-                select(Provider).where(Provider.id.in_(provider_ids))
-            )
-        ).scalars().all()
+            (await session.execute(select(Provider).where(Provider.id.in_(provider_ids))))
+            .scalars()
+            .all()
+        )
         by_id = {p.id: p for p in rows}
         for layer in route.layers:
             for entry in layer.entries:

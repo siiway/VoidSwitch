@@ -8,6 +8,7 @@ import {
   Spinner,
   Switch,
   Text,
+  Tooltip,
   tokens,
 } from "@fluentui/react-components";
 import { BroomRegular } from "@fluentui/react-icons";
@@ -26,6 +27,7 @@ import {
   useNotify,
 } from "../components/ui";
 import { useOverTimeMode, type OverTimeMode } from "../lib/prefs";
+import { shortcutHint } from "../lib/useShortcuts";
 
 type TK = keyof Translations;
 
@@ -482,9 +484,19 @@ export function Settings() {
         onRefresh={loaded.reload}
         action={
           isOwner ? (
-            <Button appearance="primary" disabled={saving} onClick={save}>
-              {t("common.saveChanges" as TK)}
-            </Button>
+            <Tooltip
+              content={shortcutHint(t("common.saveChanges" as TK), t("common.shortcutSave" as TK))}
+              relationship="label"
+            >
+              <Button
+                appearance="primary"
+                disabled={saving}
+                onClick={save}
+                data-shortcut="save"
+              >
+                {t("common.saveChanges" as TK)}
+              </Button>
+            </Tooltip>
           ) : undefined
         }
       />

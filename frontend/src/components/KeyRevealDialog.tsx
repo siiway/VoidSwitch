@@ -8,6 +8,7 @@ import {
   DialogTitle,
   Dropdown,
   Field,
+  Input,
   Option,
   Spinner,
   Text,
@@ -19,7 +20,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { Translations } from "../i18n/locales/en";
 import { useTranslation } from "react-i18next";
-import { PasswordInput } from "./PasswordInput";
+
 import { useNotify } from "./ui";
 
 type Scope = "provider" | "token" | "all";
@@ -145,7 +146,7 @@ export function KeyRevealDialog({
             ) : (
               <>
                 <Field label={t("reveal.key" as TK)}>
-                  <PasswordInput value={secret} onChange={(_, d) => setSecret(d.value)} />
+                  <Input type="text" autoComplete="off" value={secret} onChange={(_, d) => setSecret(d.value)} />
                 </Field>
                 <Field label={t("reveal.scope" as TK)}>
                   <Dropdown

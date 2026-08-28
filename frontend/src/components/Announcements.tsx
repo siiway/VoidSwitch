@@ -333,7 +333,12 @@ function EditorDialog({
             <Button appearance="secondary" onClick={onClose}>
               {t("common.cancel" as TK)}
             </Button>
-            <Button appearance="primary" disabled={saving} onClick={save}>
+            <Button
+              appearance="primary"
+              disabled={saving}
+              onClick={save}
+              data-shortcut={state?.id == null ? "apply" : "save"}
+            >
               {state?.id == null ? t("announcements.publish" as TK) : t("common.save" as TK)}
             </Button>
           </DialogActions>

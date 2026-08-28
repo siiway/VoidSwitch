@@ -1,5 +1,30 @@
 # VoidSwitch
 
+## Versioning
+
+When no release is being cut, the version number in the following three files MUST be updated to the dev format on every change:
+
+- ``backend/voidswitch/__init__.py`` (``__version__``)
+- ``backend/pyproject.toml`` (``version``)
+- ``frontend/package.json`` (``version``)
+
+**Dev format**: ``v{base}-{date}.{n}`` where:
+- ``{base}`` = the last released version (e.g. ``0.2.2``)
+- ``{date}`` = ``YYYY.M.D`` (today's date, e.g. ``2026.8.28``)
+- ``{n}`` = consecutive modification number for today (``1``, ``2``, …)
+
+Example: ``v0.2.2-2026.8.28.1``
+
+The commit hash (first 7 chars) is resolved *dynamically*, not stored in these
+files: the backend's ``core/version.py:commit_id()`` reads ``VOIDSWITCH_COMMIT``
+(docker build arg) or runs ``git rev-parse --short=7 HEAD``, and surfaces it
+separately as the ``commit`` field of ``/api/auth/config`` and the system-info
+endpoint. A direct run without git simply omits the hash.
+
+``pyproject.toml`` uses ``+`` instead of ``-`` after the base (PEP 440 local
+version): ``0.2.2+2026.8.28.1``. The ``__init__.py`` and ``package.json`` use the
+display form with hyphens.
+
 ## Lint & Typecheck
 
 ```bash

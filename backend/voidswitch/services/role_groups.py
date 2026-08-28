@@ -102,9 +102,7 @@ def is_moderator(user: User) -> bool:
 async def ensure_moderator_group(session: AsyncSession) -> RoleGroup:
     """Seed (idempotently) the built-in moderator role group."""
     group = (
-        await session.execute(
-            select(RoleGroup).where(RoleGroup.slug == MODERATOR_GROUP_SLUG)
-        )
+        await session.execute(select(RoleGroup).where(RoleGroup.slug == MODERATOR_GROUP_SLUG))
     ).scalar_one_or_none()
     if group is None:
         group = RoleGroup(
@@ -170,9 +168,7 @@ async def sync_auto_memberships(
     for gid in desired:
         current = existing.get(gid)
         if current is None:
-            session.add(
-                RoleGroupMembership(user_id=user.id, role_group_id=gid, source="auto")
-            )
+            session.add(RoleGroupMembership(user_id=user.id, role_group_id=gid, source="auto"))
         elif current.source != "manual":
             current.source = "auto"
     await session.flush()
@@ -181,12 +177,16 @@ async def sync_auto_memberships(
 async def user_group_ids(session: AsyncSession, user_id: int) -> set[int]:
     """All role-group ids a user currently belongs to (excludes moderator)."""
     rows = (
-        await session.execute(
-            select(RoleGroupMembership.role_group_id).where(
-                RoleGroupMembership.user_id == user_id
+        (
+            await session.execute(
+                select(RoleGroupMembership.role_group_id).where(
+                    RoleGroupMembership.user_id == user_id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return set(rows)
 
 
@@ -199,9 +199,7 @@ async def user_can_access_model(session: AsyncSession, user: User, model_id: str
     if is_moderator(user):
         return True
     entry = (
-        await session.execute(
-            select(ExposedModel).where(ExposedModel.model_id == model_id)
-        )
+        await session.execute(select(ExposedModel).where(ExposedModel.model_id == model_id))
     ).scalar_one_or_none()
     allowed = set(entry.allowed_role_group_ids or []) if entry is not None else set()
     if not allowed:

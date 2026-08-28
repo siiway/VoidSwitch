@@ -102,9 +102,7 @@ async def list_keys(session: AsyncSession, provider: Provider, actor: Actor) -> 
     stmt = select(ApiKey).where(ApiKey.provider_id == provider.id)
     if not actor.is_staff:
         stmt = stmt.where(ApiKey.added_by == actor.user_id)
-    rows = (
-        (await session.execute(stmt.order_by(ApiKey.sort_order, ApiKey.id))).scalars().all()
-    )
+    rows = (await session.execute(stmt.order_by(ApiKey.sort_order, ApiKey.id))).scalars().all()
     return list(rows)
 
 
@@ -123,15 +121,9 @@ async def reorder_keys(
     previous relative order.
     """
     if not actor.is_staff:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "Only staff may reorder a provider's keys."
-        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff may reorder a provider's keys.")
     keys = (
-        (
-            await session.execute(
-                select(ApiKey).where(ApiKey.provider_id == provider.id)
-            )
-        )
+        (await session.execute(select(ApiKey).where(ApiKey.provider_id == provider.id)))
         .scalars()
         .all()
     )
@@ -148,11 +140,7 @@ async def reorder_keys(
         if kid not in seen:
             seen.add(kid)
             ordered_ids.append(kid)
-    remaining = [
-        k.id
-        for k in sorted(keys, key=lambda k: (k.sort_order, k.id))
-        if k.id not in seen
-    ]
+    remaining = [k.id for k in sorted(keys, key=lambda k: (k.sort_order, k.id)) if k.id not in seen]
     final = ordered_ids + remaining
     for index, kid in enumerate(final):
         by_id[kid].sort_order = index
@@ -185,9 +173,7 @@ async def add_keys(
     existing_hashes = {
         h
         for (h,) in (
-            await session.execute(
-                select(ApiKey.key_hash).where(ApiKey.provider_id == provider.id)
-            )
+            await session.execute(select(ApiKey.key_hash).where(ApiKey.provider_id == provider.id))
         ).all()
     }
     # New keys append after the existing ones so the operator's drag order is
@@ -211,22 +197,20 @@ async def add_keys(
         # the middle/third fields actually look like a bundle (a plain token that
         # happens to contain two colons must not be reinterpreted, and a
         # non-numeric expires_at must not 500 the import).
-        if (
-            is_claude_code
-            and raw.count(":") == 2
-            and oauth_tokens.parse_bundle(raw) is None
-        ):
+        if is_claude_code and raw.count(":") == 2 and oauth_tokens.parse_bundle(raw) is None:
             parts = raw.split(":", 2)
             try:
                 expires_at = float(parts[2])
             except ValueError:
                 expires_at = None
             if expires_at is not None and parts[1]:
-                raw = json.dumps({
-                    "access_token": parts[0],
-                    "refresh_token": parts[1],
-                    "expires_at": expires_at,
-                })
+                raw = json.dumps(
+                    {
+                        "access_token": parts[0],
+                        "refresh_token": parts[1],
+                        "expires_at": expires_at,
+                    }
+                )
         digest = hash_token(raw)
         if digest in existing_hashes or digest in seen:
             continue
@@ -398,9 +382,7 @@ async def update_key(
     return key
 
 
-async def _ensure_no_clash(
-    session: AsyncSession, provider_id: int, raw: str, key_id: int
-) -> None:
+async def _ensure_no_clash(session: AsyncSession, provider_id: int, raw: str, key_id: int) -> None:
     digest = hash_token(raw)
     clash = (
         await session.execute(
@@ -412,9 +394,7 @@ async def _ensure_no_clash(
         )
     ).first()
     if clash is not None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Another key with this value already exists."
-        )
+        raise HTTPException(status.HTTP_409_CONFLICT, "Another key with this value already exists.")
 
 
 async def delete_key(
@@ -470,9 +450,7 @@ async def refresh_one(key: ApiKey, provider: Provider, settings: Settings) -> bo
     auto_disable = settings_store.get_bool("auto_disable_zero_balance", True)
     client, _route, _node = await routing.system_client()
     try:
-        return await refresh_key_balance(
-            key, provider, client, settings, auto_disable=auto_disable
-        )
+        return await refresh_key_balance(key, provider, client, settings, auto_disable=auto_disable)
     except Exception:
         return None
 

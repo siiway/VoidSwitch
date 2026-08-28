@@ -246,9 +246,7 @@ async def delete_key(
 ) -> None:
     provider = await _get_provider(session, provider_id)
     key = await _get_key(session, provider_id, key_id)
-    await keymgmt.delete_key(
-        session, provider, key, actor=_actor(user, request), settings=settings
-    )
+    await keymgmt.delete_key(session, provider, key, actor=_actor(user, request), settings=settings)
 
 
 # --------------------------------------------------------------------------- #

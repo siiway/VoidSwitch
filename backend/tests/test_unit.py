@@ -243,9 +243,7 @@ async def test_anthropic_request_thinking_becomes_reasoning_content():
             },
             {
                 "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": "tu_1", "content": "sunny"}
-                ],
+                "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "sunny"}],
             },
         ],
     }
@@ -539,7 +537,7 @@ async def test_responses_stream_to_openai_tool_call():
         'event: response.created\ndata: {"type":"response.created","response":{"id":"r1"}}\n\n',
         'event: response.output_item.added\ndata: {"type":"response.output_item.added",'
         '"output_index":0,"item":{"type":"function_call","call_id":"c1","name":"f"}}\n\n',
-        'event: response.function_call_arguments.delta\ndata:'
+        "event: response.function_call_arguments.delta\ndata:"
         ' {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\\"a\\":1}"}\n\n',
         'event: response.completed\ndata: {"type":"response.completed","response":'
         '{"status":"completed","usage":{"input_tokens":2,"output_tokens":2}}}\n\n',
@@ -649,9 +647,7 @@ async def test_grok_adapter_preserves_caller_tools():
     provider = Provider(name="grok", type="grok")
     adapter = get_adapter(provider)
     caller_tools = [{"type": "function", "name": "get_weather", "parameters": {}}]
-    body = adapter.prepare_body(
-        {"model": "grok-4.3-console", "input": [], "tools": caller_tools}
-    )
+    body = adapter.prepare_body({"model": "grok-4.3-console", "input": [], "tools": caller_tools})
     assert body["tools"] == caller_tools
 
 
@@ -680,8 +676,7 @@ async def test_xai_adapter_classify():
     )
     # No credentials presented → 401 body says so → KEY_INVALID.
     assert (
-        adapter.classify(401, {"code": "unauthenticated:no-credentials"})
-        == ErrorClass.KEY_INVALID
+        adapter.classify(401, {"code": "unauthenticated:no-credentials"}) == ErrorClass.KEY_INVALID
     )
     # A bare 401 with no informative body still counts as an auth failure.
     assert adapter.classify(401, {}) == ErrorClass.KEY_INVALID
@@ -695,9 +690,7 @@ async def test_xai_adapter_classify():
         == ErrorClass.SERVER_ERROR
     )
     # ...unless the 403 body explicitly blames the key.
-    assert (
-        adapter.classify(403, {"error": "Invalid API key"}) == ErrorClass.KEY_INVALID
-    )
+    assert adapter.classify(403, {"error": "Invalid API key"}) == ErrorClass.KEY_INVALID
 
     # A wrong model id is the client's fault (400 "Model not found") — passthrough.
     assert (
@@ -730,11 +723,13 @@ async def test_xai_adapter_refreshes_oauth_bundle_credential():
     xai_oauth.resolve_access_token = fake_resolve  # ty: ignore[invalid-assignment]
     try:
         token = await adapter.resolve_credential(
-            None, ApiKey(provider_id=1, key_ciphertext="c", key_hash="h"), "secret",
+            None,
+            ApiKey(provider_id=1, key_ciphertext="c", key_hash="h"),
+            "secret",
             force_refresh=True,
         )
     finally:
-        xai_oauth.resolve_access_token = original  # ty: ignore[invalid-assignment]
+        xai_oauth.resolve_access_token = original
 
     assert token == "resolved-access-token"
     assert called == {"secret_key": "secret", "force_refresh": True}
@@ -760,18 +755,16 @@ async def test_grok_build_adapter_headers_and_classify():
     assert headers["User-Agent"].startswith("grok-shell/")
 
     # Per-request extra headers win over the CLI defaults.
-    assert adapter.headers("T", {"x-grok-client-mode": "interactive"})[
-        "x-grok-client-mode"
-    ] == "interactive"
+    assert (
+        adapter.headers("T", {"x-grok-client-mode": "interactive"})["x-grok-client-mode"]
+        == "interactive"
+    )
 
     # Classification is inherited from the xai adapter: a bare 403 is transient
     # (do NOT disable an OAuth credential over a region/permission block), while
     # an explicit bad-key body still counts as invalid.
     assert adapter.classify(403, {}) == ErrorClass.SERVER_ERROR
-    assert (
-        adapter.classify(400, {"error": "Incorrect API key provided."})
-        == ErrorClass.KEY_INVALID
-    )
+    assert adapter.classify(400, {"error": "Incorrect API key provided."}) == ErrorClass.KEY_INVALID
     assert adapter.classify(200, {}) == ErrorClass.OK
 
     # The provider-type catalog advertises the OAuth-login capability so the
@@ -804,9 +797,10 @@ async def test_xai_oauth_begin_login_and_extract_code():
     assert "api:access" in scope
 
     # extract_code accepts the full callback URL, a bare code, and code#state.
-    assert xai_oauth.extract_code(
-        "http://127.0.0.1:56121/callback?code=ABC123&state=xyz"
-    ) == ("ABC123", "xyz")
+    assert xai_oauth.extract_code("http://127.0.0.1:56121/callback?code=ABC123&state=xyz") == (
+        "ABC123",
+        "xyz",
+    )
     assert xai_oauth.extract_code("BARECODE") == ("BARECODE", None)
     assert xai_oauth.extract_code("CODE#STATE") == ("CODE", "STATE")
 
@@ -838,7 +832,7 @@ async def test_xai_oauth_complete_login_happy_path():
             session=None,
         )
     finally:
-        xai_oauth._post_token = original  # ty: ignore[invalid-assignment]
+        xai_oauth._post_token = original
 
     assert bundle["access_token"] == "AT"
     assert bundle["refresh_token"] == "RT"
@@ -889,7 +883,7 @@ async def test_xai_oauth_complete_login_rejections():
                 session=None,
             )
     finally:
-        xai_oauth._post_token = original  # ty: ignore[invalid-assignment]
+        xai_oauth._post_token = original
     assert xai_oauth._login_states.peek(state) is None
 
 
@@ -912,7 +906,7 @@ async def test_node_group_routes_rank_and_direct_fallback():
 
     # An empty / missing group always yields a single direct route (no 502, no
     # "no route available" — an empty group = direct).
-    routes = await routing.group_routes(None, None)
+    routes = await routing.group_routes(None, None)  # ty: ignore[invalid-argument-type]
     assert len(routes) == 1
     route, node = routes[0]
     assert node is None and route.proxy_url is None
@@ -967,7 +961,9 @@ async def test_key_pool_selection_and_route_entries():
     e1.provider = provider
     e2 = RoutePoolEntry(layer=layer, provider_id=9, upstream_model="m2", weight=1, enabled=True)
     e2.provider = provider
-    disabled = RoutePoolEntry(layer=layer, provider_id=9, upstream_model="m3", weight=1, enabled=False)
+    disabled = RoutePoolEntry(
+        layer=layer, provider_id=9, upstream_model="m3", weight=1, enabled=False
+    )
     disabled.provider = provider
     layer.entries = [e1, e2, disabled]
     ordered = weighted_entries(layer, rng=random.Random(0))
@@ -1081,24 +1077,46 @@ async def test_retry_after_parsing_and_cooldown():
 
     # Precedence: Retry-After header wins over provider/global.
     k = _key()
-    cd = _mark_rate_limited(k, retry_after=90, provider_cooldown=30, global_cooldown=180, max_cooldown=3600)
+    cd = _mark_rate_limited(
+        k, retry_after=90, provider_cooldown=30, global_cooldown=180, max_cooldown=3600
+    )
     assert cd == 90.0
     assert k.status == KeyStatus.RATE_LIMITED.value
     assert k.rate_limit_until is not None
 
     # No header → provider cooldown wins over global.
     k = _key()
-    assert _mark_rate_limited(k, retry_after=None, provider_cooldown=30, global_cooldown=180, max_cooldown=3600) == 30.0
+    assert (
+        _mark_rate_limited(
+            k, retry_after=None, provider_cooldown=30, global_cooldown=180, max_cooldown=3600
+        )
+        == 30.0
+    )
 
     # No header, no provider cooldown → global.
     k = _key()
-    assert _mark_rate_limited(k, retry_after=None, provider_cooldown=0, global_cooldown=180, max_cooldown=3600) == 180.0
+    assert (
+        _mark_rate_limited(
+            k, retry_after=None, provider_cooldown=0, global_cooldown=180, max_cooldown=3600
+        )
+        == 180.0
+    )
 
     # The cap clamps even a huge Retry-After; 0 = uncapped.
     k = _key()
-    assert _mark_rate_limited(k, retry_after=99999, provider_cooldown=0, global_cooldown=180, max_cooldown=600) == 600.0
+    assert (
+        _mark_rate_limited(
+            k, retry_after=99999, provider_cooldown=0, global_cooldown=180, max_cooldown=600
+        )
+        == 600.0
+    )
     k = _key()
-    assert _mark_rate_limited(k, retry_after=99999, provider_cooldown=0, global_cooldown=180, max_cooldown=0) == 99999.0
+    assert (
+        _mark_rate_limited(
+            k, retry_after=99999, provider_cooldown=0, global_cooldown=180, max_cooldown=0
+        )
+        == 99999.0
+    )
 
 
 async def test_rate_limited_keys_excluded_and_ranked_last():
@@ -1112,8 +1130,12 @@ async def test_rate_limited_keys_excluded_and_ranked_last():
 
     def _key(kid: int, *, status: str, until: dt.datetime | None = None, order: int = 0) -> ApiKey:
         k = ApiKey(
-            provider_id=1, key_ciphertext="x", key_hash=f"k{kid}", status=status,
-            sort_order=order, rate_limit_until=until,
+            provider_id=1,
+            key_ciphertext="x",
+            key_hash=f"k{kid}",
+            status=status,
+            sort_order=order,
+            rate_limit_until=until,
         )
         k.id = kid
         return k
@@ -1123,8 +1145,12 @@ async def test_rate_limited_keys_excluded_and_ranked_last():
     prov.key_select_mode = KeySelectMode.FALLBACK.value
     prov.keys = [
         _key(1, status=KeyStatus.ACTIVE.value, order=0),
-        _key(2, status=KeyStatus.RATE_LIMITED.value, until=now + dt.timedelta(seconds=120), order=1),  # still cooling
-        _key(3, status=KeyStatus.RATE_LIMITED.value, until=now - dt.timedelta(seconds=5), order=2),  # recovered
+        _key(
+            2, status=KeyStatus.RATE_LIMITED.value, until=now + dt.timedelta(seconds=120), order=1
+        ),  # still cooling
+        _key(
+            3, status=KeyStatus.RATE_LIMITED.value, until=now - dt.timedelta(seconds=5), order=2
+        ),  # recovered
         _key(4, status=KeyStatus.ACTIVE.value, order=3),
     ]
     reset_selection_state()
@@ -1638,9 +1664,7 @@ async def test_renamed_setting_migrates_stored_value(db):
 
     async with db.session() as session:
         # Simulate a legacy DB: old key stored False, new key absent.
-        await session.execute(
-            delete(Setting).where(Setting.key == "proxy_health_check_enabled")
-        )
+        await session.execute(delete(Setting).where(Setting.key == "proxy_health_check_enabled"))
         session.add(Setting(key="proxy_resurrector_enabled", value=False))
         await session.flush()
         await settings_store.ensure_defaults(session)
@@ -1668,7 +1692,6 @@ async def test_deep_merge_opencode_config():
     # Inputs are not mutated.
     assert base["limit"] == {"context": 100, "output": 8}
     assert "extra" not in base
-
 
 
 # --------------------------------------------------------------------------- #
@@ -1835,8 +1858,6 @@ async def test_spool_first_content_detects_degenerate_empty(db):
     assert resp.closed is True  # connection cut — nothing delivered
 
 
-
-
 # --------------------------------------------------------------------------- #
 # Alembic migrations
 # --------------------------------------------------------------------------- #
@@ -1876,10 +1897,18 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
         assert "retry_on_zero_token" in cols
         assert "drop_opencode_identity_block" in cols
         assert {
-            "users", "exposed_models", "routes", "route_layers", "route_pool_entries",
-            "providers", "api_keys", "node_groups", "node_group_members", "request_logs",
+            "users",
+            "exposed_models",
+            "routes",
+            "route_layers",
+            "route_pool_entries",
+            "providers",
+            "api_keys",
+            "node_groups",
+            "node_group_members",
+            "request_logs",
         } <= tables
-        assert ver == "6151bc02069f"  # the current head (baseline + routing rewrite)
+        assert ver == "58e48e546df2"  # the current head
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()
@@ -1920,3 +1949,24 @@ def test_decrypt_secret_fails_closed_on_corrupt_fernet():
         decrypt_secret(ct, secret="key-b")
     # A legacy plaintext value (not a Fernet token) still passes through.
     assert decrypt_secret("sk-plain", secret="anything") == "sk-plain"
+
+
+def test_reveal_partial_key_matches():
+    from voidswitch.api.admin.reveal import _provider_key_matches
+
+    p = Provider(name="x", type="openai", slug="x")
+    # Exact match still works.
+    assert _provider_key_matches(p, "sk-something", "sk-something")
+    # Partial with the ellipsis character (…).
+    assert _provider_key_matches(p, "sk-S-token-TAmY", "sk-S…TAmY")
+    # Partial with three dots (…). Accept both separators.
+    assert _provider_key_matches(p, "sk-S-token-TAmY", "sk-S...TAmY")
+    # Partial with asterisk.
+    assert _provider_key_matches(p, "sk-S-token-TAmY", "sk-S*TAmY")
+    # Prefix-only partial.
+    assert _provider_key_matches(p, "sk-S-token-TAmY", "sk-S…")
+    # Suffix-only partial.
+    assert _provider_key_matches(p, "sk-S-token-TAmY", "…TAmY")
+    # Non-matching partial must not match.
+    assert not _provider_key_matches(p, "sk-S-token-TAmY", "zz…TAmY")
+    assert not _provider_key_matches(p, "sk-S-token-TAmY", "sk-S…nope")

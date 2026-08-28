@@ -198,9 +198,7 @@ async def exchange_code(settings: Settings, code: str, state: str) -> PrismIdent
         verifier = decode_oauth_state(state, secret=settings.server.secret_key)
     except jwt.PyJWTError as exc:
         log.warning("state_invalid", error=str(exc), state_hint=state[:8] if state else "")
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Unknown or expired login state."
-        ) from exc
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown or expired login state.") from exc
 
     data = {
         "grant_type": "authorization_code",

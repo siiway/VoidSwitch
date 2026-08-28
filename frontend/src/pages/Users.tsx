@@ -2,6 +2,7 @@ import {
   Badge,
   Button,
   Dropdown,
+  Input,
   Option,
   TableBody,
   TableCell,
@@ -16,6 +17,7 @@ import {
   SignOutRegular,
   ProhibitedRegular,
 } from "@fluentui/react-icons";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -43,6 +45,40 @@ export function Users() {
   const notify = useNotify();
   const { user: me, isOwner } = useAuth();
   const users = useAsync<User[]>(() => api.get("/api/admin/users"));
+  const [userSearch, setUserSearch] = useState("");
+  const [userFilterRole, setUserFilterRole] = useState("");
+  const [userFilterStatus, setUserFilterStatus] = useState("");
+
+  const filteredUsers = useMemo(() => {
+    if (!users.data) return [];
+    let result = users.data;
+    const s = userSearch.trim().toLowerCase();
+    if (s) {
+      result = result.filter(
+        (u) =>
+          (u.name ?? "").toLowerCase().includes(s) ||
+          (u.username ?? "").toLowerCase().includes(s) ||
+          (u.email ?? "").toLowerCase().includes(s) ||
+          (u.sub ?? "").toLowerCase().includes(s) ||
+          String(u.id).includes(s),
+      );
+    }
+    if (userFilterRole) {
+      result = result.filter((u) => u.role === userFilterRole);
+    }
+    if (userFilterStatus === "enabled") {
+      result = result.filter((u) => u.enabled);
+    } else if (userFilterStatus === "disabled") {
+      result = result.filter((u) => !u.enabled);
+    }
+    return result;
+  }, [users.data, userSearch, userFilterRole, userFilterStatus]);
+
+  const allRoles = useMemo(() => {
+    const roles = new Set<string>();
+    (users.data ?? []).forEach((u) => roles.add(u.role));
+    return [...roles].sort();
+  }, [users.data]);
 
   async function setRole(u: User, role: Role) {
     try {
@@ -97,7 +133,57 @@ export function Users() {
       ) : users.error ? (
         <ErrorText error={users.error} />
       ) : (
-        <DataTable ariaLabel={t("users.title" as TK)}>
+        <>
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "center",
+              marginBottom: 12,
+            }}
+          >
+            <Input
+              placeholder={t("users.userFilterSearch" as TK)}
+              style={{ flex: "1 1 240px", minWidth: 200 }}
+              value={userSearch}
+              onChange={(_, d) => setUserSearch(d.value)}
+            />
+            <Dropdown
+              style={{ minWidth: 130 }}
+              placeholder={t("users.userFilterAllRoles" as TK)}
+              value={userFilterRole ? userFilterRole : t("users.userFilterAllRoles" as TK)}
+              selectedOptions={userFilterRole ? [userFilterRole] : []}
+              onOptionSelect={(_, d) => setUserFilterRole(d.optionValue ?? "")}
+            >
+              {allRoles.map((role) => (
+                <Option key={role} value={role} text={role}>
+                  {role}
+                </Option>
+              ))}
+            </Dropdown>
+            <Dropdown
+              style={{ minWidth: 130 }}
+              placeholder={t("users.userFilterAllStatus" as TK)}
+              value={
+                userFilterStatus === "enabled"
+                  ? t("users.userFilterEnabled" as TK)
+                  : userFilterStatus === "disabled"
+                    ? t("users.userFilterDisabled" as TK)
+                    : t("users.userFilterAllStatus" as TK)
+              }
+              selectedOptions={userFilterStatus ? [userFilterStatus] : []}
+              onOptionSelect={(_, d) => setUserFilterStatus(d.optionValue ?? "")}
+            >
+              <Option value="enabled" text={t("users.userFilterEnabled" as TK)}>
+                {t("users.userFilterEnabled" as TK)}
+              </Option>
+              <Option value="disabled" text={t("users.userFilterDisabled" as TK)}>
+                {t("users.userFilterDisabled" as TK)}
+              </Option>
+            </Dropdown>
+          </div>
+          <DataTable ariaLabel={t("users.title" as TK)}>
           <TableHeader>
             <TableRow>
               <TableHeaderCell>{t("users.user" as TK)}</TableHeaderCell>
@@ -110,7 +196,7 @@ export function Users() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(users.data ?? []).map((u) => (
+            {filteredUsers.map((u) => (
               <TableRow key={u.id}>
                 <TableCell>{(u.name || u.username || u.sub)}#{u.id}</TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
@@ -235,7 +321,8 @@ export function Users() {
               </TableRow>
             ))}
           </TableBody>
-        </DataTable>
+          </DataTable>
+        </>
       )}
     </div>
   );

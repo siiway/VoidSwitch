@@ -35,6 +35,19 @@ def _owner_label(user: User | None) -> str | None:
 def _provider_key_matches(provider: Provider, plaintext: str, raw: str) -> bool:
     if plaintext == raw:
         return True
+    # Partial reveal: `…`, `...`, or `*` acts as a wildcard — e.g.
+    # `sk-S…TAmY` matches any key that starts with `sk-S` and ends with `TAmY`.
+    for char in ("…", "...", "*"):
+        prefix, sep, suffix = raw.partition(char)
+        if not sep:
+            continue
+        matched = (
+            (prefix and suffix and plaintext.startswith(prefix) and plaintext.endswith(suffix))
+            or (prefix and not suffix and plaintext.startswith(prefix))
+            or (suffix and not prefix and plaintext.endswith(suffix))
+        )
+        if matched:
+            return True
     if provider.type != "claude-code":
         return False
     bundle = oauth_tokens.parse_bundle(plaintext)
@@ -73,9 +86,7 @@ async def reveal_key_search(
         for key, provider in rows:
             positions[provider.id] = positions.get(provider.id, 0) + 1
             try:
-                plaintext = decrypt_secret(
-                    key.key_ciphertext, secret=settings.server.secret_key
-                )
+                plaintext = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
             except Exception:
                 continue
             if _provider_key_matches(provider, plaintext, raw):
@@ -116,6 +127,37 @@ async def reveal_key_search(
                     deleted=token.deleted,
                 )
             )
+        # Partial reveal for tokens: `…`/`...`/`*` only matches the prefix
+        # (``token_prefix``) since tokens are stored as hashes and cannot be
+        # decrypted.  Suffix-only patterns are not supported for tokens.
+        if not rows:
+            for char in ("…", "...", "*"):
+                prefix, sep, suffix = raw.partition(char)
+                if not sep or not prefix or suffix:
+                    continue
+                partial_rows = (
+                    await session.execute(
+                        select(VoidToken, User)
+                        .join(User, User.id == VoidToken.user_id)
+                        .where(VoidToken.token_prefix.like(f"{prefix}%"))
+                        .order_by(VoidToken.id)
+                    )
+                ).all()
+                for token, owner in partial_rows:
+                    token_matches.append(
+                        KeyRevealTokenMatch(
+                            token_id=token.id,
+                            name=token.name,
+                            owner_id=owner.id,
+                            owner_name=_owner_label(owner),
+                            total_requests=token.total_requests,
+                            total_tokens=token.total_tokens,
+                            enabled=token.enabled,
+                            created_at=token.created_at,
+                            deleted=token.deleted,
+                        )
+                    )
+                break
 
     await record_audit(
         session,

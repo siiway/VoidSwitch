@@ -9,6 +9,7 @@ styles are translated transparently by the dispatcher.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from fnmatch import fnmatch
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -26,12 +27,28 @@ from voidswitch.constants import (
 from voidswitch.core import auth, ratelimit
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
-from voidswitch.models.db import ExposedModel, RequestLog, VoidToken
+from voidswitch.models.db import ExposedModel, Provider, RequestLog, VoidToken
 from voidswitch.services import model_routing, role_groups, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
 router = APIRouter(tags=["gateway"])
 log = get_logger("gateway")
+
+
+_PASSTHROUGH_RE = re.compile(
+    r"^(?P<exposed>[^\s@]+?)(?:\s*=>\s*(?P<upstream>[^\s@]+?))?(?:\s*@\s*(?P<pool>\S+))?$"
+)
+
+
+def _parse_passthrough_entry(entry: str) -> dict[str, str]:
+    """Parse a passthrough whitelist entry into its components."""
+    m = _PASSTHROUGH_RE.match(entry.strip())
+    if m is None:
+        return {"exposed": entry.strip(), "upstream": entry.strip(), "pool": ""}
+    exposed = (m.group("exposed") or "").strip()
+    upstream = (m.group("upstream") or exposed).strip()
+    pool = (m.group("pool") or "").strip()
+    return {"exposed": exposed, "upstream": upstream, "pool": pool}
 
 
 def _check_rpm(token: VoidToken) -> None:
@@ -59,9 +76,7 @@ async def _check_daily_quota(session: AsyncSession, token: VoidToken) -> None:
     """
     if token.daily_quota <= 0:
         return
-    start_of_day = dt.datetime.now(dt.UTC).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    start_of_day = dt.datetime.now(dt.UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     used = (
         await session.execute(
             select(func.count(RequestLog.id)).where(
@@ -112,7 +127,26 @@ async def _resolve_public_model(session: AsyncSession, model: str) -> str:
     Only *exposed* ids are callable. Raw upstream ids (``slug/model``) are never
     advertised and are rejected here, so an upstream id can't be reached
     directly.
+
+    Supports passthrough: when the model is in ``provider-slug/exposed-model-id``
+    format, the provider is looked up and its passthrough whitelist is checked.
     """
+    parts = model.split("/", 1)
+    if len(parts) == 2:
+        provider_slug = parts[0]
+        exposed_id = parts[1]
+        provider = (
+            await session.execute(select(Provider).where(Provider.slug == provider_slug))
+        ).scalar_one_or_none()
+        if provider is not None and provider.enabled and provider.passthrough_enabled:
+            for entry in provider.passthrough_models or []:
+                parsed = _parse_passthrough_entry(entry)
+                if parsed["exposed"] == exposed_id:
+                    return model
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"Model '{model}' is not in this provider's passthrough list.",
+            )
     entry = (
         await session.execute(select(ExposedModel).where(ExposedModel.model_id == model))
     ).scalar_one_or_none()
@@ -166,12 +200,12 @@ async def _handle(
     # list) would crash the translator later as a 500 after upstream billing;
     # reject it up front as a 400.
     for field in ("messages", "tools", "input"):
-        if field in payload and payload[field] is not None and not isinstance(
-            payload[field], (list, str) if field == "input" else list
+        if (
+            field in payload
+            and payload[field] is not None
+            and not isinstance(payload[field], (list, str) if field == "input" else list)
         ):
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, f"'{field}' must be a list."
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"'{field}' must be a list.")
 
     # Allow-list and rate-limit are checked against the *public* id the caller
     # used, then the model is resolved to its real upstream id (if it's an alias).
@@ -182,8 +216,12 @@ async def _handle(
     payload["model"] = model
 
     # Role-group access: a non-moderator may only call models whose allowed role
-    # groups intersect their own. Moderators may call everything.
-    if not await role_groups.user_can_access_model(session, authed.user, model):
+    # groups intersect their own. Moderators may call everything. Passthrough
+    # models (``provider-slug/exposed-model-id``) are whitelist-controlled by the
+    # provider and skip the role-group check.
+    if "/" not in model and not await role_groups.user_can_access_model(
+        session, authed.user, model
+    ):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             f"Model '{model}' is not available to your role group.",
@@ -293,6 +331,9 @@ async def _advertised_models(
     their groups allow), and the token's ``allowed_models`` allow-list is
     honoured. The ``opencode`` block is the fully merged downstream config
     (defaults ← models.dev placeholder ← custom config ← structured fields).
+
+    Passthrough models from providers with ``passthrough_enabled=True`` are also
+    listed as ``provider-slug/exposed-model-id``.
     """
     token = authed.token
 
@@ -313,11 +354,7 @@ async def _advertised_models(
         from voidswitch.models.db import ModelsDevCache
 
         rows = (
-            (
-                await session.execute(
-                    _select(ModelsDevCache).where(ModelsDevCache.id.in_(dev_ids))
-                )
-            )
+            (await session.execute(_select(ModelsDevCache).where(ModelsDevCache.id.in_(dev_ids))))
             .scalars()
             .all()
         )
@@ -355,6 +392,42 @@ async def _advertised_models(
 
     for entry in entries:
         _push(entry)
+
+    # Passthrough models: each provider with passthrough_enabled contributes its
+    # whitelisted models as ``provider-slug/exposed-model-id``.
+    passthrough_providers = (
+        (
+            await session.execute(
+                select(Provider).where(
+                    Provider.enabled.is_(True), Provider.passthrough_enabled.is_(True)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for provider in passthrough_providers:
+        for entry in provider.passthrough_models or []:
+            parsed = _parse_passthrough_entry(entry)
+            exposed_id = parsed["exposed"]
+            model_id = f"{provider.slug}/{exposed_id}"
+            if model_id in seen:
+                continue
+            if allowed and not any(
+                pattern == "*" or pattern == model_id or fnmatch(model_id, pattern)
+                for pattern in (str(p) for p in allowed)
+            ):
+                continue
+            seen.add(model_id)
+            data.append(
+                {
+                    "id": model_id,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "voidswitch",
+                }
+            )
+
     return data
 
 

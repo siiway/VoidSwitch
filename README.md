@@ -1,28 +1,29 @@
 # ⚡ VoidSwitch
 
-A production-grade, multi-provider **LLM API reverse proxy** with resilient key &
-proxy failover. It accepts **OpenAI-style** (`/v1/chat/completions`), **OpenAI
+A production-grade, multi-provider **LLM API reverse proxy** with resilient
+upstream routing. It accepts **OpenAI-style** (`/v1/chat/completions`), **OpenAI
 Responses** (`/v1/responses`), and **Anthropic-style** (`/v1/messages`) traffic,
-translates between them on the fly, and forwards to any configured upstream over
-optional HTTP/SOCKS proxies or specific local source IPs.
+translates between them on the fly, and dispatches to any configured upstream
+through **outbound node groups** (HTTP/SOCKS proxies, voidswitch-agent relays, or
+direct).
 
-Point an OpenAI SDK, an Anthropic SDK, or **Claude Code** at one endpoint and let
-VoidSwitch handle provider selection, key rotation, proxy failover, and quotas.
+Point an OpenAI SDK, an Anthropic SDK, or **Claude Code** / **OpenCode** at one
+endpoint and let VoidSwitch handle provider selection, key rotation, outbound
+routing, failover, and quotas.
 
 ```
-        OpenAI client ─┐                          ┌─ OpenAI-style upstreams
-                       ├─►  VoidSwitch gateway  ──┤   (OpenAI, DeepSeek, Groq, …)
-   Claude Code / SDK ──┘   translate · failover   └─ Anthropic-style upstreams
-                            key+proxy rotation         (Anthropic / Claude)
+         OpenAI client ─┐                          ┌─ OpenAI-style upstreams
+                        ├─►  VoidSwitch gateway  ──┤   (OpenAI, DeepSeek, Groq, …)
+    Claude Code / SDK ──┘   translate · failover   └─ Anthropic-style upstreams
+                             key+node rotation          (Anthropic / Claude)
 ```
 
-## Repository layout
-
-| Path               | Stack                                    | What it is                |
-| ------------------ | ---------------------------------------- | ------------------------- |
-| `backend/`         | Python 3.13 · uv · FastAPI · SQLAlchemy  | The gateway + admin API   |
-| `frontend/`        | Bun · React 19 · Fluent UI v9            | Decoupled admin dashboard |
-| `opencode-plugin/` | Bun · TypeScript · `@opencode-ai/plugin` | OpenCode provider plugin  |
+| Path               | Stack                                    | What it is                  |
+| ------------------ | ---------------------------------------- | --------------------------- |
+| `backend/`         | Python 3.13 · uv · FastAPI · SQLAlchemy  | The gateway + admin API     |
+| `frontend/`        | Bun · React 19 · Fluent UI v9            | Decoupled admin dashboard   |
+| `agent/`           | Go · static binary                       | Outbound relay agent        |
+| `opencode-plugin/` | Bun · TypeScript · `@opencode-ai/plugin` | OpenCode provider plugin    |
 
 Each has its own README with full details.
 
@@ -37,59 +38,29 @@ Each has its own README with full details.
 - **Bidirectional translation** — OpenAI ⇄ Anthropic for requests, responses, and
   **streaming SSE**, including tool/function calls and token usage.
 - **Resilient dispatcher** — auth/balance errors rotate the *key*; network/timeout
-  errors rotate the *proxy* (disabling it past a dynamic threshold); rate-limit and
+  errors rotate the *node* (disabling it past a dynamic threshold); rate-limit and
   5xx errors retry on the next key/provider. Streaming-safe.
-- **Outbound routing** — `httpx` + `httpx-socks`: HTTP & SOCKS proxies plus
-  `local_address` source-IP binding, with pooled connection reuse.
+- **Model routing** — per-model route flowcharts (exposed model → ordered fallback
+  layers → weighted upstream entries). Each layer can try multiple providers with
+  different upstream models and key pools.
+- **Provider passthrough** — models from a provider can be directly exposed to
+  users as `provider-id/model-id`, bypassing the route system entirely (whitelist
+  mode with optional pool scoping and exposed-id renaming).
+- **Model categories** — group models into categories for the catalog UI; provider
+  passthrough models auto-form virtual categories.
+- **Outbound routing** — node groups (with inheritance) pick HTTP/SOCKS proxies,
+  voidswitch-agent relays, or direct connections. Dynamic ranking by latency +
+  stability.
+- **voidswitch-agent** — Go static binary for custom H2 relay (X-VS-Upstream-URL)
+  + CONNECT fallback, token auth, metrics, Docker.
 - **Prism OAuth** (OIDC + PKCE) dashboard login; long-lived `vs-…` client tokens
   with per-token model allow-lists and RPM limits.
-- **Background crons** — balance probe (fast-fails empty keys) and proxy
-  resurrector (re-enables recovered proxies). Intervals tunable at runtime.
-- **Model catalog** — a **Models** page (visible to every signed-in user) collects
-  every model id served across the platform as cards. Admins set per-model
-  descriptions (individually or in batch) and a custom OpenCode model config that
-  the plugin deep-merges into each model. Any user can refresh the catalog from the
-  dashboard, the `POST /v1/models/sync` endpoint, or the OpenCode `/sync-models` command.
-- **Observability** — request/usage logs, administrative audit trail, live stats.
+- **Background crons** — balance probe (fast-fails empty keys), node resurrector
+  (re-enables recovered nodes), log cleanup. Intervals tunable at runtime.
+- **Observability** — request/usage/audit logs, live SSE stream, statistics,
+  activity heatmap.
 - **OpenCode plugin** — registers VoidSwitch as a first-class OpenCode provider and
-  reproduces the full Claude Code request surface (effort levels, fast mode, adaptive
-  thinking, task budgets, 1M context) at the wire level. See `opencode-plugin/`.
-
-## Quick start
-
-**1. Backend**
-
-```bash
-cd backend
-cp config.example.yaml config.yaml     # fill in Prism client_id / client_secret
-uv sync
-uv run voidswitch                       # http://localhost:8080  (Swagger at /swagger)
-```
-
-**2. Frontend**
-
-```bash
-cd frontend
-bun install
-bun run dev                             # http://localhost:5173
-```
-
-Sign in with Prism — the first user to log in becomes an owner. Add a provider,
-paste in some API keys (and optionally proxies), mint a Void-Token, and point your
-client at the gateway:
-
-```bash
-# OpenAI-style
-export OPENAI_BASE_URL=http://localhost:8080/v1
-export OPENAI_API_KEY=vs-...
-
-# Claude Code / Anthropic-style
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=vs-...
-```
-
-For **OpenCode**, install the `opencode-plugin/` provider plugin instead — it adds
-the full Claude Code request surface (effort, fast mode, thinking). See its README.
+  reproduces the full Claude Code request surface. See `opencode-plugin/`.
 
 ## Quality gates
 
@@ -102,11 +73,3 @@ uv run pytest           # async tests → all green
 cd ../frontend
 bun run build           # tsc + vite production build
 ```
-
-## Configuration
-
-`backend/config.yaml` holds **only** server info and Prism OAuth credentials. All
-operational thresholds (failure limits, probe intervals, timeouts, retry budget)
-live in the database and are edited from the dashboard **Settings** page or
-`PUT /api/admin/settings`. Any config value can also be set via environment, e.g.
-`VOIDSWITCH_SERVER__PORT=9000`, `VOIDSWITCH_PRISM__CLIENT_SECRET=…`.

@@ -75,12 +75,16 @@ async def list_announcements(
 
     # Collect the user's role group ids.
     memberships = (
-        await session.execute(
-            select(RoleGroupMembership.role_group_id).where(
-                RoleGroupMembership.user_id == user.id
+        (
+            await session.execute(
+                select(RoleGroupMembership.role_group_id).where(
+                    RoleGroupMembership.user_id == user.id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     user_group_ids = set(memberships)
 
     result: list[AnnouncementOut] = []

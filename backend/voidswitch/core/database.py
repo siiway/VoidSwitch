@@ -35,6 +35,7 @@ def get_request_client() -> tuple[str | None, str | None] | None:
     directly)."""
     return _request_client.get()
 
+
 # Minimal ASGI typing for the middleware.
 _Scope = MutableMapping[str, Any]
 _Message = MutableMapping[str, Any]
@@ -263,9 +264,7 @@ def _ensure_indexes(conn: Any) -> None:
     for name, table, columns in _ADDED_INDEXES:
         if table not in tables:
             continue  # create_all just made it; its own indexes come with it
-        conn.exec_driver_sql(
-            f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})"
-        )
+        conn.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})")
 
 
 def _backfill_provider_uuids(conn: Any) -> None:
@@ -282,9 +281,7 @@ def _backfill_provider_uuids(conn: Any) -> None:
     inspector = sa_inspect(conn)
     if "providers" not in set(inspector.get_table_names()):
         return
-    rows = conn.execute(
-        text("SELECT id FROM providers WHERE uuid IS NULL OR uuid = ''")
-    ).fetchall()
+    rows = conn.execute(text("SELECT id FROM providers WHERE uuid IS NULL OR uuid = ''")).fetchall()
     for (pid,) in rows:
         conn.execute(
             text("UPDATE providers SET uuid = :u WHERE id = :i"),

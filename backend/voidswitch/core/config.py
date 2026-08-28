@@ -76,9 +76,7 @@ class PrismSettings(BaseSettings):
     # ``/api/oauth/me/teams`` at login — required for team→role-group mapping and
     # the ``main_team_id`` admin mapping. Register the matching scope on the
     # Prism app or the team lookup is skipped (and team-based access denied).
-    scopes: list[str] = Field(
-        default_factory=lambda: ["openid", "profile", "email", "teams:read"]
-    )
+    scopes: list[str] = Field(default_factory=lambda: ["openid", "profile", "email", "teams:read"])
 
     @property
     def authorize_url(self) -> str:

@@ -82,9 +82,7 @@ async def auth_config(settings: Settings = Depends(get_settings)) -> dict[str, o
         "logs_page_size": settings_store.get_int("logs_page_size", 50),
         # Non-secret: lets the dashboard shell hide the Proxies tab when proxy
         # switching is turned off (an external proxy handles egress).
-        "proxy_switching_enabled": settings_store.get_bool(
-            "proxy_switching_enabled", True
-        ),
+        "proxy_switching_enabled": settings_store.get_bool("proxy_switching_enabled", True),
         # Non-secret: how many announcements the dashboard home panel shows inline
         # before the "view all" action reveals the rest.
         "announcements_home_count": settings_store.get_int("announcements_home_count", 3),

@@ -607,9 +607,7 @@ def _bash(
     model: str,
     small_model: str,
 ) -> PlainTextResponse:
-    body = _render(
-        _BASH, _safe_gateway(request, settings), _safe_token(token), model, small_model
-    )
+    body = _render(_BASH, _safe_gateway(request, settings), _safe_token(token), model, small_model)
     return PlainTextResponse(body, media_type="text/x-shellscript; charset=utf-8")
 
 
@@ -620,9 +618,7 @@ def _powershell(
     model: str,
     small_model: str,
 ) -> PlainTextResponse:
-    body = _render(
-        _PS, _safe_gateway(request, settings), _safe_token(token), model, small_model
-    )
+    body = _render(_PS, _safe_gateway(request, settings), _safe_token(token), model, small_model)
     return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
 
 

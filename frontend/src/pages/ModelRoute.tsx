@@ -1,14 +1,11 @@
 import {
   Button,
   Checkbox,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
+  Combobox,
+  Dropdown,
   Field,
   Input,
+  Option,
   Text,
   Tooltip,
   makeStyles,
@@ -20,14 +17,15 @@ import {
   ArrowLeftRegular,
   ArrowUpRegular,
   DeleteRegular,
+  ReOrderDotsVerticalRegular,
   SaveRegular,
 } from "@fluentui/react-icons";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
-import type { ModelWithRoute, Provider, Route } from "../api/types";
+import type { ApiKey, ModelWithRoute, Provider, Route } from "../api/types";
 import {
   ErrorText,
   Loading,
@@ -112,10 +110,42 @@ export function ModelRoute() {
 
   const [draft, setDraft] = useState<DraftLayer[] | null>(null);
   const [saving, setSaving] = useState(false);
-  const [picker, setPicker] = useState<{ layerPk: string } | null>(null);
-  const [providerSearch, setProviderSearch] = useState("");
-  // Filter for the upstream-model datalist suggestions.
-  const [upstreamSearch, setUpstreamSearch] = useState("");
+
+  const [providerQuery, setProviderQuery] = useState<Record<string, string>>({});
+
+  const [poolsByProvider, setPoolsByProvider] = useState<Record<number, string[]>>({});
+  const loadedPoolsRef = useRef<Set<number>>(new Set());
+
+  const providerIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          (draft ?? [])
+            .flatMap((l) => l.entries.map((e) => e.provider_id))
+            .filter((id): id is number => id != null),
+        ),
+      ].sort(),
+    [draft],
+  );
+
+  useEffect(() => {
+    for (const id of providerIds) {
+      if (loadedPoolsRef.current.has(id)) continue;
+      loadedPoolsRef.current.add(id);
+      api
+        .get<ApiKey[]>(`/api/admin/providers/${id}/keys`)
+        .then((keys) => {
+          const pools = [...new Set(keys.map((k) => k.pool ?? "").filter(Boolean))].sort();
+          setPoolsByProvider((p) => ({ ...p, [id]: pools }));
+        })
+        .catch(() => {
+          loadedPoolsRef.current.delete(id);
+        });
+    }
+  }, [providerIds]);
+
+  const [dragLayerPk, setDragLayerPk] = useState<string | null>(null);
+  const [dragOverLayerIdx, setDragOverLayerIdx] = useState<number | null>(null);
 
   if (!decoded) {
     return <ErrorText error={t("nodes.title" as TK)} />;
@@ -216,6 +246,36 @@ export function ModelRoute() {
     return (providers.data ?? []).find((p) => p.id === id);
   }
 
+  function onLayerDragStart(pk: string) {
+    setDragLayerPk(pk);
+  }
+
+  function onLayerDragOver(e: React.DragEvent, idx: number) {
+    e.preventDefault();
+    setDragOverLayerIdx(idx);
+  }
+
+  function onLayerDrop(idx: number) {
+    if (!dragLayerPk) return;
+    const arr = [...(draft ?? [])];
+    const from = arr.findIndex((l) => l.pk === dragLayerPk);
+    if (from < 0 || from === idx) {
+      setDragLayerPk(null);
+      setDragOverLayerIdx(null);
+      return;
+    }
+    const [moved] = arr.splice(from, 1);
+    arr.splice(idx, 0, moved);
+    setDraft(arr);
+    setDragLayerPk(null);
+    setDragOverLayerIdx(null);
+  }
+
+  function onLayerDragEnd() {
+    setDragLayerPk(null);
+    setDragOverLayerIdx(null);
+  }
+
   async function save() {
     if (!decoded) return;
     const layers: Array<{
@@ -257,26 +317,6 @@ export function ModelRoute() {
     }
   }
 
-  const pickableProviders = (providers.data ?? []).filter((p) => {
-    const q = providerSearch.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      p.name.toLowerCase().includes(q) ||
-      p.slug.toLowerCase().includes(q) ||
-      (p.models ?? []).some((m) => m.toLowerCase().includes(q))
-    );
-  });
-
-  function upstreamCandidates(providerId: number | null): string[] {
-    const p = providerById(providerId);
-    if (!p) return [];
-    const list = p.models ?? [];
-    const q = upstreamSearch.trim().toLowerCase();
-    return q
-      ? list.filter((m) => m.toLowerCase().includes(q))
-      : list;
-  }
-
   return (
     <div>
       <div
@@ -297,10 +337,10 @@ export function ModelRoute() {
           {t("common.back" as TK)}
         </Button>
         <Text size={600} weight="semibold" as="h1">
-          {t("models.routeTitle" as TK)}
-        </Text>
-        <Text size={300} style={{ fontFamily: tokens.fontFamilyMonospace }}>
-          {decoded}
+          {t("models.routeTitle" as TK).replace("{id}", "")}
+          <Text size={300} as="span" style={{ fontFamily: tokens.fontFamilyMonospace }}>
+            {decoded}
+          </Text>
         </Text>
         <span style={{ flex: 1 }} />
         <Button
@@ -325,155 +365,242 @@ export function ModelRoute() {
             {t("models.routeHint" as TK)}
           </Text>
           <div className={styles.flow}>
-            {(draft ?? []).map((layer, index) => (
-              <div key={layer.pk} className={styles.layer}>
-                <div className={styles.layerHead}>
-                  <Text weight="semibold">
-                    {t("models.layerLabel" as TK).replace(
-                      "{n}",
-                      String(index + 1),
-                    )}
-                  </Text>
-                  <Field label={t("models.maxAttempts" as TK)}>
-                    <Input
-                      type="number"
-                      value={String(layer.max_attempts)}
-                      min={1}
-                      style={{ width: 80 }}
-                      onChange={(_, d) =>
-                        setLayer(layer.pk, {
-                          max_attempts: Math.max(1, Number(d.value) || 1),
-                        })
-                      }
-                    />
-                  </Field>
-                  <span style={{ flex: 1 }} />
-                  <Tooltip content={t("common.up" as TK)} relationship="label">
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<ArrowUpRegular />}
-                      disabled={index === 0}
-                      onClick={() => moveLayer(index, -1)}
-                      aria-label={t("common.up" as TK)}
-                    />
-                  </Tooltip>
-                  <Tooltip content={t("common.down" as TK)} relationship="label">
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<ArrowDownRegular />}
-                      disabled={index === (draft?.length ?? 0) - 1}
-                      onClick={() => moveLayer(index, 1)}
-                      aria-label={t("common.down" as TK)}
-                    />
-                  </Tooltip>
-                  <Tooltip content={t("common.delete" as TK)} relationship="label">
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<DeleteRegular />}
-                      onClick={() => removeLayer(layer.pk)}
-                      aria-label={t("common.delete" as TK)}
-                    />
-                  </Tooltip>
-                </div>
-                <div className={styles.layerBody}>
-                  {layer.entries.map((entry) => {
-                    const provider = providerById(entry.provider_id);
-                    return (
-                      <div key={entry.pk} className={styles.entry}>
-                        <Checkbox
-                          checked={entry.enabled}
-                          onChange={(_, d) =>
-                            setEntry(layer.pk, entry.pk, {
-                              enabled: d.checked === true,
-                            })
-                          }
-                          aria-label={t("common.enabled" as TK)}
-                        />
-                        <Field label={t("models.routeProvider" as TK)} style={{ flex: "1 1 160px" }}>
+            {(draft ?? []).map((layer, index) => {
+              const showLine =
+                dragLayerPk != null && dragOverLayerIdx === index;
+              return (
+                <div
+                  key={layer.pk}
+                  className={styles.layer}
+                  style={{
+                    borderTop: showLine
+                      ? `2px solid ${tokens.colorBrandForeground1}`
+                      : "2px solid transparent",
+                    transition: "border-color 0.15s",
+                  }}
+                >
+                  <div className={styles.layerHead}>
+                    <Tooltip content={t("models.dragHint" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        appearance="transparent"
+                        icon={<ReOrderDotsVerticalRegular />}
+                        style={{ cursor: "grab", flexShrink: 0 }}
+                        draggable
+                        onDragStart={() => onLayerDragStart(layer.pk)}
+                        onDragOver={(e) => onLayerDragOver(e, index)}
+                        onDrop={() => onLayerDrop(index)}
+                        onDragEnd={onLayerDragEnd}
+                        aria-label={t("models.dragHint" as TK)}
+                      />
+                    </Tooltip>
+                    <Text weight="semibold">
+                      {t("models.layerLabel" as TK).replace(
+                        "{n}",
+                        String(index + 1),
+                      )}
+                    </Text>
+                    <Field label={t("models.maxAttempts" as TK)}>
+                      <Input
+                        type="number"
+                        value={String(layer.max_attempts)}
+                        min={1}
+                        style={{ width: 80 }}
+                        onChange={(_, d) =>
+                          setLayer(layer.pk, {
+                            max_attempts: Math.max(1, Number(d.value) || 1),
+                          })
+                        }
+                      />
+                    </Field>
+                    <span style={{ flex: 1 }} />
+                    <Tooltip content={t("common.up" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<ArrowUpRegular />}
+                        disabled={index === 0}
+                        onClick={() => moveLayer(index, -1)}
+                        aria-label={t("common.up" as TK)}
+                      />
+                    </Tooltip>
+                    <Tooltip content={t("common.down" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<ArrowDownRegular />}
+                        disabled={index === (draft?.length ?? 0) - 1}
+                        onClick={() => moveLayer(index, 1)}
+                        aria-label={t("common.down" as TK)}
+                      />
+                    </Tooltip>
+                    <Tooltip content={t("common.delete" as TK)} relationship="label">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<DeleteRegular />}
+                        onClick={() => removeLayer(layer.pk)}
+                        aria-label={t("common.delete" as TK)}
+                      />
+                    </Tooltip>
+                  </div>
+                  <div className={styles.layerBody}>
+                    {layer.entries.map((entry) => {
+                      const provider = providerById(entry.provider_id);
+                      const pQuery = providerQuery[entry.pk];
+                      const typing = pQuery !== undefined;
+                      const pFilter = (p: Provider) => {
+                        if (!typing || !pQuery) return true;
+                        const q = pQuery.toLowerCase();
+                        return (
+                          p.name.toLowerCase().includes(q) ||
+                          p.slug.toLowerCase().includes(q)
+                        );
+                      };
+                      const pools = poolsByProvider[entry.provider_id ?? 0] ?? [];
+
+                      return (
+                        <div key={entry.pk} className={styles.entry}>
                           <Button
-                            appearance="outline"
-                            style={{ width: "100%", justifyContent: "flex-start" }}
-                            onClick={() => {
-                              setPicker({ layerPk: layer.pk });
-                              setProviderSearch("");
-                            }}
-                          >
-                            {provider
-                              ? provider.slug || provider.name
-                              : t("models.routeSelectProvider" as TK)}
-                          </Button>
-                        </Field>
-                        <Field label={t("models.routeUpstream" as TK)} style={{ flex: "1 1 160px" }}>
-                          <Input
-                            value={entry.upstream_model}
-                            placeholder={t("models.routeUpstreamPlaceholder" as TK)}
-                            list={`ul-${entry.pk}`}
+                            size="small"
+                            appearance="subtle"
+                            icon={<DeleteRegular />}
+                            onClick={() => removeEntry(layer.pk, entry.pk)}
+                            aria-label={t("common.delete" as TK)}
+                          />
+                          <Checkbox
+                            checked={entry.enabled}
                             onChange={(_, d) =>
                               setEntry(layer.pk, entry.pk, {
-                                upstream_model: d.value,
+                                enabled: d.checked === true,
                               })
                             }
-                            onInput={(e) =>
-                              setUpstreamSearch(
-                                (e.target as HTMLInputElement).value,
-                              )
-                            }
+                            aria-label={t("common.enabled" as TK)}
                           />
-                          <datalist id={`ul-${entry.pk}`}>
-                            {upstreamCandidates(entry.provider_id).map((m) => (
-                              <option key={m} value={m} />
-                            ))}
-                          </datalist>
-                        </Field>
-                        <Field label={t("models.routeWeight" as TK)}>
-                          <Input
-                            type="number"
-                            value={String(entry.weight)}
-                            min={1}
-                            style={{ width: 72 }}
-                            onChange={(_, d) =>
-                              setEntry(layer.pk, entry.pk, {
-                                weight: Math.max(1, Number(d.value) || 1),
-                              })
-                            }
-                          />
-                        </Field>
-                        <Field label={t("models.routeKeyPool" as TK)}>
-                          <Input
-                            value={entry.key_pool}
-                            placeholder="(any)"
-                            style={{ width: 110 }}
-                            onChange={(_, d) =>
-                              setEntry(layer.pk, entry.pk, { key_pool: d.value })
-                            }
-                          />
-                        </Field>
-                        <Button
-                          size="small"
-                          appearance="subtle"
-                          icon={<DeleteRegular />}
-                          onClick={() => removeEntry(layer.pk, entry.pk)}
-                          aria-label={t("common.delete" as TK)}
-                        />
-                      </div>
-                    );
-                  })}
-                  <div>
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<AddRegular />}
-                      onClick={() => addEntry(layer.pk)}
-                    >
-                      {t("models.routeAddEntry" as TK)}
-                    </Button>
+                          <Field label={t("models.routeProvider" as TK)} style={{ flex: "1 1 180px" }}>
+                            <Combobox
+                              freeform
+                              autoComplete="list"
+                              placeholder={t("models.routeSelectProvider" as TK)}
+                              value={
+                                typing
+                                  ? pQuery
+                                  : provider
+                                    ? `${provider.name} · ${provider.slug}`
+                                    : ""
+                              }
+                              selectedOptions={
+                                !typing && provider ? [String(provider.id)] : []
+                              }
+                              onOptionSelect={(_, d) => {
+                                if (d.optionValue) {
+                                  setEntry(layer.pk, entry.pk, {
+                                    provider_id: Number(d.optionValue),
+                                    key_pool: "",
+                                  });
+                                }
+                                setProviderQuery((q) => {
+                                  const n = { ...q };
+                                  delete n[entry.pk];
+                                  return n;
+                                });
+                              }}
+                              onChange={(e) =>
+                                setProviderQuery((q) => ({
+                                  ...q,
+                                  [entry.pk]: e.target.value,
+                                }))
+                              }
+                              onBlur={() =>
+                                setProviderQuery((q) => {
+                                  const n = { ...q };
+                                  delete n[entry.pk];
+                                  return n;
+                                })
+                              }
+                            >
+                              {(providers.data ?? []).filter(pFilter).map((p) => (
+                                <Option key={p.id} value={String(p.id)} text={`${p.name} · ${p.slug}`}>
+                                  {p.name} · {p.slug} ({(p.models ?? []).length})
+                                </Option>
+                              ))}
+                            </Combobox>
+                          </Field>
+                          <Field label={t("models.routeUpstream" as TK)} style={{ flex: "1 1 180px" }}>
+                            <Combobox
+                              freeform
+                              autoComplete="list"
+                              value={entry.upstream_model}
+                              placeholder={t("models.routeUpstreamPlaceholder" as TK)}
+                              onOptionSelect={(_, d) =>
+                                d.optionValue &&
+                                setEntry(layer.pk, entry.pk, {
+                                  upstream_model: d.optionValue,
+                                })
+                              }
+                              onChange={(e) =>
+                                setEntry(layer.pk, entry.pk, {
+                                  upstream_model: (e.target as HTMLInputElement).value,
+                                })
+                              }
+                            >
+                              {(provider?.models ?? []).map((m) => (
+                                <Option key={m} value={m}>
+                                  {m}
+                                </Option>
+                              ))}
+                            </Combobox>
+                          </Field>
+                          <Field label={t("models.routeKeyPool" as TK)}>
+                            <Dropdown
+                              style={{ minWidth: 120 }}
+                              value={entry.key_pool}
+                              selectedOptions={entry.key_pool ? [entry.key_pool] : []}
+                              placeholder={t("models.routeKeyPoolAny" as TK)}
+                              onOptionSelect={(_, d) =>
+                                setEntry(layer.pk, entry.pk, {
+                                  key_pool: d.optionValue ?? "",
+                                })
+                              }
+                            >
+                              <Option value="">{t("models.routeKeyPoolAny" as TK)}</Option>
+                              {pools.map((p) => (
+                                <Option key={p} value={p}>
+                                  {p}
+                                </Option>
+                              ))}
+                            </Dropdown>
+                          </Field>
+                          <Field label={t("models.routeWeight" as TK)}>
+                            <Input
+                              type="number"
+                              value={String(entry.weight)}
+                              min={1}
+                              style={{ width: 72 }}
+                              onChange={(_, d) =>
+                                setEntry(layer.pk, entry.pk, {
+                                  weight: Math.max(1, Number(d.value) || 1),
+                                })
+                              }
+                            />
+                          </Field>
+                        </div>
+                      );
+                    })}
+                    <div>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<AddRegular />}
+                        onClick={() => addEntry(layer.pk)}
+                      >
+                        {t("models.routeAddEntry" as TK)}
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div style={{ marginTop: 16 }}>
             <Button appearance="secondary" icon={<AddRegular />} onClick={addLayer}>
@@ -482,100 +609,6 @@ export function ModelRoute() {
           </div>
         </>
       )}
-
-      {/* Provider picker (mounted as a dialog for picking an entry's provider) */}
-      <Dialog
-        open={picker !== null}
-        onOpenChange={(_, d) => !d.open && setPicker(null)}
-      >
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>{t("models.routePickProvider" as TK)}</DialogTitle>
-            <DialogContent
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                paddingTop: 8,
-              }}
-            >
-              <Input
-                contentBefore={<></>}
-                placeholder={t("models.routeProviderSearch" as TK)}
-                value={providerSearch}
-                onChange={(_, d) => setProviderSearch(d.value)}
-              />
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                  maxHeight: 300,
-                  overflowY: "auto",
-                }}
-              >
-                {pickableProviders.length === 0 ? (
-                  <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-                    {t("models.noModels" as TK)}
-                  </Text>
-                ) : (
-                  pickableProviders.map((p) => (
-                    <Button
-                      key={p.id}
-                      appearance="subtle"
-                      style={{ justifyContent: "flex-start" }}
-                      onClick={() => {
-                        if (picker) {
-                          const layer = draft?.find((l) => l.pk === picker.layerPk);
-                          const existing = layer?.entries.find(
-                            (e2) => e2.provider_id == null,
-                          );
-                          if (existing) {
-                            setEntry(picker.layerPk, existing.pk, {
-                              provider_id: p.id,
-                            });
-                          } else {
-                            // no blank entry — add one bound to this provider
-                            const pk = nextPk();
-                            setDraft((d) =>
-                              (d ?? []).map((l) =>
-                                l.pk === picker.layerPk
-                                  ? {
-                                      ...l,
-                                      entries: [
-                                        ...l.entries,
-                                        {
-                                          pk,
-                                          provider_id: p.id,
-                                          upstream_model: "",
-                                          weight: 1,
-                                          enabled: true,
-                                          key_pool: "",
-                                        },
-                                      ],
-                                    }
-                                  : l,
-                              ),
-                            );
-                          }
-                        }
-                        setPicker(null);
-                      }}
-                    >
-                      {p.slug || p.name} — {p.models?.length ?? 0} model(s)
-                    </Button>
-                  ))
-                )}
-              </div>
-            </DialogContent>
-            <DialogActions>
-              <Button appearance="secondary" onClick={() => setPicker(null)}>
-                {t("common.cancel" as TK)}
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
     </div>
   );
 }

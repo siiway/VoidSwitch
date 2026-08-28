@@ -98,7 +98,5 @@ async def stats(
         avg_first_token_ms_24h=(
             round(avg_first_token_ms_24h, 1) if avg_first_token_ms_24h is not None else None
         ),
-        avg_tokens_per_request_24h=(
-            round(tokens_24h / requests_24h, 1) if requests_24h else 0.0
-        ),
+        avg_tokens_per_request_24h=(round(tokens_24h / requests_24h, 1) if requests_24h else 0.0),
     )

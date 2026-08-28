@@ -48,6 +48,28 @@ def _token_preview(raw: str) -> str:
     return f"{raw[:8]}…{raw[-4:]}" if len(raw) > 12 else raw[:4] + "***"
 
 
+def _parse_node_url(raw: str) -> tuple[str, str, str | None]:
+    """Parse one textarea line into ``(url, type, token)``.
+
+    ``url`` is what gets stored (empty for direct nodes), ``type`` is one of the
+    :class:`NodeType` values, and ``token`` is the agent credential parsed from
+    the ``?token`` query of an agent URL (else ``None``). ``# ...`` introduces an
+    inline comment.
+    """
+    line = raw.split("#", 1)[0].strip()
+    lower = line.lower()
+    if lower in {"direct", "direct://"}:
+        return "", NodeType.DIRECT.value, None
+    if lower.startswith("http+agent://") or lower.startswith("https+agent://"):
+        base, sep, token = line.partition("?")
+        return base.strip(), NodeType.AGENT.value, (token.strip() if sep else None)
+    if lower.startswith("socks5://"):
+        return line, NodeType.SOCKS5.value, None
+    if lower.startswith("http://") or lower.startswith("https://"):
+        return line, NodeType.HTTP.value, None
+    raise ValueError(f"Unrecognised node URL: {line!r}")
+
+
 # --------------------------------------------------------------------------- #
 # Nodes
 # --------------------------------------------------------------------------- #
@@ -90,37 +112,35 @@ async def add_nodes(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
 ) -> list[NodeOut]:
-    if body.type not in _VALID_TYPES:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"type must be one of {sorted(_VALID_TYPES)}.",
-        )
     settings = get_settings()
     existing = {u for (u,) in (await session.execute(select(Node.url))).all()}
     created: list[Node] = []
     seen: set[str] = set()
+    types_seen: list[str] = []
     for raw in body.urls:
-        url = (raw or "").strip()
-        if not url:
+        raw_s = (raw or "").strip()
+        if not raw_s:
             continue
+        try:
+            url, node_type, token = _parse_node_url(raw)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
         if url in existing or url in seen:
             continue
         seen.add(url)
         node = Node(
             url=url,
-            type=body.type,
-            local_address=body.local_address,
-            weight=body.weight,
+            type=node_type,
+            weight=1,
             note=body.note,
             status=NodeStatus.ACTIVE.value,
             token_ciphertext=(
-                encrypt_secret(body.token, secret=settings.server.secret_key)
-                if body.token
-                else None
+                encrypt_secret(token, secret=settings.server.secret_key) if token else None
             ),
         )
         session.add(node)
         created.append(node)
+        types_seen.append(node_type)
     if not created:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No new nodes to add.")
     await session.flush()
@@ -130,7 +150,11 @@ async def add_nodes(
         actor_sub=user.sub,
         actor_name=actor_display_name(user),
         target_type="node",
-        detail={"added": len(created), "ids": [n.id for n in created], "type": body.type},
+        detail={
+            "added": len(created),
+            "ids": [n.id for n in created],
+            "types": types_seen,
+        },
         ip=request.client.host if request.client else None,
     )
     return [_with_token_preview(n, show=is_owner(user)) for n in created]

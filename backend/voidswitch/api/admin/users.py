@@ -49,9 +49,7 @@ def _to_user_out(u: User) -> UserOut:
     # Role-group names come from the user's (auto/manual) memberships; the
     # built-in moderator group is never stored there, so this lists only the
     # custom groups that gate model access.
-    out.role_group_names = sorted(
-        m.group.name for m in u.group_memberships if m.group is not None
-    )
+    out.role_group_names = sorted(m.group.name for m in u.group_memberships if m.group is not None)
     return out
 
 

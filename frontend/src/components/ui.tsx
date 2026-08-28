@@ -39,6 +39,7 @@ import {
   type ReactNode,
 } from "react";
 import { makeStyles } from "@fluentui/react-components";
+import { shortcutHint } from "../lib/useShortcuts";
 
 // --- async data loading --------------------------------------------------- //
 
@@ -185,7 +186,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               <DialogTitle>
                 {opts?.title ?? t("common.areYouSure")}
               </DialogTitle>
-              <DialogContent>{opts?.message}</DialogContent>
+              <DialogContent style={{ whiteSpace: "pre-line" }}>{opts?.message}</DialogContent>
               <DialogActions>
                 <Button appearance="secondary" onClick={() => settle(false)}>
                   {opts?.cancelLabel ?? t("common.cancel")}
@@ -278,7 +279,10 @@ export function PageHeader({
             {title}
           </Text>
           {onRefresh ? (
-            <Tooltip content={t("common.refresh")} relationship="label">
+            <Tooltip
+              content={shortcutHint(t("common.refresh"), t("common.shortcutRefresh"))}
+              relationship="label"
+            >
               <Button
                 size="small"
                 appearance="subtle"
@@ -287,6 +291,7 @@ export function PageHeader({
                 }
                 onClick={handleRefresh}
                 aria-label={t("common.refresh")}
+                data-shortcut="refresh"
               />
             </Tooltip>
           ) : null}

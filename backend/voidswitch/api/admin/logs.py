@@ -429,9 +429,7 @@ async def _resolve_request_log_rows(
             token_names[tid] = (f"{tname}#{tid}", f"{label}#{uid}")
     user_names: dict[str, str | None] = {}
     if subs:
-        for u in (
-            (await session.execute(select(User).where(User.sub.in_(subs)))).scalars().all()
-        ):
+        for u in (await session.execute(select(User).where(User.sub.in_(subs)))).scalars().all():
             label = u.username or u.name or u.email or u.sub
             user_names[u.sub] = f"{label}#{u.id}"
 
@@ -519,9 +517,7 @@ async def request_filter_options(
             if p
         }
     )
-    subs = {
-        s for s in (await session.execute(_distinct(RequestLog.user_sub))).scalars().all() if s
-    }
+    subs = {s for s in (await session.execute(_distinct(RequestLog.user_sub))).scalars().all() if s}
     token_ids = {
         tid
         for tid in (await session.execute(_distinct(RequestLog.token_id))).scalars().all()
@@ -561,11 +557,7 @@ async def request_filter_options(
         tokens = [
             TokenRef(
                 id=tid,
-                name=(
-                    f"{resolved_tokens[tid][0]}#{tid}"
-                    if tid in resolved_tokens
-                    else f"#{tid}"
-                ),
+                name=(f"{resolved_tokens[tid][0]}#{tid}" if tid in resolved_tokens else f"#{tid}"),
                 user_sub=resolved_tokens.get(tid, (f"#{tid}", None, None))[1],
                 user_name=resolved_tokens.get(tid, (f"#{tid}", None, None))[2],
             )
@@ -573,9 +565,7 @@ async def request_filter_options(
         ]
         tokens.sort(key=lambda tk: tk.name.lower())
 
-    return RequestFilterOptions(
-        models=models, providers=providers, users=users, tokens=tokens
-    )
+    return RequestFilterOptions(models=models, providers=providers, users=users, tokens=tokens)
 
 
 # --------------------------------------------------------------------------- #
@@ -677,11 +667,20 @@ async def request_log_stream(
         req_status=req_status,
     )
 
+    # The stream should only ever deliver rows created *after* the client
+    # connects. If the client didn't pass an explicit ``after_id`` (it hasn't
+    # yet seen any row, e.g. the live view was just switched on), snapshot the
+    # current max id now so the stream doesn't flood the client with the
+    # entire request-log history on the first poll.
+    if after_id == 0:
+        after_id = (await session.execute(select(func.max(RequestLog.id)))).scalar_one() or 0
+
     async def _stream() -> AsyncIterator[str]:
         async for event in _stream_request_log_events(
             get_database(), filters, user.sub, after_id=after_id
         ):
             yield event
+
     return StreamingResponse(
         _stream(),
         media_type="text/event-stream",

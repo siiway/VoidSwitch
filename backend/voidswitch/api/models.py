@@ -9,6 +9,7 @@ layer pools → upstream refs), and match models to the models.dev registry.
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -25,6 +26,7 @@ from voidswitch.core.auth import (
 from voidswitch.core.database import get_session
 from voidswitch.models.db import (
     ExposedModel,
+    ModelCategory,
     Provider,
     RoleGroup,
     Route,
@@ -35,6 +37,9 @@ from voidswitch.models.db import (
 from voidswitch.models.schemas import (
     ModelBatchResult,
     ModelBatchUpdate,
+    ModelCategoryCreate,
+    ModelCategoryOut,
+    ModelCategoryUpdate,
     ModelCleanResult,
     ModelOut,
     ModelSyncResult,
@@ -46,6 +51,32 @@ from voidswitch.models.schemas import (
 from voidswitch.services import model_routing, models_catalog, models_dev
 
 router = APIRouter(prefix="/api/models", tags=["models"])
+
+_PASSTHROUGH_RE = re.compile(
+    r"^(?P<exposed>[^\s@]+?)(?:\s*=>\s*(?P<upstream>[^\s@]+?))?(?:\s*@\s*(?P<pool>\S+))?$"
+)
+
+
+def _parse_passthrough_entry(entry: str) -> dict[str, str]:
+    """Parse a passthrough whitelist entry into its components."""
+    m = _PASSTHROUGH_RE.match(entry.strip())
+    if m is None:
+        return {"exposed": entry.strip(), "upstream": entry.strip(), "pool": ""}
+    exposed = (m.group("exposed") or "").strip()
+    upstream = (m.group("upstream") or exposed).strip()
+    pool = (m.group("pool") or "").strip()
+    return {"exposed": exposed, "upstream": upstream, "pool": pool}
+
+
+def _slugify_category(name: str) -> str:
+    """A stable category slug from a name (mirrors the provider slugify)."""
+    out: list[str] = []
+    for ch in (name or "").lower():
+        if ch.isalnum():
+            out.append(ch)
+        elif out and out[-1] != "-":
+            out.append("-")
+    return "".join(out).strip("-") or "category"
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -75,9 +106,7 @@ def _to_out(item: ExposedModel) -> ModelOut:
                 if provider is None:
                     continue
                 slug = provider.slug or provider.name
-                upstreams.append(
-                    f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug
-                )
+                upstreams.append(f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug)
     return ModelOut(
         id=item.id,
         model_id=item.model_id,
@@ -98,6 +127,9 @@ def _to_out(item: ExposedModel) -> ModelOut:
         added_by_name=item.added_by_name,
         created_at=item.created_at,
         updated_at=item.updated_at,
+        category_id=item.category_id,
+        category_name=item.category.name if item.category is not None else None,
+        category_slug=item.category.slug if item.category is not None else None,
     )
 
 
@@ -141,12 +173,44 @@ async def list_models(
     # manage them, get the full list with the "unavailable (hidden)" badge.
     if not is_staff(user):
         catalog = [i for i in catalog if i.enabled]
-    return [_to_out(i) for i in catalog]
+    result = [_to_out(i) for i in catalog]
+
+    # Passthrough virtual entries: each provider with passthrough_enabled
+    # contributes its whitelisted models as ``provider-slug/exposed-model-id``.
+    passthrough_providers = (
+        (
+            await session.execute(
+                select(Provider).where(
+                    Provider.enabled.is_(True), Provider.passthrough_enabled.is_(True)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    virtual_id = -1
+    for provider in passthrough_providers:
+        for entry in provider.passthrough_models or []:
+            parsed = _parse_passthrough_entry(entry)
+            exposed_id = parsed["exposed"]
+            model_id = f"{provider.slug}/{exposed_id}"
+            result.append(
+                ModelOut(
+                    id=virtual_id,
+                    model_id=model_id,
+                    display_name=exposed_id,
+                    enabled=True,
+                    category_name=provider.name,
+                    category_slug=provider.slug,
+                    provider=True,
+                )
+            )
+            virtual_id -= 1
+
+    return result
 
 
-async def _get_or_create_entry(
-    session: AsyncSession, model_id: str, user: User
-) -> ExposedModel:
+async def _get_or_create_entry(session: AsyncSession, model_id: str, user: User) -> ExposedModel:
     entry = (
         await session.execute(select(ExposedModel).where(ExposedModel.model_id == model_id))
     ).scalar_one_or_none()
@@ -162,15 +226,11 @@ async def _get_or_create_entry(
     return entry
 
 
-async def _validated_role_group_ids(
-    session: AsyncSession, ids: list[int]
-) -> list[int]:
+async def _validated_role_group_ids(session: AsyncSession, ids: list[int]) -> list[int]:
     """Validate a role-group allow-list; reject unknown ids instead of silently
     dropping them."""
     existing = set(
-        (
-            await session.execute(select(RoleGroup.id).where(RoleGroup.builtin.is_(False)))
-        )
+        (await session.execute(select(RoleGroup.id).where(RoleGroup.builtin.is_(False))))
         .scalars()
         .all()
     )
@@ -187,6 +247,21 @@ async def _validated_role_group_ids(
             seen.add(gid)
             result.append(gid)
     return result
+
+
+async def _validate_category_id(session: AsyncSession, category_id: int | None) -> int | None:
+    """Validate a category id; reject unknown ids."""
+    if category_id is None:
+        return None
+    exists = (
+        await session.execute(select(ModelCategory.id).where(ModelCategory.id == category_id))
+    ).first()
+    if exists is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Unknown category id: {category_id}.",
+        )
+    return category_id
 
 
 @router.put("", response_model=ModelOut)
@@ -209,6 +284,9 @@ async def upsert_model(
             if value:
                 entry.models_dev_synced_at = dt.datetime.now(dt.UTC)
             continue
+        if field == "category_id":
+            entry.category_id = await _validate_category_id(session, value)
+            continue
         setattr(entry, field, value)
     if body.allowed_role_group_ids is not None:
         entry.allowed_role_group_ids = await _validated_role_group_ids(
@@ -229,6 +307,8 @@ async def upsert_model(
         ip=request.client.host if request.client else None,
     )
     entry = await session.get(ExposedModel, entry.id)
+    if entry is None:  # pragma: no cover - just written above
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Model not found.")
     return _to_out(entry)
 
 
@@ -244,9 +324,7 @@ async def batch_update_models(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "model_ids is required.")
     role_group_ids: list[int] | None = None
     if body.allowed_role_group_ids is not None:
-        role_group_ids = await _validated_role_group_ids(
-            session, body.allowed_role_group_ids
-        )
+        role_group_ids = await _validated_role_group_ids(session, body.allowed_role_group_ids)
     merge = body.opencode_config_mode != "overwrite"
     for model_id in ids:
         entry = await _get_or_create_entry(session, model_id, user)
@@ -349,6 +427,118 @@ async def delete_model(
 
 
 # --------------------------------------------------------------------------- #
+# Model categories
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/categories", response_model=list[ModelCategoryOut])
+async def list_categories(
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(get_current_user),
+) -> list[ModelCategoryOut]:
+    rows = (
+        (await session.execute(select(ModelCategory).order_by(ModelCategory.position)))
+        .scalars()
+        .all()
+    )
+    return [ModelCategoryOut.model_validate(r) for r in rows]
+
+
+@router.post("/categories", response_model=ModelCategoryOut, status_code=status.HTTP_201_CREATED)
+async def create_category(
+    body: ModelCategoryCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> ModelCategoryOut:
+    existing = (
+        await session.execute(select(ModelCategory).where(ModelCategory.name == body.name))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Category name already exists.")
+    slug = _slugify_category(body.name)
+    cat = ModelCategory(name=body.name, slug=slug, position=body.position)
+    session.add(cat)
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.MODEL_CATEGORY_CREATE,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="model_category",
+        target_id=cat.id,
+        detail={"name": cat.name, "slug": cat.slug, "position": cat.position},
+        ip=request.client.host if request.client else None,
+    )
+    await session.refresh(cat)
+    return ModelCategoryOut.model_validate(cat)
+
+
+@router.patch("/categories/{category_id}", response_model=ModelCategoryOut)
+async def update_category(
+    category_id: int,
+    body: ModelCategoryUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> ModelCategoryOut:
+    cat = await session.get(ModelCategory, category_id)
+    if cat is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found.")
+    changes = body.model_dump(exclude_unset=True)
+    if "name" in changes:
+        existing = (
+            await session.execute(
+                select(ModelCategory.id).where(
+                    ModelCategory.name == changes["name"], ModelCategory.id != category_id
+                )
+            )
+        ).first()
+        if existing is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Category name already exists.")
+        cat.name = changes["name"]
+        cat.slug = _slugify_category(changes["name"])
+    if "position" in changes:
+        cat.position = changes["position"]
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.MODEL_CATEGORY_UPDATE,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="model_category",
+        target_id=cat.id,
+        detail={"name": cat.name, "changes": changes},
+        ip=request.client.host if request.client else None,
+    )
+    await session.refresh(cat)
+    return ModelCategoryOut.model_validate(cat)
+
+
+@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_category(
+    category_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> None:
+    cat = await session.get(ModelCategory, category_id)
+    if cat is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found.")
+    await session.delete(cat)
+    await record_audit(
+        session,
+        action=AuditAction.MODEL_CATEGORY_DELETE,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="model_category",
+        target_id=category_id,
+        detail={"name": cat.name},
+        ip=request.client.host if request.client else None,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Route flowcharts (staff editor)
 # --------------------------------------------------------------------------- #
 
@@ -385,9 +575,7 @@ async def update_route(
 ) -> ModelWithRouteOut:
     entry = await _get_exposed(session, model_id)
     route = await model_routing.get_or_create_route(session, entry)
-    provider_ids = {
-        e.provider_id for layer in body.layers for e in layer.entries if e.provider_id
-    }
+    provider_ids = {e.provider_id for layer in body.layers for e in layer.entries if e.provider_id}
     if provider_ids:
         found = set(
             (await session.execute(select(Provider.id).where(Provider.id.in_(provider_ids))))

@@ -12,10 +12,10 @@ def commit_id() -> str | None:
     for key in ("VOIDSWITCH_COMMIT", "GIT_COMMIT", "COMMIT_SHA", "SOURCE_VERSION"):
         value = os.environ.get(key)
         if value:
-            return value[:12]
+            return value[:7]
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short=12", "HEAD"],
+            ["git", "rev-parse", "--short=7", "HEAD"],
             check=True,
             capture_output=True,
             text=True,

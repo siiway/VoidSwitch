@@ -7,8 +7,10 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Dropdown,
   Field,
   Input,
+  Option,
   TableBody,
   TableCell,
   TableHeader,
@@ -30,7 +32,7 @@ import {
   KeyRegular,
   ProhibitedRegular,
 } from "@fluentui/react-icons";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
@@ -64,6 +66,29 @@ export function Tokens() {
   const [editing, setEditing] = useState<VoidToken | null>(null);
   const [editName, setEditName] = useState("");
   const [revealOpen, setRevealOpen] = useState(false);
+  const [tokenSearch, setTokenSearch] = useState("");
+  const [tokenFilterStatus, setTokenFilterStatus] = useState("");
+
+  const filteredTokens = useMemo(() => {
+    if (!list.data) return [];
+    let result = list.data;
+    const s = tokenSearch.trim().toLowerCase();
+    if (s) {
+      result = result.filter(
+        (t) =>
+          t.name.toLowerCase().includes(s) ||
+          (t.token_prefix ?? "").toLowerCase().includes(s) ||
+          (t.username ?? "").toLowerCase().includes(s) ||
+          String(t.id).includes(s),
+      );
+    }
+    if (tokenFilterStatus === "enabled") {
+      result = result.filter((t) => t.enabled);
+    } else if (tokenFilterStatus === "disabled") {
+      result = result.filter((t) => !t.enabled);
+    }
+    return result;
+  }, [list.data, tokenSearch, tokenFilterStatus]);
 
   async function create() {
     const allowed_models = allowed
@@ -207,6 +232,45 @@ export function Tokens() {
           }
         />
       ) : (
+        <>
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "center",
+              marginBottom: 12,
+            }}
+          >
+            <Input
+              placeholder={tr("tokens.tokenFilterSearch" as TK)}
+              style={{ flex: "1 1 240px", minWidth: 200 }}
+              value={tokenSearch}
+              onChange={(_, d) => setTokenSearch(d.value)}
+            />
+            <Dropdown
+              style={{ minWidth: 150 }}
+              placeholder={tr("tokens.tokenFilterAllStatus" as TK)}
+              value={
+                tokenFilterStatus === "enabled"
+                  ? tr("tokens.tokenFilterEnabled" as TK)
+                  : tokenFilterStatus === "disabled"
+                    ? tr("tokens.tokenFilterDisabled" as TK)
+                    : tr("tokens.tokenFilterAllStatus" as TK)
+              }
+              selectedOptions={tokenFilterStatus ? [tokenFilterStatus] : []}
+              onOptionSelect={(_, d) =>
+                setTokenFilterStatus(d.optionValue ?? "")
+              }
+            >
+              <Option value="enabled" text={tr("tokens.tokenFilterEnabled" as TK)}>
+                {tr("tokens.tokenFilterEnabled" as TK)}
+              </Option>
+              <Option value="disabled" text={tr("tokens.tokenFilterDisabled" as TK)}>
+                {tr("tokens.tokenFilterDisabled" as TK)}
+              </Option>
+            </Dropdown>
+          </div>
         <DataTable ariaLabel={tr("tokens.title" as TK)}>
           <TableHeader>
             <TableRow>
@@ -222,7 +286,7 @@ export function Tokens() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(list.data ?? []).map((t) => (
+            {filteredTokens.map((t) => (
               <TableRow key={t.id}>
                 <TableCell
                   style={{
@@ -296,6 +360,7 @@ export function Tokens() {
             ))}
           </TableBody>
         </DataTable>
+        </>
       )}
 
       <Dialog open={creating} onOpenChange={(_, d) => setCreating(d.open)}>
@@ -327,7 +392,7 @@ export function Tokens() {
               <Button appearance="secondary" onClick={() => setCreating(false)}>
                 {tr("common.cancel" as TK)}
               </Button>
-              <Button appearance="primary" onClick={create}>
+              <Button appearance="primary" onClick={create} data-shortcut="apply">
                 {tr("common.create" as TK)}
               </Button>
             </DialogActions>
@@ -348,7 +413,7 @@ export function Tokens() {
               <Button appearance="secondary" onClick={() => setEditing(null)}>
                 {tr("common.cancel" as TK)}
               </Button>
-              <Button appearance="primary" onClick={saveEdit}>
+              <Button appearance="primary" onClick={saveEdit} data-shortcut="save">
                 {tr("common.save" as TK)}
               </Button>
             </DialogActions>

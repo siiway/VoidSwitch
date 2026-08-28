@@ -523,7 +523,7 @@ export function MyToken() {
         <Field label={t("myToken.newTokenName" as TK)} style={{ flex: "0 0 240px" }}>
           <Input value={name} onChange={(_, d) => setName(d.value)} />
         </Field>
-        <Button appearance="primary" icon={<AddRegular />} onClick={create}>
+        <Button appearance="primary" icon={<AddRegular />} onClick={create} data-shortcut="apply">
           {t("myToken.createToken" as TK)}
         </Button>
       </div>
@@ -630,7 +630,7 @@ export function MyToken() {
               <Button appearance="secondary" onClick={() => setEditing(null)}>
                 {t("common.cancel" as TK)}
               </Button>
-              <Button appearance="primary" onClick={saveEdit}>
+              <Button appearance="primary" onClick={saveEdit} data-shortcut="save">
                 {t("common.save" as TK)}
               </Button>
             </DialogActions>

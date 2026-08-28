@@ -458,7 +458,7 @@ export function RoleGroups() {
               <Button appearance="secondary" onClick={() => setEdit(null)}>
                 {t("common.cancel" as TK)}
               </Button>
-              <Button appearance="primary" disabled={saving} onClick={save}>
+              <Button appearance="primary" disabled={saving} onClick={save} data-shortcut="save">
                 {t("common.save" as TK)}
               </Button>
             </DialogActions>

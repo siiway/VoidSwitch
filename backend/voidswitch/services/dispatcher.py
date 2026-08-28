@@ -22,10 +22,12 @@ import contextlib
 import datetime as dt
 import hashlib
 import json
+import re
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
+from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
@@ -44,6 +46,22 @@ from voidswitch.services.providers.registry import get_adapter
 from voidswitch.services.selector import select_keys, static_routes
 
 log = get_logger("dispatcher")
+
+_PASSTHROUGH_RE = re.compile(
+    r"^(?P<exposed>[^\s@]+?)(?:\s*=>\s*(?P<upstream>[^\s@]+?))?(?:\s*@\s*(?P<pool>\S+))?$"
+)
+
+
+def _parse_passthrough_entry(entry: str) -> dict[str, str]:
+    """Parse a passthrough whitelist entry into its components."""
+    m = _PASSTHROUGH_RE.match(entry.strip())
+    if m is None:
+        return {"exposed": entry.strip(), "upstream": entry.strip(), "pool": ""}
+    exposed = (m.group("exposed") or "").strip()
+    upstream = (m.group("upstream") or exposed).strip()
+    pool = (m.group("pool") or "").strip()
+    return {"exposed": exposed, "upstream": upstream, "pool": pool}
+
 
 _NETWORK_ERRORS = (
     httpx.ConnectError,
@@ -372,6 +390,31 @@ async def dispatch(
     return await _do_dispatch(req, session)
 
 
+async def _resolve_passthrough(
+    session: AsyncSession, model: str
+) -> tuple[Provider, str, str] | None:
+    """If ``model`` is a passthrough ``provider-slug/exposed-model-id`` format,
+    look up the provider, match the whitelist, and return
+    ``(provider, upstream_model, key_pool)``.  Returns ``None`` when the model is
+    not a passthrough (or the provider is not found / passthrough disabled / the
+    model is not in the whitelist).
+    """
+    parts = model.split("/", 1)
+    if len(parts) != 2:
+        return None
+    provider_slug, exposed_id = parts
+    provider = (
+        await session.execute(select(Provider).where(Provider.slug == provider_slug))
+    ).scalar_one_or_none()
+    if provider is None or not provider.passthrough_enabled:
+        return None
+    for entry in provider.passthrough_models or []:
+        parsed = _parse_passthrough_entry(entry)
+        if parsed["exposed"] == exposed_id:
+            return provider, parsed["upstream"], parsed["pool"]
+    return None
+
+
 async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchResult:
     settings = get_settings()
     max_retries = max(1, settings_store.get_int("max_retries", 6))
@@ -400,24 +443,68 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     last_ctx: dict[str, Any] = {}
     last_outcome: _Attempt | None = None
 
-    # The inbound model must be an *exposed* model; raw upstream ids
-    # (``slug/model``) are never accepted here (rejected earlier by the gateway).
-    exposed = (
-        await session.execute(
-            select(ExposedModel).where(ExposedModel.model_id == req.model)
-        )
-    ).scalar_one_or_none()
-    if exposed is None:
-        return DispatchResult(
-            status_code=404,
-            is_stream=False,
-            content=_error_body(
-                req.inbound_style,
-                f"No exposed model '{req.model}'.",
-                "model_not_found",
-            ),
-            model=req.model,
-        )
+    # Passthrough models (``provider-slug/exposed-model-id``) bypass the exposed
+    # model + route system and dispatch directly to the provider.
+    passthrough = await _resolve_passthrough(session, req.model)
+    if passthrough is not None:
+        passthrough_provider, passthrough_upstream, passthrough_pool = passthrough
+        if not passthrough_provider.enabled:
+            return DispatchResult(
+                status_code=404,
+                is_stream=False,
+                content=_error_body(
+                    req.inbound_style,
+                    f"Provider for '{req.model}' is disabled.",
+                    "model_not_found",
+                ),
+                model=req.model,
+            )
+        layers = [
+            SimpleNamespace(
+                position=0,
+                max_attempts=1,
+                entries=[
+                    SimpleNamespace(
+                        provider=passthrough_provider,
+                        upstream_model=passthrough_upstream,
+                        key_pool=passthrough_pool,
+                        enabled=True,
+                        weight=1,
+                    )
+                ],
+            )
+        ]
+    else:
+        # The inbound model must be an *exposed* model; raw upstream ids
+        # (``slug/model``) are never accepted here (rejected earlier by gateway).
+        exposed = (
+            await session.execute(select(ExposedModel).where(ExposedModel.model_id == req.model))
+        ).scalar_one_or_none()
+        if exposed is None:
+            return DispatchResult(
+                status_code=404,
+                is_stream=False,
+                content=_error_body(
+                    req.inbound_style,
+                    f"No exposed model '{req.model}'.",
+                    "model_not_found",
+                ),
+                model=req.model,
+            )
+
+        route = await model_routing.resolve_route(session, exposed)
+        if not route.layers:
+            return DispatchResult(
+                status_code=404,
+                is_stream=False,
+                content=_error_body(
+                    req.inbound_style,
+                    f"Model '{req.model}' has no route configured.",
+                    "model_not_found",
+                ),
+                model=req.model,
+            )
+        layers = route.layers
 
     # Proxy switching off (external proxy like mihomo handles egress): every
     # request goes through a single fixed route and no node is ever disabled.
@@ -427,31 +514,16 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     # counted but never park a node.
     node_health_check = settings_store.get_bool("proxy_health_check_enabled", True)
     fixed_routes = (
-        None
-        if proxy_switching
-        else static_routes(settings_store.get_str("static_proxy_url", ""))
+        None if proxy_switching else static_routes(settings_store.get_str("static_proxy_url", ""))
     )
-
-    route = await model_routing.resolve_route(session, exposed)
-    if not route.layers:
-        return DispatchResult(
-            status_code=404,
-            is_stream=False,
-            content=_error_body(
-                req.inbound_style,
-                f"Model '{req.model}' has no route configured.",
-                "model_not_found",
-            ),
-            model=req.model,
-        )
 
     # Walk the flow: layers top→bottom are fallback pools; each layer tries up to
     # ``max_attempts`` entries (weighted-random order); within an entry, keys then
     # outbound nodes are iterated. The whole flow is capped by ``max_retries``.
-    for layer in route.layers:
+    for layer in layers:
         if attempts >= max_retries:
             break
-        entries = model_routing.weighted_entries(layer)
+        entries = model_routing.weighted_entries(layer)  # ty: ignore[invalid-argument-type]
         layer_attempts = max(1, int(layer.max_attempts or 1))
         for entry in entries[:layer_attempts]:
             if attempts >= max_retries:
@@ -471,9 +543,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 group = await routing.provider_routes(session, provider)
                 routes = await routing.group_routes(session, group)
             if not routes:
-                last_error = (
-                    f"provider '{provider.name}': no available outbound node"
-                )
+                last_error = f"provider '{provider.name}': no available outbound node"
                 last_status = 502
                 continue
 
@@ -576,9 +646,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                         # for these cascades failures: fewer nodes → more timeouts →
                         # more disabled nodes → collapse.
                         if outcome.blame_proxy and node is not None:
-                            routing.penalize_node(
-                                node, last_error, auto_disable=node_health_check
-                            )
+                            routing.penalize_node(node, last_error, auto_disable=node_health_check)
                         await session.flush()
                         continue  # keep key, next node
 
@@ -588,9 +656,8 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     err_class = adapter.classify(outcome.status_code, outcome.body_json)
                     # A provider that can *detect* "no quota" (vs a plain rate
                     # limit) turns a 429 into a permanently-disabled key.
-                    if (
-                        err_class is ErrorClass.RATE_LIMITED
-                        and adapter.detect_no_quota(outcome.status_code, outcome.body_json)
+                    if err_class is ErrorClass.RATE_LIMITED and adapter.detect_no_quota(
+                        outcome.status_code, outcome.body_json
                     ):
                         err_class = ErrorClass.INSUFFICIENT_BALANCE
 
@@ -605,11 +672,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                             total = _extract_usage(outcome.body_json, upstream_style)[
                                 "total_tokens"
                             ]
-                            degenerate = (
-                                outcome.degenerate_empty
-                                if req.stream
-                                else total == 0
-                            )
+                            degenerate = outcome.degenerate_empty if req.stream else total == 0
                         if degenerate:
                             last_error = "upstream returned 200 OK with 0 tokens"
                             last_status = 200
@@ -773,6 +836,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         attempts=attempts,
         error="upstream_unavailable",
     )
+
 
 async def _resolve_token(
     session: Any,
@@ -987,8 +1051,13 @@ async def _attempt(
             f"Increase max_connections in network.py or reduce concurrency. "
             f"Proxy is NOT penalised for this. Original: {exc}"
         )
-        log.warning("outbound_pool_timeout", url=url, proxy=route.proxy_url,
-                    pool_info=pool_info, error=str(exc))
+        log.warning(
+            "outbound_pool_timeout",
+            url=url,
+            proxy=route.proxy_url,
+            pool_info=pool_info,
+            error=str(exc),
+        )
         return _Attempt(
             network_error=True,
             error=detail,
@@ -1003,8 +1072,13 @@ async def _attempt(
             f"via proxy={route.proxy_url!r}. The upstream did not complete in time. "
             f"Proxy is NOT penalised for this. Original: {exc}"
         )
-        log.warning("outbound_response_timeout", url=url, proxy=route.proxy_url,
-                    timeout=total_timeout, error=str(exc))
+        log.warning(
+            "outbound_response_timeout",
+            url=url,
+            proxy=route.proxy_url,
+            timeout=total_timeout,
+            error=str(exc),
+        )
         return _Attempt(
             network_error=True,
             error=detail,
@@ -1455,17 +1529,27 @@ async def _finalise_success(
 
 
 async def _stream_cleanup(
-    response: httpx.Response | _SpooledResponse, log_id: int, token_id: int | None,
-    usage: dict[str, int], *, req_status: str, first_token_ms: float | None,
-    finished_at: dt.datetime, error: str | None = None,
+    response: httpx.Response | _SpooledResponse,
+    log_id: int,
+    token_id: int | None,
+    usage: dict[str, int],
+    *,
+    req_status: str,
+    first_token_ms: float | None,
+    finished_at: dt.datetime,
+    error: str | None = None,
 ) -> None:
     """Close the upstream response and persist captured usage — shielded caller."""
     await response.aclose()
-    await _persist_stream_usage(log_id, token_id, usage,
-                                req_status=req_status,
-                                first_token_ms=first_token_ms,
-                                finished_at=finished_at,
-                                error=error)
+    await _persist_stream_usage(
+        log_id,
+        token_id,
+        usage,
+        req_status=req_status,
+        first_token_ms=first_token_ms,
+        finished_at=finished_at,
+        error=error,
+    )
 
 
 async def _build_stream(
@@ -1533,9 +1617,7 @@ async def _build_stream(
                 break
             except TimeoutError:
                 req_status = "terminated"
-                stream_error = (
-                    f"response timeout after {int(response_timeout)}s — connection cut"
-                )
+                stream_error = f"response timeout after {int(response_timeout)}s — connection cut"
                 break
             yield piece
     except asyncio.CancelledError:
@@ -1560,13 +1642,18 @@ async def _build_stream(
         # the shield, the cancellation propagates into these awaits and the
         # upstream connection leaks / usage is lost.
         try:
-            await asyncio.shield(_stream_cleanup(
-                response, log_id, token_id, usage,
-                req_status=req_status,
-                first_token_ms=first_token["ms"],
-                finished_at=finished_at,
-                error=stream_error,
-            ))
+            await asyncio.shield(
+                _stream_cleanup(
+                    response,
+                    log_id,
+                    token_id,
+                    usage,
+                    req_status=req_status,
+                    first_token_ms=first_token["ms"],
+                    finished_at=finished_at,
+                    error=stream_error,
+                )
+            )
         except asyncio.CancelledError:
             log.debug("stream_cancelled", log_id=log_id)
 
@@ -1602,6 +1689,7 @@ async def _capture_usage(
         _sniff_usage(buffer, usage)
         if first_token["ms"] is None and _sse_has_content(buffer.encode("utf-8"), upstream_style):
             first_token["ms"] = (time.monotonic() - start_mono) * 1000.0
+
 
 def _sniff_usage(block: str, usage: dict[str, int]) -> None:
     for line in block.splitlines():
@@ -1644,9 +1732,14 @@ _STREAM_USAGE_RETRY_BASE_DELAY = 0.5  # seconds; exponential, capped at 5s
 
 
 async def _persist_stream_usage(
-    log_id: int, token_id: int | None, usage: dict[str, int],
-    *, req_status: str = "completed", first_token_ms: float | None = None,
-    finished_at: dt.datetime | None = None, error: str | None = None,
+    log_id: int,
+    token_id: int | None,
+    usage: dict[str, int],
+    *,
+    req_status: str = "completed",
+    first_token_ms: float | None = None,
+    finished_at: dt.datetime | None = None,
+    error: str | None = None,
 ) -> None:
     """Write final stream token usage back to the log row + token quota.
 

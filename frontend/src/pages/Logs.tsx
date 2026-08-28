@@ -1376,7 +1376,6 @@ function RequestLogs({
             setDetailLog(null);
           }
         }}
-        modalType="non-modal"
       >
         <DialogSurface style={{ maxWidth: 820, width: "100%" }}>
           <DialogBody>

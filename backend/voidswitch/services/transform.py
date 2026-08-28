@@ -396,9 +396,7 @@ def openai_response_to_anthropic(resp: dict[str, Any], *, model: str) -> dict[st
     reasoning = message.get("reasoning_content")
     if isinstance(reasoning, str) and reasoning:
         # Thinking blocks must precede text/tool_use; sign it so the client replays it.
-        blocks.append(
-            {"type": "thinking", "thinking": reasoning, "signature": _THINKING_SIGNATURE}
-        )
+        blocks.append({"type": "thinking", "thinking": reasoning, "signature": _THINKING_SIGNATURE})
     text = message.get("content")
     if isinstance(text, str) and text:
         blocks.append({"type": "text", "text": text})
@@ -950,8 +948,10 @@ def openai_request_to_responses(payload: dict[str, Any]) -> dict[str, Any]:
         out["instructions"] = "\n\n".join(instructions)
     out["input"] = input_items
 
-    max_out = payload.get("max_output_tokens") or payload.get("max_tokens") or payload.get(
-        "max_completion_tokens"
+    max_out = (
+        payload.get("max_output_tokens")
+        or payload.get("max_tokens")
+        or payload.get("max_completion_tokens")
     )
     if max_out:
         out["max_output_tokens"] = max_out
@@ -1044,14 +1044,14 @@ def responses_request_to_openai(payload: dict[str, Any]) -> dict[str, Any]:
                     },
                 }
                 # Fold consecutive function calls into one assistant turn.
-                if messages and messages[-1].get("role") == "assistant" and messages[-1].get(
-                    "tool_calls"
+                if (
+                    messages
+                    and messages[-1].get("role") == "assistant"
+                    and messages[-1].get("tool_calls")
                 ):
                     messages[-1]["tool_calls"].append(call)
                 else:
-                    messages.append(
-                        {"role": "assistant", "content": None, "tool_calls": [call]}
-                    )
+                    messages.append({"role": "assistant", "content": None, "tool_calls": [call]})
             elif itype == "function_call_output":
                 messages.append(
                     {
@@ -1536,9 +1536,7 @@ async def responses_stream_to_openai(
         return _data(
             {
                 **base,
-                "choices": [
-                    {"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}
-                ],
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
             }
         )
 
@@ -1648,9 +1646,7 @@ async def responses_stream_to_openai(
                             {
                                 "index": 0,
                                 "delta": {
-                                    "tool_calls": [
-                                        {"index": tidx, "function": {"arguments": args}}
-                                    ]
+                                    "tool_calls": [{"index": tidx, "function": {"arguments": args}}]
                                 },
                                 "finish_reason": None,
                             }

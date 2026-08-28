@@ -12,16 +12,19 @@ repos = [
     # hooks autofix in place and re-stage the files (via scripts/ruff_fix.sh),
     # so a fix is treated as success and committed with the change. ty is a
     # pure check — run `uv run --project backend ty check` and fix manually.
+    # `require_serial` keeps ruff_fix.sh's `git add` from racing itself (prek
+    # batches files into parallel invocations otherwise, which clash on
+    # .git/index.lock).
     { id = "ruff-check", name = "ruff check --fix (backend)",
       language = "system",
       entry = "scripts/ruff_fix.sh check",
-      files = "backend/.*\\.py$" },
+      files = "backend/.*\\.py$", require_serial = true },
     { id = "ruff-format", name = "ruff format (backend)",
       language = "system",
       entry = "scripts/ruff_fix.sh format",
-      files = "backend/.*\\.py$" },
+      files = "backend/.*\\.py$", require_serial = true },
     { id = "ty-check", name = "ty check (backend)",
       language = "system", entry = "uv run --project backend ty check",
-      files = "backend/.*\\.py$" },
+      files = "backend/.*\\.py$", require_serial = true },
   ] },
 ]

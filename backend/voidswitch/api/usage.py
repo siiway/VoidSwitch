@@ -61,9 +61,7 @@ _PG_FMT = {
 }
 
 
-def _apply_window(
-    stmt: Select, start: dt.datetime | None, end: dt.datetime | None
-) -> Select:
+def _apply_window(stmt: Select, start: dt.datetime | None, end: dt.datetime | None) -> Select:
     """Restrict a query to the ``[start, end)`` window on ``RequestLog.ts``."""
     if start is not None:
         stmt = stmt.where(RequestLog.ts >= start)
@@ -72,9 +70,7 @@ def _apply_window(
     return stmt
 
 
-def _auto_granularity(
-    start: dt.datetime | None, end: dt.datetime | None
-) -> str:
+def _auto_granularity(start: dt.datetime | None, end: dt.datetime | None) -> str:
     """Pick a sensible bucket size for a window (mode B / window-driven series)."""
     if start is None or end is None:
         return "year"  # "all" → a yearly overview
@@ -175,11 +171,7 @@ async def _series(
         UsageBucket(
             period=str(r[0]),
             **_totals_from_row(r[1:6]),
-            avg_first_token_ms=(
-                round(float(r[6]), 1)
-                if r[6] is not None
-                else None
-            ),
+            avg_first_token_ms=(round(float(r[6]), 1) if r[6] is not None else None),
         )
         for r in rows
         if r[0] is not None
@@ -262,8 +254,7 @@ async def _status_codes(
     """HTTP status-code distribution over the window."""
     stmt = _apply_window(
         _scope(
-            select(RequestLog.status_code, _COUNT)
-            .where(RequestLog.status_code.isnot(None)),
+            select(RequestLog.status_code, _COUNT).where(RequestLog.status_code.isnot(None)),
             user,
         ),
         start,
@@ -271,11 +262,7 @@ async def _status_codes(
     )
     stmt = stmt.group_by(RequestLog.status_code).order_by(RequestLog.status_code)
     rows = (await session.execute(stmt)).all()
-    return [
-        StatusCount(status_code=int(r[0]), count=int(r[1]))
-        for r in rows
-        if r[0] is not None
-    ]
+    return [StatusCount(status_code=int(r[0]), count=int(r[1])) for r in rows if r[0] is not None]
 
 
 async def _group(
@@ -349,15 +336,9 @@ async def usage_analytics(
 
     # Synthetic Claude Code token-op requests (``<cc-…-token>``) aren't real
     # inference calls, so exclude them from the model breakdown.
-    not_internal_model = or_(
-        RequestLog.model.is_(None), ~RequestLog.model.like("<cc-%")
-    )
-    user_rows = await _group(
-        session, user, RequestLog.user_sub, start=start, end=end
-    )
-    token_rows = await _group(
-        session, user, RequestLog.token_id, start=start, end=end
-    )
+    not_internal_model = or_(RequestLog.model.is_(None), ~RequestLog.model.like("<cc-%"))
+    user_rows = await _group(session, user, RequestLog.user_sub, start=start, end=end)
+    token_rows = await _group(session, user, RequestLog.token_id, start=start, end=end)
     model_rows = await _group(
         session,
         user,
@@ -366,9 +347,7 @@ async def usage_analytics(
         end=end,
         extra=not_internal_model,
     )
-    provider_rows = await _group(
-        session, user, RequestLog.provider_name, start=start, end=end
-    )
+    provider_rows = await _group(session, user, RequestLog.provider_name, start=start, end=end)
 
     # Resolve human-friendly labels for users and tokens in batched queries.
     subs = {r[0] for r in user_rows if r[0]}
@@ -395,8 +374,8 @@ async def usage_analytics(
     owner_ids = {o for o in token_owners.values() if o is not None}
     if owner_ids:
         for u in (
-            await session.execute(select(User).where(User.id.in_(owner_ids)))
-        ).scalars().all():
+            (await session.execute(select(User).where(User.id.in_(owner_ids)))).scalars().all()
+        ):
             label = u.username or u.name or u.email or u.sub
             user_by_id[u.id] = f"{label}#{u.id}"
 
@@ -416,7 +395,9 @@ async def usage_analytics(
             label=(
                 f"{token_names[r[0]]}#{r[0]}"
                 if r[0] is not None and r[0] in token_names
-                else f"#{r[0]}" if r[0] is not None else "<internal>"
+                else f"#{r[0]}"
+                if r[0] is not None
+                else "<internal>"
             ),
             sublabel=(
                 user_by_id.get(token_owners.get(r[0]))
@@ -581,11 +562,7 @@ async def heatmap_bundle(
 ) -> HeatmapBundleOut:
     """The caller's own activity heatmap, plus the site-wide one for staff."""
     personal = await _heatmap_data(session, user_sub=user.sub, scope="self")
-    site = (
-        await _heatmap_data(session, user_sub=None, scope="site")
-        if is_staff(user)
-        else None
-    )
+    site = await _heatmap_data(session, user_sub=None, scope="site") if is_staff(user) else None
     return HeatmapBundleOut(personal=personal, site=site)
 
 
@@ -596,9 +573,7 @@ async def heatmap_for_user(
     _: User = Depends(require_staff),
 ) -> HeatmapOut:
     """A specific user's activity heatmap (staff only) — powers the stats popup."""
-    subject = (
-        await session.execute(select(User).where(User.sub == sub))
-    ).scalar_one_or_none()
+    subject = (await session.execute(select(User).where(User.sub == sub))).scalar_one_or_none()
     if subject is not None:
         base = subject.username or subject.name or subject.email or subject.sub
         label = f"{base}#{subject.id}"

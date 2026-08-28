@@ -47,9 +47,9 @@ def _validated_min_role(value: str) -> str:
 async def _member_counts(session: AsyncSession) -> dict[int, int]:
     rows = (
         await session.execute(
-            select(
-                RoleGroupMembership.role_group_id, func.count(RoleGroupMembership.id)
-            ).group_by(RoleGroupMembership.role_group_id)
+            select(RoleGroupMembership.role_group_id, func.count(RoleGroupMembership.id)).group_by(
+                RoleGroupMembership.role_group_id
+            )
         )
     ).all()
     return {gid: int(count) for gid, count in rows}
@@ -262,9 +262,7 @@ async def list_role_group_members(
     return out
 
 
-@router.delete(
-    "/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_role_group_member(
     group_id: int,
     user_id: int,
