@@ -1,7 +1,7 @@
 {
   "name": "voidswitch-frontend",
   "private": true,
-  "version": "0.2.2-2026.8.29.1",
+  "version": "0.2.2-2026.8.29.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -21,7 +21,8 @@
     "react-i18next": "^17.0.8",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "simple-icons": "^16.29.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

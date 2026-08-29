@@ -1,106 +1,74 @@
-// Brand icons for model cards. Official logo paths come from Simple Icons
-// (https://simpleicons.org); brands that are absent there are hand-drawn
-// approximations. Models without a resolvable brand fall back to their first
+// Brand icons for model cards, sourced from Simple Icons (https://simpleicons.org)
+// — a single monochrome path per brand. The rendered SVG uses `currentColor` so
+// the glyph automatically adapts to the active light/dark theme (black on light,
+// white on dark). Models whose brand has no known icon fall back to their first
 // letter (rendered by the caller).
+import {
+  siAnthropic,
+  siBytedance,
+  siDeepseek,
+  siGooglegemini,
+  siKimi,
+  siMeta,
+  siMinimax,
+  siMistralai,
+  siMoonshotai,
+  siNvidia,
+  siQwen,
+  siX,
+} from "simple-icons";
 
-export interface BrandIcon {
-  svg: string;
-  color: string;
-}
+// OpenAI's mark was removed from Simple Icons over a trademark request, so it is
+// carried here from the last upstream revision that shipped it (the official
+// hexagonal-knot wordmark), kept as a raw path like every other entry.
+const OPENAI_PATH =
+  "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654 2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z";
 
-function svgOf(path: string, color: string): BrandIcon {
-  return {
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="${color}">${path}</svg>`,
-    color,
-  };
-}
-
-const BRANDS: Record<string, BrandIcon> = {
-  // Anthropic / Claude — official Simple Icons path.
-  claude: svgOf(
-    '<path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/>',
-    "#d97757",
-  ),
-  anthropic: svgOf(
-    '<path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/>',
-    "#d97757",
-  ),
-  // DeepSeek — official Simple Icons path.
-  deepseek: svgOf(
-    '<path d="M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45"/>',
-    "#4d6bfe",
-  ),
-  // Google Gemini — official Simple Icons path.
-  gemini: svgOf(
-    '<path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/>',
-    "#4285f4",
-  ),
-  google: svgOf(
-    '<path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/>',
-    "#4285f4",
-  ),
-  // Meta (Llama) — official Simple Icons path.
-  meta: svgOf(
-    '<path d="M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a6.624 6.624 0 0 0 .265.86 5.297 5.297 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927 1.497 0 2.633-.671 3.965-2.444.76-1.012 1.144-1.626 2.663-4.32l.756-1.339.186-.325c.061.1.121.196.183.3l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314 1.046.987 1.992 1.22 3.06 1.22 1.075 0 1.876-.355 2.455-.843a3.743 3.743 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745 0-2.72-.681-5.357-2.084-7.45-1.282-1.912-2.957-2.93-4.716-2.93-1.047 0-2.088.467-3.053 1.308-.652.57-1.257 1.29-1.82 2.05-.69-.875-1.335-1.547-1.958-2.056-1.182-.966-2.315-1.303-3.454-1.303zm10.16 2.053c1.147 0 2.188.758 2.992 1.999 1.132 1.748 1.647 4.195 1.647 6.4 0 1.548-.368 2.9-1.839 2.9-.58 0-1.027-.23-1.664-1.004-.496-.601-1.343-1.878-2.832-4.358l-.617-1.028a44.908 44.908 0 0 0-1.255-1.98c.07-.109.141-.224.211-.327 1.12-1.667 2.118-2.602 3.358-2.602zm-10.201.553c1.265 0 2.058.791 2.675 1.446.307.327.737.871 1.234 1.579l-1.02 1.566c-.757 1.163-1.882 3.017-2.837 4.338-1.191 1.649-1.81 1.817-2.486 1.817-.524 0-1.038-.237-1.383-.794-.263-.426-.464-1.13-.464-2.046 0-2.221.63-4.535 1.66-6.088.454-.687.964-1.226 1.533-1.533a2.264 2.264 0 0 1 1.088-.285z"/>',
-    "#0081fb",
-  ),
-  llama: svgOf(
-    '<path d="M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a6.624 6.624 0 0 0 .265.86 5.297 5.297 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927 1.497 0 2.633-.671 3.965-2.444.76-1.012 1.144-1.626 2.663-4.32l.756-1.339.186-.325c.061.1.121.196.183.3l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314 1.046.987 1.992 1.22 3.06 1.22 1.075 0 1.876-.355 2.455-.843a3.743 3.743 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745 0-2.72-.681-5.357-2.084-7.45-1.282-1.912-2.957-2.93-4.716-2.93-1.047 0-2.088.467-3.053 1.308-.652.57-1.257 1.29-1.82 2.05-.69-.875-1.335-1.547-1.958-2.056-1.182-.966-2.315-1.303-3.454-1.303zm10.16 2.053c1.147 0 2.188.758 2.992 1.999 1.132 1.748 1.647 4.195 1.647 6.4 0 1.548-.368 2.9-1.839 2.9-.58 0-1.027-.23-1.664-1.004-.496-.601-1.343-1.878-2.832-4.358l-.617-1.028a44.908 44.908 0 0 0-1.255-1.98c.07-.109.141-.224.211-.327 1.12-1.667 2.118-2.602 3.358-2.602zm-10.201.553c1.265 0 2.058.791 2.675 1.446.307.327.737.871 1.234 1.579l-1.02 1.566c-.757 1.163-1.882 3.017-2.837 4.338-1.191 1.649-1.81 1.817-2.486 1.817-.524 0-1.038-.237-1.383-.794-.263-.426-.464-1.13-.464-2.046 0-2.221.63-4.535 1.66-6.088.454-.687.964-1.226 1.533-1.533a2.264 2.264 0 0 1 1.088-.285z"/>',
-    "#0081fb",
-  ),
-  // NVIDIA — official Simple Icons path.
-  nvidia: svgOf(
-    '<path d="M8.948 8.798v-1.43a6.7 6.7 0 0 1 .424-.018c3.922-.124 6.493 3.374 6.493 3.374s-2.774 3.851-5.75 3.851c-.398 0-.787-.062-1.158-.185v-4.346c1.528.185 1.837.857 2.747 2.385l2.04-1.714s-1.492-1.952-4-1.952a6.016 6.016 0 0 0-.796.035m0-4.735v2.138l.424-.027c5.45-.185 9.01 4.47 9.01 4.47s-4.08 4.964-8.33 4.964c-.37 0-.733-.035-1.095-.097v1.325c.3.035.61.062.91.062 3.957 0 6.82-2.023 9.593-4.408.459.371 2.34 1.263 2.73 1.652-2.633 2.208-8.772 3.984-12.253 3.984-.335 0-.653-.018-.971-.053v1.864H24V4.063zm0 10.326v1.131c-3.657-.654-4.673-4.46-4.673-4.46s1.758-1.944 4.673-2.262v1.237H8.94c-1.528-.186-2.73 1.245-2.73 1.245s.68 2.412 2.739 3.11M2.456 10.9s2.164-3.197 6.5-3.533V6.201C4.153 6.59 0 10.653 0 10.653s2.35 6.802 8.948 7.42v-1.237c-4.84-.6-6.492-5.936-6.492-5.936z"/>',
-    "#76b900",
-  ),
-  nv: svgOf(
-    '<path d="M8.948 8.798v-1.43a6.7 6.7 0 0 1 .424-.018c3.922-.124 6.493 3.374 6.493 3.374s-2.774 3.851-5.75 3.851c-.398 0-.787-.062-1.158-.185v-4.346c1.528.185 1.837.857 2.747 2.385l2.04-1.714s-1.492-1.952-4-1.952a6.016 6.016 0 0 0-.796.035m0-4.735v2.138l.424-.027c5.45-.185 9.01 4.47 9.01 4.47s-4.08 4.964-8.33 4.964c-.37 0-.733-.035-1.095-.097v1.325c.3.035.61.062.91.062 3.957 0 6.82-2.023 9.593-4.408.459.371 2.34 1.263 2.73 1.652-2.633 2.208-8.772 3.984-12.253 3.984-.335 0-.653-.018-.971-.053v1.864H24V4.063zm0 10.326v1.131c-3.657-.654-4.673-4.46-4.673-4.46s1.758-1.944 4.673-2.262v1.237H8.94c-1.528-.186-2.73 1.245-2.73 1.245s.68 2.412 2.739 3.11M2.456 10.9s2.164-3.197 6.5-3.533V6.201C4.153 6.59 0 10.653 0 10.653s2.35 6.802 8.948 7.42v-1.237c-4.84-.6-6.492-5.936-6.492-5.936z"/>',
-    "#76b900",
-  ),
-  // xAI / Grok — official Simple Icons "X" path.
-  grok: svgOf(
-    '<path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/>',
-    "#1d1d1f",
-  ),
-  xai: svgOf(
-    '<path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/>',
-    "#1d1d1f",
-  ),
-  // OpenAI — hand-drawn hexagonal knot approximation (brand removed from
-  // Simple Icons due to trademark requests).
-  openai: svgOf(
-    '<path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804a4.5304 4.5304 0 0 0 4.5113-4.5113l.0804-.142a4.4755 4.4755 0 0 1 1.0408 2.8764 4.5235 4.5235 0 0 1-1.898 2.898zm-3.1698-1.0408a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804a4.5304 4.5304 0 0 0 4.5113-4.5113l.0804-.142a4.4755 4.4755 0 0 1 1.0408 2.8764 4.5235 4.5235 0 0 1-1.8973 2.898zm-1.9373-3.9591a4.4755 4.4755 0 0 0 1.0408 3.0827l.1419-.0804a4.5304 4.5304 0 0 0 1.2821-4.5113l.0804-.142a4.4755 4.4755 0 0 0-2.5452 0zm4.9895-4.9632a4.4755 4.4755 0 0 0-1.0408 3.0827l.1419-.0804a4.5304 4.5304 0 0 1 1.2821-4.5113l.0804-.142a4.4755 4.4755 0 0 1 2.5452 0z" opacity=".9"/>',
-    "#10a37f",
-  ),
-  gpt: svgOf(
-    '<path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804a4.5304 4.5304 0 0 0 4.5113-4.5113l.0804-.142a4.4755 4.4755 0 0 1 1.0408 2.8764 4.5235 4.5235 0 0 1-1.898 2.898z" opacity=".9"/>',
-    "#10a37f",
-  ),
-  // Mistral — hand-drawn "M" wordmark (brand removed from Simple Icons).
-  mistral: svgOf(
-    '<path d="M12 5h8v8h-3V8h-5zm-8 0h8v8H9V8H4zM4 19h3v-5h5v8H4z" opacity=".95"/>',
-    "#fa520f",
-  ),
+// Canonical brand → Simple Icons glyph (path only). Aliases are normalised via
+// ``ALIASES`` below.
+const BRAND_PATHS: Record<string, string> = {
+  anthropic: siAnthropic.path,
+  deepseek: siDeepseek.path,
+  googlegemini: siGooglegemini.path,
+  meta: siMeta.path,
+  nvidia: siNvidia.path,
+  x: siX.path,
+  qwen: siQwen.path,
+  kimi: siKimi.path,
+  minimax: siMinimax.path,
+  bytedance: siBytedance.path,
+  mistralai: siMistralai.path,
+  moonshotai: siMoonshotai.path,
+  openai: OPENAI_PATH,
 };
 
-// Brand aliases → canonical key (so "anthropic" and "claude" share one icon).
+// Brand aliases → canonical key (so "anthropic" and "claude" share one icon, and
+// "gpt" resolves to OpenAI, "google"/"gemini" to Google Gemini, etc.).
 const ALIASES: Record<string, string> = {
-  claude: "claude",
+  claude: "anthropic",
   anthropic: "anthropic",
   deepseek: "deepseek",
-  gemini: "gemini",
-  google: "google",
+  gemini: "googlegemini",
+  google: "googlegemini",
   meta: "meta",
-  llama: "llama",
+  llama: "meta",
   nvidia: "nvidia",
-  nv: "nv",
-  grok: "grok",
-  xai: "xai",
-  x: "grok",
+  nv: "nvidia",
+  grok: "x",
+  xai: "x",
+  x: "x",
   openai: "openai",
-  gpt: "gpt",
-  chatgpt: "gpt",
-  mistral: "mistral",
+  gpt: "openai",
+  chatgpt: "openai",
+  qwen: "qwen",
+  kimi: "kimi",
+  minimax: "minimax",
+  doubao: "bytedance",
+  bytedance: "bytedance",
+  mistral: "mistralai",
+  mistralai: "mistralai",
+  moonshot: "moonshotai",
+  moonshotai: "moonshotai",
 };
 
 // Known brand keys the user can pick in the edit dialog (ordered).
@@ -116,45 +84,52 @@ export const BRAND_KEYS: string[] = [
   "qwen",
   "kimi",
   "moonshot",
-  "glm",
   "minimax",
   "doubao",
+  "glm",
   "yi",
   "step",
   "sensenova",
 ];
+
+export interface BrandIconGlyph {
+  path: string;
+}
+
+// Resolve a brand key to a monochrome glyph path, when one exists. The rendered
+// SVG uses `fill="currentColor"` so it follows the active theme foreground.
+export function brandIconForKey(
+  brand: string | null | undefined,
+): BrandIconGlyph | null {
+  if (!brand) return null;
+  const key = ALIASES[brand.toLowerCase()] ?? brand.toLowerCase();
+  const path = BRAND_PATHS[key];
+  return path ? { path } : null;
+}
+
+// Resolve an arbitrary string (a family, provider id, or model prefix) to a
+// canonical brand key, or null when none is known. e.g. "deepseek-flash" →
+// "deepseek"; "anthropic" → "anthropic".
+export function resolveBrandKey(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const key = input.toLowerCase().trim();
+  if (ALIASES[key]) return ALIASES[key];
+  const first = key.split(/[-_/ ]+/)[0];
+  if (ALIASES[first] || BRAND_PATHS[first]) return ALIASES[first] ?? first;
+  return null;
+}
 
 // Extract a likely brand from a model id: the first dash/slash-delimited token.
 export function deriveBrand(modelId: string): string | null {
   if (!modelId) return null;
   const first = modelId.split(/[/-]+/)[0];
   if (!first) return null;
-  const key = ALIASES[first.toLowerCase()];
-  return key || (BRANDS[first.toLowerCase()] ? first.toLowerCase() : null);
-}
-
-// Resolve a brand key (may be an alias or unknown) to its icon, if one exists.
-export function brandIconForKey(brand: string | null | undefined): BrandIcon | null {
-  if (!brand) return null;
-  const key = ALIASES[brand.toLowerCase()] ?? brand.toLowerCase();
-  return BRANDS[key] ?? null;
-}
-
-// Resolve an arbitrary string (a family, provider id, or model prefix) to a
-// canonical brand key, or null when none is known. e.g. "deepseek-flash" →
-// "deepseek"; "anthropic" → "claude".
-export function resolveBrandKey(input: string | null | undefined): string | null {
-  if (!input) return null;
-  const key = input.toLowerCase().trim();
-  if (ALIASES[key]) return ALIASES[key];
-  const first = key.split(/[-_/ ]+/)[0];
-  if (ALIASES[first] || BRANDS[first]) return ALIASES[first] ?? first;
-  return null;
+  return resolveBrandKey(first);
 }
 
 export function getBrandIcon(
   brand: string | null | undefined,
   modelId: string,
-): BrandIcon | null {
+): BrandIconGlyph | null {
   return brandIconForKey(brand) ?? brandIconForKey(deriveBrand(modelId));
 }

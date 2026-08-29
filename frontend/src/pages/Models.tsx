@@ -277,17 +277,20 @@ function BrandIcon({ brand, modelId }: { brand?: string | null; modelId: string 
   const icon = getBrandIcon(brand, modelId);
   if (icon) {
     return (
-      <span
+      <svg
+        viewBox="0 0 24 24"
+        width={24}
+        height={24}
+        role="img"
+        aria-hidden="true"
         style={{
-          width: 24,
-          height: 24,
           flexShrink: 0,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
+          fill: "currentColor",
+          color: tokens.colorNeutralForeground1,
         }}
-        dangerouslySetInnerHTML={{ __html: icon.svg }}
-      />
+      >
+        <path d={icon.path} />
+      </svg>
     );
   }
   // No brand/icon: fall back to the first letter of the model name.
