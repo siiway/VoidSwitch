@@ -27,11 +27,14 @@ VoidSwitch  ──(token 鉴权 + X-VS-Upstream-URL)──►  agent  ──► 
 **方式一 · 一行安装（推荐）**
 
 ```bash
-curl -fsSL https://…/install.sh | sh
+curl -fsSL https://voidswitch.siiway.page/agent.sh | sudo bash -s -- [agent 参数]
 ```
 
-脚本自动识别架构下载二进制、生成随机 token、写 systemd unit，并打印接入信息
-（地址 + token），可直接粘贴到 VoidSwitch 的节点页。
+`--` 之后的参数原样透传给 agent 可执行文件（见下方「配置」表，如 `--listen`、
+`--mode`、`--log-level` 等）。脚本自动识别系统与架构、下载对应二进制，无
+`--token` 时生成随机 token，并注册持久化服务：Linux 用 systemd、macOS 用
+launchd；无法注册时打印手动运行命令。最后打印接入信息（地址 + token），可直接
+粘贴到 VoidSwitch 的节点页。
 
 **方式二 · Docker**
 

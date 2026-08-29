@@ -31,12 +31,16 @@ VoidSwitch  ──(token auth + X-VS-Upstream-URL)──►  agent  ──►  u
 **One: one-line installer (recommended)**
 
 ```bash
-curl -fsSL https://…/install.sh | sh
+curl -fsSL https://voidswitch.siiway.page/agent.sh | sudo bash -s -- [agent flags]
 ```
 
-The script detects the architecture, downloads the binary, generates a random
-token, writes a systemd unit, and prints the connection info (address + token)
-to paste into the VoidSwitch Nodes page.
+Every flag after `--` is passed through verbatim to the agent (see the
+configuration table below, e.g. `--listen`, `--mode`, `--log-level`). The script
+detects the OS/arch, downloads the matching binary, generates a random token when
+`--token` is not given, and registers a persistent service — systemd on Linux,
+launchd on macOS. Where it can't, it prints the manual run command. It then
+prints the connection info (address + token) to paste into the VoidSwitch Nodes
+page.
 
 **Two: Docker**
 

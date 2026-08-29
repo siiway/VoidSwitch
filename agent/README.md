@@ -17,16 +17,22 @@ fingerprinting that plagues generic public HTTP/SOCKS proxies.
 ## Quick start
 
 ```bash
-# 1. download the binary (or use Docker / your package manager)
-curl -fsSL https://…/install.sh | sh          # auto: arch, token, systemd unit
+# 1. one-line install — downloads the binary, generates a token, registers a service
+curl -fsSL https://voidswitch.siiway.page/agent.sh | sudo bash -s -- --listen :8443
+#    any agent flag can be passed after `--` (forwarded verbatim), e.g.:
+#    curl -fsSL https://voidswitch.siiway.page/agent.sh | sudo bash -s -- --mode connect --log-level debug
 #    or run directly:
 ./voidswitch-agent --token "$(openssl rand -hex 24)"
 
-# 2. add it as a Node in VoidSwitch (type = agent, token = the above)
+# 2. add it as a Node in VoidSwitch (type = agent, token = the printed one)
 ```
 
-The install script writes a systemd unit and prints the address + token to paste
-into the VoidSwitch **Nodes** page.
+The install script detects the OS/arch, downloads the matching release binary,
+generates a shared token (unless `--token` is given — every flag after `--` is
+passed straight through), and registers a persistent service: systemd on Linux,
+launchd on macOS. Where no service manager can register one it prints the exact
+manual command. It then prints the address + token to paste into the VoidSwitch
+**Nodes** page.
 
 ### Docker
 
