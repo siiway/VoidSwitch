@@ -186,6 +186,9 @@ class ExposedModel(Base, TimestampMixin):
     models_dev_synced_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # Brand key (e.g. "claude", "deepseek", "openai") used to pick the model's
+    # icon. Auto-derived from models.dev when matched; overridable in the UI.
+    brand: Mapped[str | None] = mapped_column(String(64), default=None)
     # Who first registered metadata for this model (id + display-name snapshot).
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)

@@ -27,7 +27,6 @@ import {
 } from "@fluentui/react-components";
 import {
   AddRegular,
-  ArrowDownRegular,
   ArrowLeftRegular,
   ArrowRightRegular,
   ArrowSwapRegular,
@@ -120,7 +119,6 @@ export function Providers() {
   const nodeGroups = useAsync<NodeGroup[]>(() => api.get("/api/admin/node-groups"));
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
-  const [fetchOpen, setFetchOpen] = useState(false);
   const [fetchToken, setFetchToken] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
@@ -315,7 +313,6 @@ export function Providers() {
       merged = [...existing, ...picked.filter((id) => !existSet.has(id))];
     }
     setForm({ ...form, models: merged.join("\n") });
-    setFetchOpen(false);
   }
 
   async function save() {
@@ -817,16 +814,17 @@ export function Providers() {
                   }
                 />
               </Field>
-              <Button
-                icon={fetchOpen ? <ArrowDownRegular /> : <ArrowRightRegular />}
-                appearance="subtle"
-                style={{ justifyContent: "flex-start", width: "100%" }}
-                onClick={() => setFetchOpen((o) => !o)}
-                aria-expanded={fetchOpen}
-              >
-                {t("providers.fetchModels" as TK)}
-              </Button>
-              <div style={{ display: fetchOpen ? "block" : "none" }}>
+              <details>
+                <summary
+                  style={{
+                    cursor: "pointer",
+                    padding: "8px 12px",
+                    fontWeight: 600,
+                    color: tokens.colorNeutralForeground1,
+                  }}
+                >
+                  {t("providers.fetchModels" as TK)}
+                </summary>
                 <div
                   style={{
                     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -1027,7 +1025,7 @@ export function Providers() {
                     </>
                   )}
                 </div>
-              </div>
+              </details>
               <Field
                 label={t("providers.slug" as TK)}
                 hint={t("providers.slugHint" as TK)}

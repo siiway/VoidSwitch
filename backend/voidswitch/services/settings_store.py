@@ -112,6 +112,11 @@ def get_str(key: str, default: str = "") -> str:
     return str(value) if value is not None else default
 
 
+def get_list(key: str, default: list[Any] | None = None) -> list[Any]:
+    value = get_cached(key, default if default is not None else [])
+    return value if isinstance(value, list) else default if default is not None else []
+
+
 async def update(session: AsyncSession, values: dict[str, Any]) -> dict[str, Any]:
     """Upsert provided settings and refresh the cache."""
     for key, value in values.items():

@@ -1202,24 +1202,27 @@ async def test_session_key_precedence():
     assert _session_key(_req(session_id="x")) != _session_key(_req(token_id=6, session_id="x"))
 
 
-async def test_served_upstream_ids_ignore_wildcards_and_serve_checks():
+async def test_passthrough_model_ids():
     from voidswitch.models.db import Provider
-    from voidswitch.services.models_catalog import providers_serving, served_upstream_ids
+    from voidswitch.services.models_catalog import passthrough_model_ids
 
-    # Only concrete upstream names become served ids; wildcards match but name
-    # nothing (so the public catalog is never polluted by "*").
     prov = Provider(
-        name="ds",
-        type="deepseek",
-        models=["deepseek-v4-flash", "deepseek-v4-pro", "*"],
+        name="cc",
+        slug="cc",
+        type="claude-code",
+        passthrough_enabled=True,
+        passthrough_models=[
+            "claude-fable-5",
+            "claude-opus-4-6 => claude-opus-4-6-20250929 @ prod",
+            "ox-alpha @ stealth",
+        ],
     )
-    assert served_upstream_ids([prov]) == {"deepseek-v4-flash", "deepseek-v4-pro"}
-    assert set(providers_serving([prov], "deepseek-v4-flash")) == {"ds"}
-    assert set(providers_serving([prov], "anything-at-all")) == {"ds"}
-
-    narrow = Provider(name="x", type="openai", models=["exact"])
-    assert providers_serving([narrow], "exact") == ["x"]
-    assert providers_serving([narrow], "other") == []
+    disabled = Provider(name="off", slug="off", type="openai", passthrough_models=["nope"])
+    assert passthrough_model_ids([prov, disabled]) == {
+        "cc/claude-fable-5",
+        "cc/claude-opus-4-6",
+        "cc/ox-alpha",
+    }
 
 
 async def test_deleting_node_group_scrubs_provider_references(db):
@@ -1908,7 +1911,7 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
             "node_group_members",
             "request_logs",
         } <= tables
-        assert ver == "58e48e546df2"  # the current head
+        assert ver == "a3c1d2e4f5b6"  # the current head
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()

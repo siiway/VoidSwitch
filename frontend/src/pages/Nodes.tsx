@@ -71,6 +71,28 @@ function redactUrl(url: string): string {
   return url.replace(/\/\/[^\/:@]+:[^@]+@/, "//***:***@");
 }
 
+const COLLAPSED_KEY = "voidswitch.nodes.collapsedGroups";
+
+function loadCollapsed(): Set<number> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY);
+    if (raw == null) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is number => typeof x === "number"));
+  } catch {
+    return new Set();
+  }
+}
+
+function persistCollapsed(set: Set<number>): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set]));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function Nodes() {
   const { t } = useTranslation();
   const notify = useNotify();
@@ -103,11 +125,13 @@ export function Nodes() {
   const [savingGroup, setSavingGroup] = useState(false);
 
   // ---- Inline members editor ----
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [editMembers, setEditMembers] = useState<MemberDraft[]>([]);
+  const [collapsedIds, setCollapsedIds] = useState<Set<number>>(loadCollapsed);
+  const [memberDrafts, setMemberDrafts] = useState<Map<number, MemberDraft[]>>(
+    new Map(),
+  );
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
-  const [membersSaving, setMembersSaving] = useState(false);
+  const [savingGroupId, setSavingGroupId] = useState<number | null>(null);
 
   function reload() {
     nodes.reload();
@@ -286,13 +310,13 @@ export function Nodes() {
 
   // ---- Inline members ----
 
-  function expandGroup(g: NodeGroup) {
-    if (expandedId === g.id) {
-      collapseGroup();
-      return;
-    }
-    collapseGroup();
-    const draft = g.members.map((m, i) => {
+  function setCollapsed(next: Set<number>) {
+    setCollapsedIds(next);
+    persistCollapsed(next);
+  }
+
+  function buildDraft(g: NodeGroup): MemberDraft[] {
+    return g.members.map((m, i) => {
       const isNode = m.node_id != null;
       return {
         key: `m-${i}-${Date.now()}`,
@@ -300,15 +324,40 @@ export function Nodes() {
         ref: isNode ? (m.node_id as number) : (m.source_group_id as number),
       };
     });
-    setExpandedId(g.id);
-    setEditMembers(draft);
   }
 
-  function collapseGroup() {
-    setExpandedId(null);
-    setEditMembers([]);
+  function expandGroup(g: NodeGroup) {
+    const next = new Set(collapsedIds);
+    next.delete(g.id);
+    setCollapsed(next);
+    setMemberDrafts((prev) => {
+      if (prev.has(g.id)) return prev;
+      const map = new Map(prev);
+      map.set(g.id, buildDraft(g));
+      return map;
+    });
+  }
+
+  function collapseGroup(g: NodeGroup) {
+    const next = new Set(collapsedIds);
+    next.add(g.id);
+    setCollapsed(next);
+    setMemberDrafts((prev) => {
+      if (!prev.has(g.id)) return prev;
+      const map = new Map(prev);
+      map.delete(g.id);
+      return map;
+    });
     setDragKey(null);
     setDragOverIdx(null);
+  }
+
+  function toggleGroup(g: NodeGroup) {
+    if (collapsedIds.has(g.id)) {
+      expandGroup(g);
+    } else {
+      collapseGroup(g);
+    }
   }
 
   function canEditMembers(g: NodeGroup): boolean {
@@ -324,30 +373,46 @@ export function Nodes() {
     return (groups.data ?? []).find((g) => g.id === ref);
   }
 
-  function addMemberDraft(kind: "node" | "group", ref: number) {
-    setEditMembers((d) => {
-      if (d.some((m) => m.kind === kind && m.ref === ref)) return d;
-      return [...d, { key: `${kind}-${ref}-${Date.now()}`, kind, ref }];
+  function addMemberDraft(gId: number, kind: "node" | "group", ref: number) {
+    setMemberDrafts((prev) => {
+      const draft = prev.get(gId) ?? [];
+      if (draft.some((m) => m.kind === kind && m.ref === ref)) return prev;
+      const map = new Map(prev);
+      map.set(gId, [
+        ...draft,
+        { key: `${kind}-${ref}-${Date.now()}`, kind, ref },
+      ]);
+      return map;
     });
   }
 
-  function removeMemberDraft(key: string) {
-    setEditMembers((d) => d.filter((m) => m.key !== key));
+  function removeMemberDraft(gId: number, key: string) {
+    setMemberDrafts((prev) => {
+      const draft = prev.get(gId);
+      if (!draft) return prev;
+      const map = new Map(prev);
+      map.set(
+        gId,
+        draft.filter((m) => m.key !== key),
+      );
+      return map;
+    });
   }
 
-  async function saveMembers() {
-    const group = (groups.data ?? []).find((g) => g.id === expandedId);
+  async function saveMembers(gId: number) {
+    const group = (groups.data ?? []).find((g) => g.id === gId);
     if (!group) return;
-    const body = editMembers.map((m, i) =>
+    const draft = memberDrafts.get(gId) ?? [];
+    const body = draft.map((m, i) =>
       m.kind === "node"
         ? { node_id: m.ref, weight: i + 1 }
         : { source_group_id: m.ref, weight: i + 1 },
     );
-    setMembersSaving(true);
+    setSavingGroupId(gId);
     try {
       await api.put(`/api/admin/node-groups/${group.id}/members`, body);
       notify(t("nodes.membersSaved" as TK), group.name, "success");
-      collapseGroup();
+      collapseGroup(group);
       groups.reload();
     } catch (e) {
       notify(
@@ -356,7 +421,7 @@ export function Nodes() {
         "error",
       );
     } finally {
-      setMembersSaving(false);
+      setSavingGroupId(null);
     }
   }
 
@@ -371,18 +436,28 @@ export function Nodes() {
     setDragOverIdx(idx);
   }
 
-  function onDrop(idx: number) {
+  function onDrop(gId: number, idx: number) {
     if (!dragKey) return;
-    const from = editMembers.findIndex((m) => m.key === dragKey);
+    const draft = memberDrafts.get(gId);
+    if (!draft) {
+      setDragKey(null);
+      setDragOverIdx(null);
+      return;
+    }
+    const from = draft.findIndex((m) => m.key === dragKey);
     if (from < 0 || from === idx) {
       setDragKey(null);
       setDragOverIdx(null);
       return;
     }
-    const next = [...editMembers];
+    const next = [...draft];
     const [moved] = next.splice(from, 1);
     next.splice(idx, 0, moved);
-    setEditMembers(next);
+    setMemberDrafts((prev) => {
+      const map = new Map(prev);
+      map.set(gId, next);
+      return map;
+    });
     setDragKey(null);
     setDragOverIdx(null);
   }
@@ -394,33 +469,23 @@ export function Nodes() {
 
   // ---- Combobox helpers ----
 
-  const addedNodeIds = new Set(
-    editMembers.filter((m) => m.kind === "node").map((m) => m.ref),
-  );
-  const addedGroupIds = new Set(
-    editMembers.filter((m) => m.kind === "group").map((m) => m.ref),
-  );
-
-  const availableNodes = (nodes.data ?? []).filter(
-    (n) => !addedNodeIds.has(n.id),
-  );
-  const availableGroups = (groups.data ?? []).filter(
-    (g) => g.id !== expandedId && !addedGroupIds.has(g.id),
-  );
-
-  function handleAddNodes(_e: SelectionEvents, d: OptionOnSelectData) {
+  function handleAddNodes(
+    gId: number,
+    _e: SelectionEvents,
+    d: OptionOnSelectData,
+  ) {
     for (const id of d.selectedOptions) {
-      const nid = Number(id);
-      if (!addedNodeIds.has(nid)) {
-        addMemberDraft("node", nid);
-      }
+      addMemberDraft(gId, "node", Number(id));
     }
   }
 
-  function handleAddGroup(_e: SelectionEvents, d: OptionOnSelectData) {
-    const gid = Number(d.optionValue);
-    if (d.optionValue && !addedGroupIds.has(gid)) {
-      addMemberDraft("group", gid);
+  function handleAddGroup(
+    gId: number,
+    _e: SelectionEvents,
+    d: OptionOnSelectData,
+  ) {
+    if (d.optionValue) {
+      addMemberDraft(gId, "group", Number(d.optionValue));
     }
   }
 
@@ -485,7 +550,7 @@ export function Nodes() {
           marginBottom: 16,
         }}
       >
-        <Field label={t("nodes.urlsHint" as TK)} style={{ maxWidth: 560 }}>
+        <Field label={t("nodes.urlsHint" as TK)}>
           <Textarea
             value={bulk}
             rows={5}
@@ -625,13 +690,30 @@ export function Nodes() {
               <TableHeaderCell>{t("nodes.groupName" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.groupProbeUrl" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.groupMembers" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("nodes.groupInherits" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.actions" as TK)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
             {(groups.data ?? []).map((g) => {
-              const isExpanded = expandedId === g.id;
+              const isExpanded = !collapsedIds.has(g.id);
               const canEdit = canEditMembers(g);
+              const draft = memberDrafts.get(g.id) ?? [];
+              const addedNodeIds = new Set(
+                draft.filter((m) => m.kind === "node").map((m) => m.ref),
+              );
+              const addedGroupIds = new Set(
+                draft.filter((m) => m.kind === "group").map((m) => m.ref),
+              );
+              const availableNodes = (nodes.data ?? []).filter(
+                (n) => !addedNodeIds.has(n.id),
+              );
+              const availableGroups = (groups.data ?? []).filter(
+                (grp) => grp.id !== g.id && !addedGroupIds.has(grp.id),
+              );
+              const inheritCount = g.members.filter(
+                (m) => m.source_group_id != null,
+              ).length;
               return (
                 <Fragment key={g.id}>
                   <TableRow>
@@ -646,7 +728,7 @@ export function Nodes() {
                             <ChevronRightRegular />
                           )
                         }
-                        onClick={() => expandGroup(g)}
+                        onClick={() => toggleGroup(g)}
                         style={{ fontWeight: 600, padding: 0 }}
                       >
                         {g.name}
@@ -674,6 +756,7 @@ export function Nodes() {
                       {g.probe_url || "—"}
                     </TableCell>
                     <TableCell>{g.member_count}</TableCell>
+                    <TableCell>{inheritCount}</TableCell>
                     <TableCell>
                       <Tooltip content={t("common.edit" as TK)} relationship="label">
                         <Button
@@ -700,7 +783,7 @@ export function Nodes() {
                   {isExpanded && (
                     <TableRow key={`${g.id}-expanded`}>
                       <TableCell
-                        colSpan={4}
+                        colSpan={5}
                         style={{
                           backgroundColor: tokens.colorNeutralBackground1Pressed,
                           padding: "12px 16px",
@@ -732,7 +815,7 @@ export function Nodes() {
                             >
                               {t("nodes.membersLabel" as TK)}
                             </Text>
-                            {editMembers.length === 0 && (
+                            {draft.length === 0 && (
                               <Text
                                 size={200}
                                 style={{ color: tokens.colorNeutralForeground3 }}
@@ -740,7 +823,7 @@ export function Nodes() {
                                 {t("nodes.membersEmpty" as TK)}
                               </Text>
                             )}
-                            {editMembers.map((m, idx) => {
+                            {draft.map((m, idx) => {
                               const isNode = m.kind === "node";
                               const nodeInfo = isNode
                                 ? memberNodeInfo(m.ref)
@@ -765,7 +848,7 @@ export function Nodes() {
                                     draggable
                                     onDragStart={() => onDragStart(m.key)}
                                     onDragOver={(e) => onDragOver(e, idx)}
-                                    onDrop={() => onDrop(idx)}
+                                    onDrop={() => onDrop(g.id, idx)}
                                     onDragEnd={onDragEnd}
                                     style={{
                                       display: "flex",
@@ -897,7 +980,7 @@ export function Nodes() {
                                               "nodes.removeMember" as TK,
                                             )}
                                             onClick={() =>
-                                              removeMemberDraft(m.key)
+                                              removeMemberDraft(g.id, m.key)
                                             }
                                           />
                                         </Tooltip>
@@ -933,7 +1016,7 @@ export function Nodes() {
                                               "nodes.removeMember" as TK,
                                             )}
                                             onClick={() =>
-                                              removeMemberDraft(m.key)
+                                              removeMemberDraft(g.id, m.key)
                                             }
                                           />
                                         </Tooltip>
@@ -956,17 +1039,14 @@ export function Nodes() {
                             <div
                               style={{
                                 borderTop:
-                                  dragKey != null &&
-                                  dragOverIdx === editMembers.length
+                                  dragKey != null && dragOverIdx === draft.length
                                     ? `2px solid ${tokens.colorBrandForeground1}`
                                     : "2px solid transparent",
                                 transition: "border-color 0.15s",
                                 minHeight: 4,
                               }}
-                              onDragOver={(e) =>
-                                onDragOver(e, editMembers.length)
-                              }
-                              onDrop={() => onDrop(editMembers.length)}
+                              onDragOver={(e) => onDragOver(e, draft.length)}
+                              onDrop={() => onDrop(g.id, draft.length)}
                             />
                           </div>
 
@@ -990,7 +1070,9 @@ export function Nodes() {
                                     "nodes.addNodePlaceholder" as TK,
                                   )}
                                   selectedOptions={[]}
-                                  onOptionSelect={handleAddNodes}
+                                  onOptionSelect={(e, d) =>
+                                    handleAddNodes(g.id, e, d)
+                                  }
                                 >
                                   {availableNodes.map((n) => (
                                     <Option
@@ -1014,7 +1096,7 @@ export function Nodes() {
                                   placeholder={t(
                                     "nodes.inheritGroupPlaceholder" as TK,
                                   )}
-                                  onOptionSelect={handleAddGroup}
+                                  onOptionSelect={(e, d) => handleAddGroup(g.id, e, d)}
                                 >
                                   {availableGroups.map((grp) => (
                                     <Option
@@ -1044,17 +1126,17 @@ export function Nodes() {
                             >
                               <Button
                                 appearance="secondary"
-                                onClick={collapseGroup}
+                                onClick={() => collapseGroup(g)}
                               >
                                 {t("common.cancel" as TK)}
                               </Button>
                               <Button
                                 appearance="primary"
-                                disabled={membersSaving}
-                                onClick={saveMembers}
+                                disabled={savingGroupId === g.id}
+                                onClick={() => saveMembers(g.id)}
                                 data-shortcut="save"
                               >
-                                {membersSaving
+                                {savingGroupId === g.id
                                   ? t("nodes.membersSaving" as TK)
                                   : t("common.save" as TK)}
                               </Button>

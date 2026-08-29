@@ -199,6 +199,8 @@ export interface ModelEntry {
   modalities: Record<string, unknown>;
   models_dev_id?: string | null;
   models_dev_synced_at?: string | null;
+  // Brand key (e.g. "claude", "deepseek", "openai") selecting the model's icon.
+  brand?: string | null;
   // Staff-visible upstream refs reachable through the route (slug/model).
   upstreams: string[];
   added_by_name?: string | null;
@@ -564,6 +566,7 @@ export interface AuthConfig {
   issuer: string;
   version: string;
   commit?: string | null;
+  chat_preset_questions?: string[];
 }
 
 export interface LoginTokenStatus {

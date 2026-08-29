@@ -244,6 +244,9 @@ class ModelOut(BaseModel):
     # models.dev mapping.
     models_dev_id: str | None = None
     models_dev_synced_at: dt.datetime | None = None
+    # Brand key (e.g. "claude", "deepseek", "openai") that selects the model's
+    # icon. Auto-derived from models.dev; overridable in the UI.
+    brand: str | None = None
     # Staff-visible upstream refs reachable through the route (slug/model).
     upstreams: list[str] = Field(default_factory=list)
     added_by_name: str | None = None
@@ -277,6 +280,8 @@ class ModelUpsert(BaseModel):
     modalities: dict | None = None
     # ""/null clears the models.dev mapping.
     models_dev_id: str | None = None
+    # Brand key for the icon; ""/null clears (fallback to auto-derivation).
+    brand: str | None = None
     category_id: int | None = None
 
 

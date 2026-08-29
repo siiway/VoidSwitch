@@ -1360,12 +1360,14 @@ function RequestLogs({
         </TableBody>
       </DataTable>
       </div>
-      <Pager
-        total={data.total}
-        offset={offset}
-        limit={pageSize}
-        onChange={setOffset}
-      />
+      {!liveEnabled && (
+        <Pager
+          total={data.total}
+          offset={offset}
+          limit={pageSize}
+          onChange={setOffset}
+        />
+      )}
 
       {/* Detail modal */}
       <Dialog

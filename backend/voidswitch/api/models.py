@@ -42,7 +42,6 @@ from voidswitch.models.schemas import (
     ModelCategoryUpdate,
     ModelCleanResult,
     ModelOut,
-    ModelSyncResult,
     ModelUpsert,
     ModelWithRouteOut,
     RouteOut,
@@ -123,6 +122,7 @@ def _to_out(item: ExposedModel) -> ModelOut:
         modalities=item.modalities or {},
         models_dev_id=item.models_dev_id,
         models_dev_synced_at=item.models_dev_synced_at,
+        brand=item.brand,
         upstreams=upstreams,
         added_by_name=item.added_by_name,
         created_at=item.created_at,
@@ -169,14 +169,12 @@ async def list_models(
     user: User = Depends(get_current_user),
 ) -> list[ModelOut]:
     catalog = await models_catalog.build_catalog(session)
-    # Members must not see hidden (disabled) models at all — only staff, who can
-    # manage them, get the full list with the "unavailable (hidden)" badge.
-    if not is_staff(user):
-        catalog = [i for i in catalog if i.enabled]
-    result = [_to_out(i) for i in catalog]
 
     # Passthrough virtual entries: each provider with passthrough_enabled
     # contributes its whitelisted models as ``provider-slug/exposed-model-id``.
+    # A passthrough id *takes over* the matching exposed-model id so the catalog
+    # never shows the same id twice (a leftover exposed-model row from the old
+    # 1:1 sync would otherwise render alongside its passthrough twin).
     passthrough_providers = (
         (
             await session.execute(
@@ -188,13 +186,20 @@ async def list_models(
         .scalars()
         .all()
     )
+    passthrough_ids: set[str] = set()
+    virtual: list[ModelOut] = []
     virtual_id = -1
     for provider in passthrough_providers:
+        seen: set[str] = set()
         for entry in provider.passthrough_models or []:
             parsed = _parse_passthrough_entry(entry)
             exposed_id = parsed["exposed"]
             model_id = f"{provider.slug}/{exposed_id}"
-            result.append(
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            passthrough_ids.add(model_id)
+            virtual.append(
                 ModelOut(
                     id=virtual_id,
                     model_id=model_id,
@@ -206,6 +211,17 @@ async def list_models(
                 )
             )
             virtual_id -= 1
+
+    result: list[ModelOut] = []
+    for item in catalog:
+        # Members must not see hidden (disabled) models at all.
+        if not is_staff(user) and not item.enabled:
+            continue
+        # Passthrough serves these ids directly — drop any stale duplicate.
+        if item.model_id in passthrough_ids:
+            continue
+        result.append(_to_out(item))
+    result.extend(virtual)
 
     return result
 
@@ -284,6 +300,9 @@ async def upsert_model(
             if value:
                 entry.models_dev_synced_at = dt.datetime.now(dt.UTC)
             continue
+        if field == "brand":
+            entry.brand = value or None
+            continue
         if field == "category_id":
             entry.category_id = await _validate_category_id(session, value)
             continue
@@ -354,30 +373,6 @@ async def batch_update_models(
         ip=request.client.host if request.client else None,
     )
     return ModelBatchResult(updated=len(ids))
-
-
-@router.post("/sync", response_model=ModelSyncResult)
-async def sync_models(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_staff),
-) -> ModelSyncResult:
-    """Auto-expose every currently-served upstream id with a 1:1 route."""
-    added, total = await models_catalog.sync_from_providers(
-        session, added_by=user.id, added_by_name=actor_display_name(user)
-    )
-    if added:
-        await record_audit(
-            session,
-            action=AuditAction.MODEL_SYNC,
-            actor_sub=user.sub,
-            actor_name=actor_display_name(user),
-            target_type="model",
-            detail={"added": added, "total": total},
-            ip=request.client.host if request.client else None,
-            scope=audit_scope_for(user),
-        )
-    return ModelSyncResult(added=added, total=total)
 
 
 @router.post("/clean", response_model=ModelCleanResult)
@@ -642,7 +637,7 @@ async def models_dev_search(
         if models_dev.sync_enabled()
         else []
     )
-    results = models_dev.search_cached(rows, q)
+    results = models_dev.search_models(rows, q)
     return {
         "results": results,
         "synced": models_dev.sync_enabled(),

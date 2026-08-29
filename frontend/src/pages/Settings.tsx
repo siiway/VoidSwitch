@@ -8,6 +8,7 @@ import {
   Spinner,
   Switch,
   Text,
+  Textarea,
   Tooltip,
   tokens,
 } from "@fluentui/react-components";
@@ -96,7 +97,11 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
   },
   {
     titleKey: "settings.sectionOpencode",
-    keys: ["opencode_default_model", "opencode_small_model"],
+    keys: [
+      "opencode_default_model",
+      "opencode_small_model",
+      "chat_preset_questions",
+    ],
   },
   {
     titleKey: "settings.sectionAnnouncements",
@@ -301,6 +306,7 @@ export function Settings() {
       proxy_probe_url: t("settings.proxyProbeUrl" as TK),
       opencode_default_model: t("settings.opencodeDefaultModel" as TK),
       opencode_small_model: t("settings.opencodeSmallModel" as TK),
+      chat_preset_questions: t("settings.chatPresetQuestions" as TK),
       audit_log_retention_days: t("settings.auditLogRetentionDays" as TK),
       request_log_retention_days: t("settings.requestLogRetentionDays" as TK),
       debug_log_retention_days: t("settings.debugLogRetentionDays" as TK),
@@ -330,6 +336,29 @@ export function Settings() {
     const value = values[key];
     const label = labels[key] ?? key;
 
+    if (key === "chat_preset_questions" && Array.isArray(value)) {
+      return (
+        <Field
+          key={key}
+          label={label}
+          hint={t("settings.chatPresetQuestionsHint" as TK)}
+        >
+          <Textarea
+            value={value.map((s) => String(s)).join("\n")}
+            disabled={!isOwner}
+            onChange={(_, d) =>
+              set(
+                key,
+                d.value
+                  .split("\n")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              )
+            }
+          />
+        </Field>
+      );
+    }
     if (typeof value === "boolean") {
       // The auto-cleanup toggle gets an inline "clean now" action (owner-only).
       if (key === "log_cleanup_enabled") {

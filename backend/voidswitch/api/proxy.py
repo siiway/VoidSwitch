@@ -345,20 +345,19 @@ async def _advertised_models(
     data: list[dict[str, object]] = []
     allowed = token.allowed_models or []
 
-    # Pre-load the models.dev entries referenced by any exposed model, once.
+    # Pre-load the models.dev registry once and resolve each exposed model's
+    # ``models_dev_id`` (a ``provider/model`` id) to its flattened model entry.
     dev_ids = [e.models_dev_id for e in entries if e.models_dev_id]
     md_by_id: dict[str, dict] = {}
     if dev_ids:
-        from sqlalchemy import select as _select
-
         from voidswitch.models.db import ModelsDevCache
+        from voidswitch.services import models_dev
 
-        rows = (
-            (await session.execute(_select(ModelsDevCache).where(ModelsDevCache.id.in_(dev_ids))))
-            .scalars()
-            .all()
-        )
-        md_by_id = {r.id: r.data or {} for r in rows}
+        rows = (await session.execute(select(ModelsDevCache))).scalars().all()
+        for dev_id in dev_ids:
+            entry_data = models_dev.resolve_model(rows, dev_id)
+            if entry_data is not None:
+                md_by_id[dev_id] = entry_data
 
     def _push(entry: ExposedModel) -> None:
         nonlocal data, seen, allowed, group_ids, is_mod, md_by_id

@@ -208,6 +208,14 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # the "view all" action is needed to open the rest. 0 = show none inline
     # (only the full-list dialog). The login popup always shows recent ones.
     "announcements_home_count": 3,
+    # Preset questions shown in the dashboard Chat page's empty state. A JSON
+    # list of strings; empty list = no presets. Editable by admins in Settings.
+    "chat_preset_questions": [
+        "Explain async/await in Python with a short example",
+        "Write a regex to validate an email address",
+        "Summarize the CAP theorem in three bullets",
+        "Refactor this loop into a list comprehension",
+    ],
     # Per-user abuse rate limits (sliding window, in-process, single-node).
     # Enforced for EVERYONE — including owners — with each user counted
     # independently. 0 max = disabled.

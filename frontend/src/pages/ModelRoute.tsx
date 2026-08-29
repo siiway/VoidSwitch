@@ -338,9 +338,17 @@ export function ModelRoute() {
         </Button>
         <Text size={600} weight="semibold" as="h1">
           {t("models.routeTitle" as TK).replace("{id}", "")}
-          <Text size={300} as="span" style={{ fontFamily: tokens.fontFamilyMonospace }}>
-            {decoded}
-          </Text>
+          <Tooltip content={t("common.copyId" as TK)} relationship="label">
+            <span
+              onClick={() => {
+                void navigator.clipboard?.writeText(decoded);
+                notify(t("common.copied" as TK), decoded, "success");
+              }}
+              style={{ cursor: "pointer", fontFamily: tokens.fontFamilyMonospace }}
+            >
+              {decoded}
+            </span>
+          </Tooltip>
         </Text>
         <span style={{ flex: 1 }} />
         <Button

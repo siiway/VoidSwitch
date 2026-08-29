@@ -120,20 +120,16 @@ async def _member_headers(sub: str = "member-1") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def test_member_can_view_but_not_sync(client, db, seeded):
+async def test_member_can_view_but_not_reshape(client, db, seeded):
     await _add_member(db)
     # Members may browse the catalog…
+    assert (await client.get("/api/models", headers=await _member_headers())).status_code == 200
+    # …but reshaping the shared catalog is staff-only. The old "sync from
+    # providers" auto-expose endpoint is gone: models are created by hand or
+    # via provider passthrough, so a member can't mass-create model configs.
     assert (
-        await client.get("/api/models", headers=await _member_headers())
-    ).status_code == 200
-    # …but syncing (reshaping the shared catalog) is staff-only now.
-    assert (
-        await client.post("/api/models/sync", headers=await _member_headers())
+        await client.put("/api/models", headers=await _member_headers(), json={"model_id": "x"})
     ).status_code == 403
-    # Staff can sync.
-    assert (
-        await client.post("/api/models/sync", headers=_session_headers())
-    ).status_code == 200
 
 
 async def test_member_does_not_see_hidden_models(client, db, seeded):
@@ -151,8 +147,7 @@ async def test_member_does_not_see_hidden_models(client, db, seeded):
     assert "deepseek-chat" not in member_ids
     # Staff still see it (to manage it).
     staff_ids = {
-        m["model_id"]
-        for m in (await client.get("/api/models", headers=_session_headers())).json()
+        m["model_id"] for m in (await client.get("/api/models", headers=_session_headers())).json()
     }
     assert "deepseek-chat" in staff_ids
 
