@@ -846,6 +846,34 @@ def _openai_text(content: Any) -> str:
     return str(content)
 
 
+def openai_roles_to_system(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map OpenAI ``developer`` messages down to ``system``.
+
+    Newer OpenAI clients increasingly emit ``role: "developer"`` for the system
+    prompt. Passthrough (OpenAI -> OpenAI) pushes messages through untouched, and
+    many OpenAI-compatible upstreams only accept ``['system', 'assistant',
+    'user', 'tool', 'function']``. Normalise before the request leaves so such
+    upstreams don't reject it with ``developer is not one of [...]``. The copy
+    is shallow; only the ``messages`` list and each message dict are rebuilt.
+    """
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return payload
+    rebuilt = []
+    changed = False
+    for msg in messages:
+        item = msg
+        if isinstance(msg, dict) and msg.get("role") == "developer":
+            item = {**msg, "role": "system"}
+            changed = True
+        rebuilt.append(item)
+    if not changed:
+        return payload
+    out = dict(payload)
+    out["messages"] = rebuilt
+    return out
+
+
 # =========================================================================== #
 # OpenAI Chat Completions  <->  OpenAI Responses
 #

@@ -863,6 +863,8 @@ def _prepare_body(
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
     body = _translate_request(req.inbound_style, upstream_style, req.payload)
     body = dict(body)
+    if upstream_style is ApiStyle.OPENAI:
+        body = transform.openai_roles_to_system(body)
     body["model"] = upstream_model
     if req.stream:
         body["stream"] = True

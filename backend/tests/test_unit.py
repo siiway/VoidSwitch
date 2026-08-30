@@ -108,6 +108,31 @@ async def test_openai_request_to_anthropic_system_and_tools():
     assert out["max_tokens"] == 100
 
 
+async def test_openai_roles_to_system():
+    payload = {
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "developer", "content": "be brief"},
+            {"role": "user", "content": "hi"},
+        ],
+    }
+    out = transform.openai_roles_to_system(payload)
+    assert out["messages"] == [
+        {"role": "system", "content": "be brief"},
+        {"role": "user", "content": "hi"},
+    ]
+    assert out["model"] == "gpt-4o"
+
+
+async def test_openai_roles_to_system_noop_without_developer():
+    payload = {
+        "model": "gpt-4o",
+        "messages": [{"role": "system", "content": "be brief"}],
+    }
+    out = transform.openai_roles_to_system(payload)
+    assert out is payload
+
+
 async def test_anthropic_request_to_openai_roundtrips_system():
     payload = {
         "model": "claude-3-5-haiku-latest",
