@@ -272,52 +272,89 @@ async def probe_node(
 async def _member_projection(session: AsyncSession, group: NodeGroup) -> NodeGroupOut:
     """Project a group (with its resolved members) into the response schema.
 
-    Builds a plain ``NodeGroupOut`` rather than mutating the ORM object — the
-    ``members`` relationship must stay a collection of ORM ``NodeGroupMember``
-    rows (assigning pydantic models to it breaks SQLAlchemy's instrumentation).
+    Builds a plain ``NodeGroupOut`` rather than mutating the ORM object. Members
+    are loaded with an explicit query (never via the ``group.members`` lazy
+    relationship, which triggers a MissingGreenlet when the group was just
+    created and its collection is still unloaded in this async session).
+
+    Direct nodes are ordered by their *computed* dynamic ranking (pinned first,
+    then by quality score), matching what the dispatcher actually tries; the
+    rank is exposed per-member so the UI can show the live order.
     """
+    # Never touch ``group.members`` directly — query the rows explicitly.
+    member_rows = (
+        (
+            await session.execute(
+                select(NodeGroupMember)
+                .where(NodeGroupMember.group_id == group.id)
+                .order_by(NodeGroupMember.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     groups_by_id = {
         g.id: g
         for g in (await session.execute(select(NodeGroup).where(NodeGroup.id != group.id)))
         .scalars()
         .all()
     }
+    node_ids = [m.node_id for m in member_rows if m.node_id is not None]
     nodes_by_id = {
         n.id: n
-        for n in (
-            await session.execute(
-                select(Node).where(
-                    Node.id.in_([m.node_id for m in group.members if m.node_id is not None] or [0])
-                )
-            )
-        )
+        for n in (await session.execute(select(Node).where(Node.id.in_(node_ids or [0]))))
         .scalars()
         .all()
     }
+
+    # Compute the dynamic order of this group's direct nodes (pinned first,
+    # then quality score), mirroring routing.group_routes.
+    direct_nodes = [nodes_by_id[nid] for nid in node_ids if nid in nodes_by_id]
+    pinned_ids = {m.node_id for m in member_rows if m.pinned and m.node_id is not None}
+    ranked = routing.rank_nodes(direct_nodes, pinned=pinned_ids)
+    rank_by_id = {n.id: idx for idx, n in enumerate(ranked)}
+
     members: list[NodeGroupMemberOut] = []
-    for member in group.members:
+    for member in member_rows:
         item = {
             "node_id": member.node_id,
             "source_group_id": member.source_group_id,
             "weight": member.weight,
+            "pinned": member.pinned,
             "node_url": None,
+            "node_note": None,
             "node_status": None,
             "node_latency_ms": None,
+            "node_latency_ewma": None,
             "source_group_name": None,
             "source_group_is_system": False,
+            "rank": None,
         }
         if member.node_id is not None:
             node = nodes_by_id.get(member.node_id)
             if node is not None:
                 item["node_url"] = node.url or "(direct)"
+                item["node_note"] = node.note
                 item["node_status"] = node.status if node.enabled else "disabled"
                 item["node_latency_ms"] = node.latency_ms
+                item["node_latency_ewma"] = node.latency_ewma
+                item["rank"] = rank_by_id.get(node.id)
         if member.source_group_id is not None:
             src = groups_by_id.get(member.source_group_id)
             if src is not None:
                 item["source_group_name"] = src.name
                 item["source_group_is_system"] = src.is_system
         members.append(NodeGroupMemberOut(**item))
+    # Sort: pinned direct nodes first by rank, then the rest, with inherited
+    # group refs kept after direct nodes (they resolve to their own nodes).
+    members.sort(
+        key=lambda m: (
+            0 if m.node_id is not None else 1,
+            0 if m.pinned else 1,
+            m.rank if m.rank is not None else 2**31,
+            m.node_id or 2**31,
+        )
+    )
     return NodeGroupOut(
         id=group.id,
         slug=group.slug,
@@ -436,6 +473,7 @@ async def create_node_group(
                 node_id=m.node_id,
                 source_group_id=m.source_group_id,
                 weight=max(1, m.weight),
+                pinned=m.pinned,
             )
         )
     await session.flush()
@@ -513,7 +551,14 @@ async def set_node_group_members(
             "Only owners/co-owners may edit the System node group.",
         )
     await _validate_members(session, group, body)
-    for member in list(group.members):
+    # Load existing member rows explicitly — ``group.members`` may be unloaded
+    # on a freshly fetched group and lazy-loading it can raise MissingGreenlet.
+    existing_members = (
+        (await session.execute(select(NodeGroupMember).where(NodeGroupMember.group_id == group.id)))
+        .scalars()
+        .all()
+    )
+    for member in existing_members:
         await session.delete(member)
     for m in body:
         session.add(
@@ -522,6 +567,7 @@ async def set_node_group_members(
                 node_id=m.node_id,
                 source_group_id=m.source_group_id,
                 weight=max(1, m.weight),
+                pinned=m.pinned,
             )
         )
     await session.flush()

@@ -10,7 +10,8 @@
 - **节点与路由** — 代理切换总开关（`proxy_switching_enabled`）：`true` = 节点/节点组路由系统开启；
   `false` = 关闭路由系统，每个请求走 `static_proxy_url`（或环境变量）。
   路由系统相关设置含 `node_default_probe_url`（默认探测 URL）、`node_probe_interval_seconds`
-  （空闲健康检查间隔）、`node_rank_alpha/beta/gamma`（节点动态排序的权重）、`max_retries`（每请求最大重试）
+  （空闲健康检查间隔）、`node_rank_alpha/beta/gamma`（节点动态排序的权重）、
+  `node_rank_ewma_half_life_seconds`（节点 EWMA 延迟的衰减半衰期）、`max_retries`（每请求最大重试）
   和 `max_proxy_failures`（节点禁用前的失败阈值）。
 - **密钥与余额** — 密钥失败限制、零余额密钥自动禁用以及余额探测/重新扫描节奏和速率。
 - **速率限制** — 默认恢复窗口和任何单次冷却的上限。
@@ -28,7 +29,9 @@
   （`heatmap_retention_days`）：控制台活跃度热力图所依赖的每日用量汇总的保留窗口，独立于请求日志保留。
   默认 365 天；`0` 表示永久保留，非零值不得少于 365 天（保存时会校验）。
 - **OpenCode 默认值** — 向插件发布的默认模型和小型模型。
-- **公告** — 控制台上显示多少条公告后才显示"查看全部"。
+- **模型与目录** — models.dev 占位元数据的同步间隔（`models_dev_sync_interval_minutes`，`0` = 禁用）。
+- **平台信息** — 控制台上显示多少条公告后才显示"查看全部"（`announcements_home_count`），以及
+  聊天页空状态里的**聊天预设问题**（`chat_preset_questions`，每行一个）。
 - **速率限制（滥用防护）** — 两个每用户滑动窗口限制，每个设置为
   "在 N 秒内，最多 X 个请求"（0 = 无限制）：
   - **运维操作** — 变更型控制台操作（添加/编辑/删除/保存）。

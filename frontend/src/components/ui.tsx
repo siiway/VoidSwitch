@@ -254,6 +254,14 @@ export function PageHeader({
   const [spinning, setSpinning] = useState(false);
   const spin = spinning || !!refreshing;
 
+  // Reflect the page title in the browser tab, dynamically.
+  useEffect(() => {
+    document.title = title ? `VoidSwitch | ${title}` : "VoidSwitch";
+    return () => {
+      document.title = "VoidSwitch";
+    };
+  }, [title]);
+
   const handleRefresh = useCallback(() => {
     if (!onRefresh) return;
     setSpinning(true);

@@ -499,6 +499,9 @@ class NodeGroupMember(Base):
     source_group_id: Mapped[int | None] = mapped_column(
         ForeignKey("node_groups.id", ondelete="CASCADE"), default=None, index=True
     )
+    # Pinned nodes are always tried first within a group (independently ranked),
+    # regardless of their dynamic quality score.
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     weight: Mapped[int] = mapped_column(Integer, default=1)
 
     group: Mapped[NodeGroup] = relationship(

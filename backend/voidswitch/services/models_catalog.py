@@ -79,6 +79,24 @@ async def build_catalog(session: AsyncSession) -> list[ExposedModel]:
     return sorted(rows, key=lambda m: (m.model_id or "").lower())
 
 
+def is_unserved(exposed: ExposedModel, providers_by_id: dict[int, Provider]) -> bool:
+    """Whether an exposed model's route resolves to no enabled upstream.
+
+    Mirrors the deletion logic in :func:`clean_unserved` so the catalog can flag
+    the same models the clean action would remove.
+    """
+    route = exposed.route
+    if route is None:
+        return True
+    return not any(
+        entry.enabled
+        and entry.provider_id is not None
+        and providers_by_id.get(entry.provider_id) is not None
+        for layer in route.layers
+        for entry in layer.entries
+    )
+
+
 async def clean_unserved(session: AsyncSession) -> tuple[int, list[str]]:
     """Delete exposed models whose route resolves to no enabled upstream.
 
@@ -94,19 +112,7 @@ async def clean_unserved(session: AsyncSession) -> tuple[int, list[str]]:
     for exposed in rows:
         if exposed.model_id in passthrough:
             continue
-        route = exposed.route
-        if route is None:
-            removed.append(exposed.model_id)
-            await session.delete(exposed)
-            continue
-        usable = any(
-            entry.enabled
-            and entry.provider_id is not None
-            and providers_by_id.get(entry.provider_id) is not None
-            for layer in route.layers
-            for entry in layer.entries
-        )
-        if not usable:
+        if is_unserved(exposed, providers_by_id):
             removed.append(exposed.model_id)
             await session.delete(exposed)
     if removed:

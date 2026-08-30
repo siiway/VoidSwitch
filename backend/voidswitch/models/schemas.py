@@ -258,6 +258,9 @@ class ModelOut(BaseModel):
     category_slug: str | None = None
     # True when this is a virtual passthrough model entry (not a real ExposedModel).
     provider: bool = False
+    # True when the model's route resolves to no enabled upstream (would be
+    # removed by the "clean unserved" action).
+    unserved: bool = False
 
 
 class ModelUpsert(BaseModel):
@@ -555,6 +558,8 @@ class NodeGroupMemberIn(BaseModel):
     node_id: int | None = None
     source_group_id: int | None = None
     weight: int = 1
+    # Pinned nodes are always tried first within a group, independent of score.
+    pinned: bool = False
 
 
 class NodeGroupCreate(BaseModel):
@@ -576,12 +581,18 @@ class NodeGroupMemberOut(BaseModel):
     node_id: int | None = None
     source_group_id: int | None = None
     weight: int = 1
+    pinned: bool = False
     # Convenience projection for the UI.
     node_url: str | None = None
+    node_note: str | None = None
     node_status: str | None = None
     node_latency_ms: float | None = None
+    node_latency_ewma: float | None = None
     source_group_name: str | None = None
     source_group_is_system: bool = False
+    # Position of this direct node in the group's computed dynamic ranking
+    # (0-based; None for inherited-group refs).
+    rank: int | None = None
 
 
 class NodeGroupOut(BaseModel):

@@ -63,6 +63,7 @@ import {
   useDebouncedValue,
   useNotify,
 } from "../components/ui";
+import { useLiveLogCap } from "../lib/prefs";
 
 const DEFAULT_PAGE = 50;
 
@@ -75,10 +76,6 @@ const REQ_STATUS_VALUES: string[] = [
   "error",
   "terminated",
 ];
-
-// Max rows kept from the live SSE stream before older ones are dropped, so a
-// long-lived stream can't grow the table without bound.
-const LIVE_ROW_CAP = 200;
 
 const REQ_STATUS_LABEL: Record<string, string> = {
   pending: "logs.reqStatusPending",
@@ -771,6 +768,7 @@ function RequestLogs({
   const hl = useHighlightStyles();
   const cellStyles = useFilterStyles();
   const notify = useNotify();
+  const [liveLogCap] = useLiveLogCap();
   const [searchParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
   const [filters, setFilters] = useState<RequestFilters>(() =>
@@ -869,12 +867,12 @@ function RequestLogs({
       setLiveRows((prev) => {
         const next = prev.filter((p) => p.id !== row.id);
         next.unshift(row);
-        return next.slice(0, LIVE_ROW_CAP);
+        return next.slice(0, liveLogCap);
       });
       // Jump to page one so the freshly-arrived rows are visible.
       if (offset !== 0) setOffset(0);
     },
-    [offset],
+    [offset, liveLogCap],
   );
 
   useLogStream({

@@ -27,7 +27,7 @@ import {
   useConfirm,
   useNotify,
 } from "../components/ui";
-import { useOverTimeMode, type OverTimeMode } from "../lib/prefs";
+import { useOverTimeMode, useLiveLogCap, type OverTimeMode } from "../lib/prefs";
 import { shortcutHint } from "../lib/useShortcuts";
 
 type TK = keyof Translations;
@@ -48,6 +48,12 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
       "proxy_probe_interval_seconds",
       "proxy_health_check_enabled",
       "proxy_probe_url",
+      "node_default_probe_url",
+      "node_probe_interval_seconds",
+      "node_rank_alpha",
+      "node_rank_beta",
+      "node_rank_gamma",
+      "node_rank_ewma_half_life_seconds",
     ],
   },
   {
@@ -100,12 +106,15 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
     keys: [
       "opencode_default_model",
       "opencode_small_model",
-      "chat_preset_questions",
     ],
   },
   {
-    titleKey: "settings.sectionAnnouncements",
-    keys: ["announcements_home_count"],
+    titleKey: "settings.sectionModels",
+    keys: ["models_dev_sync_interval_minutes"],
+  },
+  {
+    titleKey: "settings.sectionPlatformInfo",
+    keys: ["announcements_home_count", "chat_preset_questions"],
   },
 ];
 
@@ -150,6 +159,7 @@ export function Settings() {
   const confirm = useConfirm();
   const { isOwner } = useAuth();
   const [overTimeMode, setOverTimeMode] = useOverTimeMode();
+  const [liveLogCap, setLiveLogCap] = useLiveLogCap();
   const loaded = useAsync<SettingsResponse>(() =>
     api.get("/api/admin/settings"),
   );
@@ -320,6 +330,17 @@ export function Settings() {
       max_connections: t("settings.maxConnections" as TK),
       max_keepalive_connections: t("settings.maxKeepaliveConnections" as TK),
       announcements_home_count: t("settings.announcementsHomeCount" as TK),
+      node_default_probe_url: t("settings.nodeDefaultProbeUrl" as TK),
+      node_probe_interval_seconds: t("settings.nodeProbeInterval" as TK),
+      node_rank_alpha: t("settings.nodeRankAlpha" as TK),
+      node_rank_beta: t("settings.nodeRankBeta" as TK),
+      node_rank_gamma: t("settings.nodeRankGamma" as TK),
+      node_rank_ewma_half_life_seconds: t(
+        "settings.nodeRankEwmaHalfLife" as TK,
+      ),
+      models_dev_sync_interval_minutes: t(
+        "settings.modelsDevSyncInterval" as TK,
+      ),
     }),
     [t],
   );
@@ -619,6 +640,20 @@ export function Settings() {
                 {t("settings.statsModeC" as TK)}
               </Option>
             </Dropdown>
+          </Field>
+          <Field
+            label={t("settings.liveLogRowCap" as TK)}
+            hint={t("settings.liveLogRowCapHint" as TK)}
+          >
+            <SpinButton
+              value={liveLogCap}
+              min={1}
+              onChange={(_, d) => {
+                const next = d.value ?? (d.displayValue ? Number(d.displayValue) : liveLogCap);
+                if (next != null && !Number.isNaN(next) && next >= 1)
+                  setLiveLogCap(Math.floor(next));
+              }}
+            />
           </Field>
         </div>
         {sections.map((section) => {

@@ -135,11 +135,15 @@ export interface NodeGroupMember {
   node_id?: number | null;
   source_group_id?: number | null;
   weight: number;
+  pinned?: boolean;
   node_url?: string | null;
+  node_note?: string | null;
   node_status?: string | null;
   node_latency_ms?: number | null;
+  node_latency_ewma?: number | null;
   source_group_name?: string | null;
   source_group_is_system?: boolean;
+  rank?: number | null;
 }
 
 export interface NodeGroup {
@@ -212,6 +216,8 @@ export interface ModelEntry {
   category_slug?: string | null;
   // True when this is a virtual passthrough model entry (not a real ExposedModel).
   provider?: boolean;
+  // True when the model's route resolves to no enabled upstream.
+  unserved?: boolean;
 }
 
 export interface ModelCategory {

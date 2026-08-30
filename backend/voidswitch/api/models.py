@@ -90,7 +90,11 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def _to_out(item: ExposedModel) -> ModelOut:
+def _to_out(
+    item: ExposedModel,
+    *,
+    providers_by_id: dict[int, Provider] | None = None,
+) -> ModelOut:
     upstreams = []
     route = item.route
     if route is not None:
@@ -106,6 +110,9 @@ def _to_out(item: ExposedModel) -> ModelOut:
                     continue
                 slug = provider.slug or provider.name
                 upstreams.append(f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug)
+    unserved = (
+        models_catalog.is_unserved(item, providers_by_id) if providers_by_id is not None else False
+    )
     return ModelOut(
         id=item.id,
         model_id=item.model_id,
@@ -130,6 +137,7 @@ def _to_out(item: ExposedModel) -> ModelOut:
         category_id=item.category_id,
         category_name=item.category.name if item.category is not None else None,
         category_slug=item.category.slug if item.category is not None else None,
+        unserved=unserved,
     )
 
 
@@ -212,6 +220,16 @@ async def list_models(
             )
             virtual_id -= 1
 
+    # Enabled providers by id, used to flag unserved exposed models.
+    enabled_providers = {
+        p.id: p
+        for p in (
+            (await session.execute(select(Provider).where(Provider.enabled.is_(True))))
+            .scalars()
+            .all()
+        )
+    }
+
     result: list[ModelOut] = []
     for item in catalog:
         # Members must not see hidden (disabled) models at all.
@@ -220,7 +238,7 @@ async def list_models(
         # Passthrough serves these ids directly — drop any stale duplicate.
         if item.model_id in passthrough_ids:
             continue
-        result.append(_to_out(item))
+        result.append(_to_out(item, providers_by_id=enabled_providers))
     result.extend(virtual)
 
     return result
@@ -417,6 +435,61 @@ async def delete_model(
         target_type="model",
         target_id=entry_id,
         detail={"model_id": model_id},
+        ip=request.client.host if request.client else None,
+    )
+
+
+@router.delete("/passthrough/{slug}/{exposed}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_passthrough_model(
+    slug: str,
+    exposed: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> None:
+    """Remove a passthrough model from its provider's whitelist.
+
+    The model's id is ``slug/exposed``. Deletes the matching entry(ies) from the
+    provider's ``passthrough_models`` list and drops any stale exposed-model
+    metadata row carrying the same id.
+    """
+    provider = (
+        await session.execute(
+            select(Provider).where(Provider.slug == slug, Provider.passthrough_enabled.is_(True))
+        )
+    ).scalar_one_or_none()
+    if provider is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Passthrough provider not found.")
+    kept: list[str] = []
+    removed = 0
+    for entry in provider.passthrough_models or []:
+        parsed = _parse_passthrough_entry(entry)
+        if parsed["exposed"] == exposed:
+            removed += 1
+            continue
+        kept.append(entry)
+    if removed:
+        provider.passthrough_models = kept
+    # Clean any leftover exposed-model metadata for this id.
+    stale = (
+        await session.execute(
+            select(ExposedModel).where(ExposedModel.model_id == f"{slug}/{exposed}")
+        )
+    ).scalar_one_or_none()
+    if stale is not None:
+        await session.delete(stale)
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.MODEL_DELETE,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="model",
+        detail={
+            "model_id": f"{slug}/{exposed}",
+            "provider_id": provider.id,
+            "passthrough_removed": removed,
+        },
         ip=request.client.host if request.client else None,
     )
 

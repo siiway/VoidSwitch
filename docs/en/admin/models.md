@@ -25,13 +25,20 @@ Route flowcharts are edited on a **dedicated page**: top model â†’ layer pools â
 
 Staff can click **Create model** to register a new `model_id` (leave the display name
 empty and a placeholder is auto-generated from the `model_id`). Optionally, pick a
-**provider + upstream model** to pre-fill the first route layer. A category can be
-assigned at creation time.
+**provider + upstream model** to pre-fill the first route layer. A group can be
+assigned at creation time (the **Create group** button sits between **Clean up unserved**
+and **Create model** at the top of the page).
 
-Categories group models (e.g. "Coding", "Writing"). The **Models** page supports
-filtering by category; models without a category are **Uncategorized**. Provider
-passthrough models appear under their provider's name as a virtual category with a
+Groups group models (e.g. "Coding", "Writing"). The **Models** page supports
+filtering by group; models without a group are **Ungrouped**. Provider passport-through
+models appear under their **provider's name** (not its id/slug) as a virtual group with a
 **Provider** badge.
+
+## Provider passthrough models
+
+Passthrough models are served directly by their provider and bypass the routing system, so they
+**have no Route button**. To delete one, click its **Delete** button: this removes the model from the
+provider's passthrough list and cleans up any residual model metadata.
 
 ## Per-exposed-model metadata
 

@@ -227,7 +227,8 @@ export function displayNamePlaceholder(modelId: string): string {
     .join(" ");
 }
 
-function providerNameOf(m: ModelEntry): string {
+function providerSlugOf(m: ModelEntry): string {
+  if (m.category_slug) return m.category_slug;
   const id = m.model_id ?? "";
   const slash = id.indexOf("/");
   if (slash > 0) return id.slice(0, slash);
@@ -237,6 +238,13 @@ function providerNameOf(m: ModelEntry): string {
     return s > 0 ? u.slice(0, s) : u;
   }
   return "";
+}
+
+function providerNameOf(m: ModelEntry): string {
+  // Passthrough virtual entries carry the provider's display name in
+  // ``category_name`` (e.g. "Claude Code"), not the id/slug.
+  if (m.category_name) return m.category_name;
+  return providerSlugOf(m);
 }
 
 // Auto-fill an edit form from a models.dev model entry (leave existing values
@@ -514,24 +522,29 @@ export function Models() {
         match = (m.category_id == null) && !m.provider;
       else if (filterCategory.startsWith("provider:")) {
         const slug = filterCategory.slice("provider:".length);
-        match = !!m.provider && providerNameOf(m) === slug;
+        match = !!m.provider && providerSlugOf(m) === slug;
       } else
         match = String(m.category_id ?? "") === filterCategory;
     }
     return match;
   });
 
-// Unserved = exposed models with no reachable upstream. Passthrough virtual
-// models (``provider`` bit set) are served directly by their provider, so they
-// are never "unserved" even though they carry no route/upstreams.
-const unserved = items.filter((m) => !m.provider && (m.upstreams ?? []).length === 0);
-const cleanable = items.filter((m) => !m.provider && (m.upstreams ?? []).length === 0);
+// Unserved = exposed models whose route resolves to no enabled upstream. The
+// backend computes ``unserved`` with the same logic the clean action deletes,
+// so the count shown in the confirm matches exactly what gets removed.
+const unserved = items.filter((m) => !m.provider && m.unserved === true);
+const cleanable = items.filter((m) => !m.provider && m.unserved === true);
 
-  const providerPassthroughSlugs = Array.from(
-    new Set(
-      items.filter((m) => m.provider).map(providerNameOf).filter(Boolean),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
+  const providerPassthrough = Array.from(
+    new Map(
+      items
+        .filter((m) => m.provider)
+        .map((m) => [providerSlugOf(m), providerNameOf(m)] as const)
+        .filter(([slug]) => Boolean(slug)),
+    ).entries(),
+  )
+    .map(([slug, name]) => ({ slug, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   // Group the filtered models by category (manual / provider passthrough /
   // uncategorized), preserving a stable order even when "all" is shown.
@@ -555,7 +568,7 @@ const cleanable = items.filter((m) => !m.provider && (m.upstreams ?? []).length 
       let label: string;
       let provider = false;
       if (m.provider) {
-        key = `provider:${providerNameOf(m)}`;
+        key = `provider:${providerSlugOf(m)}`;
         label = providerNameOf(m);
         provider = true;
       } else if (m.category_id != null) {
@@ -591,7 +604,8 @@ const cleanable = items.filter((m) => !m.provider && (m.upstreams ?? []).length 
       return t("models.filterUncategorized" as TK);
     if (filterCategory.startsWith("provider:")) {
       const slug = filterCategory.slice("provider:".length);
-      return `${slug} · ${t("models.providerBadge" as TK)}`;
+      const name = providerPassthrough.find((p) => p.slug === slug)?.name ?? slug;
+      return `${name} · ${t("models.providerBadge" as TK)}`;
     }
     const cat = (categories.data ?? []).find(
       (c) => String(c.id) === filterCategory,
@@ -908,16 +922,28 @@ const cleanable = items.filter((m) => !m.provider && (m.upstreams ?? []).length 
   }
 
   async function remove(m: ModelEntry) {
-    if (m.id == null) return;
+    const isPassthrough = !!m.provider;
+    if (!isPassthrough && m.id == null) return;
     const ok = await confirm({
       title: t("models.deleteTitle" as TK),
-      message: t("models.deleteMsgServed" as TK).replace("{id}", m.model_id),
+      message: isPassthrough
+        ? t("models.deleteMsgPassthrough" as TK).replace("{id}", m.model_id)
+        : t("models.deleteMsgServed" as TK).replace("{id}", m.model_id),
       confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
     try {
-      await api.del(`/api/models/${m.id}`);
+      if (isPassthrough) {
+        const slash = m.model_id.indexOf("/");
+        const slug = m.model_id.slice(0, slash);
+        const exposed = m.model_id.slice(slash + 1);
+        await api.del(
+          `/api/models/passthrough/${encodeURIComponent(slug)}/${encodeURIComponent(exposed)}`,
+        );
+      } else {
+        await api.del(`/api/models/${m.id}`);
+      }
       notify(t("models.metadataRemoved" as TK), m.model_id, "success");
       catalog.reload();
     } catch (e) {
@@ -957,6 +983,14 @@ const cleanable = items.filter((m) => !m.provider && (m.upstreams ?? []).length 
                     : t("models.clean" as TK)}
                 </Button>
               </Tooltip>
+            )}
+            {isStaff && (
+              <Button
+                icon={<FolderAddRegular />}
+                onClick={() => setCategoryOpen(true)}
+              >
+                {t("models.createCategory" as TK)}
+              </Button>
             )}
             {isStaff && (
               <Button
@@ -1061,8 +1095,8 @@ const cleanable = items.filter((m) => !m.provider && (m.upstreams ?? []).length 
           {(categories.data ?? []).map((c) => (
             <Option key={c.id} value={String(c.id)}>{c.name}</Option>
           ))}
-          {providerPassthroughSlugs.map((slug) => {
-            const label = `${slug} · ${t("models.providerBadge" as TK)}`;
+          {providerPassthrough.map(({ slug, name }) => {
+            const label = `${name} · ${t("models.providerBadge" as TK)}`;
             return (
               <Option key={`provider:${slug}`} value={`provider:${slug}`} text={label}>
                 {label}
@@ -1070,16 +1104,6 @@ const cleanable = items.filter((m) => !m.provider && (m.upstreams ?? []).length 
             );
           })}
         </Dropdown>
-        {isStaff && (
-          <Tooltip content={t("models.createCategory" as TK)} relationship="label">
-            <Button
-              aria-label={t("models.createCategory" as TK)}
-              appearance="subtle"
-              icon={<FolderAddRegular />}
-              onClick={() => setCategoryOpen(true)}
-            />
-          </Tooltip>
-        )}
         {isStaff && (
           <Dropdown
             aria-label={t("models.filterGroup" as TK)}
@@ -1224,15 +1248,17 @@ const cleanable = items.filter((m) => !m.provider && (m.upstreams ?? []).length 
 
                           {isStaff && (
                             <div className={styles.actions}>
-                              <Tooltip content={t("models.route" as TK)} relationship="label">
-                                <Button
-                                  size="small"
-                                  appearance="subtle"
-                                  icon={<ArrowRoutingRegular />}
-                                  onClick={() => navigate(`/models/${encodeURIComponent(m.model_id)}/route`)}
-                                  aria-label={t("models.route" as TK)}
-                                />
-                              </Tooltip>
+                              {!m.provider && (
+                                <Tooltip content={t("models.route" as TK)} relationship="label">
+                                  <Button
+                                    size="small"
+                                    appearance="subtle"
+                                    icon={<ArrowRoutingRegular />}
+                                    onClick={() => navigate(`/models/${encodeURIComponent(m.model_id)}/route`)}
+                                    aria-label={t("models.route" as TK)}
+                                  />
+                                </Tooltip>
+                              )}
                               <Tooltip content={t("common.edit" as TK)} relationship="label">
                                 <Button
                                   size="small"

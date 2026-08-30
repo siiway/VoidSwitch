@@ -262,13 +262,25 @@ export function Providers() {
     let list = providers.data;
     const s = providerSearch.trim().toLowerCase();
     if (s) {
-      list = list.filter((p) =>
-        p.name.toLowerCase().includes(s) ||
-        p.type.toLowerCase().includes(s) ||
-        (p.base_url ?? "").toLowerCase().includes(s) ||
-        (p.added_by_name ?? "").toLowerCase().includes(s) ||
-        (p.models ?? []).some((m) => m.toLowerCase().includes(s))
-      );
+      // Rank each provider by the highest-priority field that matches, then
+      // sort best-first: id/slug > name > type > base URL > model id > added by.
+      list = list
+        .map((p) => {
+          let rank = 6;
+          if (String(p.id).toLowerCase().includes(s)) rank = Math.min(rank, 0);
+          if ((p.slug ?? "").toLowerCase().includes(s)) rank = Math.min(rank, 0);
+          if (p.name.toLowerCase().includes(s)) rank = Math.min(rank, 1);
+          if (p.type.toLowerCase().includes(s)) rank = Math.min(rank, 2);
+          if ((p.base_url ?? "").toLowerCase().includes(s)) rank = Math.min(rank, 3);
+          if ((p.models ?? []).some((m) => m.toLowerCase().includes(s)))
+            rank = Math.min(rank, 4);
+          if ((p.added_by_name ?? "").toLowerCase().includes(s))
+            rank = Math.min(rank, 5);
+          return { p, rank };
+        })
+        .filter(({ rank }) => rank < 6)
+        .sort((a, b) => a.rank - b.rank || a.p.id - b.p.id)
+        .map(({ p }) => p);
     }
     if (providerFilterType) {
       list = list.filter((p) => p.type === providerFilterType);

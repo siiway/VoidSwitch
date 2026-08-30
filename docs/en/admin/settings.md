@@ -11,8 +11,9 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
   node-group routing system is on; `false` = routing is off and every request goes through
   `static_proxy_url` (or the environment). Routing-related settings include `node_default_probe_url` (default
   probe URL), `node_probe_interval_seconds` (idle health-check interval), `node_rank_alpha/beta/gamma`
-  (weights for dynamic node ordering), `max_retries` (max retries per request), and `max_proxy_failures`
-  (failure threshold before a node is disabled).
+  (weights for dynamic node ordering), `node_rank_ewma_half_life_seconds` (decay half-life of a node's EWMA
+  latency), `max_retries` (max retries per request), and `max_proxy_failures` (failure threshold before a
+  node is disabled).
 - **Keys & Balance** — key failure limit, auto-disable for zero-balance keys, and balance probe/rescan cadence and rate.
 - **Rate Limiting** — the default recovery window and the cap on any single cooldown.
 - **Timeouts & Retries** — connection / request / stream-idle timeouts, the retry budget, plus a
@@ -33,7 +34,11 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
   (`heatmap_retention_days`): the retention window for the daily usage aggregates that the dashboard activity heatmap relies on, independent of request log retention.
   The default is 365 days; `0` means keep forever, and a non-zero value must not be less than 365 days (validated on save).
 - **OpenCode defaults** — the default model and small model published to the plugin.
-- **Announcements** — how many announcements to show on the dashboard before showing "View all".
+- **Models & catalog** — the models.dev placeholder-metadata sync interval
+  (`models_dev_sync_interval_minutes`, `0` = disabled).
+- **Platform info** — how many announcements to show on the dashboard before "View all"
+  (`announcements_home_count`), and the **chat preset questions** (`chat_preset_questions`, one per line)
+  shown in the chat page's empty state.
 - **Rate Limiting (abuse protection)** — two per-user sliding-window limits, each set as
   "at most X requests within N seconds" (0 = unlimited):
   - **Operational actions** — mutating dashboard actions (add/edit/delete/save).

@@ -1628,6 +1628,14 @@ async def _build_stream(
         # cancelled rather than a clean completion.
         req_status = "cancelled"
         raise
+    except httpx.TransportError as exc:
+        # The upstream closed the connection mid-stream (incomplete chunked
+        # read, peer reset, …). Bytes are already flowing to the client, so a
+        # traceback would only flood the logs: record a concise error, persist
+        # usage in the finally block, and let the stream end cleanly.
+        req_status = "error"
+        stream_error = f"upstream connection closed: {type(exc).__name__}: {exc}"
+        log.warning("stream_upstream_closed", log_id=log_id, error=stream_error)
     except Exception:
         req_status = "error"
         raise
