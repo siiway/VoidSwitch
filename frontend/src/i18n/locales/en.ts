@@ -503,6 +503,12 @@ const en = {
     noDescription: "No description",
     editModel: "Edit model",
     editSelected: "Edit selected ({count})",
+    deleteSelected: "Delete selected ({count})",
+    batchDeleteTitle: "Delete selected models",
+    batchDeleteMsg:
+      "Delete {count} model(s)? Exposed models are removed from the catalog; passthrough models are removed from their provider's whitelist.",
+    batchDeleted: "Models deleted",
+    batchDeletedDetail: "{count} model(s) deleted.",
     selectFiltered: "Select filtered ({count})",
     clearSelection: "Clear selection ({count})",
     modelId: "Model id",

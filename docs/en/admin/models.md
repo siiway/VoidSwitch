@@ -62,7 +62,7 @@ For any exposed model, staff can set:
 
 Structured fields **>** custom `opencode_config` **>** models.dev placeholder **>** defaults.
 
-## Bulk edit
+## Bulk edit / delete
 
 Apply the same change to multiple models at once — description, enabled state, allowed role groups,
 OpenCode config, capabilities, reasoning, limits, or category.
@@ -73,6 +73,9 @@ For OpenCode config, choose:
 
 - **Merge** — deep-merge into each model's existing config (nested dicts merge, lists/scalars replace); or
 - **Overwrite** — replace entirely.
+
+With a selection you can also **Delete selected**: exposed models leave the catalog; passthrough models
+are removed from their provider's whitelist (`POST /api/models/batch-delete`).
 
 ## Access control
 

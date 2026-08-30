@@ -708,6 +708,13 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
         ),
         "success",
       );
+      if (r.model_ids?.length) {
+        const gone = new Set(r.model_ids);
+        setSelected((prev) => {
+          const next = new Set([...prev].filter((id) => !gone.has(id)));
+          return next.size === prev.size ? prev : next;
+        });
+      }
       catalog.reload();
     } catch (e) {
       notify(
@@ -945,6 +952,12 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
         await api.del(`/api/models/${m.id}`);
       }
       notify(t("models.metadataRemoved" as TK), m.model_id, "success");
+      setSelected((prev) => {
+        if (!prev.has(m.model_id)) return prev;
+        const next = new Set(prev);
+        next.delete(m.model_id);
+        return next;
+      });
       catalog.reload();
     } catch (e) {
       notify(
@@ -952,6 +965,42 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
         e instanceof Error ? e.message : String(e),
         "error",
       );
+    }
+  }
+
+  async function removeSelected() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const ok = await confirm({
+      title: t("models.batchDeleteTitle" as TK),
+      message: t("models.batchDeleteMsg" as TK)
+        .replace("{count}", String(ids.length))
+        .concat("\n", ids.map((id) => `• ${id}`).join("\n")),
+      confirmLabel: t("common.delete" as TK),
+      tone: "danger",
+    });
+    if (!ok) return;
+    setSaving(true);
+    try {
+      const r = await api.post<{ deleted: number; model_ids: string[] }>(
+        "/api/models/batch-delete",
+        { model_ids: ids },
+      );
+      notify(
+        t("models.batchDeleted" as TK),
+        t("models.batchDeletedDetail" as TK).replace("{count}", String(r.deleted)),
+        "success",
+      );
+      setSelected(new Set());
+      catalog.reload();
+    } catch (e) {
+      notify(
+        t("common.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -966,6 +1015,15 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
             {isStaff && selected.size > 0 && (
               <Button icon={<EditRegular />} onClick={openBatch}>
                 {t("models.editSelected" as TK).replace("{count}", String(selected.size))}
+              </Button>
+            )}
+            {isStaff && selected.size > 0 && (
+              <Button
+                icon={<DeleteRegular />}
+                disabled={saving}
+                onClick={removeSelected}
+              >
+                {t("models.deleteSelected" as TK).replace("{count}", String(selected.size))}
               </Button>
             )}
             {isStaff && unserved.length > 0 && (

@@ -304,6 +304,37 @@ async def test_delete_removes_exposed_model(client, seeded):
     assert all(m["model_id"] != "deepseek-chat" for m in listed)
 
 
+async def test_upsert_returns_model_without_greenlet_error(client, seeded):
+    """PUT /api/models must not MissingGreenlet when projecting route upstreams."""
+    resp = await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "description": "round-trip"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["model_id"] == "deepseek-chat"
+    assert body["description"] == "round-trip"
+    assert isinstance(body.get("upstreams"), list)
+
+
+async def test_batch_delete_models(client, db, seeded):
+    await _add_exposed(db, "batch-del-a")
+    await _add_exposed(db, "batch-del-b")
+    resp = await client.post(
+        "/api/models/batch-delete",
+        headers=_session_headers(),
+        json={"model_ids": ["batch-del-a", "batch-del-b", "missing-no-op"]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deleted"] == 2
+    assert set(resp.json()["model_ids"]) == {"batch-del-a", "batch-del-b"}
+    listed = (await client.get("/api/models", headers=_session_headers())).json()
+    ids = {m["model_id"] for m in listed}
+    assert "batch-del-a" not in ids
+    assert "batch-del-b" not in ids
+
+
 async def test_clean_unserved_removes_models_without_route(client, db, seeded):
     # Create an exposed model with an empty route (no usable upstream).
     await _add_exposed(db, "orphan-model")

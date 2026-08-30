@@ -35,6 +35,7 @@ from voidswitch.models.db import (
     User,
 )
 from voidswitch.models.schemas import (
+    ModelBatchDelete,
     ModelBatchResult,
     ModelBatchUpdate,
     ModelCategoryCreate,
@@ -343,9 +344,16 @@ async def upsert_model(
         },
         ip=request.client.host if request.client else None,
     )
-    entry = await session.get(ExposedModel, entry.id)
-    if entry is None:  # pragma: no cover - just written above
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Model not found.")
+    # Expire + re-select so selectin relationships (route → layers → entries)
+    # reload. session.get alone returns the identity-map instance whose route
+    # may still be unloaded after get_or_create_route; accessing it in sync
+    # _to_out raises MissingGreenlet under asyncpg. Capture the PK before
+    # expire — reading entry.id afterwards would itself lazy-load.
+    entry_id = entry.id
+    session.expire(entry)
+    entry = (
+        await session.execute(select(ExposedModel).where(ExposedModel.id == entry_id))
+    ).scalar_one()
     return _to_out(entry)
 
 
@@ -391,6 +399,79 @@ async def batch_update_models(
         ip=request.client.host if request.client else None,
     )
     return ModelBatchResult(updated=len(ids))
+
+
+@router.post("/batch-delete", response_model=ModelCleanResult)
+async def batch_delete_models(
+    body: ModelBatchDelete,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> ModelCleanResult:
+    """Delete many models by public id (exposed rows and/or passthrough entries)."""
+    ids = [m.strip() for m in body.model_ids if m and m.strip()]
+    if not ids:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "model_ids is required.")
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for mid in ids:
+        if mid in seen:
+            continue
+        seen.add(mid)
+        ordered.append(mid)
+
+    removed: list[str] = []
+    # Passthrough: strip matching whitelist entries from each provider.
+    passthrough_providers = (
+        (await session.execute(select(Provider).where(Provider.passthrough_enabled.is_(True))))
+        .scalars()
+        .all()
+    )
+    for mid in ordered:
+        slash = mid.find("/")
+        if slash <= 0:
+            continue
+        slug, exposed = mid[:slash], mid[slash + 1 :]
+        for provider in passthrough_providers:
+            if provider.slug != slug:
+                continue
+            kept: list[str] = []
+            hit = False
+            for entry in provider.passthrough_models or []:
+                parsed = _parse_passthrough_entry(entry)
+                if parsed["exposed"] == exposed:
+                    hit = True
+                    continue
+                kept.append(entry)
+            if hit:
+                provider.passthrough_models = kept
+                if mid not in removed:
+                    removed.append(mid)
+
+    # Exposed-model rows (also covers leftover metadata for passthrough ids).
+    rows = (
+        (await session.execute(select(ExposedModel).where(ExposedModel.model_id.in_(ordered))))
+        .scalars()
+        .all()
+    )
+    for entry in rows:
+        if entry.model_id not in removed:
+            removed.append(entry.model_id)
+        await session.delete(entry)
+
+    if removed:
+        await session.flush()
+        await record_audit(
+            session,
+            action=AuditAction.MODEL_DELETE,
+            actor_sub=user.sub,
+            actor_name=actor_display_name(user),
+            target_type="model",
+            detail={"model_ids": removed, "batch": True},
+            ip=request.client.host if request.client else None,
+        )
+    return ModelCleanResult(deleted=len(removed), model_ids=removed)
 
 
 @router.post("/clean", response_model=ModelCleanResult)

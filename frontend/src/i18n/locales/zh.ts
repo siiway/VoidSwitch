@@ -494,6 +494,12 @@ const zh: Translations = {
     noDescription: "无描述",
     editModel: "编辑模型",
     editSelected: "编辑已选（{count}）",
+    deleteSelected: "删除已选（{count}）",
+    batchDeleteTitle: "删除已选模型",
+    batchDeleteMsg:
+      "删除 {count} 个模型？暴露模型会从目录移除；直通模型会从其提供商的 passthrough 列表中移除。",
+    batchDeleted: "模型已删除",
+    batchDeletedDetail: "{count} 个模型已删除。",
     selectFiltered: "选择当前筛选结果（{count}）",
     clearSelection: "清除选择（{count}）",
     modelId: "模型 ID",

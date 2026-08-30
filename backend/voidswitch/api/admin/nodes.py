@@ -560,6 +560,10 @@ async def set_node_group_members(
     )
     for member in existing_members:
         await session.delete(member)
+    # Flush deletes before inserts: uq_group_node / uq_group_source_group would
+    # otherwise UniqueViolation when the same (group, node) is re-added in the
+    # same flush (pin toggle = full replace with identical keys).
+    await session.flush()
     for m in body:
         session.add(
             NodeGroupMember(

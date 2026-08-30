@@ -365,6 +365,12 @@ class ModelBatchResult(BaseModel):
     updated: int
 
 
+class ModelBatchDelete(BaseModel):
+    """Delete many exposed / passthrough models by public id."""
+
+    model_ids: list[str]
+
+
 class ModelSyncResult(BaseModel):
     added: int
     total: int
