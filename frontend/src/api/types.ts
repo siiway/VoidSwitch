@@ -16,10 +16,22 @@ export interface User {
   // Prism team ids the user belongs to (snapshot at last login).
   team_ids?: string[];
   // Names of the (custom) role groups the user belongs to.
+  // For a role-group-admin viewing the admin user list this is filtered to
+  // just the groups the caller manages (so an org admin never learns what
+  // *other* groups a user is also in). Staff callers see the full list.
   role_group_names?: string[];
+  // For each row on the admin user list, the ids of *the caller's* managed
+  // groups this user belongs to — i.e. why this user is visible to me.
+  // Populated by the backend to drive per-row "visible via X, Y" chips.
+  visible_via_group_ids?: number[];
   enabled: boolean;
   last_login_at?: string | null;
   created_at: string;
+  // Role groups the current user is a *read-only observer admin* of.
+  // Surfaced only on /api/me (never on the admin user list) so the dashboard
+  // knows whether to render the role-group-admin views/hints.
+  managed_group_ids?: number[];
+  managed_group_names?: string[];
 }
 
 export interface Provider {
@@ -265,15 +277,21 @@ export interface ModelsDevSearchResult {
 // Role groups ("身份组").
 export type TeamRole = "owner" | "co-owner" | "admin" | "member";
 
+// What a mapping hands out: "member" (model access) or "admin" (read-only
+// observer view over the group's users / stats / logs). See CONTEXT.md.
+export type RoleGroupGrants = "member" | "admin";
+
 export interface RoleGroupMapping {
   id: number;
   team_id: string;
   min_role: TeamRole;
+  grants: RoleGroupGrants;
 }
 
 export interface RoleGroupMappingIn {
   team_id: string;
   min_role: TeamRole;
+  grants: RoleGroupGrants;
 }
 
 export interface RoleGroup {
@@ -299,6 +317,26 @@ export interface RoleGroupMember {
   role: Role;
   source: "auto" | "manual";
   enabled: boolean;
+  // True when this user is *also* an admin of the group (read-only observer).
+  // Admin-only users (no membership) still appear in the member list with
+  // is_admin=true.
+  is_admin?: boolean;
+}
+
+// Scoped stats for a role-group admin's dashboard card. Deliberately omits
+// platform-wide provider/keys/proxies figures.
+export interface GroupStats {
+  group_ids: number[];
+  group_names: string[];
+  users: number;
+  tokens: number;
+  requests_24h: number;
+  success_24h: number;
+  failures_24h: number;
+  tokens_24h: number;
+  success_rate_24h: number;
+  avg_first_token_ms_24h?: number | null;
+  avg_tokens_per_request_24h: number;
 }
 
 export interface Announcement {

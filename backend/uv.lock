@@ -871,7 +871,7 @@ wheels = [
 
 [[package]]
 name = "voidswitch"
-version = "0.2.2+2026.8.30.4"
+version = "0.2.2+2026.8.31.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },

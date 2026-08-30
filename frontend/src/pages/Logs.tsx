@@ -10,6 +10,8 @@ import {
   DialogTitle,
   Dropdown,
   Input,
+  MessageBar,
+  MessageBarBody,
   Option,
   TableBody,
   TableCell,
@@ -443,7 +445,7 @@ function TimeRangeFilter({
 export function Logs() {
   const { t } = useTranslation();
   type TK = keyof Translations;
-  const { isStaff } = useAuth();
+  const { isStaff, isRoleGroupAdmin, managedGroupNames } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
   const [liveEnabled, setLiveEnabled] = useState(false);
   const config = useAsync<{ logs_page_size?: number }>(() =>
@@ -463,6 +465,16 @@ export function Logs() {
         onRefresh={() => setRefreshKey((k) => k + 1)}
         extraActions={<LiveStreamToggle enabled={liveEnabled} onToggle={setLiveEnabled} />}
       />
+      {isRoleGroupAdmin && managedGroupNames.length > 0 && (
+        <MessageBar intent="info" style={{ marginBottom: 12 }}>
+          <MessageBarBody>
+            {t("logs.roleGroupAdminHint" as TK).replace(
+              "{groups}",
+              managedGroupNames.join(", "),
+            )}
+          </MessageBarBody>
+        </MessageBar>
+      )}
       <div style={{ marginTop: 16 }}>
         <RequestLogs
           refreshKey={refreshKey}
@@ -511,6 +523,7 @@ function LiveStreamToggle({
 export function Audit() {
   const { t } = useTranslation();
   type TK = keyof Translations;
+  const { isRoleGroupAdmin, managedGroupNames } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
   const config = useAsync<{ logs_page_size?: number }>(() =>
     api.get("/api/auth/config"),
@@ -524,6 +537,16 @@ export function Audit() {
         subtitle={t("audit.subtitle" as TK)}
         onRefresh={() => setRefreshKey((k) => k + 1)}
       />
+      {isRoleGroupAdmin && managedGroupNames.length > 0 && (
+        <MessageBar intent="info" style={{ marginBottom: 12 }}>
+          <MessageBarBody>
+            {t("logs.roleGroupAdminHint" as TK).replace(
+              "{groups}",
+              managedGroupNames.join(", "),
+            )}
+          </MessageBarBody>
+        </MessageBar>
+      )}
       <div style={{ marginTop: 16 }}>
         <AuditLogs refreshKey={refreshKey} pageSize={pageSize} />
       </div>
@@ -764,7 +787,7 @@ function RequestLogs({
 }) {
   const { t: tr } = useTranslation();
   type TK = keyof Translations;
-  const { isOwner } = useAuth();
+  const { isOwner, isStaff: isStaffView, isRoleGroupAdmin: isRoleGroupAdminView } = useAuth();
   const hl = useHighlightStyles();
   const cellStyles = useFilterStyles();
   const notify = useNotify();
@@ -1337,9 +1360,11 @@ function RequestLogs({
                       onClick={() => openDetail(r, "info")}
                     />
                   </Tooltip>
-                  {/* Debug detail is owner / co-owner only, and only exists for
-                      rows recorded in debug mode. */}
-                  {isOwner && r.debug ? (
+                  {/* Debug detail (headers + per-attempt trail) is visible to
+                      staff and role-group admins; bodies inside remain owner-
+                      only (rendered conditionally in the detail dialog). Only
+                      surfaces for rows recorded in debug mode. */}
+                  {(isStaffView || isRoleGroupAdminView) && r.debug ? (
                     <Tooltip content={tr("logs.viewDebug" as TK)} relationship="label">
                       <Button
                         size="small"
@@ -1468,7 +1493,13 @@ function RequestLogs({
                           </Button>
                         )}
                       </div>
-                      {isOwner ? (
+                      {/* Detail-panel visibility split (matches the backend's
+                          strip policy in api/admin/logs.py):
+                          - identity headers (method, upstream url, proxy, key
+                            preview) + req/resp headers + debug attempts:
+                            visible to platform staff AND role-group admins;
+                          - req/resp bodies: owner / co-owner only. */}
+                      {(isStaffView || isRoleGroupAdminView) ? (
                         <>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: tokens.fontSizeBase200, marginBottom: 8 }}>
                             <DetailRow label={tr("logs.method" as TK)} value={detailLog.req_method ?? "—"} />
@@ -1477,11 +1508,18 @@ function RequestLogs({
                             <DetailRow label={tr("logs.key" as TK)} value={detailLog.key_preview ?? (detailLog.key_id != null ? `#${detailLog.key_id}` : "—")} />
                           </div>
                           <CodeBlock label={tr("logs.reqHeaders" as TK)} value={detailLog.req_headers} />
-                          <CodeBlock label={tr("logs.reqBody" as TK)} value={detailLog.req_body} />
+                          {isOwner ? (
+                            <CodeBlock label={tr("logs.reqBody" as TK)} value={detailLog.req_body} />
+                          ) : null}
                           <CodeBlock label={tr("logs.respHeaders" as TK)} value={detailLog.resp_headers} />
-                          <CodeBlock label={tr("logs.respBody" as TK)} value={detailLog.resp_body} />
+                          {isOwner ? (
+                            <CodeBlock label={tr("logs.respBody" as TK)} value={detailLog.resp_body} />
+                          ) : null}
                           {detailLog.debug_attempts && detailLog.debug_attempts.length > 0 ? (
-                            <AttemptTrail attempts={detailLog.debug_attempts} />
+                            <AttemptTrail
+                              attempts={detailLog.debug_attempts}
+                              showBodies={isOwner}
+                            />
                           ) : null}
                         </>
                       ) : (
@@ -1542,7 +1580,15 @@ function CodeBlock({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-function AttemptTrail({ attempts }: { attempts: RequestLogAttempt[] }) {
+function AttemptTrail({
+  attempts,
+  showBodies = false,
+}: {
+  attempts: RequestLogAttempt[];
+  // Owner-only: request/response bodies inside each attempt entry. Headers
+  // are shown regardless (they're the diagnostic minimum admins need).
+  showBodies?: boolean;
+}) {
   const { t } = useTranslation();
   type TK = keyof Translations;
   return (
@@ -1628,9 +1674,13 @@ function AttemptTrail({ attempts }: { attempts: RequestLogAttempt[] }) {
                 </Text>
               ) : null}
               <CodeBlock label={t("logs.reqHeaders" as TK)} value={a.req_headers} />
-              <CodeBlock label={t("logs.reqBody" as TK)} value={a.req_body} />
+              {showBodies ? (
+                <CodeBlock label={t("logs.reqBody" as TK)} value={a.req_body} />
+              ) : null}
               <CodeBlock label={t("logs.respHeaders" as TK)} value={a.resp_headers} />
-              <CodeBlock label={t("logs.respBody" as TK)} value={a.resp_body} />
+              {showBodies ? (
+                <CodeBlock label={t("logs.respBody" as TK)} value={a.resp_body} />
+              ) : null}
             </div>
           );
         })}

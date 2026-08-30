@@ -334,9 +334,15 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
     role = _resolve_role(settings, identity, is_first_user)
 
     # Role-group auto-assignment from the team mappings (recomputed every login).
+    # ``member`` mappings drive model access; ``admin`` mappings drive read-only
+    # observer adminships (see the group's users / stats / logs). Adminship
+    # never implies membership — a user might be an admin of a group without
+    # being a member of it (the cross-organisation observer case).
     from voidswitch.services import role_groups
 
-    auto_group_ids = await role_groups.evaluate_auto_group_ids(session, identity.teams)
+    auto_group_ids, auto_admin_group_ids = await role_groups.evaluate_auto_group_ids(
+        session, identity.teams
+    )
 
     # The user's role in the *main team* (Prism), snapshotted for display and to
     # flag a "local admin override" (a VoidSwitch admin who is not an admin of the
@@ -353,14 +359,16 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
     # Access policy: a non-moderator who isn't mapped to any role group — and has
     # no explicit owner/bootstrap grant — has no business on the platform. Refuse
     # the login outright (e.g. someone not in main_team_id and not in any mapped
-    # team position).
+    # team position). Being *only* a role-group admin is also a valid reason to
+    # be on the platform (e.g. a client-org admin using the read-only observer
+    # view over their org's group), so admin mappings count too.
     privileged = role.value in STAFF_ROLES
     explicit = (
         identity.sub in settings.admin.owner_subs
         or bool(identity.email and identity.email in settings.admin.owner_emails)
         or (is_first_user and settings.admin.bootstrap_first_user)
     )
-    if not privileged and not explicit and not auto_group_ids:
+    if not privileged and not explicit and not auto_group_ids and not auto_admin_group_ids:
         log.info("login_denied_no_access", sub=identity.sub[:12])
         raise LoginDenied("No platform access: not a moderator and no role group applies.")
 
@@ -391,6 +399,7 @@ async def upsert_user(session: AsyncSession, settings: Settings, identity: Prism
         user = existing
 
     await role_groups.sync_auto_memberships(session, user, auto_group_ids)
+    await role_groups.sync_auto_adminships(session, user, auto_admin_group_ids)
 
     # If the account was disabled and later re-enabled by an owner, its
     # Void-Tokens were parked off; bring them back now that the user has proven
@@ -573,6 +582,44 @@ async def require_owner(user: User = Depends(get_current_user)) -> User:
     if user.role not in OWNER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner privileges required.")
     return user
+
+
+def managed_group_ids(user: User) -> set[int]:
+    """The set of role-group ids this user is a read-only observer admin of.
+
+    A user is a **role-group admin** for a group when there is an active
+    :class:`RoleGroupAdminship` row linking them. Adminship is orthogonal to
+    membership — a user might admin a group without being a member of it.
+
+    Staff (owner / co-owner / admin) get *no* implicit adminship here; their
+    ability to see everything comes from the ``require_staff`` path, not this
+    one. Callers that want "staff OR admins of X" should check ``is_staff``
+    first and only consult this set when the caller isn't staff.
+    """
+    return {a.role_group_id for a in (user.group_adminships or [])}
+
+
+def is_role_group_admin(user: User) -> bool:
+    """Whether ``user`` is an admin of at least one custom role group."""
+    return bool(user.group_adminships)
+
+
+async def require_staff_or_role_group_admin(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Guard for endpoints that a role-group admin may also reach.
+
+    Staff callers pass through; non-staff callers only pass if they hold at
+    least one role-group adminship. The endpoint body is responsible for
+    scoping its data to :func:`managed_group_ids` (staff sees everything;
+    role-group admins see only the union of the groups they manage).
+    """
+    if is_staff(user) or is_role_group_admin(user):
+        return user
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "Requires staff or role-group admin privileges.",
+    )
 
 
 @dataclass(slots=True)

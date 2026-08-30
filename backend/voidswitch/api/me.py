@@ -18,7 +18,7 @@ from voidswitch.core.security import (
     hash_token,
     token_fingerprint,
 )
-from voidswitch.models.db import RequestLog, User, VoidToken
+from voidswitch.models.db import RequestLog, RoleGroup, User, VoidToken
 from voidswitch.models.schemas import (
     LoginTokenStatus,
     LoginTokenWithSecret,
@@ -38,8 +38,36 @@ def _require_login_token_user(user: User) -> None:
 
 
 @router.get("", response_model=UserOut)
-async def my_profile(user: User = Depends(get_current_user)) -> User:
-    return user
+async def my_profile(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserOut:
+    """Return the caller's own profile.
+
+    Populates ``managed_group_ids`` / ``managed_group_names`` from the
+    role-group adminships loaded with the ``User`` row — this is how the
+    dashboard learns whether to render the role-group-admin views (Users tab
+    scoping, the "you administer …" hint bar, the group filter dropdowns).
+    Also populates ``role_group_names`` from the user's memberships for parity
+    with the admin user list.
+    """
+    out = UserOut.model_validate(user)
+    # Membership names — mirror the admin users endpoint so the frontend can
+    # render the same information in both views.
+    out.role_group_names = sorted(
+        m.group.name for m in user.group_memberships if m.group is not None
+    )
+    managed_ids = sorted({a.role_group_id for a in (user.group_adminships or [])})
+    if managed_ids:
+        groups = (
+            (await session.execute(select(RoleGroup).where(RoleGroup.id.in_(managed_ids))))
+            .scalars()
+            .all()
+        )
+        by_id = {g.id: g.name for g in groups}
+        out.managed_group_ids = managed_ids
+        out.managed_group_names = [by_id[gid] for gid in managed_ids if gid in by_id]
+    return out
 
 
 @router.get("/login-token", response_model=LoginTokenStatus)

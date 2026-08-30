@@ -48,7 +48,11 @@ import { AnnouncementsPopup } from "./Announcements";
 import { ConfirmProvider, ToastProvider } from "./ui";
 import type { ReactElement } from "react";
 
-type NavScope = "member" | "staff" | "owner";
+// Ordered visibility gate for nav items:
+//   member < role_group_admin < staff < owner
+// An item scoped to a level is visible to *anyone at that level or above*.
+// See CONTEXT.md § "Platform roles".
+type NavScope = "member" | "role_group_admin" | "staff" | "owner";
 
 type TranslationKey = keyof Translations;
 
@@ -103,7 +107,7 @@ const SECTIONS: NavSection[] = [
     heading: "Operations",
     headingKey: "nav.operations",
     items: [
-      { to: "/users", label: "Users", labelKey: "nav.users", icon: <PeopleRegular />, scope: "staff" },
+      { to: "/users", label: "Users", labelKey: "nav.users", icon: <PeopleRegular />, scope: "role_group_admin" },
       {
         to: "/role-groups",
         label: "Role Groups",
@@ -130,7 +134,7 @@ const SECTIONS: NavSection[] = [
         label: "Audit",
         labelKey: "nav.audit",
         icon: <ShieldTaskRegular />,
-        scope: "staff",
+        scope: "role_group_admin",
       },
       {
         to: "/settings",
@@ -351,7 +355,7 @@ const useStyles = makeStyles({
 
 export function Layout() {
   const styles = useStyles();
-  const { user, isStaff, isOwner, logout } = useAuth();
+  const { user, isStaff, isOwner, isRoleGroupAdmin, logout } = useAuth();
   const { mode, scheme, setMode } = useTheme();
   const { t, i18n } = useTranslation();
   const location = useLocation();
@@ -393,8 +397,13 @@ export function Layout() {
     i18n.changeLanguage(next.code);
   }, [i18n]);
 
+  // Visibility ladder: member < role_group_admin < staff < owner. An item at
+  // scope X is shown to anyone at that level or above.
   const canSee = (scope: NavScope) =>
-    scope === "member" || (scope === "staff" && isStaff) || (scope === "owner" && isOwner);
+    scope === "member" ||
+    (scope === "role_group_admin" && (isRoleGroupAdmin || isStaff || isOwner)) ||
+    (scope === "staff" && isStaff) ||
+    (scope === "owner" && isOwner);
   const sections = useMemo(
     () =>
       SECTIONS.map((s) => ({
@@ -405,7 +414,8 @@ export function Layout() {
           .filter((i) => proxySwitching || i.to !== "/proxies")
           .map((i) => ({ ...i, label: t(i.labelKey as TranslationKey) })),
       })).filter((s) => s.items.length > 0),
-    [t, isStaff, isOwner, proxySwitching],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t, isStaff, isOwner, isRoleGroupAdmin, proxySwitching],
   );
 
   const roleColor =

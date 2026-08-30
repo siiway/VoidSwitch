@@ -83,15 +83,21 @@ async def test_evaluate_auto_group_ids(db):
         gid = group.id
 
     async with db.session() as session:
-        # admin in t-beta → granted; member in t-beta → not granted.
-        granted = await role_groups.evaluate_auto_group_ids(
+        # admin in t-beta → granted membership; member in t-beta → not granted.
+        # The evaluator now returns (member_group_ids, admin_group_ids); the
+        # legacy mapping (no ``grants`` value / defaulting to "member") lands
+        # entirely on the member side, and no admin mapping exists here so the
+        # admin set is always empty.
+        member_ids, admin_ids = await role_groups.evaluate_auto_group_ids(
             session, [{"id": "t-beta", "role": "admin"}]
         )
-        assert granted == {gid}
-        not_granted = await role_groups.evaluate_auto_group_ids(
+        assert member_ids == {gid}
+        assert admin_ids == set()
+        member_ids, admin_ids = await role_groups.evaluate_auto_group_ids(
             session, [{"id": "t-beta", "role": "member"}]
         )
-        assert not_granted == set()
+        assert member_ids == set()
+        assert admin_ids == set()
 
 
 @pytest.mark.asyncio
@@ -324,3 +330,231 @@ async def test_negative_rate_limit_rejected(client, db):
         json={"name": "Bad", "call_rate_limit_max_requests": -1},
     )
     assert resp.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# Adminship (grants="admin" mappings + RoleGroupAdminship syncing)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_evaluate_auto_group_ids_splits_member_and_admin(db):
+    """A mixed mapping set separates its ``grants="member"`` and
+    ``grants="admin"`` hits into two disjoint id sets."""
+    async with db.session() as session:
+        group_m = RoleGroup(name="MemberOnly", builtin=False)
+        group_a = RoleGroup(name="AdminOnly", builtin=False)
+        group_both = RoleGroup(name="Both", builtin=False)
+        session.add_all([group_m, group_a, group_both])
+        await session.flush()
+        session.add(
+            RoleGroupMapping(
+                role_group_id=group_m.id,
+                team_id="team-a",
+                min_role="member",
+                grants="member",
+            )
+        )
+        session.add(
+            RoleGroupMapping(
+                role_group_id=group_a.id,
+                team_id="team-a",
+                min_role="admin",
+                grants="admin",
+            )
+        )
+        # Same team+min_role, both flavours → single evaluator pass hits both.
+        session.add(
+            RoleGroupMapping(
+                role_group_id=group_both.id,
+                team_id="team-a",
+                min_role="admin",
+                grants="member",
+            )
+        )
+        session.add(
+            RoleGroupMapping(
+                role_group_id=group_both.id,
+                team_id="team-a",
+                min_role="admin",
+                grants="admin",
+            )
+        )
+        await session.flush()
+        ids = (group_m.id, group_a.id, group_both.id)
+
+    async with db.session() as session:
+        # Team admin: satisfies member+admin cutoffs.
+        member_ids, admin_ids = await role_groups.evaluate_auto_group_ids(
+            session, [{"id": "team-a", "role": "admin"}]
+        )
+        assert ids[0] in member_ids  # MemberOnly
+        assert ids[2] in member_ids  # Both (member half)
+        assert ids[1] not in member_ids  # AdminOnly stays out
+        assert ids[1] in admin_ids
+        assert ids[2] in admin_ids
+        assert ids[0] not in admin_ids
+
+        # Team member: below AdminOnly's cutoff, above MemberOnly's only.
+        member_ids, admin_ids = await role_groups.evaluate_auto_group_ids(
+            session, [{"id": "team-a", "role": "member"}]
+        )
+        assert member_ids == {ids[0]}
+        assert admin_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_sync_auto_adminships_is_idempotent_and_keeps_manual(db):
+    """``sync_auto_adminships`` mirrors ``sync_auto_memberships``: auto rows
+    are reconciled on each call, manual rows persist untouched."""
+    from voidswitch.models.db import RoleGroupAdminship
+
+    async with db.session() as session:
+        u = User(sub="admin-obs", role="member")
+        g1 = RoleGroup(name="G1", builtin=False)
+        g2 = RoleGroup(name="G2", builtin=False)
+        session.add_all([u, g1, g2])
+        await session.flush()
+        # Seed a manual adminship for g2 that must never be reaped.
+        session.add(RoleGroupAdminship(user_id=u.id, role_group_id=g2.id, source="manual"))
+        await session.flush()
+        uid, gid1, gid2 = u.id, g1.id, g2.id
+
+    async with db.session() as session:
+        user = await session.get(User, uid)
+        assert user is not None
+        await role_groups.sync_auto_adminships(session, user, [gid1])
+        rows = (
+            (
+                await session.execute(
+                    select(RoleGroupAdminship).where(RoleGroupAdminship.user_id == uid)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_gid = {r.role_group_id: r for r in rows}
+        assert set(by_gid.keys()) == {gid1, gid2}
+        assert by_gid[gid1].source == "auto"
+        assert by_gid[gid2].source == "manual"
+
+    # Second sync with an empty desired set: g1 (auto) drops, g2 (manual) stays.
+    async with db.session() as session:
+        user = await session.get(User, uid)
+        assert user is not None
+        await role_groups.sync_auto_adminships(session, user, [])
+        remaining = (
+            (
+                await session.execute(
+                    select(RoleGroupAdminship).where(RoleGroupAdminship.user_id == uid)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert {r.role_group_id for r in remaining} == {gid2}
+        assert remaining[0].source == "manual"
+
+
+@pytest.mark.asyncio
+async def test_login_permitted_by_admin_mapping_only(db):
+    """A user whose only reason to be here is an ``admin`` mapping passes the
+    access policy — the observer-only case is a first-class login reason."""
+    from voidswitch.models.db import RoleGroupAdminship
+
+    async with db.session() as session:
+        group = RoleGroup(name="OrgA", builtin=False)
+        session.add(group)
+        await session.flush()
+        session.add(
+            RoleGroupMapping(
+                role_group_id=group.id,
+                team_id="org-a",
+                min_role="admin",
+                grants="admin",
+            )
+        )
+        await session.flush()
+
+    settings = _settings()
+    identity = _identity("observer", teams=[{"id": "org-a", "role": "admin"}])
+    async with db.session() as session:
+        user = await auth.upsert_user(session, settings, identity)
+        # Not staff — the platform role falls through to member (no main team).
+        assert user.role == "member"
+        # Adminship was synced.
+        adminships = (
+            (
+                await session.execute(
+                    select(RoleGroupAdminship).where(RoleGroupAdminship.user_id == user.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(adminships) == 1
+        # No membership was granted for the same mapping.
+        assert user.group_memberships == []
+
+
+# --------------------------------------------------------------------------- #
+# Write-permission tightening (admin can read, owner-only for edits)
+# --------------------------------------------------------------------------- #
+
+
+def _staff_admin_headers() -> dict[str, str]:
+    """Session headers for a platform admin (staff but not owner)."""
+    from voidswitch.core.config import get_settings
+    from voidswitch.core.security import create_session_token
+
+    token = create_session_token(
+        secret=get_settings().server.secret_key,
+        subject="user-admin",
+        extra={"role": "admin", "name": "admin", "epoch": 0},
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _seed_staff_admin(db) -> None:
+    async with db.session() as session:
+        existing = (
+            await session.execute(select(User).where(User.sub == "user-admin"))
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(User(sub="user-admin", username="admin", role="admin"))
+            await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_create_or_edit_role_group(client, db):
+    """Platform admin (staff-not-owner) may read but not mutate role groups."""
+    await _seed_staff_admin(db)
+    headers = _staff_admin_headers()
+    # GET is allowed.
+    resp = await client.get("/api/admin/role-groups", headers=headers)
+    assert resp.status_code == 200
+    # POST is forbidden.
+    resp = await client.post("/api/admin/role-groups", headers=headers, json={"name": "NopeGroup"})
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_builtin_moderator_rejects_admin_mapping(client, db):
+    """Even an owner cannot add ``grants='admin'`` to the built-in group."""
+    await _seed_owner(db)
+    async with db.session() as session:
+        await role_groups.ensure_moderator_group(session)
+        mod = (
+            await session.execute(select(RoleGroup).where(RoleGroup.slug == "moderator"))
+        ).scalar_one()
+        mod_id = mod.id
+    resp = await client.patch(
+        f"/api/admin/role-groups/{mod_id}",
+        headers=_owner_headers(),
+        json={"mappings": [{"team_id": "team-x", "min_role": "admin", "grants": "admin"}]},
+    )
+    # The endpoint refuses moderator-group mapping edits altogether (existing
+    # behaviour) with 400; the ``grants="admin"`` guard is a second wall for
+    # any future path that would let a mapping edit through — either 400 or
+    # 422 is a correct rejection.
+    assert resp.status_code in (400, 422)

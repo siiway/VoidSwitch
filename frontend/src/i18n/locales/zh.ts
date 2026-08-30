@@ -673,6 +673,16 @@ const zh: Translations = {
     callRateUnlimited: "调用不限流",
     builtinEditNote:
       "内置 moderator 组无法重命名或修改映射，只能调整其调用限流。",
+    readOnly: "只读视图",
+    readOnlyHint:
+      "仅 owner / co-owner 可编辑身份组，您可以查看列表和成员。",
+    mappingGrants: "作为",
+    mappingGrantsMember: "成员",
+    mappingGrantsAdmin: "管理员",
+    mappingGrantsHint:
+      "管理员映射仅授予对该组用户 / 统计 / 日志的只读查看权限，不含模型调用权。如需模型访问，请另加一条 “作为 成员” 的映射。",
+    builtinAdminForbidden: "内置 moderator 组不接受 “管理员” 映射。",
+    memberIsAdmin: "身份组管理员",
   },
   proxies: {
     title: "出站代理",
@@ -785,6 +795,11 @@ const zh: Translations = {
     userFilterAllStatus: "全部状态",
     userFilterEnabled: "启用",
     userFilterDisabled: "禁用",
+    roleGroupAdminHint:
+      "您是 {groups} 身份组的管理员，此列表仅显示这些身份组的成员。",
+    groupFilter: "身份组",
+    groupFilterAll: "我管理的全部身份组",
+    visibleVia: "可见于",
   },
   reveal: {
     title: "Reveal 密钥",
@@ -909,6 +924,8 @@ const zh: Translations = {
     title: "日志",
     subtitleStaff: "全平台请求流量",
     subtitleMember: "您的请求流量",
+    roleGroupAdminHint:
+      "您是 {groups} 身份组的管理员，以下日志仅限这些身份组的成员与身份组本身相关的条目。",
     requests: "请求",
     audit: "审计",
     time: "时间",
@@ -1012,6 +1029,10 @@ const zh: Translations = {
   stats: {
     title: "统计",
     subtitle: "按用户、令牌和模型的用量统计",
+    roleGroupAdminHint:
+      "您是 {groups} 身份组的管理员，以下统计仅限这些身份组的成员。",
+    groupFilter: "身份组",
+    groupFilterAll: "我管理的全部身份组",
     totalRequests: "总请求数",
     succeeded: "成功",
     failed: "失败",

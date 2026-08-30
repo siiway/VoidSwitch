@@ -691,6 +691,19 @@ const en = {
     callRateUnlimited: "No call rate limit",
     builtinEditNote:
       "The built-in moderator group can't be renamed or remapped — only its call rate limit can be changed.",
+    // Read-only banner shown to platform admins (non-owner staff).
+    readOnly: "Read-only view",
+    readOnlyHint:
+      "Only owner / co-owner may edit role groups. You can view the list and members.",
+    // Mapping grants: "member" (model access) vs "admin" (read-only observer).
+    mappingGrants: "As",
+    mappingGrantsMember: "Member",
+    mappingGrantsAdmin: "Admin",
+    mappingGrantsHint:
+      "Admin mappings grant a read-only view over this group's users / statistics / logs — they do NOT grant model access. To give both, add a second 'as Member' mapping alongside.",
+    builtinAdminForbidden:
+      "The built-in moderator group cannot accept admin mappings.",
+    memberIsAdmin: "Group admin",
   },
   proxies: {
     title: "Outbound proxies",
@@ -804,6 +817,15 @@ const en = {
     userFilterAllStatus: "All statuses",
     userFilterEnabled: "Enabled",
     userFilterDisabled: "Disabled",
+    // Role-group-admin hint bar (only shown to non-staff callers who
+    // administer at least one role group). ``{groups}`` = comma-joined names.
+    roleGroupAdminHint:
+      "You administer {groups} — this list shows only their members.",
+    // Group filter dropdown on the Users page.
+    groupFilter: "Role group",
+    groupFilterAll: "All my groups",
+    // Aria label for the per-row visible-via chip cluster.
+    visibleVia: "Visible via",
   },
   reveal: {
     title: "Reveal key",
@@ -934,6 +956,9 @@ const en = {
     title: "Logs",
     subtitleStaff: "Request traffic across the platform",
     subtitleMember: "Your request traffic",
+    // Role-group-admin hint bar (Logs page: request + audit tabs share it).
+    roleGroupAdminHint:
+      "You administer {groups} — logs below are scoped to those groups' users and to the groups themselves.",
     requests: "Requests",
     audit: "Audit",
     time: "Time",
@@ -1038,6 +1063,12 @@ const en = {
   stats: {
     title: "Statistics",
     subtitle: "Usage across users, tokens, and models",
+    // Role-group-admin hint bar shown above the filter row.
+    roleGroupAdminHint:
+      "You administer {groups} — statistics below are scoped to those groups' members.",
+    // Group filter dropdown ("all my managed groups" default + one entry per group).
+    groupFilter: "Role group",
+    groupFilterAll: "All my groups",
     totalRequests: "Total requests",
     succeeded: "Succeeded",
     failed: "Failed",

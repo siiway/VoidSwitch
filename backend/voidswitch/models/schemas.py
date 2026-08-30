@@ -35,11 +35,25 @@ class UserOut(BaseModel):
     # hover for users who are not in the main team.
     team_ids: list[str] = []
     # Names of the (custom) role groups the user belongs to. Used to label a
-    # non-main-team user's "team role" cell with their role group(s).
+    # non-main-team user's "team role" cell with their role group(s). For a
+    # non-staff role-group admin viewing the user list, this is filtered to the
+    # groups the caller manages (so an organisation admin never sees which
+    # *other* groups a user is in) — staff callers see the full list.
     role_group_names: list[str] = []
+    # For a role-group admin caller, the ids of *their managed* groups this
+    # user belongs to (i.e. why the user shows up in the caller's user list).
+    # Empty for members, and equal to the user's full membership set for staff.
+    # Used by the dashboard to render "visible via" chips per row.
+    visible_via_group_ids: list[int] = []
     enabled: bool
     last_login_at: dt.datetime | None = None
     created_at: dt.datetime
+    # Ids of role groups the user is *admin of* (read-only observer view over
+    # the group's users / stats / logs). Surfaced only on ``/api/me`` so the
+    # frontend knows whether to render the role-group-admin views/hints; not
+    # populated on the admin user list.
+    managed_group_ids: list[int] = []
+    managed_group_names: list[str] = []
 
 
 class SessionOut(BaseModel):
@@ -881,6 +895,28 @@ class StatsOut(BaseModel):
     avg_tokens_per_request_24h: float = 0.0
 
 
+class GroupStatsOut(BaseModel):
+    """Scoped stats for a role-group admin's dashboard card.
+
+    Deliberately omits provider/keys/proxies fields (they are platform-wide
+    concerns that don't make sense for a role-group scope). ``group_ids`` and
+    ``group_names`` echo the effective scope so the frontend can render the
+    "for groups X, Y" label without a second call.
+    """
+
+    group_ids: list[int] = Field(default_factory=list)
+    group_names: list[str] = Field(default_factory=list)
+    users: int
+    tokens: int
+    requests_24h: int
+    success_24h: int
+    failures_24h: int
+    tokens_24h: int
+    success_rate_24h: float = 0.0
+    avg_first_token_ms_24h: float | None = None
+    avg_tokens_per_request_24h: float = 0.0
+
+
 class Page[T](BaseModel):
     items: list[T]
     total: int
@@ -1053,13 +1089,23 @@ class AnnouncementOut(BaseModel):
 class RoleGroupMappingIn(BaseModel):
     """One team→role auto-assignment rule.
 
-    A member whose *effective* role in ``team_id`` is at least ``min_role`` is
-    auto-assigned the group at login.
+    A user whose *effective* role in ``team_id`` is at least ``min_role`` is
+    auto-assigned the group at login. ``grants`` decides what kind of
+    assignment they get:
+
+    * ``"member"`` — regular membership (model call access).
+    * ``"admin"`` — read-only observer adminship (see the group's users /
+      stats / logs; does NOT imply model access — to grant both, add two
+      rules with the same team+min_role, one for each ``grants`` value).
+
+    ``"admin"`` is rejected on the built-in moderator group.
     """
 
     team_id: str
     # owner | co-owner | admin | member (team roles).
     min_role: str = "member"
+    # "member" (default, backward-compatible) or "admin".
+    grants: str = "member"
 
 
 class RoleGroupMappingOut(RoleGroupMappingIn):
@@ -1115,3 +1161,7 @@ class RoleGroupMemberOut(BaseModel):
     # How the membership was granted: "auto" (a team mapping) or "manual".
     source: str = "auto"
     enabled: bool = True
+    # Whether this user is *also* an admin (read-only observer) of the group.
+    # A user can be an admin without being a member; those rows show up only
+    # when the member list view includes adminship-only users too.
+    is_admin: bool = False
