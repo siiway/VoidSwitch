@@ -1,7 +1,7 @@
 {
   "name": "voidswitch-frontend",
   "private": true,
-  "version": "0.2.2-2026.8.30.3",
+  "version": "0.2.2-2026.8.30.4",
   "type": "module",
   "scripts": {
     "dev": "vite",

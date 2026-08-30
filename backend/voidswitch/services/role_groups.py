@@ -209,8 +209,9 @@ async def rate_limit_groups(
     memberships. When ``entry`` (the exposed model being called) is given, only
     groups that actually grant access to it are returned — a group the user
     belongs to but that can't call the model contributes no budget. Pass
-    ``entry=None`` (e.g. provider passthrough models, which skip the role-group
-    access check) to consider all of the user's groups.
+    ``entry=None`` to consider all of the user's groups (e.g. when the model
+    isn't tracked by an ExposedModel row and no per-model access filter
+    applies).
 
     A member of several groups may call as long as ANY returned group still has
     budget; the caller picks the group with the most remaining capacity.

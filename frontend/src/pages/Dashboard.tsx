@@ -1,4 +1,15 @@
 import { Badge, Text, tokens, makeStyles } from "@fluentui/react-components";
+import {
+  CheckmarkCircleRegular,
+  ChartMultipleRegular,
+  DataUsageRegular,
+  KeyRegular,
+  KeyMultipleRegular,
+  PeopleRegular,
+  PlugConnectedRegular,
+  TimerRegular,
+} from "@fluentui/react-icons";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -49,6 +60,9 @@ const useStatStyles = makeStyles({
     borderRadius: "10px",
     background: tokens.colorNeutralBackground1,
     transition: "box-shadow 0.15s",
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
     ":hover": {
       borderTopColor: tokens.colorNeutralForeground1,
       borderRightColor: tokens.colorNeutralForeground1,
@@ -56,26 +70,51 @@ const useStatStyles = makeStyles({
       borderLeftColor: tokens.colorNeutralForeground1,
     },
   },
+  iconWrap: {
+    flex: "0 0 auto",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "40px",
+    height: "40px",
+    borderRadius: "8px",
+    background: tokens.colorNeutralBackground3,
+    color: tokens.colorNeutralForeground2,
+    fontSize: "24px",
+  },
+  body: {
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+    flex: "1 1 auto",
+  },
 });
 
 function Stat({
   label,
   value,
+  icon,
   accent,
 }: {
   label: string;
   value: number | string;
+  icon: ReactNode;
   accent?: string;
 }) {
   const styles = useStatStyles();
   return (
     <div className={styles.card}>
-      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }} block>
-        {label}
-      </Text>
-      <Text size={800} weight="bold" style={{ color: accent }}>
-        {value}
-      </Text>
+      <span className={styles.iconWrap} aria-hidden="true">
+        {icon}
+      </span>
+      <div className={styles.body}>
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }} block>
+          {label}
+        </Text>
+        <Text size={800} weight="bold" style={{ color: accent }}>
+          {value}
+        </Text>
+      </div>
     </div>
   );
 }
@@ -115,13 +154,22 @@ function MemberDashboard() {
         <ErrorText error={usage.error} />
       ) : usage.data ? (
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
-          <Stat label={t("dashboard.myRequests" as TK)} value={usage.data.requests} />
+          <Stat
+            label={t("dashboard.myRequests" as TK)}
+            value={usage.data.requests}
+            icon={<ChartMultipleRegular />}
+          />
           <Stat
             label={t("dashboard.myTokens" as TK)}
             value={usage.data.tokens}
+            icon={<DataUsageRegular />}
             accent={tokens.colorPaletteGreenForeground1}
           />
-          <Stat label={t("dashboard.myApiKeys" as TK)} value={usage.data.token_count} />
+          <Stat
+            label={t("dashboard.myApiKeys" as TK)}
+            value={usage.data.token_count}
+            icon={<KeyRegular />}
+          />
         </div>
       ) : null}
       <HeatmapSection />
@@ -161,13 +209,27 @@ function StaffDashboard() {
                 marginBottom: 20,
               }}
             >
-              <Stat label={t("dashboard.providers" as TK)} value={stats.data.providers} />
+              <Stat
+                label={t("dashboard.providers" as TK)}
+                value={stats.data.providers}
+                icon={<PlugConnectedRegular />}
+              />
               <Stat
                 label={t("dashboard.activeKeys" as TK)}
                 value={`${stats.data.active_keys}/${stats.data.total_keys}`}
+                icon={<KeyMultipleRegular />}
                 accent={tokens.colorPaletteGreenForeground1}
               />
-              <Stat label={t("dashboard.voidTokens" as TK)} value={stats.data.tokens} />
+              <Stat
+                label={t("dashboard.users" as TK)}
+                value={stats.data.users}
+                icon={<PeopleRegular />}
+              />
+              <Stat
+                label={t("dashboard.voidTokens" as TK)}
+                value={stats.data.tokens}
+                icon={<KeyRegular />}
+              />
             </div>
             <div
               style={{
@@ -177,11 +239,17 @@ function StaffDashboard() {
                 marginBottom: 20,
               }}
             >
-              <Stat label={t("dashboard.successRate24h" as TK)}
+              <Stat
+                label={t("dashboard.successRate24h" as TK)}
                 value={`${stats.data.success_rate_24h}%`}
+                icon={<CheckmarkCircleRegular />}
                 accent={tokens.colorPaletteGreenForeground1}
               />
-              <Stat label={t("dashboard.tokens24h" as TK)} value={stats.data.tokens_24h} />
+              <Stat
+                label={t("dashboard.tokens24h" as TK)}
+                value={stats.data.tokens_24h}
+                icon={<DataUsageRegular />}
+              />
               <Stat
                 label={t("dashboard.avgTtft24h" as TK)}
                 value={
@@ -189,10 +257,12 @@ function StaffDashboard() {
                     ? `${Math.round(stats.data.avg_first_token_ms_24h)}ms`
                     : "—"
                 }
+                icon={<TimerRegular />}
               />
               <Stat
                 label={t("dashboard.avgTokensPerReq24h" as TK)}
                 value={stats.data.avg_tokens_per_request_24h}
+                icon={<ChartMultipleRegular />}
               />
             </div>
           </>

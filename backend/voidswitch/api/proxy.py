@@ -96,19 +96,20 @@ async def _check_call_rate_limit(session: AsyncSession, user: User, model: str) 
 
     Every role group carries its own sliding-window budget (``call_rate_limit_*``
     on the group). The groups that govern a call are the user's groups that may
-    call ``model`` (the built-in moderator group for staff; all of the user's
-    groups for provider passthrough ids, which skip the role-group access
-    check). A member of several groups passes as long as ANY of those groups
-    still has budget — the hit is then recorded on the group with the most
-    remaining capacity. A group whose max (or window) is 0 imposes no limit.
-    Independent of a token's own ``rpm_limit``; owners are throttled too (via
-    the moderator group's budget).
+    call ``model`` (the built-in moderator group for staff; the user's custom
+    groups filtered by the model's ``allowed_role_group_ids`` otherwise). A
+    member of several groups passes as long as ANY of those groups still has
+    budget — the hit is then recorded on the group with the most remaining
+    capacity. A group whose max (or window) is 0 imposes no limit. Independent
+    of a token's own ``rpm_limit``; owners are throttled too (via the moderator
+    group's budget).
     """
-    entry = None
-    if "/" not in model:
-        entry = (
-            await session.execute(select(ExposedModel).where(ExposedModel.model_id == model))
-        ).scalar_one_or_none()
+    # Passthrough ids ("slug/exposed") may or may not have an ExposedModel row —
+    # the row is created lazily the first time an operator edits the model's
+    # metadata or access list, so we always look it up.
+    entry = (
+        await session.execute(select(ExposedModel).where(ExposedModel.model_id == model))
+    ).scalar_one_or_none()
     groups = await role_groups.rate_limit_groups(session, user, entry)
     if not groups:
         # No group to hold a budget for this caller (e.g. a membership-less user
@@ -245,11 +246,12 @@ async def _handle(
 
     # Role-group access: a non-moderator may only call models whose allowed role
     # groups intersect their own. Moderators may call everything. Passthrough
-    # models (``provider-slug/exposed-model-id``) are whitelist-controlled by the
-    # provider and skip the role-group check.
-    if "/" not in model and not await role_groups.user_can_access_model(
-        session, authed.user, model
-    ):
+    # models (``provider-slug/exposed-model-id``) are also gated by this check —
+    # the ExposedModel row is created lazily the first time an operator edits
+    # the passthrough model's metadata or access list, so a model with no row
+    # (or with an empty ``allowed_role_group_ids``) is only callable by
+    # moderators.
+    if not await role_groups.user_can_access_model(session, authed.user, model):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             f"Model '{model}' is not available to your role group.",
@@ -424,7 +426,11 @@ async def _advertised_models(
         _push(entry)
 
     # Passthrough models: each provider with passthrough_enabled contributes its
-    # whitelisted models as ``provider-slug/exposed-model-id``.
+    # whitelisted models as ``provider-slug/exposed-model-id``. Role-group access
+    # is enforced against the (lazily created) ExposedModel row that carries the
+    # passthrough id's metadata — same rule as for regular models, so a
+    # passthrough id with no metadata (or an empty allow-list) is only visible
+    # to moderators.
     passthrough_providers = (
         (
             await session.execute(
@@ -436,6 +442,7 @@ async def _advertised_models(
         .scalars()
         .all()
     )
+    entries_by_id = {e.model_id: e for e in entries}
     for provider in passthrough_providers:
         for entry in provider.passthrough_models or []:
             parsed = _parse_passthrough_entry(entry)
@@ -448,15 +455,28 @@ async def _advertised_models(
                 for pattern in (str(p) for p in allowed)
             ):
                 continue
+            pt_entry = entries_by_id.get(model_id)
+            if not role_groups.model_allowed_for_groups(pt_entry, group_ids, is_mod=is_mod):
+                continue
+            # Members must not see a hidden (disabled) passthrough model.
+            if pt_entry is not None and not pt_entry.enabled:
+                continue
             seen.add(model_id)
-            data.append(
-                {
-                    "id": model_id,
-                    "object": "model",
-                    "created": 0,
-                    "owned_by": "voidswitch",
-                }
-            )
+            item: dict[str, object] = {
+                "id": model_id,
+                "object": "model",
+                "created": 0,
+                "owned_by": "voidswitch",
+            }
+            # Surface saved metadata for passthrough ids too.
+            if pt_entry is not None:
+                dev_entry = md_by_id.get(pt_entry.models_dev_id) if pt_entry.models_dev_id else None
+                item["opencode"] = model_routing.build_opencode_config(pt_entry, dev_entry)
+                if pt_entry.display_name:
+                    item["display_name"] = pt_entry.display_name
+                if pt_entry.description:
+                    item["description"] = pt_entry.description
+            data.append(item)
 
     return data
 

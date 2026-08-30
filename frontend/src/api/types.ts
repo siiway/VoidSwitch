@@ -327,6 +327,7 @@ export interface Stats {
   total_keys: number;
   active_proxies: number;
   total_proxies: number;
+  users: number;
   tokens: number;
   requests_24h: number;
   success_24h: number;

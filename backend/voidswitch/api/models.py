@@ -178,12 +178,16 @@ async def list_models(
     user: User = Depends(get_current_user),
 ) -> list[ModelOut]:
     catalog = await models_catalog.build_catalog(session)
+    catalog_by_id = {item.model_id: item for item in catalog}
 
     # Passthrough virtual entries: each provider with passthrough_enabled
     # contributes its whitelisted models as ``provider-slug/exposed-model-id``.
     # A passthrough id *takes over* the matching exposed-model id so the catalog
     # never shows the same id twice (a leftover exposed-model row from the old
-    # 1:1 sync would otherwise render alongside its passthrough twin).
+    # 1:1 sync would otherwise render alongside its passthrough twin). Any
+    # ExposedModel row saved for the passthrough id (created the first time an
+    # operator edits its metadata or access) is *merged* into the virtual entry
+    # so edits actually surface in the catalog.
     passthrough_providers = (
         (
             await session.execute(
@@ -208,18 +212,37 @@ async def list_models(
                 continue
             seen.add(model_id)
             passthrough_ids.add(model_id)
-            virtual.append(
-                ModelOut(
-                    id=virtual_id,
-                    model_id=model_id,
-                    display_name=exposed_id,
-                    enabled=True,
-                    category_name=provider.name,
-                    category_slug=provider.slug,
-                    provider=True,
+
+            existing = catalog_by_id.get(model_id)
+            if existing is not None:
+                # Members must not see hidden (disabled) models at all — even
+                # for passthrough ids that would otherwise be surfaced by the
+                # provider whitelist.
+                if not is_staff(user) and not existing.enabled:
+                    continue
+                # Merge the saved metadata into the virtual entry. ``unserved``
+                # is meaningless for passthrough (the provider forwards the id
+                # directly), so it stays False.
+                out = _to_out(existing)
+                out.provider = True
+                out.category_name = provider.name
+                out.category_slug = provider.slug
+                if not out.display_name:
+                    out.display_name = exposed_id
+                virtual.append(out)
+            else:
+                virtual.append(
+                    ModelOut(
+                        id=virtual_id,
+                        model_id=model_id,
+                        display_name=exposed_id,
+                        enabled=True,
+                        category_name=provider.name,
+                        category_slug=provider.slug,
+                        provider=True,
+                    )
                 )
-            )
-            virtual_id -= 1
+                virtual_id -= 1
 
     # Enabled providers by id, used to flag unserved exposed models.
     enabled_providers = {

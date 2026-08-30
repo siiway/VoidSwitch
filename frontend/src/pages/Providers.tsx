@@ -31,6 +31,8 @@ import {
   ArrowRightRegular,
   ArrowSwapRegular,
   CheckmarkCircleFilled,
+  ChevronDownRegular,
+  ChevronRightRegular,
   DeleteRegular,
   DismissCircleFilled,
   EditRegular,
@@ -127,6 +129,12 @@ export function Providers() {
   const [placeholderVals, setPlaceholderVals] = useState<Record<string, string>>({});
   const [fetchMethod, setFetchMethod] = useState("GET");
   const [fetchPath, setFetchPath] = useState("/models");
+  // Whether the "fetch models from API" panel is expanded. Uses controlled
+  // React state instead of the native ``<details>`` element — a native details
+  // inside Fluent UI's focus-trapped dialog kept stealing focus back to the
+  // summary on any click within the dialog, so inputs outside the panel could
+  // not be edited while it was open.
+  const [fetchPanelOpen, setFetchPanelOpen] = useState(false);
   // Per-provider key-management API credential (owner-only).
   const [keyApiFor, setKeyApiFor] = useState<Provider | null>(null);
   const [keyApi, setKeyApi] = useState<ProviderKeyApi | null>(null);
@@ -161,10 +169,12 @@ export function Providers() {
   };
 
   function openCreate() {
+    setFetchPanelOpen(false);
     setForm({ ...EMPTY });
   }
 
   function openEdit(p: Provider) {
+    setFetchPanelOpen(false);
     setForm({
       id: p.id,
       name: p.name,
@@ -826,23 +836,33 @@ export function Providers() {
                   }
                 />
               </Field>
-              <details>
-                <summary
+              <div>
+                <Button
+                  appearance="subtle"
+                  onClick={() => setFetchPanelOpen((v) => !v)}
+                  icon={
+                    fetchPanelOpen ? (
+                      <ChevronDownRegular />
+                    ) : (
+                      <ChevronRightRegular />
+                    )
+                  }
                   style={{
-                    cursor: "pointer",
-                    padding: "8px 12px",
+                    justifyContent: "flex-start",
                     fontWeight: 600,
                     color: tokens.colorNeutralForeground1,
                   }}
                 >
                   {t("providers.fetchModels" as TK)}
-                </summary>
+                </Button>
                 <div
+                  hidden={!fetchPanelOpen}
                   style={{
                     border: `1px solid ${tokens.colorNeutralStroke2}`,
                     borderRadius: 8,
                     padding: 16,
-                    display: "flex",
+                    marginTop: 8,
+                    display: fetchPanelOpen ? "flex" : "none",
                     flexDirection: "column",
                     gap: 12,
                     background: tokens.colorNeutralBackground2,
@@ -1037,7 +1057,7 @@ export function Providers() {
                     </>
                   )}
                 </div>
-              </details>
+              </div>
               <Field
                 label={t("providers.slug" as TK)}
                 hint={t("providers.slugHint" as TK)}

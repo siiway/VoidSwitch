@@ -124,9 +124,12 @@ Owner-only (use `require_owner` on the backend and gate the control with `isOwne
 
 ## Focus loss in Dialogs
 
-**Root cause**: Fluent UI's `Dialog` uses a `FocusTrapZone` that re-focuses when the DOM subtree inside the dialog changes. If a section inside the dialog is conditionally mounted (`{cond && <JSX>}`), the `FocusTrapZone` re-evaluates its focus target when the conditional content appears/disappears, stealing focus from whichever input the user was interacting with.
+**Root cause**: Fluent UI's `Dialog` uses a `FocusTrapZone` that re-evaluates focus whenever the set of focusable elements inside the dialog changes. Any DOM mutation that adds or removes focusables — conditional React mounting, hidden `visibility`, native `<details>` opening — makes the trap steal focus back from whichever input the user was editing.
 
-**Fix**: never conditionally mount/unmount content inside a Dialog. Use `display: none` / `display: block` (or `visibility`) to hide/show instead:
+**Rules** (also apply to any wrapper that owns focus management: Popover, Drawer, etc.):
+
+- Never conditionally mount / unmount content inside a Dialog. Toggle visibility with `display: none` / `display: block` (or `visibility: hidden`) so the DOM tree stays stable.
+- Never use native `<details>` / `<summary>` inside a Dialog. Toggling `open` on `<details>` shows/hides its children, which counts as the same focusable-set change. Use a controlled collapsible: a `Button` + React state + a `<div style={{ display: open ? "block" : "none" }}>` wrapper.
 
 ```tsx
 {/* bad — FocusTrapZone re-focuses when fetchOpen flips */}
@@ -134,12 +137,25 @@ Owner-only (use `require_owner` on the backend and gate the control with `isOwne
   {fetchOpen && <FetchPanel />}
 </DialogContent>
 
+{/* bad — native <details> has the same effect when the user expands it */}
+<DialogContent>
+  <details>
+    <summary>Fetch models</summary>
+    <FetchPanel />
+  </details>
+</DialogContent>
+
 {/* good — DOM stays stable, FocusTrapZone never re-focuses */}
 <DialogContent>
+  <Button
+    appearance="subtle"
+    icon={fetchOpen ? <ChevronDownRegular /> : <ChevronRightRegular />}
+    onClick={() => setFetchOpen((v) => !v)}
+  >
+    Fetch models
+  </Button>
   <div style={{ display: fetchOpen ? "block" : "none" }}>
     <FetchPanel />
   </div>
 </DialogContent>
 ```
-
-This also applies to any wrapper that owns focus management (Popover, Drawer, etc.).

@@ -870,6 +870,7 @@ class StatsOut(BaseModel):
     total_keys: int
     active_proxies: int
     total_proxies: int
+    users: int
     tokens: int
     requests_24h: int
     success_24h: int

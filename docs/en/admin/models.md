@@ -40,6 +40,13 @@ Passthrough models are served directly by their provider and bypass the routing 
 **have no Route button**. To delete one, click its **Delete** button: this removes the model from the
 provider's passthrough list and cleans up any residual model metadata.
 
+Passthrough models also support metadata editing and role-group access — both **Edit** and **Access**
+buttons are available. Saving either creates an `ExposedModel` row lazily, and the passthrough entry
+then participates in the same `/v1/models` rendering and access filtering as regular models. As a
+result, a passthrough model without any configured role group is invisible to non-moderators (see
+**Access control** below). The passthrough whitelist itself is configured in the **Providers** edit
+dialog (the "Model passthrough" switch + "Passthrough models" list).
+
 ## Per-exposed-model metadata
 
 For any exposed model, staff can set:
