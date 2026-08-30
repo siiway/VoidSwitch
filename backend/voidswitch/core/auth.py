@@ -509,21 +509,27 @@ def _enforce_operation_rate_limit(request: Request, user: User) -> None:
 
     Read-only requests (GET/HEAD/OPTIONS) are never limited so page loads — which
     fan out into several parallel reads — are unaffected. Enforced for everyone,
-    owners included; each user is counted independently. Disabled when the
-    configured max is 0.
+    owners included; each user is counted independently. The window/max are fixed
+    constants (``constants.OPERATION_RATE_LIMIT_*``), deliberately not a runtime
+    setting, so a bad value can never lock anyone out of the dashboard.
     """
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return
+    from voidswitch.constants import (
+        OPERATION_RATE_LIMIT_MAX_REQUESTS,
+        OPERATION_RATE_LIMIT_WINDOW_SECONDS,
+    )
     from voidswitch.core import ratelimit
 
-    window = settings_store.get_int("operation_rate_limit_window_seconds", 10)
-    max_requests = settings_store.get_int("operation_rate_limit_max_requests", 0)
     if not ratelimit.operation_limiter.allow(
-        f"op:{user.id}", window_seconds=window, max_requests=max_requests
+        f"op:{user.id}",
+        window_seconds=OPERATION_RATE_LIMIT_WINDOW_SECONDS,
+        max_requests=OPERATION_RATE_LIMIT_MAX_REQUESTS,
     ):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            f"Operation rate limit exceeded ({max_requests} per {window}s). Slow down.",
+            f"Operation rate limit exceeded ({OPERATION_RATE_LIMIT_MAX_REQUESTS} "
+            f"per {OPERATION_RATE_LIMIT_WINDOW_SECONDS}s). Slow down.",
         )
 
 

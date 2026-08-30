@@ -24,6 +24,7 @@ import {
 import {
   AddRegular,
   ArrowRoutingRegular,
+  ArrowSyncRegular,
   ChevronDownRegular,
   ChevronRightRegular,
   DeleteRegular,
@@ -1277,9 +1278,11 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                               </Badge>
                             )}
                             {m.models_dev_id && (
-                              <Badge appearance="tint" color="informative">
-                                models.dev
-                              </Badge>
+                              <Tooltip content={m.models_dev_id} relationship="label">
+                                <Badge appearance="tint" color="brand">
+                                  models.dev
+                                </Badge>
+                              </Tooltip>
                             )}
                             {hasConfig && (
                               <Badge appearance="tint" color="brand">
@@ -2104,98 +2107,116 @@ function ModelsDevSection({
   }
 
   return (
-    <div
-      style={{
-        border: `1px solid ${tokens.colorNeutralStroke2}`,
-        borderRadius: 8,
-        padding: 12,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        background: tokens.colorNeutralBackground2,
-      }}
-    >
-      <div style={{ fontWeight: 600 }}>{t("models.modelsDevTitle" as TK)}</div>
-      {modelsDevId ? (
-        <Field label={t("models.modelsDevLinked" as TK)}>
-          <Input readOnly value={modelsDevId} />
-        </Field>
-      ) : (
-        <Button
-          size="small"
-          appearance="subtle"
-          disabled={syncingMd}
-          onClick={syncMd}
-        >
-          {syncingMd
-            ? t("models.modelsDevSyncing" as TK)
-            : t("models.modelsDevSync" as TK)}
-        </Button>
-      )}
-      <div style={{ display: "flex", gap: 8 }}>
-        <Input
-          placeholder={t("models.modelsDevSearch" as TK)}
-          value={q}
-          onChange={(_, d) => setQ(d.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") search();
-          }}
-        />
-        <Button disabled={searching || !q.trim()} onClick={search}>
-          {searching ? <Spinner size="tiny" /> : t("models.modelsDevSearchBtn" as TK)}
-        </Button>
-      </div>
-      {results.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            maxHeight: 200,
-            overflowY: "auto",
-          }}
-        >
-          {results.map((entry, i) => {
-            const fullId = fullIdOf(entry);
-            const selected = fullId === modelsDevId;
-            return (
-              <div
-                key={fullId || i}
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  border: `1px solid ${tokens.colorNeutralStroke2}`,
-                  borderRadius: 6,
-                  padding: "6px 8px",
-                  background: tokens.colorNeutralBackground1,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {label(entry)}
-                  </div>
-                  <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                    {fullId}
-                    {entry.provider_name ? ` · ${String(entry.provider_name)}` : ""}
-                  </Text>
-                </div>
-                <Button
-                  size="small"
-                  appearance={selected ? "primary" : "subtle"}
-                  onClick={() => onPick(entry)}
-                  title={t("models.modelsDevAutoFill" as TK)}
-                >
-                  {selected
-                    ? t("models.modelsDevSelected" as TK)
-                    : t("models.modelsDevUse" as TK)}
-                </Button>
-              </div>
-            );
-          })}
+    <details>
+      <summary
+        style={{
+          cursor: "pointer",
+          padding: "8px 12px",
+          fontWeight: 600,
+          color: tokens.colorNeutralForeground1,
+        }}
+      >
+        {t("models.modelsDevTitle" as TK)}
+        {modelsDevId ? (
+          <Text
+            size={200}
+            style={{ color: tokens.colorNeutralForeground3, marginLeft: 8 }}
+          >
+            {modelsDevId}
+          </Text>
+        ) : null}
+      </summary>
+      <div
+        style={{
+          border: `1px solid ${tokens.colorNeutralStroke2}`,
+          borderRadius: 8,
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          background: tokens.colorNeutralBackground2,
+        }}
+      >
+        {modelsDevId ? (
+          <Field label={t("models.modelsDevLinked" as TK)}>
+            <Input readOnly value={modelsDevId} />
+          </Field>
+        ) : null}
+        <div style={{ display: "flex", gap: 8 }}>
+          <Input
+            placeholder={t("models.modelsDevSearch" as TK)}
+            value={q}
+            style={{ flex: 1 }}
+            onChange={(_, d) => setQ(d.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") search();
+            }}
+          />
+          <Button disabled={searching || !q.trim()} onClick={search}>
+            {searching ? <Spinner size="tiny" /> : t("models.modelsDevSearchBtn" as TK)}
+          </Button>
+          <Button
+            disabled={syncingMd}
+            onClick={syncMd}
+            icon={syncingMd ? <Spinner size="tiny" /> : <ArrowSyncRegular />}
+          >
+            {syncingMd
+              ? t("models.modelsDevSyncing" as TK)
+              : t("models.modelsDevSync" as TK)}
+          </Button>
         </div>
-      )}
-    </div>
+        {results.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              maxHeight: 200,
+              overflowY: "auto",
+            }}
+          >
+            {results.map((entry, i) => {
+              const fullId = fullIdOf(entry);
+              const selected = fullId === modelsDevId;
+              return (
+                <div
+                  key={fullId || i}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    border: `1px solid ${tokens.colorNeutralStroke2}`,
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    background: tokens.colorNeutralBackground1,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {label(entry)}
+                    </div>
+                    <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                      {fullId}
+                      {entry.provider_name ? ` · ${String(entry.provider_name)}` : ""}
+                    </Text>
+                  </div>
+                  <Button
+                    size="small"
+                    appearance={selected ? "primary" : "subtle"}
+                    onClick={() => onPick(entry)}
+                    title={t("models.modelsDevAutoFill" as TK)}
+                  >
+                    {selected
+                      ? t("models.modelsDevSelected" as TK)
+                      : t("models.modelsDevUse" as TK)}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }

@@ -9,7 +9,7 @@
 
 - **节点与路由** — 代理切换总开关（`proxy_switching_enabled`）：`true` = 节点/节点组路由系统开启；
   `false` = 关闭路由系统，每个请求走 `static_proxy_url`（或环境变量）。
-  路由系统相关设置含 `node_default_probe_url`（默认探测 URL）、`node_probe_interval_seconds`
+  路由系统相关设置含 `node_default_probe_url`（节点组未单独设置时使用的探测 URL，也是唯一的探测 URL 设置）、`node_probe_interval_seconds`
   （空闲健康检查间隔）、`node_rank_alpha/beta/gamma`（节点动态排序的权重）、
   `node_rank_ewma_half_life_seconds`（节点 EWMA 延迟的衰减半衰期）、`max_retries`（每请求最大重试）
   和 `max_proxy_failures`（节点禁用前的失败阈值）。
@@ -32,14 +32,11 @@
 - **模型与目录** — models.dev 占位元数据的同步间隔（`models_dev_sync_interval_minutes`，`0` = 禁用）。
 - **平台信息** — 控制台上显示多少条公告后才显示"查看全部"（`announcements_home_count`），以及
   聊天页空状态里的**聊天预设问题**（`chat_preset_questions`，每行一个）。
-- **速率限制（滥用防护）** — 两个每用户滑动窗口限制，每个设置为
-  "在 N 秒内，最多 X 个请求"（0 = 无限制）：
-  - **运维操作** — 变更型控制台操作（添加/编辑/删除/保存）。
-  - **OpenAI / Anthropic 调用** — 网关端点
-    （`/v1/chat/completions`、`/v1/messages`）。
-
-  两者适用于**所有人，包括所有者**，每个用户独立计数。为防止锁定，过低的
-  操作限制（低于约 20 次操作/分钟）在保存时**会被拒绝**。
+- **速率限制** — 控制台管理操作固定限流：每用户 20 秒内最多 30 个请求（写死，不可配置）。
+  OpenAI / Anthropic 网关调用（`/v1/chat/completions`、`/v1/messages`）的限流
+  **按身份组配置**，见[身份组](/admin/role-groups)：默认 30 秒内最多 30 个请求，
+  内置 moderator 组默认 30 秒内最多 50 个请求。限流仍按用户计数；加入多个身份组的成员，
+  只要任一组仍有额度即可继续调用。
 
 ## 注意事项
 

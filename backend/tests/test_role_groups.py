@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 from voidswitch.core import auth
 from voidswitch.core.config import get_settings
 from voidswitch.models.db import (
@@ -77,9 +78,7 @@ async def test_evaluate_auto_group_ids(db):
         group = RoleGroup(name="Beta", builtin=False)
         session.add(group)
         await session.flush()
-        session.add(
-            RoleGroupMapping(role_group_id=group.id, team_id="t-beta", min_role="admin")
-        )
+        session.add(RoleGroupMapping(role_group_id=group.id, team_id="t-beta", min_role="admin"))
         await session.flush()
         gid = group.id
 
@@ -167,9 +166,7 @@ async def test_admin_in_other_team_is_not_platform_admin(db):
         group = RoleGroup(name="Mapped", builtin=False)
         session.add(group)
         await session.flush()
-        session.add(
-            RoleGroupMapping(role_group_id=group.id, team_id="other", min_role="member")
-        )
+        session.add(RoleGroupMapping(role_group_id=group.id, team_id="other", min_role="member"))
         await session.flush()
 
     identity = _identity("outsider", teams=[{"id": "other", "role": "admin"}])
@@ -187,9 +184,7 @@ async def test_login_grants_member_via_role_group(db):
         group = RoleGroup(name="Mapped", builtin=False)
         session.add(group)
         await session.flush()
-        session.add(
-            RoleGroupMapping(role_group_id=group.id, team_id="t-x", min_role="member")
-        )
+        session.add(RoleGroupMapping(role_group_id=group.id, team_id="t-x", min_role="member"))
         await session.flush()
         gid = group.id
 
@@ -215,9 +210,7 @@ async def test_reenable_restores_tokens_on_login(db):
         user = User(sub="u-disabled", role="admin", enabled=True)
         session.add(user)
         await session.flush()
-        token = VoidToken(
-            user_id=user.id, name="t", token_hash="h" * 64, token_prefix="p"
-        )
+        token = VoidToken(user_id=user.id, name="t", token_hash="h" * 64, token_prefix="p")
         session.add(token)
         await session.flush()
         # Simulate the disable flow: the parked token is marked auto_disabled and
@@ -233,3 +226,101 @@ async def test_reenable_restores_tokens_on_login(db):
         user = await auth.upsert_user(session, settings, identity)
         assert user.void_tokens_admin_disabled is False
         assert all(t.enabled for t in user.tokens)
+
+
+# --------------------------------------------------------------------------- #
+# Rate-limit administration (dashboard API)
+# --------------------------------------------------------------------------- #
+
+
+def _owner_headers() -> dict[str, str]:
+    from voidswitch.core.config import get_settings
+    from voidswitch.core.security import create_session_token
+
+    token = create_session_token(
+        secret=get_settings().server.secret_key,
+        subject="user-1",
+        extra={"role": "owner", "name": "alice", "epoch": 0},
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _seed_owner(db) -> None:
+    async with db.session() as session:
+        existing = (
+            await session.execute(select(User).where(User.sub == "user-1"))
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(User(sub="user-1", username="alice", role="owner"))
+            await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_create_group_with_custom_rate_limit(client, db):
+    await _seed_owner(db)
+    resp = await client.post(
+        "/api/admin/role-groups",
+        headers=_owner_headers(),
+        json={
+            "name": "Limited",
+            "call_rate_limit_window_seconds": 60,
+            "call_rate_limit_max_requests": 5,
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["call_rate_limit_window_seconds"] == 60
+    assert body["call_rate_limit_max_requests"] == 5
+
+
+@pytest.mark.asyncio
+async def test_create_group_defaults_to_30_per_30s(client, db):
+    await _seed_owner(db)
+    resp = await client.post(
+        "/api/admin/role-groups", headers=_owner_headers(), json={"name": "Defaults"}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["call_rate_limit_window_seconds"] == 30
+    assert body["call_rate_limit_max_requests"] == 30
+
+
+@pytest.mark.asyncio
+async def test_moderator_group_limit_editable_but_identity_locked(client, db):
+    await _seed_owner(db)
+    async with db.session() as session:
+        group = await role_groups.ensure_moderator_group(session)
+        gid = group.id
+        # Seeded with the moderator default (50 per 30s).
+        assert group.call_rate_limit_max_requests == 50
+
+    headers = _owner_headers()
+    # Rate limit edits are allowed on the built-in group.
+    resp = await client.patch(
+        f"/api/admin/role-groups/{gid}",
+        headers=headers,
+        json={"call_rate_limit_max_requests": 80},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["call_rate_limit_max_requests"] == 80
+    # Everything else is locked.
+    resp = await client.patch(
+        f"/api/admin/role-groups/{gid}", headers=headers, json={"name": "Renamed"}
+    )
+    assert resp.status_code == 400
+    # Owner's gateway budget follows the edited moderator limit.
+    async with db.session() as session:
+        group = await session.get(RoleGroup, gid)
+        assert group is not None
+        assert group.call_rate_limit_max_requests == 80
+
+
+@pytest.mark.asyncio
+async def test_negative_rate_limit_rejected(client, db):
+    await _seed_owner(db)
+    resp = await client.post(
+        "/api/admin/role-groups",
+        headers=_owner_headers(),
+        json={"name": "Bad", "call_rate_limit_max_requests": -1},
+    )
+    assert resp.status_code == 422

@@ -1071,6 +1071,10 @@ class RoleGroupCreate(BaseModel):
     name: str
     description: str | None = None
     mappings: list[RoleGroupMappingIn] = Field(default_factory=list)
+    # Per-user call rate limit for this group's members on the OpenAI/Anthropic
+    # gateway endpoints. Omitted → the seeded defaults (30 per 30s). 0 = unlimited.
+    call_rate_limit_window_seconds: int | None = None
+    call_rate_limit_max_requests: int | None = None
 
 
 class RoleGroupUpdate(BaseModel):
@@ -1078,6 +1082,10 @@ class RoleGroupUpdate(BaseModel):
     description: str | None = None
     # When provided, fully replaces the group's mapping set.
     mappings: list[RoleGroupMappingIn] | None = None
+    # Per-user call rate limit. Only these two fields may be changed on the
+    # built-in moderator group. 0 = unlimited.
+    call_rate_limit_window_seconds: int | None = None
+    call_rate_limit_max_requests: int | None = None
 
 
 class RoleGroupOut(BaseModel):
@@ -1088,6 +1096,8 @@ class RoleGroupOut(BaseModel):
     name: str
     description: str | None = None
     builtin: bool = False
+    call_rate_limit_window_seconds: int = 30
+    call_rate_limit_max_requests: int = 30
     mappings: list[RoleGroupMappingOut] = Field(default_factory=list)
     member_count: int = 0
     created_at: dt.datetime

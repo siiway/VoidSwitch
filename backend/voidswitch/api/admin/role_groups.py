@@ -14,7 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import TEAM_ROLE_RANK
+from voidswitch.constants import (
+    CALL_RATE_LIMIT_MAX_REQUESTS,
+    CALL_RATE_LIMIT_WINDOW_SECONDS,
+    TEAM_ROLE_RANK,
+)
 from voidswitch.core.audit import AuditAction, record_audit
 from voidswitch.core.auth import actor_display_name, require_staff
 from voidswitch.core.database import get_session
@@ -62,6 +66,8 @@ def _to_out(group: RoleGroup, member_count: int) -> RoleGroupOut:
         name=group.name,
         description=group.description,
         builtin=group.builtin,
+        call_rate_limit_window_seconds=group.call_rate_limit_window_seconds,
+        call_rate_limit_max_requests=group.call_rate_limit_max_requests,
         mappings=[
             RoleGroupMappingOut(id=m.id, team_id=m.team_id, min_role=m.min_role)
             for m in sorted(group.mappings, key=lambda m: m.id)
@@ -70,6 +76,16 @@ def _to_out(group: RoleGroup, member_count: int) -> RoleGroupOut:
         created_at=group.created_at,
         updated_at=group.updated_at,
     )
+
+
+def _validated_rate_limit(window: int, max_requests: int) -> tuple[int, int]:
+    """Validate a per-group call rate limit pair (each >= 0; 0 = unlimited)."""
+    if window < 0 or max_requests < 0:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Rate limit window/max cannot be negative.",
+        )
+    return window, max_requests
 
 
 @router.get("", response_model=list[RoleGroupOut])
@@ -112,7 +128,21 @@ async def create_role_group(
     ).scalar_one_or_none()
     if clash is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "A role group with this name already exists.")
-    group = RoleGroup(name=name, description=(body.description or None), builtin=False)
+    window, max_requests = _validated_rate_limit(
+        body.call_rate_limit_window_seconds
+        if body.call_rate_limit_window_seconds is not None
+        else CALL_RATE_LIMIT_WINDOW_SECONDS,
+        body.call_rate_limit_max_requests
+        if body.call_rate_limit_max_requests is not None
+        else CALL_RATE_LIMIT_MAX_REQUESTS,
+    )
+    group = RoleGroup(
+        name=name,
+        description=(body.description or None),
+        builtin=False,
+        call_rate_limit_window_seconds=window,
+        call_rate_limit_max_requests=max_requests,
+    )
     session.add(group)
     await session.flush()
     for m in body.mappings:
@@ -135,7 +165,12 @@ async def create_role_group(
         actor_name=actor_display_name(actor),
         target_type="role_group",
         target_id=group.id,
-        detail={"name": name, "mappings": [m.model_dump() for m in body.mappings]},
+        detail={
+            "name": name,
+            "mappings": [m.model_dump() for m in body.mappings],
+            "call_rate_limit_window_seconds": window,
+            "call_rate_limit_max_requests": max_requests,
+        },
         ip=request.client.host if request.client else None,
     )
     return _to_out(group, 0)
@@ -152,10 +187,16 @@ async def update_role_group(
     group = await session.get(RoleGroup, group_id)
     if group is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Role group not found.")
-    if group.builtin:
+    # The built-in moderator group is locked except for its call rate limit: its
+    # name/description/membership are derived from staff roles and must never be
+    # renamed or deleted, but its throttle is an operator knob.
+    if group.builtin and (
+        body.name is not None or body.description is not None or body.mappings is not None
+    ):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "The built-in moderator group cannot be edited.",
+            "The built-in moderator group cannot be edited "
+            "(only its call rate limit can be changed).",
         )
 
     changes: dict[str, object] = {}
@@ -200,6 +241,25 @@ async def update_role_group(
             )
             new_mappings.append({"team_id": team_id, "min_role": min_role})
         changes["mappings"] = new_mappings
+
+    # Per-group call rate limit (the only editable knob on the built-in group).
+    if body.call_rate_limit_window_seconds is not None or (
+        body.call_rate_limit_max_requests is not None
+    ):
+        window, max_requests = _validated_rate_limit(
+            body.call_rate_limit_window_seconds
+            if body.call_rate_limit_window_seconds is not None
+            else group.call_rate_limit_window_seconds,
+            body.call_rate_limit_max_requests
+            if body.call_rate_limit_max_requests is not None
+            else group.call_rate_limit_max_requests,
+        )
+        if window != group.call_rate_limit_window_seconds:
+            group.call_rate_limit_window_seconds = window
+            changes["call_rate_limit_window_seconds"] = window
+        if max_requests != group.call_rate_limit_max_requests:
+            group.call_rate_limit_max_requests = max_requests
+            changes["call_rate_limit_max_requests"] = max_requests
 
     await session.flush()
     await session.refresh(group)

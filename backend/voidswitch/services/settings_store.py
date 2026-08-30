@@ -29,6 +29,19 @@ _RENAMED_KEYS: dict[str, str] = {
     "proxy_resurrector_enabled": "proxy_health_check_enabled",
 }
 
+# Settings keys that were removed outright. Any stored rows are deleted on boot
+# so they don't linger in the settings table / surface in the dashboard's
+# "Other" section. (``proxy_probe_url`` was merged into ``node_default_probe_url``;
+# the four global rate-limit keys moved to fixed constants / per-role-group
+# limits — see ``constants.py``.)
+_REMOVED_KEYS: set[str] = {
+    "proxy_probe_url",
+    "operation_rate_limit_window_seconds",
+    "operation_rate_limit_max_requests",
+    "call_rate_limit_window_seconds",
+    "call_rate_limit_max_requests",
+}
+
 
 async def ensure_defaults(session: AsyncSession) -> None:
     """Seed any missing default settings rows (idempotent), migrating renames."""
@@ -42,6 +55,11 @@ async def ensure_defaults(session: AsyncSession) -> None:
         # Delete the old-name row so it doesn't surface in load_all or the UI.
         if old_key in rows:
             await session.delete(rows[old_key])
+    # Drop rows for settings that no longer exist.
+    for key in _REMOVED_KEYS:
+        if key in rows:
+            await session.delete(rows[key])
+            del rows[key]
     for key, value in DEFAULT_SETTINGS.items():
         if key not in rows:
             session.add(Setting(key=key, value=value))
@@ -57,7 +75,7 @@ async def load_all(session: AsyncSession) -> dict[str, Any]:
         # Skip renamed keys so their old value doesn't leak into the returned dict
         # under the obsolete name (the current key was already migrated by
         # ensure_defaults and any new-name row already carries the value).
-        if row.key in _RENAMED_KEYS:
+        if row.key in _RENAMED_KEYS or row.key in _REMOVED_KEYS:
             continue
         merged[row.key] = row.value
     async with _lock:

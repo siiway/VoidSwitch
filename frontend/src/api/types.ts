@@ -282,6 +282,10 @@ export interface RoleGroup {
   name: string;
   description?: string | null;
   builtin: boolean;
+  // Per-user call rate limit for this group's members on the OpenAI/Anthropic
+  // gateway endpoints. 0 = unlimited.
+  call_rate_limit_window_seconds: number;
+  call_rate_limit_max_requests: number;
   mappings: RoleGroupMapping[];
   member_count: number;
   created_at: string;

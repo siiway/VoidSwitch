@@ -88,32 +88,39 @@ async def get_model(session: AsyncSession, model_id: str | None) -> dict | None:
     return row.data if row is not None else None
 
 
-def _score(q: str, mid: str, name: str) -> int:
-    """A tiny relevance score: exact prefix first, then substring, else 0."""
-    q = q.lower()
-    mid_l, name_l = mid.lower(), name.lower()
-    if mid_l == q or name_l == q:
-        return 3
-    if mid_l.startswith(q) or name_l.startswith(q):
-        return 2
-    if q in mid_l or q in name_l:
-        return 1
+def _official(provider: str, mid: str) -> bool:
+    """Heuristic for the provider's own (official) listing of a model: the
+    model id starts with the provider id (``deepseek/deepseek-v4-pro``,
+    ``openai/gpt-5``). Third-party aggregators list the same model under a
+    longer, namespaced id (``openrouter/deepseek/deepseek-v4-pro``)."""
+    return bool(provider) and mid.startswith(provider)
+
+
+def _match_score(q: str, full_id: str, mid: str, name: str, provider: str, family: str) -> int:
+    """Tiered relevance score — exact/whole-string matches and the provider's
+    own (official) listing outrank prefixes, which outrank substrings, which
+    outrank provider/family hits. 0 = no match.
+    """
+    if full_id == q:
+        return 100
+    if mid == q:
+        # The official provider's own entry leads the pack.
+        return 90 if _official(provider, mid) else 80
+    if name == q:
+        return 70
+    if full_id.startswith(q):
+        return 60
+    if mid.startswith(q) or name.startswith(q):
+        return 50
+    if q in mid:
+        return 40
+    if q in name:
+        return 30
+    if provider and q in provider:
+        return 20
+    if family and q in family:
+        return 10
     return 0
-
-
-def search_cached(rows: Sequence[ModelsDevCache], query: str, limit: int = 50) -> list[dict]:
-    """Local relevance search over cached registry entries."""
-    q = (query or "").strip()
-    if not q:
-        return []
-    scored: list[tuple[int, str, dict]] = []
-    for row in rows:
-        name = str((row.data or {}).get("name") or row.id)
-        s = _score(q, row.id, name)
-        if s:
-            scored.append((s, row.id, row.data))
-    scored.sort(key=lambda t: (-t[0], t[1].lower()))
-    return [t[2] for t in scored[:limit]]
 
 
 def iter_registry_models(rows: Sequence[ModelsDevCache]) -> list[tuple[str, dict]]:
@@ -145,30 +152,27 @@ def iter_registry_models(rows: Sequence[ModelsDevCache]) -> list[tuple[str, dict
 def search_models(rows: Sequence[ModelsDevCache], query: str, limit: int = 100) -> list[dict]:
     """Relevance search over the flattened *model* entries (not providers).
 
-    A query can match the model id, its display name, the provider id/name, or
-    its ``family``. Returns the flattened model entries.
+    A query can match the model id, its display name, the full ``provider/model``
+    id, the provider id, or its ``family``. Whole-string matches beat prefixes,
+    prefixes beat substrings, and a provider's own (official) listing of a model
+    outranks third-party aggregates of the same model (so searching
+    ``deepseek-v4-pro`` leads with ``deepseek/deepseek-v4-pro``). Ties prefer the
+    shorter full id (official ids are the short ones), then alphabetical order.
     """
-    q = (query or "").strip()
+    q = (query or "").strip().lower()
     if not q:
         return []
-    ql = q.lower()
-    scored: list[tuple[int, str, dict]] = []
+    scored: list[tuple[int, int, str, dict]] = []
     for full_id, entry in iter_registry_models(rows):
         mid = str(entry.get("id") or "").lower()
         name = str(entry.get("name") or "").lower()
         provider = str(entry.get("provider") or "").lower()
         family = str(entry.get("family") or "").lower()
-        if ql in (mid, name, full_id.lower()):
-            s = 3
-        elif mid.startswith(ql) or name.startswith(ql) or full_id.lower().startswith(ql):
-            s = 2
-        elif ql in mid or ql in name or ql in provider or ql in family:
-            s = 1
-        else:
-            continue
-        scored.append((s, full_id, entry))
-    scored.sort(key=lambda t: (-t[0], t[1].lower()))
-    return [t[2] for t in scored[:limit]]
+        s = _match_score(q, full_id.lower(), mid, name, provider, family)
+        if s:
+            scored.append((s, len(full_id), full_id.lower(), entry))
+    scored.sort(key=lambda t: (-t[0], t[1], t[2]))
+    return [t[3] for t in scored[:limit]]
 
 
 def resolve_model(rows: Sequence[ModelsDevCache], full_id: str) -> dict | None:

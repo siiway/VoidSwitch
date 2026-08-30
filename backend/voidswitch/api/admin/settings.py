@@ -17,12 +17,6 @@ from voidswitch.tasks.log_cleanup import cleanup_logs
 
 router = APIRouter(prefix="/api/admin/settings", tags=["admin:settings"])
 
-# The operation rate limit gates mutating dashboard actions for everyone (owners
-# included). Refuse to save a value so restrictive it could lock the dashboard —
-# it must always permit at least this many operations per minute so an owner can
-# still change settings back.
-MIN_OPERATION_RATE_PER_MINUTE = 20
-
 # The heatmap rollups (and their statistics) must be retainable for at least a
 # year, so any non-"keep forever" retention window is required to be >= this.
 MIN_HEATMAP_RETENTION_DAYS = 365
@@ -43,23 +37,6 @@ def _to_int(value: object, default: int = 0) -> int:
         except ValueError:
             return default
     return default
-
-
-def _validate_operation_rate_limit(effective: dict[str, object]) -> None:
-    window = _to_int(effective.get("operation_rate_limit_window_seconds"), 0)
-    max_requests = _to_int(effective.get("operation_rate_limit_max_requests"), 0)
-    # 0 max / 0 window = disabled → always fine.
-    if max_requests <= 0 or window <= 0:
-        return
-    per_minute = max_requests * 60 / window
-    if per_minute < MIN_OPERATION_RATE_PER_MINUTE:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Operation rate limit is too low: it must allow at least "
-            f"{MIN_OPERATION_RATE_PER_MINUTE} operations per minute "
-            f"(got {per_minute:.0f}/min from {max_requests} per {window}s), "
-            "otherwise an owner could lock everyone out of the dashboard.",
-        )
 
 
 def _validate_heatmap_retention(effective: dict[str, object]) -> None:
@@ -103,9 +80,6 @@ async def update_settings_values(
     user: User = Depends(require_owner),
 ) -> SettingsOut:
     old_values = await settings_store.get_all(session)
-    # Guard against a self-inflicted lockout: validate the *effective* operation
-    # rate limit (existing values overlaid with this update) before persisting.
-    _validate_operation_rate_limit({**old_values, **body.values})
     _validate_heatmap_retention({**old_values, **body.values})
     _validate_session_ttl({**old_values, **body.values})
     values = await settings_store.update(session, body.values)

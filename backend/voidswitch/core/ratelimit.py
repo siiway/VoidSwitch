@@ -12,9 +12,11 @@
 Three shared limiters cover the configurable abuse/quota limits:
 
 * :data:`operation_limiter` — mutating dashboard/management actions, keyed per
-  signed-in user.
+  signed-in user, with a fixed window/max (see
+  ``constants.OPERATION_RATE_LIMIT_*``).
 * :data:`call_limiter` — the OpenAI/Anthropic gateway endpoints, keyed per
-  Void-Token owner.
+  (user, role group); each role group carries its own window/max and a member
+  of several groups passes as long as any of them has budget left.
 * :data:`gateway_rpm_limiter` — the per-Void-Token ``rpm_limit`` on the gateway.
 
 All are enforced for *everyone* (owners included); each subject is counted
@@ -59,6 +61,23 @@ class SlidingWindowLimiter:
         self._maybe_gc(now, window_seconds)
         return True
 
+    def remaining(self, key: str, *, window_seconds: float, max_requests: int) -> int:
+        """Capacity left for ``key`` without recording a hit (peek).
+
+        Returns ``max_requests`` when the limiter is disabled for these
+        parameters (``max_requests <= 0`` or ``window_seconds <= 0``), so a
+        disabled group always looks like it has budget.
+        """
+        if max_requests <= 0 or window_seconds <= 0:
+            return max_requests if max_requests > 0 else 1
+        now = time.monotonic()
+        window = self._windows.get(key)
+        if not window:
+            return max_requests
+        cutoff = now - window_seconds
+        hits = sum(1 for ts in window if ts >= cutoff)
+        return max(0, max_requests - hits)
+
     def _maybe_gc(self, now: float, window_seconds: float) -> None:
         """Drop subjects whose window is empty and last touched long ago.
 
@@ -73,6 +92,10 @@ class SlidingWindowLimiter:
         for k in stale:
             if not self._windows[k]:
                 del self._windows[k]
+
+    def clear(self) -> None:
+        """Drop all recorded hits (used by the test-suite between tests)."""
+        self._windows.clear()
 
 
 # Process-wide singletons shared by the request guards.

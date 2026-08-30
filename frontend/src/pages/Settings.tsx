@@ -47,7 +47,6 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
       "max_proxy_failures",
       "proxy_probe_interval_seconds",
       "proxy_health_check_enabled",
-      "proxy_probe_url",
       "node_default_probe_url",
       "node_probe_interval_seconds",
       "node_rank_alpha",
@@ -118,15 +117,6 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
   },
 ];
 
-// Abuse rate-limit keys get a bespoke two-inputs-per-line layout (window + max),
-// so they're excluded from the generic sections (and the "Other" fallback).
-const RATE_LIMIT_KEYS = [
-  "operation_rate_limit_window_seconds",
-  "operation_rate_limit_max_requests",
-  "call_rate_limit_window_seconds",
-  "call_rate_limit_max_requests",
-];
-
 // Proxy-pool settings that are meaningless when proxy switching is off (an
 // external proxy handles egress, so there is no pool to tune, probe, or
 // resurrect). Their background tasks are also short-circuited on the backend.
@@ -134,7 +124,6 @@ const PROXY_SWITCHING_ONLY = new Set([
   "max_proxy_failures",
   "proxy_probe_interval_seconds",
   "proxy_health_check_enabled",
-  "proxy_probe_url",
 ]);
 
 // The single static upstream proxy URL only applies when switching is OFF; with
@@ -150,8 +139,16 @@ const DEPENDENT_ON: Record<string, string> = {
   log_cleanup_interval_seconds: "log_cleanup_enabled",
 };
 
-// Keys that were renamed / removed and should never appear in the UI.
-const HIDDEN_KEYS = new Set(["proxy_resurrector_enabled"]);
+// Keys that were renamed / removed and should never appear in the UI. (The
+// backend deletes the removed rows on boot; this keeps them hidden regardless.)
+const HIDDEN_KEYS = new Set([
+  "proxy_resurrector_enabled",
+  "proxy_probe_url",
+  "operation_rate_limit_window_seconds",
+  "operation_rate_limit_max_requests",
+  "call_rate_limit_window_seconds",
+  "call_rate_limit_max_requests",
+]);
 
 export function Settings() {
   const { t } = useTranslation();
@@ -313,7 +310,6 @@ export function Settings() {
       balance_probe_enabled: t("settings.balanceProbeEnabled" as TK),
       balance_rescan_enabled: t("settings.balanceRescanEnabled" as TK),
       proxy_health_check_enabled: t("settings.proxyHealthCheckEnabled" as TK),
-      proxy_probe_url: t("settings.proxyProbeUrl" as TK),
       opencode_default_model: t("settings.opencodeDefaultModel" as TK),
       opencode_small_model: t("settings.opencodeSmallModel" as TK),
       chat_preset_questions: t("settings.chatPresetQuestions" as TK),
@@ -340,6 +336,22 @@ export function Settings() {
       ),
       models_dev_sync_interval_minutes: t(
         "settings.modelsDevSyncInterval" as TK,
+      ),
+    }),
+    [t],
+  );
+
+  // Explanatory hints for the node-scheduling knobs: the weights are opaque
+  // without the ranking formula they feed into, spelled out here.
+  const hints = useMemo<Record<string, string>>(
+    () => ({
+      node_default_probe_url: t("settings.nodeDefaultProbeUrlHint" as TK),
+      node_probe_interval_seconds: t("settings.nodeProbeIntervalHint" as TK),
+      node_rank_alpha: t("settings.nodeRankAlphaHint" as TK),
+      node_rank_beta: t("settings.nodeRankBetaHint" as TK),
+      node_rank_gamma: t("settings.nodeRankGammaHint" as TK),
+      node_rank_ewma_half_life_seconds: t(
+        "settings.nodeRankEwmaHalfLifeHint" as TK,
       ),
     }),
     [t],
@@ -419,7 +431,7 @@ export function Settings() {
     }
     if (typeof value === "number") {
       return (
-        <Field key={key} label={label}>
+        <Field key={key} label={label} hint={hints[key]}>
           <SpinButton
             value={value}
             min={0}
@@ -462,7 +474,7 @@ export function Settings() {
         );
       }
       return (
-        <Field key={key} label={label}>
+        <Field key={key} label={label} hint={hints[key]}>
           <Input
             value={value}
             disabled={!isOwner}
@@ -474,50 +486,10 @@ export function Settings() {
     return null;
   }
 
-  function renderRateLimitRow(labelKey: TK, windowKey: string, maxKey: string) {
-    const windowVal = Number(values[windowKey] ?? 0);
-    const maxVal = Number(values[maxKey] ?? 0);
-    return (
-      <div
-        style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
-      >
-        <Text style={{ minWidth: 150 }}>{t(labelKey)}</Text>
-        <SpinButton
-          value={windowVal}
-          min={0}
-          disabled={!isOwner}
-          style={{ width: 96 }}
-          onChange={(_, d) => {
-            const next = d.value ?? (d.displayValue ? Number(d.displayValue) : windowVal);
-            if (!Number.isNaN(next)) set(windowKey, next);
-          }}
-        />
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-          {t("settings.rateLimitWithin" as TK)}
-        </Text>
-        <SpinButton
-          value={maxVal}
-          min={0}
-          disabled={!isOwner}
-          style={{ width: 96 }}
-          onChange={(_, d) => {
-            const next = d.value ?? (d.displayValue ? Number(d.displayValue) : maxVal);
-            if (!Number.isNaN(next)) set(maxKey, next);
-          }}
-        />
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-          {t("settings.rateLimitRequests" as TK)}
-        </Text>
-      </div>
-    );
-  }
-
-  const hasRateLimitKeys = RATE_LIMIT_KEYS.some((k) => k in values);
-
   if (loaded.loading) return <Loading />;
   if (loaded.error) return <ErrorText error={loaded.error} />;
 
-  const known = new Set([...SECTIONS.flatMap((s) => s.keys), ...RATE_LIMIT_KEYS, ...HIDDEN_KEYS]);
+  const known = new Set([...SECTIONS.flatMap((s) => s.keys), ...HIDDEN_KEYS]);
   const otherKeys = Object.keys(values).filter((k) => !known.has(k));
   const sections = [
     ...SECTIONS,
@@ -680,28 +652,6 @@ export function Settings() {
             </div>
           );
         })}
-        {hasRateLimitKeys ? (
-          <div
-            style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, border: "1px solid var(--colorNeutralStroke1)", borderRadius: "10px" }}
-          >
-            <Text weight="semibold" size={400}>
-              {t("settings.sectionAbuseLimits" as TK)}
-            </Text>
-            {renderRateLimitRow(
-              "settings.rateLimitOperation" as TK,
-              "operation_rate_limit_window_seconds",
-              "operation_rate_limit_max_requests",
-            )}
-            {renderRateLimitRow(
-              "settings.rateLimitCall" as TK,
-              "call_rate_limit_window_seconds",
-              "call_rate_limit_max_requests",
-            )}
-            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-              {t("settings.abuseLimitsHint" as TK)}
-            </Text>
-          </div>
-        ) : null}
         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           {t("common.settingsAppliedNote" as TK)}
         </Text>

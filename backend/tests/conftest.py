@@ -33,6 +33,20 @@ from voidswitch.services import routing, settings_store
 from voidswitch.services.network import get_pool
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """The rate limiters are process-wide singletons, but every test gets a fresh
+    database whose user/token ids restart at 1. Without a reset, hits from an
+    earlier test keep counting against the reused ids in later tests — spurious
+    429s once the always-on operation limit (30/20s) accumulates enough."""
+    from voidswitch.core import ratelimit
+
+    ratelimit.operation_limiter.clear()
+    ratelimit.call_limiter.clear()
+    ratelimit.gateway_rpm_limiter.clear()
+    yield
+
+
 @pytest.fixture
 def settings():
     return get_settings()

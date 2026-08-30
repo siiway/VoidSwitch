@@ -27,6 +27,8 @@ from sqlalchemy.orm import (
 )
 
 from voidswitch.constants import (
+    CALL_RATE_LIMIT_MAX_REQUESTS,
+    CALL_RATE_LIMIT_WINDOW_SECONDS,
     KeySelectMode,
     KeyStatus,
     NodeStatus,
@@ -558,6 +560,22 @@ class RoleGroup(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(120), unique=True)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-user call rate limit for this group's members on the OpenAI/Anthropic
+    # gateway endpoints, enforced as a sliding window per (user, group). A member
+    # of several groups may call as long as ANY of their groups still has budget.
+    # 0 max (or 0 window) = unlimited for this group.
+    call_rate_limit_window_seconds: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=CALL_RATE_LIMIT_WINDOW_SECONDS,
+        server_default=str(CALL_RATE_LIMIT_WINDOW_SECONDS),
+    )
+    call_rate_limit_max_requests: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=CALL_RATE_LIMIT_MAX_REQUESTS,
+        server_default=str(CALL_RATE_LIMIT_MAX_REQUESTS),
+    )
 
     mappings: Mapped[list[RoleGroupMapping]] = relationship(
         back_populates="group", cascade="all, delete-orphan", lazy="selectin"

@@ -663,6 +663,15 @@ const zh: Translations = {
     removeMemberMsg:
       "将“{user}”移出“{group}”？其对该组模型的访问将立即被收回（直到其重新登录）。",
     memberRemoved: "已移出成员",
+    callRateLimit: "调用限流",
+    callRateLimitHint:
+      "OpenAI / Anthropic 网关调用按用户对该组的滑动窗口计数。属于多个组的成员，只要任一组仍有额度即可调用。最大值设为 0 表示不限。",
+    rateLimitWithin: "秒内最多",
+    rateLimitRequests: "次请求",
+    callRateSummary: "{max} 次 / {window} 秒",
+    callRateUnlimited: "调用不限流",
+    builtinEditNote:
+      "内置 moderator 组无法重命名或修改映射，只能调整其调用限流。",
   },
   proxies: {
     title: "出站代理",
@@ -812,7 +821,6 @@ const zh: Translations = {
     balanceRescanEnabled: "启用余额重新扫描（重新启用恢复的密钥）",
     proxyHealthCheckEnabled:
       "启用代理健康检测（关闭后不探测、不自动禁用、不自动启用 — 适用于外部管理代理连通性）",
-    proxyProbeUrl: "代理探测 URL",
     opencodeDefaultModel: "OpenCode 默认模型",
     opencodeSmallModel: "OpenCode 小模型（用于后台任务）",
     chatPresetQuestions: "聊天预设问题",
@@ -834,24 +842,29 @@ const zh: Translations = {
     maxConnections: "最大出站连接数",
     maxKeepaliveConnections: "最大保持连接数",
     announcementsHomeCount: "仪表盘展示的公告数量（超出后需“查看全部”）",
-    nodeDefaultProbeUrl: "节点默认探测 URL",
+    nodeDefaultProbeUrl: "节点探测 URL",
+    nodeDefaultProbeUrlHint:
+      "节点组未单独设置探测 URL 时，空闲健康探测使用的地址。应选择一个上游稳定提供的轻量接口。",
     nodeProbeInterval: "节点探测间隔（秒）",
+    nodeProbeIntervalHint:
+      "节点组未单独设置时，空闲节点健康探测的间隔。",
     nodeRankAlpha: "节点排序 α（延迟权重）",
+    nodeRankAlphaHint:
+      "评分 = α·EWMA 延迟 + β·失败次数 + γ·临近失败惩罚；优先使用评分最低的节点。α 是每毫秒平滑延迟的惩罚值。",
     nodeRankBeta: "节点排序 β（失败权重）",
+    nodeRankBetaHint:
+      "每次记录失败所加的惩罚。β 越大，出错的节点越快被排到后面。",
     nodeRankGamma: "节点排序 γ（失败临近权重）",
+    nodeRankGammaHint:
+      "对接近自动禁用失败阈值的节点的惩罚。γ 越大，越早避开高风险节点。",
     nodeRankEwmaHalfLife: "节点 EWMA 半衰期（秒）",
+    nodeRankEwmaHalfLifeHint:
+      "空闲节点的平滑延迟减半所需的时间，让曾经较慢的节点能逐步恢复排名。",
     modelsDevSyncInterval: "models.dev 同步间隔（分钟，0 = 禁用）",
     liveLogRowCap: "浏览器保留的实时日志条数",
     liveLogRowCapHint:
       "实时请求日志流在丢弃最旧记录前保留多少条（过多会导致浏览器卡顿）。",
     sectionPlatformInfo: "平台信息",
-    sectionAbuseLimits: "请求限流（防滥用）",
-    rateLimitOperation: "操作",
-    rateLimitCall: "OpenAI / Anthropic 调用",
-    rateLimitWithin: "秒内最多",
-    rateLimitRequests: "次请求",
-    abuseLimitsHint:
-      "即“N 秒内最多 X 个请求”。0 = 不限制。所有用户（含 owner）分别独立计算。“操作”指仪表盘的更改操作，“调用”指网关端点。操作限流值过低将在保存时被拒绝，以防锁死仪表盘。",
     sectionProxy: "代理与路由",
     sectionKeys: "密钥与余额",
     sectionRateLimit: "限流",

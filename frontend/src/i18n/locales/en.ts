@@ -681,6 +681,15 @@ const en = {
     removeMemberMsg:
       'Remove "{user}" from "{group}"? Their access to this group\'s models is revoked immediately (until they log in again).',
     memberRemoved: "Member removed",
+    callRateLimit: "Call rate limit",
+    callRateLimitHint:
+      "OpenAI / Anthropic gateway calls are counted per user against this group's sliding window. A member of several groups passes while any of them still has budget. Set max to 0 for unlimited.",
+    rateLimitWithin: "s — at most",
+    rateLimitRequests: "requests",
+    callRateSummary: "{max} calls / {window}s",
+    callRateUnlimited: "No call rate limit",
+    builtinEditNote:
+      "The built-in moderator group can't be renamed or remapped — only its call rate limit can be changed.",
   },
   proxies: {
     title: "Outbound proxies",
@@ -831,7 +840,6 @@ const en = {
     balanceRescanEnabled: "Balance rescan enabled (re-enable recovered keys)",
     proxyHealthCheckEnabled:
       "Enable proxy health check (off: no probing, no auto-disable, no auto-enable — for external connectivity managers)",
-    proxyProbeUrl: "Proxy probe URL",
     opencodeDefaultModel: "OpenCode default model",
     opencodeSmallModel: "OpenCode small model (for background tasks)",
     chatPresetQuestions: "Chat preset questions",
@@ -857,24 +865,29 @@ const en = {
     maxKeepaliveConnections: "Max keep-alive connections",
     announcementsHomeCount:
       "Announcements shown on the dashboard (before \"view all\")",
-    nodeDefaultProbeUrl: "Node default probe URL",
+    nodeDefaultProbeUrl: "Node probe URL",
+    nodeDefaultProbeUrlHint:
+      "The URL idle health-checks probe when a node group doesn't set its own. Should be a lightweight endpoint the upstream always serves.",
     nodeProbeInterval: "Node probe interval (s)",
+    nodeProbeIntervalHint:
+      "How often idle nodes are health-checked when a group doesn't set its own interval.",
     nodeRankAlpha: "Node rank α (latency weight)",
+    nodeRankAlphaHint:
+      "Score = α·EWMA latency + β·failures + γ·failure-proximity; nodes are tried lowest-score first. α is the penalty per ms of smoothed latency.",
     nodeRankBeta: "Node rank β (failure weight)",
+    nodeRankBetaHint:
+      "Penalty added per recorded failure. Higher β pushes failing nodes to the back of the order faster.",
     nodeRankGamma: "Node rank γ (failure-proximity weight)",
+    nodeRankGammaHint:
+      "Penalty for being close to the auto-disable failure threshold. Higher γ avoids risky nodes sooner.",
     nodeRankEwmaHalfLife: "Node EWMA half-life (s)",
+    nodeRankEwmaHalfLifeHint:
+      "How long an idle node's smoothed latency takes to halve, letting a once-slow node recover its ranking.",
     modelsDevSyncInterval: "models.dev sync interval (min, 0 = disabled)",
     liveLogRowCap: "Live log rows kept in the browser",
     liveLogRowCapHint:
       "How many rows the live request-log stream keeps before dropping the oldest (too many can make the browser lag).",
     sectionPlatformInfo: "Platform info",
-    sectionAbuseLimits: "Rate limits (abuse protection)",
-    rateLimitOperation: "Operations",
-    rateLimitCall: "OpenAI / Anthropic calls",
-    rateLimitWithin: "s — at most",
-    rateLimitRequests: "requests",
-    abuseLimitsHint:
-      "Within N seconds, at most X requests. 0 = unlimited. Everyone (owners included) is counted independently. \"Operations\" covers dashboard changes; \"calls\" covers the gateway endpoints. An operation limit that's too low is rejected on save to avoid locking the dashboard.",
     sectionProxy: "Proxy & routing",
     sectionKeys: "Keys & balance",
     sectionRateLimit: "Rate limiting",

@@ -27,7 +27,7 @@ from voidswitch.constants import (
 from voidswitch.core import auth, ratelimit
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
-from voidswitch.models.db import ExposedModel, Provider, RequestLog, VoidToken
+from voidswitch.models.db import ExposedModel, Provider, RequestLog, User, VoidToken
 from voidswitch.services import model_routing, role_groups, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
@@ -91,22 +91,52 @@ async def _check_daily_quota(session: AsyncSession, token: VoidToken) -> None:
         )
 
 
-def _check_call_rate_limit(user_id: int) -> None:
-    """Per-user abuse limit on the OpenAI/Anthropic gateway endpoints.
+async def _check_call_rate_limit(session: AsyncSession, user: User, model: str) -> None:
+    """Per-user, per-role-group abuse limit on the OpenAI/Anthropic gateway.
 
-    Independent of a token's own ``rpm_limit`` — this is a platform-wide guard
-    that everyone obeys (owners included), counted per user. Disabled when the
-    configured max is 0.
+    Every role group carries its own sliding-window budget (``call_rate_limit_*``
+    on the group). The groups that govern a call are the user's groups that may
+    call ``model`` (the built-in moderator group for staff; all of the user's
+    groups for provider passthrough ids, which skip the role-group access
+    check). A member of several groups passes as long as ANY of those groups
+    still has budget — the hit is then recorded on the group with the most
+    remaining capacity. A group whose max (or window) is 0 imposes no limit.
+    Independent of a token's own ``rpm_limit``; owners are throttled too (via
+    the moderator group's budget).
     """
-    window = settings_store.get_int("call_rate_limit_window_seconds", 60)
-    max_requests = settings_store.get_int("call_rate_limit_max_requests", 0)
-    if not ratelimit.call_limiter.allow(
-        f"call:{user_id}", window_seconds=window, max_requests=max_requests
-    ):
+    entry = None
+    if "/" not in model:
+        entry = (
+            await session.execute(select(ExposedModel).where(ExposedModel.model_id == model))
+        ).scalar_one_or_none()
+    groups = await role_groups.rate_limit_groups(session, user, entry)
+    if not groups:
+        # No group to hold a budget for this caller (e.g. a membership-less user
+        # on a provider passthrough model) — nothing to throttle against.
+        return
+    best_remaining = 0
+    best_group = None
+    for g in groups:
+        window = g.call_rate_limit_window_seconds
+        max_requests = g.call_rate_limit_max_requests
+        if max_requests <= 0 or window <= 0:
+            # This group is unlimited → the call always passes, uncounted.
+            return
+        remaining = ratelimit.call_limiter.remaining(
+            f"call:{user.id}:g{g.id}", window_seconds=window, max_requests=max_requests
+        )
+        if remaining > best_remaining:
+            best_remaining, best_group = remaining, g
+    if best_group is None:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            f"Call rate limit exceeded ({max_requests} per {window}s). Slow down.",
+            "Call rate limit exceeded for all of your role groups. Slow down.",
         )
+    ratelimit.call_limiter.allow(
+        f"call:{user.id}:g{best_group.id}",
+        window_seconds=best_group.call_rate_limit_window_seconds,
+        max_requests=best_group.call_rate_limit_max_requests,
+    )
 
 
 def _check_model_allowed(token: VoidToken, model: str) -> None:
@@ -188,8 +218,6 @@ async def _handle(
     inbound_style: ApiStyle,
 ) -> Response:
     authed = await auth.authenticate_void_token(session, authorization, x_api_key)
-    # Platform-wide per-user call rate limit (abuse guard, everyone incl. owners).
-    _check_call_rate_limit(authed.user.id)
     payload = await _body(request)
 
     model = payload.get("model")
@@ -226,6 +254,9 @@ async def _handle(
             status.HTTP_403_FORBIDDEN,
             f"Model '{model}' is not available to your role group.",
         )
+
+    # Per-user, per-role-group call rate limit (abuse guard, owners included).
+    await _check_call_rate_limit(session, authed.user, model)
 
     stream = bool(payload.get("stream", False))
     passthrough: dict[str, str] = {}

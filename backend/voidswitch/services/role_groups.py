@@ -19,7 +19,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.constants import MODERATOR_GROUP_SLUG, TEAM_ROLE_RANK, Role
+from voidswitch.constants import (
+    CALL_RATE_LIMIT_WINDOW_SECONDS,
+    MODERATOR_CALL_RATE_LIMIT_MAX_REQUESTS,
+    MODERATOR_GROUP_SLUG,
+    TEAM_ROLE_RANK,
+    Role,
+)
 from voidswitch.core.auth import STAFF_ROLES
 from voidswitch.models.db import ExposedModel, RoleGroup, RoleGroupMembership, User
 
@@ -113,6 +119,9 @@ async def ensure_moderator_group(session: AsyncSession) -> RoleGroup:
                 "Built-in — cannot be deleted or restricted."
             ),
             builtin=True,
+            # Moderators get a higher default call budget than custom groups.
+            call_rate_limit_window_seconds=CALL_RATE_LIMIT_WINDOW_SECONDS,
+            call_rate_limit_max_requests=MODERATOR_CALL_RATE_LIMIT_MAX_REQUESTS,
         )
         session.add(group)
         await session.flush()
@@ -188,6 +197,41 @@ async def user_group_ids(session: AsyncSession, user_id: int) -> set[int]:
         .all()
     )
     return set(rows)
+
+
+async def rate_limit_groups(
+    session: AsyncSession, user: User, entry: ExposedModel | None
+) -> list[RoleGroup]:
+    """The role groups whose call rate limits govern ``user``'s gateway call.
+
+    Staff resolve to the built-in moderator group (they hold no stored
+    memberships); everyone else resolves to their stored custom-group
+    memberships. When ``entry`` (the exposed model being called) is given, only
+    groups that actually grant access to it are returned — a group the user
+    belongs to but that can't call the model contributes no budget. Pass
+    ``entry=None`` (e.g. provider passthrough models, which skip the role-group
+    access check) to consider all of the user's groups.
+
+    A member of several groups may call as long as ANY returned group still has
+    budget; the caller picks the group with the most remaining capacity.
+    """
+    if is_moderator(user):
+        group = (
+            await session.execute(select(RoleGroup).where(RoleGroup.slug == MODERATOR_GROUP_SLUG))
+        ).scalar_one_or_none()
+        # Moderator access is unconditional, so the moderator group always counts.
+        return [group] if group is not None else []
+
+    ids = await user_group_ids(session, user.id)
+    if not ids:
+        return []
+    groups = list(
+        (await session.execute(select(RoleGroup).where(RoleGroup.id.in_(ids)))).scalars().all()
+    )
+    if entry is not None:
+        allowed = set(entry.allowed_role_group_ids or [])
+        groups = [g for g in groups if g.id in allowed]
+    return groups
 
 
 async def user_can_access_model(session: AsyncSession, user: User, model_id: str) -> bool:
