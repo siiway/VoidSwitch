@@ -109,6 +109,11 @@ class ProviderBase(BaseModel):
     retry_on_zero_token: bool = False
     # claude-code only: drop the whole "You are OpenCode…" system block.
     drop_opencode_identity_block: bool = False
+    # OpenAI-style upstreams: remap ``role: "developer"`` to ``role: "system"``
+    # before sending. Default True (safe for the majority of OpenAI-compatible
+    # upstreams that reject ``developer``); turn off for upstreams that speak
+    # the modern schema natively. Ignored for non-OpenAI-style upstreams.
+    normalize_developer_role_to_system: bool = True
     # Outbound node group this provider's upstream requests use; null = default.
     node_group_id: int | None = None
     # Key selection: "round_robin" | "random" | "fallback" |
@@ -139,6 +144,7 @@ class ProviderUpdate(BaseModel):
     timeout_seconds: int | None = None
     retry_on_zero_token: bool | None = None
     drop_opencode_identity_block: bool | None = None
+    normalize_developer_role_to_system: bool | None = None
     node_group_id: int | None = None
     key_select_mode: str | None = None
     rate_limit_cooldown_seconds: int | None = None

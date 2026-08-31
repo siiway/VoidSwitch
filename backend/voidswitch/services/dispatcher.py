@@ -580,6 +580,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     upstream_style,
                     upstream_model,
                     plaintext,
+                    provider,
                 )
 
                 oauth_refreshed = False
@@ -720,6 +721,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                                     upstream_style,
                                     upstream_model,
                                     plaintext,
+                                    provider,
                                 )
                                 continue  # retry same key with the refreshed token
                             except Exception as exc:
@@ -860,10 +862,19 @@ def _prepare_body(
     upstream_style: ApiStyle,
     upstream_model: str,
     plaintext: str,
+    provider: Provider | None = None,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
     body = _translate_request(req.inbound_style, upstream_style, req.payload)
     body = dict(body)
-    if upstream_style is ApiStyle.OPENAI:
+    # OpenAI-style upstreams: optionally remap ``role: "developer"`` down to
+    # ``role: "system"``. Gated per provider (see
+    # ``Provider.normalize_developer_role_to_system``) so upstreams that speak
+    # the modern schema natively — real OpenAI included — keep receiving the
+    # original role. Default is on, preserving the behaviour of the original
+    # ``adeddb3`` fix on all pre-existing rows.
+    if upstream_style is ApiStyle.OPENAI and (
+        provider is None or provider.normalize_developer_role_to_system
+    ):
         body = transform.openai_roles_to_system(body)
     body["model"] = upstream_model
     if req.stream:

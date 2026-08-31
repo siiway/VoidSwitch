@@ -48,6 +48,12 @@ export interface Provider {
   timeout_seconds: number;
   retry_on_zero_token: boolean;
   drop_opencode_identity_block: boolean;
+  // OpenAI-style upstreams: when true, rewrite ``role: "developer"`` messages
+  // down to ``role: "system"`` before dispatch. Default true — some upstreams
+  // (real OpenAI, etc.) speak the modern schema natively and want the
+  // original role, so this can be turned off per provider. Ignored for
+  // non-OpenAI-style upstreams.
+  normalize_developer_role_to_system: boolean;
   node_group_id: number | null;
   key_select_mode: KeySelectMode;
   rate_limit_cooldown_seconds: number;

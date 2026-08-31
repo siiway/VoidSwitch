@@ -78,6 +78,11 @@ interface FormState {
   enabled: boolean;
   drop_opencode_identity_block: boolean;
   retry_on_zero_token: boolean;
+  // OpenAI-style upstreams: remap ``role: "developer"`` to ``system`` on the
+  // way out. Default true (safe for the majority of OpenAI-compatible
+  // upstreams that reject ``developer``); operators turn it off per provider
+  // for upstreams that speak the modern schema natively.
+  normalize_developer_role_to_system: boolean;
   node_group_id: number | null;
   node_group_direct: boolean;
   key_select_mode: KeySelectMode;
@@ -97,6 +102,7 @@ const EMPTY: FormState = {
   enabled: true,
   drop_opencode_identity_block: false,
   retry_on_zero_token: false,
+  normalize_developer_role_to_system: true,
   node_group_id: null,
   node_group_direct: false,
   key_select_mode: "round_robin",
@@ -185,6 +191,7 @@ export function Providers() {
       enabled: p.enabled,
       drop_opencode_identity_block: p.drop_opencode_identity_block,
       retry_on_zero_token: p.retry_on_zero_token,
+      normalize_developer_role_to_system: p.normalize_developer_role_to_system ?? true,
       node_group_id: p.node_group_id ?? null,
       node_group_direct: false,
       key_select_mode: p.key_select_mode ?? "round_robin",
@@ -352,6 +359,7 @@ export function Providers() {
       enabled: form.enabled,
       drop_opencode_identity_block: form.drop_opencode_identity_block,
       retry_on_zero_token: form.retry_on_zero_token,
+      normalize_developer_role_to_system: form.normalize_developer_role_to_system,
       node_group_id: form.node_group_id,
       key_select_mode: form.key_select_mode,
       rate_limit_cooldown_seconds: Math.max(
@@ -1205,6 +1213,26 @@ export function Providers() {
                   }
                 />
               </Field>
+              {/* OpenAI-style upstreams only: gate the developer→system remap
+                  per provider. Hidden for non-OpenAI-style adapters where the
+                  backend already ignores the flag. */}
+              {form?.type === "openai" && (
+                <Field
+                  label={t("providers.normalizeDeveloperRole" as TK)}
+                  hint={t("providers.normalizeDeveloperRoleHint" as TK)}
+                >
+                  <Switch
+                    checked={form?.normalize_developer_role_to_system ?? true}
+                    onChange={(_, d) =>
+                      setForm((f) =>
+                        f
+                          ? { ...f, normalize_developer_role_to_system: d.checked }
+                          : f,
+                      )
+                    }
+                  />
+                </Field>
+              )}
               <Field label={t("providers.passthroughEnabled" as TK)}>
                 <Switch
                   checked={form?.passthrough_enabled ?? false}

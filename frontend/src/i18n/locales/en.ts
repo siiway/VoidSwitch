@@ -284,6 +284,9 @@ const en = {
     retryZeroToken: "Auto-retry on 200 OK + 0 tokens",
     retryZeroTokenHint:
       "Treat a 200 response with zero tokens (or a stream that ends with no real content) as a transient upstream fault and retry on the next key / route / provider; the empty reply is never delivered. Streams are spooled until the first real content token, so an empty response is retried on the same connection.",
+    normalizeDeveloperRole: "Remap 'developer' role to 'system'",
+    normalizeDeveloperRoleHint:
+      "Newer OpenAI clients emit ``role: 'developer'`` for the system prompt. Many OpenAI-compatible upstreams still only accept ``[system, assistant, user, tool, function]`` and reject it — this switch rewrites developer to system before the request leaves. Leave on (the default) unless this upstream (e.g. real OpenAI) handles ``developer`` natively.",
     deleteTitle: "Delete provider",
     deleteMsg: 'Delete "{name}" and all its keys? This cannot be undone.',
     created: "Provider created",

@@ -233,6 +233,7 @@ async def create_provider(
         extra_headers=body.extra_headers,
         timeout_seconds=body.timeout_seconds,
         drop_opencode_identity_block=body.drop_opencode_identity_block,
+        normalize_developer_role_to_system=body.normalize_developer_role_to_system,
         node_group_id=body.node_group_id,
         key_select_mode=body.key_select_mode,
         rate_limit_cooldown_seconds=max(0, body.rate_limit_cooldown_seconds),

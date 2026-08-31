@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    true as sqltrue,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -337,6 +338,17 @@ class Provider(Base, TimestampMixin):
     # claude-code masquerade only: when True, drop the inbound client's entire
     # "You are OpenCode…" system block instead of scrubbing it in place.
     drop_opencode_identity_block: Mapped[bool] = mapped_column(Boolean, default=False)
+    # OpenAI-style upstreams: when True, remap ``role: "developer"`` messages
+    # down to ``role: "system"`` before the request leaves. Newer OpenAI
+    # clients emit ``developer``, but many OpenAI-compatible upstreams still
+    # only accept ``[system, assistant, user, tool, function]`` and reject the
+    # request outright. Default True — matching the original ``adeddb3`` fix —
+    # so the "safer" behaviour is the out-of-the-box one; turn it off on
+    # providers that speak the modern schema natively (real OpenAI, etc.). Has
+    # no effect on non-OpenAI-style upstreams.
+    normalize_developer_role_to_system: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=sqltrue()
+    )
     # How this provider picks which upstream key to lead with for each request:
     # "round_robin" | "random" | "fallback" | "pinned_round_robin" |
     # "pinned_random". See constants.KeySelectMode.

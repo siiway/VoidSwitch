@@ -284,6 +284,9 @@ const zh: Translations = {
     retryZeroToken: "200 OK + 0 Token 自动重试",
     retryZeroTokenHint:
       "当上游返回 200 但 Token 数为 0（或流式响应无任何真实内容即结束）时视为临时故障，自动重试下一个密钥 / 路由 / 供应商，空响应不会下发给客户端。流式请求会先缓冲到出现第一个真实内容才转发，空响应能在当前连接内当场重试。",
+    normalizeDeveloperRole: "将 “developer” 角色降级为 “system”",
+    normalizeDeveloperRoleHint:
+      "较新的 OpenAI 客户端会把系统提示词以 ``role: 'developer'`` 发出，但许多 OpenAI 兼容的上游仍然只接受 ``[system, assistant, user, tool, function]`` 并拒绝该请求。开启此项会在发送前把 developer 重写为 system。默认开启；若此上游（例如真正的 OpenAI）原生支持 ``developer``，可关闭。",
     deleteTitle: "删除提供商",
     deleteMsg: '删除 "{name}" 及其所有密钥？此操作不可撤销。',
     created: "提供商已创建",
