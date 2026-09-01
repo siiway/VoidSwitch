@@ -99,6 +99,15 @@ async def _codex_provider(db) -> int:
         return provider.id
 
 
+async def test_malformed_success_response_is_controlled_upstream_error():
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(codex_oauth.DEVICE_CODE_URL).mock(
+            return_value=httpx.Response(200, text="<html>edge error</html>")
+        )
+        with pytest.raises(codex_oauth.LoginUpstreamError, match="invalid JSON"):
+            await codex_oauth.begin_device_login()
+
+
 async def test_device_login_start_pending_then_complete():
     with respx.mock(assert_all_called=True) as mock:
         mock.post(codex_oauth.DEVICE_CODE_URL).mock(

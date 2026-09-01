@@ -146,7 +146,13 @@ async def _post(
             last = type(exc).__name__
             continue
         if response.status_code == 200:
-            result = response.json()
+            try:
+                result = response.json()
+            except ValueError:
+                # A proxy/login edge occasionally returns an HTML or empty 200.
+                # Treat that as a broken route, not an unhandled application error.
+                last = "HTTP 200: invalid JSON response"
+                continue
             return result if isinstance(result, dict) else {}
         # Device authorization reports "not approved yet" as a 403. Do not
         # confuse an unrelated edge/proxy 403 with a normal pending poll.
