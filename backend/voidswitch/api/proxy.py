@@ -27,7 +27,7 @@ from voidswitch.constants import (
 from voidswitch.core import auth, ratelimit
 from voidswitch.core.database import get_session
 from voidswitch.core.logging import get_logger, redact_headers
-from voidswitch.models.db import ExposedModel, Provider, RequestLog, VoidToken
+from voidswitch.models.db import ExposedModel, Provider, RequestLog, User, VoidToken
 from voidswitch.services import model_routing, role_groups, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
 
@@ -91,22 +91,53 @@ async def _check_daily_quota(session: AsyncSession, token: VoidToken) -> None:
         )
 
 
-def _check_call_rate_limit(user_id: int) -> None:
-    """Per-user abuse limit on the OpenAI/Anthropic gateway endpoints.
+async def _check_call_rate_limit(session: AsyncSession, user: User, model: str) -> None:
+    """Per-user, per-role-group abuse limit on the OpenAI/Anthropic gateway.
 
-    Independent of a token's own ``rpm_limit`` — this is a platform-wide guard
-    that everyone obeys (owners included), counted per user. Disabled when the
-    configured max is 0.
+    Every role group carries its own sliding-window budget (``call_rate_limit_*``
+    on the group). The groups that govern a call are the user's groups that may
+    call ``model`` (the built-in moderator group for staff; the user's custom
+    groups filtered by the model's ``allowed_role_group_ids`` otherwise). A
+    member of several groups passes as long as ANY of those groups still has
+    budget — the hit is then recorded on the group with the most remaining
+    capacity. A group whose max (or window) is 0 imposes no limit. Independent
+    of a token's own ``rpm_limit``; owners are throttled too (via the moderator
+    group's budget).
     """
-    window = settings_store.get_int("call_rate_limit_window_seconds", 60)
-    max_requests = settings_store.get_int("call_rate_limit_max_requests", 0)
-    if not ratelimit.call_limiter.allow(
-        f"call:{user_id}", window_seconds=window, max_requests=max_requests
-    ):
+    # Passthrough ids ("slug/exposed") may or may not have an ExposedModel row —
+    # the row is created lazily the first time an operator edits the model's
+    # metadata or access list, so we always look it up.
+    entry = (
+        await session.execute(select(ExposedModel).where(ExposedModel.model_id == model))
+    ).scalar_one_or_none()
+    groups = await role_groups.rate_limit_groups(session, user, entry)
+    if not groups:
+        # No group to hold a budget for this caller (e.g. a membership-less user
+        # on a provider passthrough model) — nothing to throttle against.
+        return
+    best_remaining = 0
+    best_group = None
+    for g in groups:
+        window = g.call_rate_limit_window_seconds
+        max_requests = g.call_rate_limit_max_requests
+        if max_requests <= 0 or window <= 0:
+            # This group is unlimited → the call always passes, uncounted.
+            return
+        remaining = ratelimit.call_limiter.remaining(
+            f"call:{user.id}:g{g.id}", window_seconds=window, max_requests=max_requests
+        )
+        if remaining > best_remaining:
+            best_remaining, best_group = remaining, g
+    if best_group is None:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            f"Call rate limit exceeded ({max_requests} per {window}s). Slow down.",
+            "Call rate limit exceeded for all of your role groups. Slow down.",
         )
+    ratelimit.call_limiter.allow(
+        f"call:{user.id}:g{best_group.id}",
+        window_seconds=best_group.call_rate_limit_window_seconds,
+        max_requests=best_group.call_rate_limit_max_requests,
+    )
 
 
 def _check_model_allowed(token: VoidToken, model: str) -> None:
@@ -188,8 +219,6 @@ async def _handle(
     inbound_style: ApiStyle,
 ) -> Response:
     authed = await auth.authenticate_void_token(session, authorization, x_api_key)
-    # Platform-wide per-user call rate limit (abuse guard, everyone incl. owners).
-    _check_call_rate_limit(authed.user.id)
     payload = await _body(request)
 
     model = payload.get("model")
@@ -217,15 +246,19 @@ async def _handle(
 
     # Role-group access: a non-moderator may only call models whose allowed role
     # groups intersect their own. Moderators may call everything. Passthrough
-    # models (``provider-slug/exposed-model-id``) are whitelist-controlled by the
-    # provider and skip the role-group check.
-    if "/" not in model and not await role_groups.user_can_access_model(
-        session, authed.user, model
-    ):
+    # models (``provider-slug/exposed-model-id``) are also gated by this check —
+    # the ExposedModel row is created lazily the first time an operator edits
+    # the passthrough model's metadata or access list, so a model with no row
+    # (or with an empty ``allowed_role_group_ids``) is only callable by
+    # moderators.
+    if not await role_groups.user_can_access_model(session, authed.user, model):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             f"Model '{model}' is not available to your role group.",
         )
+
+    # Per-user, per-role-group call rate limit (abuse guard, owners included).
+    await _check_call_rate_limit(session, authed.user, model)
 
     stream = bool(payload.get("stream", False))
     passthrough: dict[str, str] = {}
@@ -345,20 +378,19 @@ async def _advertised_models(
     data: list[dict[str, object]] = []
     allowed = token.allowed_models or []
 
-    # Pre-load the models.dev entries referenced by any exposed model, once.
+    # Pre-load the models.dev registry once and resolve each exposed model's
+    # ``models_dev_id`` (a ``provider/model`` id) to its flattened model entry.
     dev_ids = [e.models_dev_id for e in entries if e.models_dev_id]
     md_by_id: dict[str, dict] = {}
     if dev_ids:
-        from sqlalchemy import select as _select
-
         from voidswitch.models.db import ModelsDevCache
+        from voidswitch.services import models_dev
 
-        rows = (
-            (await session.execute(_select(ModelsDevCache).where(ModelsDevCache.id.in_(dev_ids))))
-            .scalars()
-            .all()
-        )
-        md_by_id = {r.id: r.data or {} for r in rows}
+        rows = (await session.execute(select(ModelsDevCache))).scalars().all()
+        for dev_id in dev_ids:
+            entry_data = models_dev.resolve_model(rows, dev_id)
+            if entry_data is not None:
+                md_by_id[dev_id] = entry_data
 
     def _push(entry: ExposedModel) -> None:
         nonlocal data, seen, allowed, group_ids, is_mod, md_by_id
@@ -394,7 +426,11 @@ async def _advertised_models(
         _push(entry)
 
     # Passthrough models: each provider with passthrough_enabled contributes its
-    # whitelisted models as ``provider-slug/exposed-model-id``.
+    # whitelisted models as ``provider-slug/exposed-model-id``. Role-group access
+    # is enforced against the (lazily created) ExposedModel row that carries the
+    # passthrough id's metadata — same rule as for regular models, so a
+    # passthrough id with no metadata (or an empty allow-list) is only visible
+    # to moderators.
     passthrough_providers = (
         (
             await session.execute(
@@ -406,6 +442,7 @@ async def _advertised_models(
         .scalars()
         .all()
     )
+    entries_by_id = {e.model_id: e for e in entries}
     for provider in passthrough_providers:
         for entry in provider.passthrough_models or []:
             parsed = _parse_passthrough_entry(entry)
@@ -418,15 +455,28 @@ async def _advertised_models(
                 for pattern in (str(p) for p in allowed)
             ):
                 continue
+            pt_entry = entries_by_id.get(model_id)
+            if not role_groups.model_allowed_for_groups(pt_entry, group_ids, is_mod=is_mod):
+                continue
+            # Members must not see a hidden (disabled) passthrough model.
+            if pt_entry is not None and not pt_entry.enabled:
+                continue
             seen.add(model_id)
-            data.append(
-                {
-                    "id": model_id,
-                    "object": "model",
-                    "created": 0,
-                    "owned_by": "voidswitch",
-                }
-            )
+            item: dict[str, object] = {
+                "id": model_id,
+                "object": "model",
+                "created": 0,
+                "owned_by": "voidswitch",
+            }
+            # Surface saved metadata for passthrough ids too.
+            if pt_entry is not None:
+                dev_entry = md_by_id.get(pt_entry.models_dev_id) if pt_entry.models_dev_id else None
+                item["opencode"] = model_routing.build_opencode_config(pt_entry, dev_entry)
+                if pt_entry.display_name:
+                    item["display_name"] = pt_entry.display_name
+                if pt_entry.description:
+                    item["description"] = pt_entry.description
+            data.append(item)
 
     return data
 

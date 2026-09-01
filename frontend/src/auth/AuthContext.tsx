@@ -21,6 +21,16 @@ interface AuthState {
   loading: boolean;
   isStaff: boolean;
   isOwner: boolean;
+  // Role groups the current user is a read-only observer admin of (empty
+  // array for a normal user). Derived from /api/me.
+  managedGroupIds: number[];
+  managedGroupNames: string[];
+  // True when the caller administers at least one role group and is NOT
+  // staff — i.e. this is a *pure* role-group admin who needs the scoped
+  // views on Users / Statistics / Logs and the "you administer …" hint bar.
+  // Staff who also happen to hold adminships are handled by the platform-role
+  // path (they see everything anyway).
+  isRoleGroupAdmin: boolean;
   login: () => void;
   tokenLogin: (token: string) => Promise<void>;
   devLogin: () => Promise<void>;
@@ -82,6 +92,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // drift from the backend's OWNER_ROLES / STAFF_ROLES definitions.
   const isOwner = checkOwner(user?.role);
   const isStaff = checkStaff(user?.role);
+  const managedGroupIds = user?.managed_group_ids ?? [];
+  const managedGroupNames = user?.managed_group_names ?? [];
+  const isRoleGroupAdmin = managedGroupIds.length > 0 && !isStaff;
 
   return (
     <AuthContext.Provider
@@ -90,6 +103,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         isStaff,
         isOwner,
+        managedGroupIds,
+        managedGroupNames,
+        isRoleGroupAdmin,
         login,
         tokenLogin,
         devLogin,

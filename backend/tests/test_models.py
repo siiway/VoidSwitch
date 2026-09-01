@@ -120,20 +120,16 @@ async def _member_headers(sub: str = "member-1") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def test_member_can_view_but_not_sync(client, db, seeded):
+async def test_member_can_view_but_not_reshape(client, db, seeded):
     await _add_member(db)
     # Members may browse the catalog…
+    assert (await client.get("/api/models", headers=await _member_headers())).status_code == 200
+    # …but reshaping the shared catalog is staff-only. The old "sync from
+    # providers" auto-expose endpoint is gone: models are created by hand or
+    # via provider passthrough, so a member can't mass-create model configs.
     assert (
-        await client.get("/api/models", headers=await _member_headers())
-    ).status_code == 200
-    # …but syncing (reshaping the shared catalog) is staff-only now.
-    assert (
-        await client.post("/api/models/sync", headers=await _member_headers())
+        await client.put("/api/models", headers=await _member_headers(), json={"model_id": "x"})
     ).status_code == 403
-    # Staff can sync.
-    assert (
-        await client.post("/api/models/sync", headers=_session_headers())
-    ).status_code == 200
 
 
 async def test_member_does_not_see_hidden_models(client, db, seeded):
@@ -151,8 +147,7 @@ async def test_member_does_not_see_hidden_models(client, db, seeded):
     assert "deepseek-chat" not in member_ids
     # Staff still see it (to manage it).
     staff_ids = {
-        m["model_id"]
-        for m in (await client.get("/api/models", headers=_session_headers())).json()
+        m["model_id"] for m in (await client.get("/api/models", headers=_session_headers())).json()
     }
     assert "deepseek-chat" in staff_ids
 
@@ -307,6 +302,37 @@ async def test_delete_removes_exposed_model(client, seeded):
     # The exposed model is gone from the catalog entirely.
     listed = (await client.get("/api/models", headers=_session_headers())).json()
     assert all(m["model_id"] != "deepseek-chat" for m in listed)
+
+
+async def test_upsert_returns_model_without_greenlet_error(client, seeded):
+    """PUT /api/models must not MissingGreenlet when projecting route upstreams."""
+    resp = await client.put(
+        "/api/models",
+        headers=_session_headers(),
+        json={"model_id": "deepseek-chat", "description": "round-trip"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["model_id"] == "deepseek-chat"
+    assert body["description"] == "round-trip"
+    assert isinstance(body.get("upstreams"), list)
+
+
+async def test_batch_delete_models(client, db, seeded):
+    await _add_exposed(db, "batch-del-a")
+    await _add_exposed(db, "batch-del-b")
+    resp = await client.post(
+        "/api/models/batch-delete",
+        headers=_session_headers(),
+        json={"model_ids": ["batch-del-a", "batch-del-b", "missing-no-op"]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deleted"] == 2
+    assert set(resp.json()["model_ids"]) == {"batch-del-a", "batch-del-b"}
+    listed = (await client.get("/api/models", headers=_session_headers())).json()
+    ids = {m["model_id"] for m in listed}
+    assert "batch-del-a" not in ids
+    assert "batch-del-b" not in ids
 
 
 async def test_clean_unserved_removes_models_without_route(client, db, seeded):

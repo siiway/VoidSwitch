@@ -33,19 +33,12 @@ import { useTranslation, Trans } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
 import { api, API_BASE } from "../api/client";
 import type { VoidTokenWithSecret } from "../api/types";
-import { useNotify } from "../components/ui";
+import { useAsync, useNotify } from "../components/ui";
 
 // The composer talks to the *gateway* (`/v1/chat/completions`), authenticated
 // with a `vs-…` Void-Token — not the dashboard session — so we keep that token
 // in its own localStorage slot.
 const CHAT_TOKEN_KEY = "voidswitch.chat_token";
-
-const EXAMPLES = [
-  "Explain async/await in Python with a short example",
-  "Write a regex to validate an email address",
-  "Summarize the CAP theorem in three bullets",
-  "Refactor this loop into a list comprehension",
-];
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -97,6 +90,13 @@ export function Chat() {
   const abortRef = useRef<AbortController | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  const config = useAsync<{ chat_preset_questions?: string[] }>(() =>
+    api.get("/api/auth/config"),
+  );
+  const examples = (config.data?.chat_preset_questions ?? []).filter((s) =>
+    s.trim(),
+  );
 
   useEffect(() => {
     if (chatToken) localStorage.setItem(CHAT_TOKEN_KEY, chatToken);
@@ -469,17 +469,19 @@ export function Chat() {
             >
               {t("chat.greeting" as TK)}
             </Text>
-            <div className={styles.examples}>
-              {EXAMPLES.map((ex) => (
-                <button
-                  key={ex}
-                  className={styles.example}
-                  onClick={() => useExample(ex)}
-                >
-                  {ex}
-                </button>
-              ))}
-            </div>
+            {examples.length > 0 ? (
+              <div className={styles.examples}>
+                {examples.map((ex) => (
+                  <button
+                    key={ex}
+                    className={styles.example}
+                    onClick={() => useExample(ex)}
+                  >
+                    {ex}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className={styles.thread}>

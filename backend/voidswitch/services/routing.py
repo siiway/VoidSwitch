@@ -83,6 +83,46 @@ def _expand_members(group: NodeGroup) -> dict[int, Node]:
     return nodes
 
 
+def _collect_group(
+    group: NodeGroup | None,
+    *,
+    all_groups: dict[int, NodeGroup] | None = None,
+    _path: set[int] | None = None,
+) -> tuple[dict[int, Node], set[int]]:
+    """Flatten a group into ``(nodes by id, pinned node ids)``.
+
+    * direct members are included as-is;
+    * inherited groups are expanded transitively (live reference);
+    * a group already on the current expansion path (a cycle) is skipped;
+    * a node is "pinned" when *any* member row that pulls it in is pinned, so a
+      node pinned in an inherited group stays pinned in the referencing group.
+    """
+    if group is None:
+        return {}, set()
+    path = _path if _path is not None else set()
+    all_groups = all_groups or {}
+    if group.id in path:
+        return {}, set()
+    nodes: dict[int, Node] = {}
+    pinned: set[int] = set()
+    for member in group.members or []:
+        if member.node is not None:
+            nodes.setdefault(member.node.id, member.node)
+            if member.pinned:
+                pinned.add(member.node.id)
+        elif member.source_group_id is not None:
+            src = all_groups.get(member.source_group_id)
+            if src is None:
+                continue
+            sub_nodes, sub_pinned = _collect_group(
+                src, all_groups=all_groups, _path=path | {group.id}
+            )
+            for nid, node in sub_nodes.items():
+                nodes.setdefault(nid, node)
+            pinned |= sub_pinned
+    return nodes, pinned
+
+
 def collect_group_nodes(
     group: NodeGroup | None,
     *,
@@ -96,24 +136,17 @@ def collect_group_nodes(
     * a group that is already on the current expansion path (a cycle) is
       skipped — membership is still expressible, cycles just can't recurse.
     """
-    if group is None:
-        return {}
-    path = _path if _path is not None else set()
-    all_groups = all_groups or {}
-    if group.id in path:
-        return {}
-    nodes: dict[int, Node] = {}
-    for member in group.members or []:
-        if member.node is not None:
-            nodes.setdefault(member.node.id, member.node)
-        elif member.source_group_id is not None:
-            src = all_groups.get(member.source_group_id)
-            if src is None:
-                continue
-            sub = collect_group_nodes(src, all_groups=all_groups, _path=path | {group.id})
-            for nid, node in sub.items():
-                nodes.setdefault(nid, node)
+    nodes, _ = _collect_group(group, all_groups=all_groups, _path=_path)
     return nodes
+
+
+def collect_group_members(
+    group: NodeGroup | None,
+    *,
+    all_groups: dict[int, NodeGroup] | None = None,
+) -> tuple[dict[int, Node], set[int]]:
+    """Like :func:`collect_group_nodes` but also returns the pinned node ids."""
+    return _collect_group(group, all_groups=all_groups)
 
 
 async def load_group_index(session: AsyncSession) -> dict[int, NodeGroup]:
@@ -148,18 +181,20 @@ async def group_nodes(
 # --------------------------------------------------------------------------- #
 
 
-def rank_nodes(nodes: Iterable[Node]) -> list[Node]:
+def rank_nodes(nodes: Iterable[Node], *, pinned: set[int] | None = None) -> list[Node]:
     """Order nodes best-first for a request.
 
     score = alpha·ewma_latency_ms + beta·failed_count + gamma·failure-proximity.
-    Ascending score wins; ties spread by ``weight`` (heavier first) then id. The
-    proxied request walks this list front-to-back, so a node that has been slow
-    or flaky drifts to the back automatically.
+    Ascending score wins; ties spread by ``weight`` (heavier first) then id.
+    Pinned nodes (``pinned`` = their ids) always lead the list and are ranked
+    independently by the same score — a pinned node is always tried first no
+    matter how it scores relative to unpinned nodes.
     """
     alpha = max(0.0, settings_store.get_float("node_rank_alpha", 1.0))
     beta = max(0.0, settings_store.get_float("node_rank_beta", 100.0))
     gamma = max(0.0, settings_store.get_float("node_rank_gamma", 1000.0))
     threshold = max(1, settings_store.get_int("max_proxy_failures", 3))
+    pinned = pinned or set()
 
     def _score(n: Node) -> float:
         ewma = n.latency_ewma if n.latency_ewma is not None else 0.0
@@ -167,7 +202,14 @@ def rank_nodes(nodes: Iterable[Node]) -> list[Node]:
         return alpha * ewma + beta * (n.failed_count or 0) + gamma * proximity
 
     ordered = list(nodes)
-    ordered.sort(key=lambda n: (_score(n), -(n.weight or 1), n.id or 0))
+    ordered.sort(
+        key=lambda n: (
+            0 if n.id in pinned else 1,
+            _score(n),
+            -(n.weight or 1),
+            n.id or 0,
+        )
+    )
     return ordered
 
 
@@ -302,7 +344,9 @@ async def group_routes(
     nodes = await group_nodes(session, group, only_enabled=not include_disabled)
     if not nodes:
         return [(Route(), None)]
-    return routes_for_nodes(rank_nodes(nodes))
+    index = await load_group_index(session)
+    _, pinned = collect_group_members(group, all_groups=index)
+    return routes_for_nodes(rank_nodes(nodes, pinned=pinned))
 
 
 async def provider_routes(session: AsyncSession, provider: Provider | None) -> NodeGroup | None:

@@ -13,13 +13,26 @@ import itertools
 from collections.abc import Sequence
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import ColumnElement, Row, Select, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.core.auth import get_current_user, is_staff, require_staff
+from voidswitch.core.auth import (
+    get_current_user,
+    is_role_group_admin,
+    is_staff,
+    managed_group_ids,
+    require_staff,
+)
 from voidswitch.core.database import get_session
-from voidswitch.models.db import RequestLog, SessionSpan, UsageDaily, User, VoidToken
+from voidswitch.models.db import (
+    RequestLog,
+    RoleGroupMembership,
+    SessionSpan,
+    UsageDaily,
+    User,
+    VoidToken,
+)
 from voidswitch.models.schemas import (
     HeatmapBundleOut,
     HeatmapDay,
@@ -110,11 +123,88 @@ _AVG_FIRST_TOKEN = func.avg(
 )
 
 
-def _scope(stmt: Select, user: User) -> Select:
-    """Restrict a query to the caller's own traffic unless they are staff."""
+def _scope(stmt: Select, user: User, visible_subs: set[str] | None = None) -> Select:
+    """Restrict a query to the caller's visible traffic.
+
+    * ``visible_subs`` is the pre-resolved role-group-admin scope (a set of
+      ``RequestLog.user_sub`` the caller may see). Callers must compute this
+      once per request (see :func:`_resolve_visible_subs`) rather than passing
+      the raw group ids in — this keeps ``_scope`` synchronous and cheap.
+    * Staff callers see everything (``visible_subs`` is ignored).
+    * Non-staff callers with a non-empty scope get their scope; with an empty
+      scope they see nothing (an unmatchable predicate).
+    * A plain member (not a role-group admin, ``visible_subs=None``) sees
+      only their own traffic — the historical behaviour.
+    """
     if is_staff(user):
         return stmt
+    if visible_subs is not None:
+        if not visible_subs:
+            return stmt.where(RequestLog.id.is_(None))
+        return stmt.where(RequestLog.user_sub.in_(visible_subs))
     return stmt.where(RequestLog.user_sub == user.sub)
+
+
+async def _resolve_visible_subs(
+    session: AsyncSession,
+    user: User,
+    *,
+    group_ids: list[int] | None = None,
+) -> set[str] | None:
+    """Resolve the role-group-admin scope for ``user`` into a set of user subs.
+
+    * Staff callers: returns ``None`` (no scoping is applied).
+    * Role-group-admin callers: returns the union of members of the requested
+      ``group_ids`` (must be a subset of the caller's managed groups), or of
+      all managed groups when ``group_ids`` is omitted.
+    * Plain members (no adminships): returns ``None`` so :func:`_scope` falls
+      through to the historical self-scope path.
+
+    Raises 403 when a non-staff caller asks for a group they don't administer.
+    """
+    if is_staff(user):
+        if group_ids is not None:
+            # Staff may pin the analytics view to specific groups too; translate
+            # those to a subs set. An empty group_ids list = no visible users.
+            if not group_ids:
+                return set()
+            rows = (
+                await session.execute(
+                    select(User.sub).where(
+                        User.id.in_(
+                            select(RoleGroupMembership.user_id).where(
+                                RoleGroupMembership.role_group_id.in_(group_ids)
+                            )
+                        )
+                    )
+                )
+            ).all()
+            return {s for (s,) in rows if s}
+        return None
+    if not is_role_group_admin(user):
+        return None
+    managed = managed_group_ids(user)
+    effective = set(group_ids) if group_ids is not None else managed
+    outside = [g for g in effective if g not in managed]
+    if outside:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"Not an admin of role group(s): {sorted(outside)}",
+        )
+    if not effective:
+        return set()
+    rows = (
+        await session.execute(
+            select(User.sub).where(
+                User.id.in_(
+                    select(RoleGroupMembership.user_id).where(
+                        RoleGroupMembership.role_group_id.in_(effective)
+                    )
+                )
+            )
+        )
+    ).all()
+    return {s for (s,) in rows if s}
 
 
 def _totals_from_row(row: Sequence) -> dict:
@@ -134,9 +224,11 @@ async def _totals(
     user: User,
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
+    *,
+    visible_subs: set[str] | None = None,
 ) -> UsageTotals:
     stmt = _apply_window(
-        _scope(select(_COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS), user),
+        _scope(select(_COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS), user, visible_subs),
         start,
         end,
     )
@@ -152,12 +244,14 @@ async def _series(
     *,
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
+    visible_subs: set[str] | None = None,
 ) -> list[UsageBucket]:
     period = _period_expr(dialect, granularity).label("period")
     stmt = _apply_window(
         _scope(
             select(period, _COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS, _AVG_FIRST_TOKEN),
             user,
+            visible_subs,
         ),
         start,
         end,
@@ -187,6 +281,7 @@ async def _performance(
     *,
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
+    visible_subs: set[str] | None = None,
 ) -> UsagePerformance:
     """Windowed performance aggregates: average TTFT, average latency, tokens
     per request, and token throughput.
@@ -227,6 +322,7 @@ async def _performance(
             _COUNT,
         ),
         user,
+        visible_subs,
     )
     stmt = _apply_window(stmt, start, end)
     row = (await session.execute(stmt)).one()
@@ -250,12 +346,14 @@ async def _status_codes(
     *,
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
+    visible_subs: set[str] | None = None,
 ) -> list[StatusCount]:
     """HTTP status-code distribution over the window."""
     stmt = _apply_window(
         _scope(
             select(RequestLog.status_code, _COUNT).where(RequestLog.status_code.isnot(None)),
             user,
+            visible_subs,
         ),
         start,
         end,
@@ -274,11 +372,13 @@ async def _group(
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
     extra: ColumnElement[bool] | None = None,
+    visible_subs: set[str] | None = None,
 ) -> Sequence[Row[Any]]:
     stmt = _apply_window(
         _scope(
             select(column, _COUNT, _SUCCESS_SUM, _PROMPT, _COMPLETION, _TOKENS),
             user,
+            visible_subs,
         ),
         start,
         end,
@@ -294,21 +394,33 @@ async def usage_analytics(
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
     time_mode: str = "A",
+    group_ids: list[int] | None = Query(
+        default=None,
+        description=(
+            "Restrict analytics to the members of these role groups. Non-staff "
+            "callers must supply a subset of the groups they administer (omit "
+            "to use the full set). Staff callers may pass any group ids or omit "
+            "the parameter to see everything."
+        ),
+    ),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> UsageAnalyticsOut:
     """Usage analytics for the caller.
 
     ``start``/``end`` scope the totals and the per-user/token/model breakdowns to
-    a window; they are omitted for the "all time" view. The "over time" series is
-    governed by ``time_mode`` (a per-user preference):
+    a window; they are omitted for the "all time" view. ``group_ids`` further
+    narrows the query to specific role groups (see :func:`_resolve_visible_subs`
+    for the scope semantics). The "over time" series is governed by
+    ``time_mode`` (a per-user preference):
       • ``A`` — trailing overview, unaffected by the window (default);
       • ``B`` — a single series at an auto-picked granularity for the window;
       • ``C`` — the daily/weekly/monthly/yearly tabs, clipped to the window.
     """
     dialect = session.bind.dialect.name if session.bind is not None else "sqlite"
+    visible_subs = await _resolve_visible_subs(session, user, group_ids=group_ids)
 
-    totals = await _totals(session, user, start, end)
+    totals = await _totals(session, user, start, end, visible_subs=visible_subs)
 
     daily: list[UsageBucket] = []
     weekly: list[UsageBucket] = []
@@ -321,24 +433,42 @@ async def usage_analytics(
     if mode == "B":
         windowed_granularity = _auto_granularity(start, end)
         windowed_series = await _series(
-            session, user, dialect, windowed_granularity, start=start, end=end
+            session,
+            user,
+            dialect,
+            windowed_granularity,
+            start=start,
+            end=end,
+            visible_subs=visible_subs,
         )
     elif mode == "C":
-        daily = await _series(session, user, dialect, "day", start=start, end=end)
-        weekly = await _series(session, user, dialect, "week", start=start, end=end)
-        monthly = await _series(session, user, dialect, "month", start=start, end=end)
-        yearly = await _series(session, user, dialect, "year", start=start, end=end)
+        daily = await _series(
+            session, user, dialect, "day", start=start, end=end, visible_subs=visible_subs
+        )
+        weekly = await _series(
+            session, user, dialect, "week", start=start, end=end, visible_subs=visible_subs
+        )
+        monthly = await _series(
+            session, user, dialect, "month", start=start, end=end, visible_subs=visible_subs
+        )
+        yearly = await _series(
+            session, user, dialect, "year", start=start, end=end, visible_subs=visible_subs
+        )
     else:  # "A" — trailing overview, independent of the page window.
-        daily = await _series(session, user, dialect, "day")
-        weekly = await _series(session, user, dialect, "week")
-        monthly = await _series(session, user, dialect, "month")
-        yearly = await _series(session, user, dialect, "year")
+        daily = await _series(session, user, dialect, "day", visible_subs=visible_subs)
+        weekly = await _series(session, user, dialect, "week", visible_subs=visible_subs)
+        monthly = await _series(session, user, dialect, "month", visible_subs=visible_subs)
+        yearly = await _series(session, user, dialect, "year", visible_subs=visible_subs)
 
     # Synthetic Claude Code token-op requests (``<cc-…-token>``) aren't real
     # inference calls, so exclude them from the model breakdown.
     not_internal_model = or_(RequestLog.model.is_(None), ~RequestLog.model.like("<cc-%"))
-    user_rows = await _group(session, user, RequestLog.user_sub, start=start, end=end)
-    token_rows = await _group(session, user, RequestLog.token_id, start=start, end=end)
+    user_rows = await _group(
+        session, user, RequestLog.user_sub, start=start, end=end, visible_subs=visible_subs
+    )
+    token_rows = await _group(
+        session, user, RequestLog.token_id, start=start, end=end, visible_subs=visible_subs
+    )
     model_rows = await _group(
         session,
         user,
@@ -346,8 +476,11 @@ async def usage_analytics(
         start=start,
         end=end,
         extra=not_internal_model,
+        visible_subs=visible_subs,
     )
-    provider_rows = await _group(session, user, RequestLog.provider_name, start=start, end=end)
+    provider_rows = await _group(
+        session, user, RequestLog.provider_name, start=start, end=end, visible_subs=visible_subs
+    )
 
     # Resolve human-friendly labels for users and tokens in batched queries.
     subs = {r[0] for r in user_rows if r[0]}
@@ -425,11 +558,17 @@ async def usage_analytics(
         for r in provider_rows
     ]
 
-    performance = await _performance(session, user, dialect, start=start, end=end)
-    status_codes = await _status_codes(session, user, start=start, end=end)
+    performance = await _performance(
+        session, user, dialect, start=start, end=end, visible_subs=visible_subs
+    )
+    status_codes = await _status_codes(
+        session, user, start=start, end=end, visible_subs=visible_subs
+    )
 
     return UsageAnalyticsOut(
-        scope="all" if is_staff(user) else "self",
+        # "all" for staff and for role-group admins (both see traffic beyond
+        # their own row); "self" for a plain member.
+        scope="all" if (is_staff(user) or is_role_group_admin(user)) else "self",
         totals=totals,
         daily=daily,
         weekly=weekly,

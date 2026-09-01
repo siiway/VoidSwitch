@@ -27,11 +27,12 @@ import {
 } from "@fluentui/react-components";
 import {
   AddRegular,
-  ArrowDownRegular,
   ArrowLeftRegular,
   ArrowRightRegular,
   ArrowSwapRegular,
   CheckmarkCircleFilled,
+  ChevronDownRegular,
+  ChevronRightRegular,
   DeleteRegular,
   DismissCircleFilled,
   EditRegular,
@@ -77,6 +78,11 @@ interface FormState {
   enabled: boolean;
   drop_opencode_identity_block: boolean;
   retry_on_zero_token: boolean;
+  // OpenAI-style upstreams: remap ``role: "developer"`` to ``system`` on the
+  // way out. Default true (safe for the majority of OpenAI-compatible
+  // upstreams that reject ``developer``); operators turn it off per provider
+  // for upstreams that speak the modern schema natively.
+  normalize_developer_role_to_system: boolean;
   node_group_id: number | null;
   node_group_direct: boolean;
   key_select_mode: KeySelectMode;
@@ -96,6 +102,7 @@ const EMPTY: FormState = {
   enabled: true,
   drop_opencode_identity_block: false,
   retry_on_zero_token: false,
+  normalize_developer_role_to_system: true,
   node_group_id: null,
   node_group_direct: false,
   key_select_mode: "round_robin",
@@ -120,7 +127,6 @@ export function Providers() {
   const nodeGroups = useAsync<NodeGroup[]>(() => api.get("/api/admin/node-groups"));
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
-  const [fetchOpen, setFetchOpen] = useState(false);
   const [fetchToken, setFetchToken] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
@@ -129,6 +135,12 @@ export function Providers() {
   const [placeholderVals, setPlaceholderVals] = useState<Record<string, string>>({});
   const [fetchMethod, setFetchMethod] = useState("GET");
   const [fetchPath, setFetchPath] = useState("/models");
+  // Whether the "fetch models from API" panel is expanded. Uses controlled
+  // React state instead of the native ``<details>`` element — a native details
+  // inside Fluent UI's focus-trapped dialog kept stealing focus back to the
+  // summary on any click within the dialog, so inputs outside the panel could
+  // not be edited while it was open.
+  const [fetchPanelOpen, setFetchPanelOpen] = useState(false);
   // Per-provider key-management API credential (owner-only).
   const [keyApiFor, setKeyApiFor] = useState<Provider | null>(null);
   const [keyApi, setKeyApi] = useState<ProviderKeyApi | null>(null);
@@ -163,10 +175,12 @@ export function Providers() {
   };
 
   function openCreate() {
+    setFetchPanelOpen(false);
     setForm({ ...EMPTY });
   }
 
   function openEdit(p: Provider) {
+    setFetchPanelOpen(false);
     setForm({
       id: p.id,
       name: p.name,
@@ -177,6 +191,7 @@ export function Providers() {
       enabled: p.enabled,
       drop_opencode_identity_block: p.drop_opencode_identity_block,
       retry_on_zero_token: p.retry_on_zero_token,
+      normalize_developer_role_to_system: p.normalize_developer_role_to_system ?? true,
       node_group_id: p.node_group_id ?? null,
       node_group_direct: false,
       key_select_mode: p.key_select_mode ?? "round_robin",
@@ -264,13 +279,25 @@ export function Providers() {
     let list = providers.data;
     const s = providerSearch.trim().toLowerCase();
     if (s) {
-      list = list.filter((p) =>
-        p.name.toLowerCase().includes(s) ||
-        p.type.toLowerCase().includes(s) ||
-        (p.base_url ?? "").toLowerCase().includes(s) ||
-        (p.added_by_name ?? "").toLowerCase().includes(s) ||
-        (p.models ?? []).some((m) => m.toLowerCase().includes(s))
-      );
+      // Rank each provider by the highest-priority field that matches, then
+      // sort best-first: id/slug > name > type > base URL > model id > added by.
+      list = list
+        .map((p) => {
+          let rank = 6;
+          if (String(p.id).toLowerCase().includes(s)) rank = Math.min(rank, 0);
+          if ((p.slug ?? "").toLowerCase().includes(s)) rank = Math.min(rank, 0);
+          if (p.name.toLowerCase().includes(s)) rank = Math.min(rank, 1);
+          if (p.type.toLowerCase().includes(s)) rank = Math.min(rank, 2);
+          if ((p.base_url ?? "").toLowerCase().includes(s)) rank = Math.min(rank, 3);
+          if ((p.models ?? []).some((m) => m.toLowerCase().includes(s)))
+            rank = Math.min(rank, 4);
+          if ((p.added_by_name ?? "").toLowerCase().includes(s))
+            rank = Math.min(rank, 5);
+          return { p, rank };
+        })
+        .filter(({ rank }) => rank < 6)
+        .sort((a, b) => a.rank - b.rank || a.p.id - b.p.id)
+        .map(({ p }) => p);
     }
     if (providerFilterType) {
       list = list.filter((p) => p.type === providerFilterType);
@@ -315,7 +342,6 @@ export function Providers() {
       merged = [...existing, ...picked.filter((id) => !existSet.has(id))];
     }
     setForm({ ...form, models: merged.join("\n") });
-    setFetchOpen(false);
   }
 
   async function save() {
@@ -333,6 +359,7 @@ export function Providers() {
       enabled: form.enabled,
       drop_opencode_identity_block: form.drop_opencode_identity_block,
       retry_on_zero_token: form.retry_on_zero_token,
+      normalize_developer_role_to_system: form.normalize_developer_role_to_system,
       node_group_id: form.node_group_id,
       key_select_mode: form.key_select_mode,
       rate_limit_cooldown_seconds: Math.max(
@@ -817,22 +844,33 @@ export function Providers() {
                   }
                 />
               </Field>
-              <Button
-                icon={fetchOpen ? <ArrowDownRegular /> : <ArrowRightRegular />}
-                appearance="subtle"
-                style={{ justifyContent: "flex-start", width: "100%" }}
-                onClick={() => setFetchOpen((o) => !o)}
-                aria-expanded={fetchOpen}
-              >
-                {t("providers.fetchModels" as TK)}
-              </Button>
-              <div style={{ display: fetchOpen ? "block" : "none" }}>
+              <div>
+                <Button
+                  appearance="subtle"
+                  onClick={() => setFetchPanelOpen((v) => !v)}
+                  icon={
+                    fetchPanelOpen ? (
+                      <ChevronDownRegular />
+                    ) : (
+                      <ChevronRightRegular />
+                    )
+                  }
+                  style={{
+                    justifyContent: "flex-start",
+                    fontWeight: 600,
+                    color: tokens.colorNeutralForeground1,
+                  }}
+                >
+                  {t("providers.fetchModels" as TK)}
+                </Button>
                 <div
+                  hidden={!fetchPanelOpen}
                   style={{
                     border: `1px solid ${tokens.colorNeutralStroke2}`,
                     borderRadius: 8,
                     padding: 16,
-                    display: "flex",
+                    marginTop: 8,
+                    display: fetchPanelOpen ? "flex" : "none",
                     flexDirection: "column",
                     gap: 12,
                     background: tokens.colorNeutralBackground2,
@@ -1175,6 +1213,26 @@ export function Providers() {
                   }
                 />
               </Field>
+              {/* OpenAI-style upstreams only: gate the developer→system remap
+                  per provider. Hidden for non-OpenAI-style adapters where the
+                  backend already ignores the flag. */}
+              {form?.type === "openai" && (
+                <Field
+                  label={t("providers.normalizeDeveloperRole" as TK)}
+                  hint={t("providers.normalizeDeveloperRoleHint" as TK)}
+                >
+                  <Switch
+                    checked={form?.normalize_developer_role_to_system ?? true}
+                    onChange={(_, d) =>
+                      setForm((f) =>
+                        f
+                          ? { ...f, normalize_developer_role_to_system: d.checked }
+                          : f,
+                      )
+                    }
+                  />
+                </Field>
+              )}
               <Field label={t("providers.passthroughEnabled" as TK)}>
                 <Switch
                   checked={form?.passthrough_enabled ?? false}

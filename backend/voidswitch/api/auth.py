@@ -86,6 +86,8 @@ async def auth_config(settings: Settings = Depends(get_settings)) -> dict[str, o
         # Non-secret: how many announcements the dashboard home panel shows inline
         # before the "view all" action reveals the rest.
         "announcements_home_count": settings_store.get_int("announcements_home_count", 3),
+        # Non-secret preset questions for the dashboard Chat empty state.
+        "chat_preset_questions": settings_store.get_list("chat_preset_questions", []),
     }
 
 

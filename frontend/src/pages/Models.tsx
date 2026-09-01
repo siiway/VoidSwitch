@@ -24,13 +24,17 @@ import {
 import {
   AddRegular,
   ArrowRoutingRegular,
+  ArrowSyncRegular,
+  ChevronDownRegular,
+  ChevronRightRegular,
   DeleteRegular,
   EditRegular,
+  FolderAddRegular,
   PeopleTeamRegular,
   SearchRegular,
 } from "@fluentui/react-icons";
 import JSON5 from "json5";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -43,7 +47,7 @@ import type {
   RoleGroup,
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
-import { getBrandIcon } from "../components/brand_icons";
+import { BRAND_KEYS, getBrandIcon, resolveBrandKey } from "../components/brand_icons";
 import {
   ErrorText,
   Loading,
@@ -130,6 +134,7 @@ interface EditState {
   modalities_output: string;
   models_dev_id: string;
   category_id: string;
+  brand: string;
 }
 
 interface CreateState {
@@ -223,7 +228,8 @@ export function displayNamePlaceholder(modelId: string): string {
     .join(" ");
 }
 
-function providerNameOf(m: ModelEntry): string {
+function providerSlugOf(m: ModelEntry): string {
+  if (m.category_slug) return m.category_slug;
   const id = m.model_id ?? "";
   const slash = id.indexOf("/");
   if (slash > 0) return id.slice(0, slash);
@@ -235,42 +241,88 @@ function providerNameOf(m: ModelEntry): string {
   return "";
 }
 
-function BrandIcon({ modelId }: { modelId: string }) {
-  const { svg, color } = getBrandIcon(modelId);
-  if (svg) {
+function providerNameOf(m: ModelEntry): string {
+  // Passthrough virtual entries carry the provider's display name in
+  // ``category_name`` (e.g. "Claude Code"), not the id/slug.
+  if (m.category_name) return m.category_name;
+  return providerSlugOf(m);
+}
+
+// Auto-fill an edit form from a models.dev model entry (leave existing values
+// alone; only fill what's empty/unset).
+function applyModelsDev(f: EditState, entry: Record<string, unknown>): EditState {
+  const id = String(entry.id ?? "");
+  const provider = String(entry.provider ?? "");
+  const fullId = provider ? `${provider}/${id}` : id;
+  const name = String(entry.name ?? "");
+  const desc = String(entry.description ?? "");
+  const limit = (entry.limit ?? {}) as Record<string, unknown>;
+  const mods = (entry.modalities ?? {}) as { input?: unknown; output?: unknown };
+  const inList = Array.isArray(mods.input) ? (mods.input as string[]) : [];
+  const outList = Array.isArray(mods.output) ? (mods.output as string[]) : [];
+  const family = String(entry.family ?? "");
+  const brand = resolveBrandKey(family || provider) ?? resolveBrandKey(provider);
+
+  return {
+    ...f,
+    models_dev_id: fullId,
+    display_name: f.display_name || name,
+    description: f.description || desc,
+    limit_context: f.limit_context || (limit.context != null ? String(limit.context) : ""),
+    limit_input: f.limit_input || (limit.input != null ? String(limit.input) : ""),
+    limit_output: f.limit_output || (limit.output != null ? String(limit.output) : ""),
+    reasoning: f.reasoning || entry.reasoning === true,
+    capabilities: {
+      text: f.capabilities.text || outList.includes("text") || inList.includes("text"),
+      image: f.capabilities.image || outList.includes("image") || inList.includes("image"),
+      audio: f.capabilities.audio || outList.includes("audio") || inList.includes("audio"),
+      tool: f.capabilities.tool || entry.tool_call === true,
+    },
+    brand: f.brand || brand || "",
+  };
+}
+
+function BrandIcon({ brand, modelId }: { brand?: string | null; modelId: string }) {
+  const icon = getBrandIcon(brand, modelId);
+  if (icon) {
     return (
-      <span
+      <svg
+        viewBox="0 0 24 24"
+        width={24}
+        height={24}
+        role="img"
+        aria-hidden="true"
         style={{
-          width: 24,
-          height: 24,
           flexShrink: 0,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
+          fill: "currentColor",
+          color: tokens.colorNeutralForeground1,
         }}
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
+      >
+        <path d={icon.path} />
+      </svg>
     );
   }
-  const initials = modelId.slice(0, 2).toUpperCase();
+  // No brand/icon: fall back to the first letter of the model name.
+  const nameToken = modelId.split(/[/-]+/).pop() ?? modelId;
+  const firstLetter = (nameToken.charAt(0) || "?").toUpperCase();
   return (
     <span
       style={{
         width: 24,
         height: 24,
         flexShrink: 0,
-        borderRadius: "50%",
-        background: color,
-        color: "#fff",
+        borderRadius: 6,
+        background: tokens.colorNeutralBackground3,
+        color: tokens.colorNeutralForeground3,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: 10,
-        fontWeight: 600,
+        fontSize: 13,
+        fontWeight: 700,
         fontFamily: "system-ui, sans-serif",
       }}
     >
-      {initials}
+      {firstLetter}
     </span>
   );
 }
@@ -304,6 +356,33 @@ export function Models() {
   const [edit, setEdit] = useState<EditState | null>(null);
   const [create, setCreate] = useState<CreateState | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [categoryName, setCategoryName] = useState("");
+  const [categorySaving, setCategorySaving] = useState(false);
+
+  // Collapsed model categories (persisted locally; default = all expanded).
+  const COLLAPSED_KEY = "voidswitch.models.collapsedCategories";
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(COLLAPSED_KEY);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]));
+  }, [collapsed]);
+
+  function toggleCollapse(key: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const [groupEdit, setGroupEdit] = useState<{
     model_id: string;
@@ -444,21 +523,81 @@ export function Models() {
         match = (m.category_id == null) && !m.provider;
       else if (filterCategory.startsWith("provider:")) {
         const slug = filterCategory.slice("provider:".length);
-        match = !!m.provider && providerNameOf(m) === slug;
+        match = !!m.provider && providerSlugOf(m) === slug;
       } else
         match = String(m.category_id ?? "") === filterCategory;
     }
     return match;
   });
 
-  const unserved = items.filter((m) => (m.upstreams ?? []).length === 0);
-  const cleanable = items.filter((m) => (m.upstreams ?? []).length === 0);
+// Unserved = exposed models whose route resolves to no enabled upstream. The
+// backend computes ``unserved`` with the same logic the clean action deletes,
+// so the count shown in the confirm matches exactly what gets removed.
+const unserved = items.filter((m) => !m.provider && m.unserved === true);
+const cleanable = items.filter((m) => !m.provider && m.unserved === true);
 
-  const providerPassthroughSlugs = Array.from(
-    new Set(
-      items.filter((m) => m.provider).map(providerNameOf).filter(Boolean),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
+  const providerPassthrough = Array.from(
+    new Map(
+      items
+        .filter((m) => m.provider)
+        .map((m) => [providerSlugOf(m), providerNameOf(m)] as const)
+        .filter(([slug]) => Boolean(slug)),
+    ).entries(),
+  )
+    .map(([slug, name]) => ({ slug, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Group the filtered models by category (manual / provider passthrough /
+  // uncategorized), preserving a stable order even when "all" is shown.
+  interface CategoryGroup {
+    key: string;
+    label: string;
+    provider: boolean;
+    models: ModelEntry[];
+  }
+  const grouped = useMemo<CategoryGroup[]>(() => {
+    const order: string[] = [];
+    const map = new Map<string, CategoryGroup>();
+    const push = (key: string, label: string, provider: boolean) => {
+      if (!map.has(key)) {
+        map.set(key, { key, label, provider, models: [] });
+        order.push(key);
+      }
+    };
+    for (const m of filtered) {
+      let key: string;
+      let label: string;
+      let provider = false;
+      if (m.provider) {
+        key = `provider:${providerSlugOf(m)}`;
+        label = providerNameOf(m);
+        provider = true;
+      } else if (m.category_id != null) {
+        key = `cat:${m.category_id}`;
+        label = m.category_name ?? String(m.category_id);
+      } else {
+        key = "uncategorized";
+        label = t("models.filterUncategorized" as TK);
+      }
+      push(key, label, provider);
+      map.get(key)!.models.push(m);
+    }
+    // Manual categories first (DB order), then provider passthrough, then
+    // uncategorized at the end.
+    const sorted = order.sort((a, b) => {
+      const at = a.startsWith("cat:") ? 0 : a.startsWith("provider:") ? 1 : 2;
+      const bt = b.startsWith("cat:") ? 0 : b.startsWith("provider:") ? 1 : 2;
+      if (at !== bt) return at - bt;
+      if (a.startsWith("cat:")) {
+        return (
+          (categories.data ?? []).findIndex((c) => `cat:${c.id}` === a) -
+          (categories.data ?? []).findIndex((c) => `cat:${c.id}` === b)
+        );
+      }
+      return a.localeCompare(b);
+    });
+    return sorted.map((k) => map.get(k)!);
+  }, [filtered, categories.data, t]);
 
   function categoryFilterLabel(): string {
     if (filterCategory === "all") return t("models.filterAllCategories" as TK);
@@ -466,7 +605,8 @@ export function Models() {
       return t("models.filterUncategorized" as TK);
     if (filterCategory.startsWith("provider:")) {
       const slug = filterCategory.slice("provider:".length);
-      return `${slug} · ${t("models.providerBadge" as TK)}`;
+      const name = providerPassthrough.find((p) => p.slug === slug)?.name ?? slug;
+      return `${name} · ${t("models.providerBadge" as TK)}`;
     }
     const cat = (categories.data ?? []).find(
       (c) => String(c.id) === filterCategory,
@@ -479,6 +619,27 @@ export function Models() {
     const id = Number(catId);
     const cat = (categories.data ?? []).find((c) => c.id === id);
     return cat?.name ?? catId;
+  }
+
+  async function saveCategory() {
+    const name = categoryName.trim();
+    if (!name) return;
+    setCategorySaving(true);
+    try {
+      await api.post("/api/models/categories", { name, position: 0 });
+      notify(t("models.categoryCreated" as TK), name, "success");
+      setCategoryName("");
+      setCategoryOpen(false);
+      categories.reload();
+    } catch (e) {
+      notify(
+        t("common.saveFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setCategorySaving(false);
+    }
   }
 
   function searchFieldLabel(field: SearchField): string {
@@ -548,6 +709,13 @@ export function Models() {
         ),
         "success",
       );
+      if (r.model_ids?.length) {
+        const gone = new Set(r.model_ids);
+        setSelected((prev) => {
+          const next = new Set([...prev].filter((id) => !gone.has(id)));
+          return next.size === prev.size ? prev : next;
+        });
+      }
       catalog.reload();
     } catch (e) {
       notify(
@@ -590,6 +758,7 @@ export function Models() {
       modalities_output: Number(mods?.output) > 0 ? String(mods.output) : "",
       models_dev_id: m.models_dev_id ?? "",
       category_id: m.category_id != null ? String(m.category_id) : "",
+      brand: m.brand ?? "",
     });
   }
 
@@ -629,6 +798,7 @@ export function Models() {
     if (lo != null) payload.limit_output = lo;
     if (edit.models_dev_id.trim()) payload.models_dev_id = edit.models_dev_id.trim();
     if (edit.category_id) payload.category_id = intOrEmpty(edit.category_id);
+    payload.brand = edit.brand.trim() || null;
     setSaving(true);
     try {
       await api.put("/api/models", payload);
@@ -760,17 +930,35 @@ export function Models() {
   }
 
   async function remove(m: ModelEntry) {
-    if (m.id == null) return;
+    const isPassthrough = !!m.provider;
+    if (!isPassthrough && m.id == null) return;
     const ok = await confirm({
       title: t("models.deleteTitle" as TK),
-      message: t("models.deleteMsgServed" as TK).replace("{id}", m.model_id),
+      message: isPassthrough
+        ? t("models.deleteMsgPassthrough" as TK).replace("{id}", m.model_id)
+        : t("models.deleteMsgServed" as TK).replace("{id}", m.model_id),
       confirmLabel: t("common.delete" as TK),
       tone: "danger",
     });
     if (!ok) return;
     try {
-      await api.del(`/api/models/${m.id}`);
+      if (isPassthrough) {
+        const slash = m.model_id.indexOf("/");
+        const slug = m.model_id.slice(0, slash);
+        const exposed = m.model_id.slice(slash + 1);
+        await api.del(
+          `/api/models/passthrough/${encodeURIComponent(slug)}/${encodeURIComponent(exposed)}`,
+        );
+      } else {
+        await api.del(`/api/models/${m.id}`);
+      }
       notify(t("models.metadataRemoved" as TK), m.model_id, "success");
+      setSelected((prev) => {
+        if (!prev.has(m.model_id)) return prev;
+        const next = new Set(prev);
+        next.delete(m.model_id);
+        return next;
+      });
       catalog.reload();
     } catch (e) {
       notify(
@@ -778,6 +966,42 @@ export function Models() {
         e instanceof Error ? e.message : String(e),
         "error",
       );
+    }
+  }
+
+  async function removeSelected() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const ok = await confirm({
+      title: t("models.batchDeleteTitle" as TK),
+      message: t("models.batchDeleteMsg" as TK)
+        .replace("{count}", String(ids.length))
+        .concat("\n", ids.map((id) => `• ${id}`).join("\n")),
+      confirmLabel: t("common.delete" as TK),
+      tone: "danger",
+    });
+    if (!ok) return;
+    setSaving(true);
+    try {
+      const r = await api.post<{ deleted: number; model_ids: string[] }>(
+        "/api/models/batch-delete",
+        { model_ids: ids },
+      );
+      notify(
+        t("models.batchDeleted" as TK),
+        t("models.batchDeletedDetail" as TK).replace("{count}", String(r.deleted)),
+        "success",
+      );
+      setSelected(new Set());
+      catalog.reload();
+    } catch (e) {
+      notify(
+        t("common.deleteFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -792,6 +1016,15 @@ export function Models() {
             {isStaff && selected.size > 0 && (
               <Button icon={<EditRegular />} onClick={openBatch}>
                 {t("models.editSelected" as TK).replace("{count}", String(selected.size))}
+              </Button>
+            )}
+            {isStaff && selected.size > 0 && (
+              <Button
+                icon={<DeleteRegular />}
+                disabled={saving}
+                onClick={removeSelected}
+              >
+                {t("models.deleteSelected" as TK).replace("{count}", String(selected.size))}
               </Button>
             )}
             {isStaff && unserved.length > 0 && (
@@ -809,6 +1042,14 @@ export function Models() {
                     : t("models.clean" as TK)}
                 </Button>
               </Tooltip>
+            )}
+            {isStaff && (
+              <Button
+                icon={<FolderAddRegular />}
+                onClick={() => setCategoryOpen(true)}
+              >
+                {t("models.createCategory" as TK)}
+              </Button>
             )}
             {isStaff && (
               <Button
@@ -913,8 +1154,8 @@ export function Models() {
           {(categories.data ?? []).map((c) => (
             <Option key={c.id} value={String(c.id)}>{c.name}</Option>
           ))}
-          {providerPassthroughSlugs.map((slug) => {
-            const label = `${slug} · ${t("models.providerBadge" as TK)}`;
+          {providerPassthrough.map(({ slug, name }) => {
+            const label = `${name} · ${t("models.providerBadge" as TK)}`;
             return (
               <Option key={`provider:${slug}`} value={`provider:${slug}`} text={label}>
                 {label}
@@ -954,130 +1195,175 @@ export function Models() {
           {t("models.noModels" as TK)}
         </Text>
       ) : (
-        <div className={styles.grid}>
-          {filtered.map((m) => {
-            const hasConfig =
-              m.opencode_config && Object.keys(m.opencode_config).length > 0;
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          {grouped.map((g) => {
+            const isCollapsed = collapsed.has(g.key);
+            const chevron = isCollapsed ? <ChevronRightRegular /> : <ChevronDownRegular />;
             return (
-              <div key={m.model_id} className={m.enabled ? styles.card : styles.cardHidden}>
-                <div className={styles.head}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", minWidth: 0 }}>
-                    <BrandIcon modelId={m.model_id} />
-                    <div style={{ minWidth: 0 }}>
-                      {m.display_name && (
-                        <Text weight="semibold" block>
-                          {m.display_name}
-                        </Text>
-                      )}
-                      <Text weight={m.display_name ? "regular" : "semibold"} className={styles.modelId}>
-                        {m.model_id}
-                      </Text>
-                    </div>
-                  </div>
-                  {isStaff && (
-                    <Checkbox
-                      checked={selected.has(m.model_id)}
-                      onChange={() => toggle(m.model_id)}
-                      aria-label={`Select ${m.model_id}`}
-                    />
-                  )}
-                </div>
-
-                <Text size={200} className={styles.desc}>
-                  {m.description || (
-                    <span className={styles.dim}>{t("models.noDescription" as TK)}</span>
-                  )}
-                </Text>
-
-                <div className={styles.badges}>
-                  {!m.enabled && (
-                    <Badge appearance="filled" color="subtle">
-                      {t("models.unavailableHidden" as TK)}
-                    </Badge>
-                  )}
-                  {m.reasoning && (
-                    <Badge appearance="tint" color="brand">
-                      {t("models.reasoningBadge" as TK)}
-                    </Badge>
-                  )}
-                  {m.models_dev_id && (
-                    <Badge appearance="tint" color="informative">
-                      models.dev
-                    </Badge>
-                  )}
-                  {hasConfig && (
-                    <Badge appearance="tint" color="brand">
-                      {t("common.customConfig" as TK)}
-                    </Badge>
-                  )}
-                  {m.provider && (
+              <div key={g.key}>
+                <button
+                  type="button"
+                  onClick={() => toggleCollapse(g.key)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    padding: "6px 4px",
+                    marginBottom: 10,
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: tokens.colorNeutralForeground2,
+                    fontSize: tokens.fontSizeBase400,
+                    fontWeight: 600,
+                  }}
+                >
+                  <span style={{ display: "inline-flex" }}>{chevron}</span>
+                  <span>{g.label}</span>
+                  {g.provider && (
                     <Badge appearance="tint" color="informative">
                       {t("models.providerBadge" as TK)}
                     </Badge>
                   )}
-                  {m.category_name && !m.provider && (
-                    <Badge appearance="outline" color="brand">
-                      {m.category_name}
-                    </Badge>
-                  )}
-                  {isStaff &&
-                    (m.upstreams ?? []).map((u) => (
-                      <Badge key={u} appearance="outline" color="informative">
-                        {u}
-                      </Badge>
-                    ))}
-                </div>
+                  <span style={{ color: tokens.colorNeutralForeground3, fontWeight: 400 }}>
+                    {g.models.length}
+                  </span>
+                </button>
+                {!isCollapsed && (
+                  <div className={styles.grid}>
+                    {g.models.map((m) => {
+                      const hasConfig =
+                        m.opencode_config && Object.keys(m.opencode_config).length > 0;
+                      return (
+                        <div key={m.model_id} className={m.enabled ? styles.card : styles.cardHidden}>
+                          <div className={styles.head}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", minWidth: 0 }}>
+                              <BrandIcon brand={m.brand} modelId={m.model_id} />
+                              <div style={{ minWidth: 0 }}>
+                                {m.display_name && (
+                                  <Text weight="semibold" block>
+                                    {m.display_name}
+                                  </Text>
+                                )}
+                                <Text weight={m.display_name ? "regular" : "semibold"} className={styles.modelId}>
+                                  {m.model_id}
+                                </Text>
+                              </div>
+                            </div>
+                            {isStaff && (
+                              <Checkbox
+                                checked={selected.has(m.model_id)}
+                                onChange={() => toggle(m.model_id)}
+                                aria-label={`Select ${m.model_id}`}
+                              />
+                            )}
+                          </div>
 
-                {isStaff && (
-                  <div className={styles.actions}>
-                    <Tooltip content={t("models.route" as TK)} relationship="label">
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<ArrowRoutingRegular />}
-                        onClick={() => navigate(`/models/${encodeURIComponent(m.model_id)}/route`)}
-                        aria-label={t("models.route" as TK)}
-                      />
-                    </Tooltip>
-                    <Tooltip content={t("common.edit" as TK)} relationship="label">
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<EditRegular />}
-                        onClick={() => openEdit(m)}
-                        aria-label={t("common.edit" as TK)}
-                      />
-                    </Tooltip>
-                    <Tooltip
-                      content={
-                        m.allowed_role_group_ids.length > 0
-                          ? t("models.accessCount" as TK).replace(
-                              "{count}",
-                              String(m.allowed_role_group_ids.length),
-                            )
-                          : t("models.accessTooltip" as TK)
-                      }
-                      relationship="label"
-                    >
-                      <Button
-                        size="small"
-                        appearance={
-                          m.allowed_role_group_ids.length > 0 ? "primary" : "subtle"
-                        }
-                        icon={<PeopleTeamRegular />}
-                        onClick={() => openGroupEdit(m)}
-                        aria-label={t("models.access" as TK)}
-                      />
-                    </Tooltip>
-                    <Tooltip content={t("common.delete" as TK)} relationship="label">
-                      <Button
-                        size="small"
-                        appearance="subtle"
-                        icon={<DeleteRegular />}
-                        onClick={() => remove(m)}
-                        aria-label={t("common.delete" as TK)}
-                      />
-                    </Tooltip>
+                          <Text size={200} className={styles.desc}>
+                            {m.description || (
+                              <span className={styles.dim}>{t("models.noDescription" as TK)}</span>
+                            )}
+                          </Text>
+
+                          <div className={styles.badges}>
+                            {!m.enabled && (
+                              <Badge appearance="filled" color="subtle">
+                                {t("models.unavailableHidden" as TK)}
+                              </Badge>
+                            )}
+                            {m.reasoning && (
+                              <Badge appearance="tint" color="brand">
+                                {t("models.reasoningBadge" as TK)}
+                              </Badge>
+                            )}
+                            {m.models_dev_id && (
+                              <Tooltip content={m.models_dev_id} relationship="label">
+                                <Badge appearance="tint" color="brand">
+                                  models.dev
+                                </Badge>
+                              </Tooltip>
+                            )}
+                            {hasConfig && (
+                              <Badge appearance="tint" color="brand">
+                                {t("common.customConfig" as TK)}
+                              </Badge>
+                            )}
+                            {m.provider && (
+                              <Badge appearance="tint" color="informative">
+                                {t("models.providerBadge" as TK)}
+                              </Badge>
+                            )}
+                            {m.category_name && !m.provider && (
+                              <Badge appearance="outline" color="brand">
+                                {m.category_name}
+                              </Badge>
+                            )}
+                            {isStaff &&
+                              (m.upstreams ?? []).map((u) => (
+                                <Badge key={u} appearance="outline" color="informative">
+                                  {u}
+                                </Badge>
+                              ))}
+                          </div>
+
+                          {isStaff && (
+                            <div className={styles.actions}>
+                              {!m.provider && (
+                                <Tooltip content={t("models.route" as TK)} relationship="label">
+                                  <Button
+                                    size="small"
+                                    appearance="subtle"
+                                    icon={<ArrowRoutingRegular />}
+                                    onClick={() => navigate(`/models/${encodeURIComponent(m.model_id)}/route`)}
+                                    aria-label={t("models.route" as TK)}
+                                  />
+                                </Tooltip>
+                              )}
+                              <Tooltip content={t("common.edit" as TK)} relationship="label">
+                                <Button
+                                  size="small"
+                                  appearance="subtle"
+                                  icon={<EditRegular />}
+                                  onClick={() => openEdit(m)}
+                                  aria-label={t("common.edit" as TK)}
+                                />
+                              </Tooltip>
+                              <Tooltip
+                                content={
+                                  m.allowed_role_group_ids.length > 0
+                                    ? t("models.accessCount" as TK).replace(
+                                        "{count}",
+                                        String(m.allowed_role_group_ids.length),
+                                      )
+                                    : t("models.accessTooltip" as TK)
+                                }
+                                relationship="label"
+                              >
+                                <Button
+                                  size="small"
+                                  appearance={
+                                    m.allowed_role_group_ids.length > 0 ? "primary" : "subtle"
+                                  }
+                                  icon={<PeopleTeamRegular />}
+                                  onClick={() => openGroupEdit(m)}
+                                  aria-label={t("models.access" as TK)}
+                                />
+                              </Tooltip>
+                              <Tooltip content={t("common.delete" as TK)} relationship="label">
+                                <Button
+                                  size="small"
+                                  appearance="subtle"
+                                  icon={<DeleteRegular />}
+                                  onClick={() => remove(m)}
+                                  aria-label={t("common.delete" as TK)}
+                                />
+                              </Tooltip>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1132,6 +1418,20 @@ export function Models() {
                   <Option value="">{t("models.filterUncategorized" as TK)}</Option>
                   {(categories.data ?? []).map((c) => (
                     <Option key={c.id} value={String(c.id)}>{c.name}</Option>
+                  ))}
+                </Dropdown>
+              </Field>
+              <Field label={t("models.brand" as TK)} hint={t("models.brandHint" as TK)}>
+                <Dropdown
+                  value={edit?.brand ? edit.brand : t("models.brandAuto" as TK)}
+                  selectedOptions={edit?.brand ? [edit.brand] : []}
+                  onOptionSelect={(_, d) =>
+                    setEdit((f) => (f ? { ...f, brand: d.optionValue ?? "" } : f))
+                  }
+                >
+                  <Option value="">{t("models.brandAuto" as TK)}</Option>
+                  {BRAND_KEYS.map((b) => (
+                    <Option key={b} value={b}>{b}</Option>
                   ))}
                 </Dropdown>
               </Field>
@@ -1239,8 +1539,8 @@ export function Models() {
               />
               <ModelsDevSection
                 modelsDevId={edit?.models_dev_id ?? ""}
-                onPick={(id) =>
-                  setEdit((f) => (f ? { ...f, models_dev_id: id } : f))
+                onPick={(entry) =>
+                  setEdit((f) => (f ? applyModelsDev(f, entry) : f))
                 }
               />
             </DialogContent>
@@ -1701,6 +2001,38 @@ export function Models() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+
+      <Dialog open={categoryOpen} onOpenChange={(_, d) => !d.open && setCategoryOpen(false)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{t("models.createCategory" as TK)}</DialogTitle>
+            <DialogContent>
+              <Field label={t("models.categoryName" as TK)}>
+                <Input
+                  value={categoryName}
+                  autoFocus
+                  onChange={(_, d) => setCategoryName(d.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveCategory();
+                  }}
+                />
+              </Field>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setCategoryOpen(false)}>
+                {t("common.cancel" as TK)}
+              </Button>
+              <Button
+                appearance="primary"
+                disabled={categorySaving || !categoryName.trim()}
+                onClick={() => void saveCategory()}
+              >
+                {t("common.create" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   );
 }
@@ -1710,7 +2042,7 @@ function ModelsDevSection({
   onPick,
 }: {
   modelsDevId: string;
-  onPick: (id: string) => void;
+  onPick: (entry: Record<string, unknown>) => void;
 }) {
   const { t } = useTranslation();
   type TK = keyof Translations;
@@ -1768,97 +2100,123 @@ function ModelsDevSection({
     return String(entry.name ?? entry.id ?? "");
   }
 
+  function fullIdOf(entry: Record<string, unknown>): string {
+    const id = String(entry.id ?? "");
+    const provider = String(entry.provider ?? "");
+    return provider ? `${provider}/${id}` : id;
+  }
+
   return (
-    <div
-      style={{
-        border: `1px solid ${tokens.colorNeutralStroke2}`,
-        borderRadius: 8,
-        padding: 12,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        background: tokens.colorNeutralBackground2,
-      }}
-    >
-      <div style={{ fontWeight: 600 }}>{t("models.modelsDevTitle" as TK)}</div>
-      {modelsDevId ? (
-        <Field label={t("models.modelsDevLinked" as TK)}>
-          <Input readOnly value={modelsDevId} />
-        </Field>
-      ) : (
-        <Button
-          size="small"
-          appearance="subtle"
-          disabled={syncingMd}
-          onClick={syncMd}
-        >
-          {syncingMd
-            ? t("models.modelsDevSyncing" as TK)
-            : t("models.modelsDevSync" as TK)}
-        </Button>
-      )}
-      <div style={{ display: "flex", gap: 8 }}>
-        <Input
-          placeholder={t("models.modelsDevSearch" as TK)}
-          value={q}
-          onChange={(_, d) => setQ(d.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") search();
-          }}
-        />
-        <Button disabled={searching || !q.trim()} onClick={search}>
-          {searching ? <Spinner size="tiny" /> : t("models.modelsDevSearchBtn" as TK)}
-        </Button>
-      </div>
-      {results.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            maxHeight: 200,
-            overflowY: "auto",
-          }}
-        >
-          {results.map((entry, i) => {
-            const id = String(entry.id ?? entry.name ?? "");
-            const selected = id === modelsDevId;
-            return (
-              <div
-                key={id || i}
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  border: `1px solid ${tokens.colorNeutralStroke2}`,
-                  borderRadius: 6,
-                  padding: "6px 8px",
-                  background: tokens.colorNeutralBackground1,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {label(entry)}
-                  </div>
-                  <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                    {entry.description ? String(entry.description) : ""}
-                  </Text>
-                </div>
-                <Button
-                  size="small"
-                  appearance={selected ? "primary" : "subtle"}
-                  onClick={() => onPick(id)}
-                >
-                  {selected
-                    ? t("models.modelsDevSelected" as TK)
-                    : t("models.modelsDevUse" as TK)}
-                </Button>
-              </div>
-            );
-          })}
+    <details>
+      <summary
+        style={{
+          cursor: "pointer",
+          padding: "8px 12px",
+          fontWeight: 600,
+          color: tokens.colorNeutralForeground1,
+        }}
+      >
+        {t("models.modelsDevTitle" as TK)}
+        {modelsDevId ? (
+          <Text
+            size={200}
+            style={{ color: tokens.colorNeutralForeground3, marginLeft: 8 }}
+          >
+            {modelsDevId}
+          </Text>
+        ) : null}
+      </summary>
+      <div
+        style={{
+          border: `1px solid ${tokens.colorNeutralStroke2}`,
+          borderRadius: 8,
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          background: tokens.colorNeutralBackground2,
+        }}
+      >
+        {modelsDevId ? (
+          <Field label={t("models.modelsDevLinked" as TK)}>
+            <Input readOnly value={modelsDevId} />
+          </Field>
+        ) : null}
+        <div style={{ display: "flex", gap: 8 }}>
+          <Input
+            placeholder={t("models.modelsDevSearch" as TK)}
+            value={q}
+            style={{ flex: 1 }}
+            onChange={(_, d) => setQ(d.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") search();
+            }}
+          />
+          <Button disabled={searching || !q.trim()} onClick={search}>
+            {searching ? <Spinner size="tiny" /> : t("models.modelsDevSearchBtn" as TK)}
+          </Button>
+          <Button
+            disabled={syncingMd}
+            onClick={syncMd}
+            icon={syncingMd ? <Spinner size="tiny" /> : <ArrowSyncRegular />}
+          >
+            {syncingMd
+              ? t("models.modelsDevSyncing" as TK)
+              : t("models.modelsDevSync" as TK)}
+          </Button>
         </div>
-      )}
-    </div>
+        {results.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              maxHeight: 200,
+              overflowY: "auto",
+            }}
+          >
+            {results.map((entry, i) => {
+              const fullId = fullIdOf(entry);
+              const selected = fullId === modelsDevId;
+              return (
+                <div
+                  key={fullId || i}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    border: `1px solid ${tokens.colorNeutralStroke2}`,
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    background: tokens.colorNeutralBackground1,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {label(entry)}
+                    </div>
+                    <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                      {fullId}
+                      {entry.provider_name ? ` · ${String(entry.provider_name)}` : ""}
+                    </Text>
+                  </div>
+                  <Button
+                    size="small"
+                    appearance={selected ? "primary" : "subtle"}
+                    onClick={() => onPick(entry)}
+                    title={t("models.modelsDevAutoFill" as TK)}
+                  >
+                    {selected
+                      ? t("models.modelsDevSelected" as TK)
+                      : t("models.modelsDevUse" as TK)}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }

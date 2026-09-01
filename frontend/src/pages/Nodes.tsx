@@ -27,16 +27,15 @@ import {
 } from "@fluentui/react-components";
 import {
   AddRegular,
-  CheckmarkCircleRegular,
   ChevronDownRegular,
   ChevronRightRegular,
   CloudOffRegular,
   CloudRegular,
   DeleteRegular,
   EditRegular,
-  ProhibitedRegular,
+  PinRegular,
+  PinOffRegular,
   PulseRegular,
-  ReOrderDotsVerticalRegular,
 } from "@fluentui/react-icons";
 import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -44,7 +43,7 @@ import { useNavigate } from "react-router-dom";
 import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { Node, NodeGroup } from "../api/types";
+import type { Node, NodeGroup, NodeGroupMember } from "../api/types";
 import {
   DataTable,
   ErrorText,
@@ -60,15 +59,31 @@ import { EmptyState } from "../components/EmptyState";
 
 type TK = keyof Translations;
 
-interface MemberDraft {
-  key: string;
-  kind: "node" | "group";
-  ref: number;
-}
-
 function redactUrl(url: string): string {
   if (!url) return "(direct)";
   return url.replace(/\/\/[^\/:@]+:[^@]+@/, "//***:***@");
+}
+
+const COLLAPSED_KEY = "voidswitch.nodes.collapsedGroups";
+
+function loadCollapsed(): Set<number> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY);
+    if (raw == null) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is number => typeof x === "number"));
+  } catch {
+    return new Set();
+  }
+}
+
+function persistCollapsed(set: Set<number>): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set]));
+  } catch {
+    /* ignore */
+  }
 }
 
 export function Nodes() {
@@ -103,11 +118,8 @@ export function Nodes() {
   const [savingGroup, setSavingGroup] = useState(false);
 
   // ---- Inline members editor ----
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [editMembers, setEditMembers] = useState<MemberDraft[]>([]);
-  const [dragKey, setDragKey] = useState<string | null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
-  const [membersSaving, setMembersSaving] = useState(false);
+  const [collapsedIds, setCollapsedIds] = useState<Set<number>>(loadCollapsed);
+  const [savingGroupId, setSavingGroupId] = useState<number | null>(null);
 
   function reload() {
     nodes.reload();
@@ -284,31 +296,31 @@ export function Nodes() {
     }
   }
 
-  // ---- Inline members ----
+  // ---- Inline members (immediate-edit) ----
 
-  function expandGroup(g: NodeGroup) {
-    if (expandedId === g.id) {
-      collapseGroup();
-      return;
-    }
-    collapseGroup();
-    const draft = g.members.map((m, i) => {
-      const isNode = m.node_id != null;
-      return {
-        key: `m-${i}-${Date.now()}`,
-        kind: isNode ? ("node" as const) : ("group" as const),
-        ref: isNode ? (m.node_id as number) : (m.source_group_id as number),
-      };
-    });
-    setExpandedId(g.id);
-    setEditMembers(draft);
+  function setCollapsed(next: Set<number>) {
+    setCollapsedIds(next);
+    persistCollapsed(next);
   }
 
-  function collapseGroup() {
-    setExpandedId(null);
-    setEditMembers([]);
-    setDragKey(null);
-    setDragOverIdx(null);
+  function expandGroup(g: NodeGroup) {
+    const next = new Set(collapsedIds);
+    next.delete(g.id);
+    setCollapsed(next);
+  }
+
+  function collapseGroup(g: NodeGroup) {
+    const next = new Set(collapsedIds);
+    next.add(g.id);
+    setCollapsed(next);
+  }
+
+  function toggleGroup(g: NodeGroup) {
+    if (collapsedIds.has(g.id)) {
+      expandGroup(g);
+    } else {
+      collapseGroup(g);
+    }
   }
 
   function canEditMembers(g: NodeGroup): boolean {
@@ -316,38 +328,21 @@ export function Nodes() {
     return true;
   }
 
-  function memberNodeInfo(ref: number): Node | undefined {
-    return (nodes.data ?? []).find((n) => n.id === ref);
+  // The member list is edited directly against the group's live members: every
+  // add / remove / pin persists immediately (no draft + save flow).
+  function memberBody(m: NodeGroupMember): Record<string, unknown> {
+    if (m.node_id != null) {
+      return { node_id: m.node_id, pinned: !!m.pinned };
+    }
+    return { source_group_id: m.source_group_id, pinned: false };
   }
 
-  function memberGroupInfo(ref: number): NodeGroup | undefined {
-    return (groups.data ?? []).find((g) => g.id === ref);
-  }
-
-  function addMemberDraft(kind: "node" | "group", ref: number) {
-    setEditMembers((d) => {
-      if (d.some((m) => m.kind === kind && m.ref === ref)) return d;
-      return [...d, { key: `${kind}-${ref}-${Date.now()}`, kind, ref }];
-    });
-  }
-
-  function removeMemberDraft(key: string) {
-    setEditMembers((d) => d.filter((m) => m.key !== key));
-  }
-
-  async function saveMembers() {
-    const group = (groups.data ?? []).find((g) => g.id === expandedId);
-    if (!group) return;
-    const body = editMembers.map((m, i) =>
-      m.kind === "node"
-        ? { node_id: m.ref, weight: i + 1 }
-        : { source_group_id: m.ref, weight: i + 1 },
-    );
-    setMembersSaving(true);
+  async function persistMembers(g: NodeGroup, members: NodeGroupMember[]) {
+    if (!canEditMembers(g)) return;
+    setSavingGroupId(g.id);
     try {
-      await api.put(`/api/admin/node-groups/${group.id}/members`, body);
-      notify(t("nodes.membersSaved" as TK), group.name, "success");
-      collapseGroup();
+      await api.put(`/api/admin/node-groups/${g.id}/members`, members.map(memberBody));
+      notify(t("nodes.membersSaved" as TK), g.name, "success");
       groups.reload();
     } catch (e) {
       notify(
@@ -356,72 +351,73 @@ export function Nodes() {
         "error",
       );
     } finally {
-      setMembersSaving(false);
+      setSavingGroupId(null);
     }
   }
 
-  // ---- Drag sort ----
-
-  function onDragStart(key: string) {
-    setDragKey(key);
+  function nodeInfoOf(m: NodeGroupMember): Node | undefined {
+    return (nodes.data ?? []).find((n) => n.id === m.node_id);
   }
 
-  function onDragOver(e: React.DragEvent, idx: number) {
-    e.preventDefault();
-    setDragOverIdx(idx);
+  function groupInfoOf(m: NodeGroupMember): NodeGroup | undefined {
+    return (groups.data ?? []).find((g) => g.id === m.source_group_id);
   }
 
-  function onDrop(idx: number) {
-    if (!dragKey) return;
-    const from = editMembers.findIndex((m) => m.key === dragKey);
-    if (from < 0 || from === idx) {
-      setDragKey(null);
-      setDragOverIdx(null);
-      return;
+  function addNodeMembers(g: NodeGroup, refs: number[]) {
+    const members = [...g.members];
+    const existing = new Set(g.members.map((m) => m.node_id).filter((id) => id != null));
+    for (const ref of refs) {
+      if (existing.has(ref)) continue;
+      members.push({ node_id: ref, pinned: false, weight: 1 });
+      existing.add(ref);
     }
-    const next = [...editMembers];
-    const [moved] = next.splice(from, 1);
-    next.splice(idx, 0, moved);
-    setEditMembers(next);
-    setDragKey(null);
-    setDragOverIdx(null);
+    if (members.length !== g.members.length) void persistMembers(g, members);
   }
 
-  function onDragEnd() {
-    setDragKey(null);
-    setDragOverIdx(null);
+  function addInheritedGroup(g: NodeGroup, ref: number) {
+    const members = [...g.members];
+    if (members.some((m) => m.source_group_id === ref)) return;
+    members.push({ source_group_id: ref, weight: 1 });
+    void persistMembers(g, members);
+  }
+
+  function removeMember(g: NodeGroup, m: NodeGroupMember) {
+    const members = g.members.filter(
+      (x) => !(x.node_id != null && x.node_id === m.node_id) &&
+        !(x.source_group_id != null && x.source_group_id === m.source_group_id),
+    );
+    void persistMembers(g, members);
+  }
+
+  function togglePin(g: NodeGroup, m: NodeGroupMember) {
+    if (m.node_id == null) return;
+    const members = g.members.map((x) =>
+      x.node_id === m.node_id ? { ...x, pinned: !x.pinned } : x,
+    );
+    void persistMembers(g, members);
   }
 
   // ---- Combobox helpers ----
 
-  const addedNodeIds = new Set(
-    editMembers.filter((m) => m.kind === "node").map((m) => m.ref),
-  );
-  const addedGroupIds = new Set(
-    editMembers.filter((m) => m.kind === "group").map((m) => m.ref),
-  );
-
-  const availableNodes = (nodes.data ?? []).filter(
-    (n) => !addedNodeIds.has(n.id),
-  );
-  const availableGroups = (groups.data ?? []).filter(
-    (g) => g.id !== expandedId && !addedGroupIds.has(g.id),
-  );
-
-  function handleAddNodes(_e: SelectionEvents, d: OptionOnSelectData) {
-    for (const id of d.selectedOptions) {
-      const nid = Number(id);
-      if (!addedNodeIds.has(nid)) {
-        addMemberDraft("node", nid);
-      }
-    }
+  function handleAddNodes(
+    gId: number,
+    _e: SelectionEvents,
+    d: OptionOnSelectData,
+  ) {
+    const group = (groups.data ?? []).find((g) => g.id === gId);
+    if (!group) return;
+    const refs = d.selectedOptions.map(Number).filter((n) => Number.isFinite(n));
+    addNodeMembers(group, refs);
   }
 
-  function handleAddGroup(_e: SelectionEvents, d: OptionOnSelectData) {
-    const gid = Number(d.optionValue);
-    if (d.optionValue && !addedGroupIds.has(gid)) {
-      addMemberDraft("group", gid);
-    }
+  function handleAddGroup(
+    gId: number,
+    _e: SelectionEvents,
+    d: OptionOnSelectData,
+  ) {
+    const group = (groups.data ?? []).find((g) => g.id === gId);
+    if (!group || !d.optionValue) return;
+    addInheritedGroup(group, Number(d.optionValue));
   }
 
   // Proxy switching disabled
@@ -485,7 +481,7 @@ export function Nodes() {
           marginBottom: 16,
         }}
       >
-        <Field label={t("nodes.urlsHint" as TK)} style={{ maxWidth: 560 }}>
+        <Field label={t("nodes.urlsHint" as TK)}>
           <Textarea
             value={bulk}
             rows={5}
@@ -520,6 +516,7 @@ export function Nodes() {
         <DataTable ariaLabel={t("nodes.nodesSection" as TK)}>
           <TableHeader>
             <TableRow>
+              <TableHeaderCell>{t("nodes.note" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.url" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.type" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.status" as TK)}</TableHeaderCell>
@@ -532,6 +529,19 @@ export function Nodes() {
           <TableBody>
             {(nodes.data ?? []).map((n) => (
               <TableRow key={n.id}>
+                <TableCell style={{ maxWidth: 220 }}>
+                  <span
+                    style={{
+                      display: "block",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={n.note ?? ""}
+                  >
+                    {n.note || <span style={{ color: tokens.colorNeutralForeground3 }}>—</span>}
+                  </span>
+                </TableCell>
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {n.url || "(direct)"}
                 </TableCell>
@@ -625,13 +635,33 @@ export function Nodes() {
               <TableHeaderCell>{t("nodes.groupName" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.groupProbeUrl" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.groupMembers" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("nodes.groupInherits" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.actions" as TK)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
             {(groups.data ?? []).map((g) => {
-              const isExpanded = expandedId === g.id;
+              const isExpanded = !collapsedIds.has(g.id);
               const canEdit = canEditMembers(g);
+              const addedNodeIds = new Set(
+                g.members
+                  .map((m) => m.node_id)
+                  .filter((id): id is number => id != null),
+              );
+              const addedGroupIds = new Set(
+                g.members
+                  .map((m) => m.source_group_id)
+                  .filter((id): id is number => id != null),
+              );
+              const availableNodes = (nodes.data ?? []).filter(
+                (n) => !addedNodeIds.has(n.id),
+              );
+              const availableGroups = (groups.data ?? []).filter(
+                (grp) => grp.id !== g.id && !addedGroupIds.has(grp.id),
+              );
+              const inheritCount = g.members.filter(
+                (m) => m.source_group_id != null,
+              ).length;
               return (
                 <Fragment key={g.id}>
                   <TableRow>
@@ -646,7 +676,7 @@ export function Nodes() {
                             <ChevronRightRegular />
                           )
                         }
-                        onClick={() => expandGroup(g)}
+                        onClick={() => toggleGroup(g)}
                         style={{ fontWeight: 600, padding: 0 }}
                       >
                         {g.name}
@@ -674,6 +704,7 @@ export function Nodes() {
                       {g.probe_url || "—"}
                     </TableCell>
                     <TableCell>{g.member_count}</TableCell>
+                    <TableCell>{inheritCount}</TableCell>
                     <TableCell>
                       <Tooltip content={t("common.edit" as TK)} relationship="label">
                         <Button
@@ -700,7 +731,7 @@ export function Nodes() {
                   {isExpanded && (
                     <TableRow key={`${g.id}-expanded`}>
                       <TableCell
-                        colSpan={4}
+                        colSpan={5}
                         style={{
                           backgroundColor: tokens.colorNeutralBackground1Pressed,
                           padding: "12px 16px",
@@ -713,11 +744,7 @@ export function Nodes() {
                             gap: 12,
                           }}
                         >
-                          <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-                            {t("nodes.membersHint" as TK)}
-                          </Text>
-
-                          {/* Member list */}
+                          {/* Node list (ranked automatically; pinned first) */}
                           <div
                             style={{
                               display: "flex",
@@ -725,14 +752,7 @@ export function Nodes() {
                               gap: 0,
                             }}
                           >
-                            <Text
-                              size={200}
-                              weight="semibold"
-                              style={{ marginBottom: 4 }}
-                            >
-                              {t("nodes.membersLabel" as TK)}
-                            </Text>
-                            {editMembers.length === 0 && (
+                            {g.members.length === 0 && (
                               <Text
                                 size={200}
                                 style={{ color: tokens.colorNeutralForeground3 }}
@@ -740,234 +760,163 @@ export function Nodes() {
                                 {t("nodes.membersEmpty" as TK)}
                               </Text>
                             )}
-                            {editMembers.map((m, idx) => {
-                              const isNode = m.kind === "node";
-                              const nodeInfo = isNode
-                                ? memberNodeInfo(m.ref)
-                                : undefined;
+                            {g.members.map((m) => {
+                              const isNode = m.node_id != null;
+                              const nodeInfo = isNode ? nodeInfoOf(m) : undefined;
                               const groupInfo = !isNode
-                                ? memberGroupInfo(m.ref)
+                                ? groupInfoOf(m)
                                 : undefined;
-                              const showLine =
-                                dragKey != null && dragOverIdx === idx;
-
+                              const paused = savingGroupId === g.id;
                               return (
                                 <div
-                                  key={m.key}
+                                  key={isNode ? `n-${m.node_id}` : `g-${m.source_group_id}`}
                                   style={{
-                                    borderTop: showLine
-                                      ? `2px solid ${tokens.colorBrandForeground1}`
-                                      : "2px solid transparent",
-                                    transition: "border-color 0.15s",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "6px 0",
+                                    opacity: paused ? 0.5 : 1,
+                                    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
                                   }}
                                 >
-                                  <div
-                                    draggable
-                                    onDragStart={() => onDragStart(m.key)}
-                                    onDragOver={(e) => onDragOver(e, idx)}
-                                    onDrop={() => onDrop(idx)}
-                                    onDragEnd={onDragEnd}
-                                    style={{
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 8,
-                                      padding: "6px 0",
-                                      opacity:
-                                        dragKey === m.key ? 0.4 : 1,
-                                      cursor: "grab",
-                                      borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-                                    }}
-                                  >
-                                    <Tooltip
-                                      content={t("nodes.dragHint" as TK)}
-                                      relationship="label"
-                                    >
-                                      <Button
-                                        size="small"
-                                        appearance="transparent"
-                                        icon={<ReOrderDotsVerticalRegular />}
-                                        style={{ cursor: "grab", flexShrink: 0 }}
-                                        aria-label={t("nodes.dragHint" as TK)}
-                                      />
-                                    </Tooltip>
-
-                                    {isNode && nodeInfo ? (
-                                      <>
-                                        <span
-                                          style={{
-                                            fontFamily: "monospace",
-                                            fontSize: 13,
-                                            flex: 1,
-                                            minWidth: 0,
-                                            overflow: "hidden",
-                                            textOverflow: "ellipsis",
-                                            whiteSpace: "nowrap",
-                                          }}
-                                        >
-                                          {redactUrl(nodeInfo.url)}
-                                        </span>
-                                        <StatusBadge
-                                          status={
-                                            nodeInfo.enabled
-                                              ? nodeInfo.status
-                                              : "disabled"
-                                          }
-                                        />
-                                        <span
-                                          style={{
-                                            fontSize: 13,
-                                            color: tokens.colorNeutralForeground3,
-                                            minWidth: 40,
-                                            textAlign: "right",
-                                          }}
-                                        >
-                                          {nodeInfo.failed_count}
-                                        </span>
-                                        <span
-                                          style={{
-                                            fontSize: 13,
-                                            color: tokens.colorNeutralForeground3,
-                                            minWidth: 60,
-                                            textAlign: "right",
-                                          }}
-                                        >
-                                          {nodeInfo.latency_ms != null
-                                            ? `${Math.round(nodeInfo.latency_ms)} ms`
-                                            : "—"}
-                                        </span>
-                                        <span
-                                          style={{
-                                            fontSize: 13,
-                                            color: tokens.colorNeutralForeground3,
-                                            minWidth: 100,
-                                            textAlign: "right",
-                                          }}
-                                        >
-                                          {formatDate(
-                                            nodeInfo.last_checked_at,
-                                          )}
-                                        </span>
-                                        <Tooltip
-                                          content={t("common.edit")}
-                                          relationship="label"
-                                        >
-                                          <Button
-                                            size="small"
-                                            appearance="subtle"
-                                            icon={<EditRegular />}
-                                            aria-label={t("common.edit")}
-                                            onClick={() => openRename(nodeInfo)}
-                                          />
-                                        </Tooltip>
-                                        <Tooltip
-                                          content={
-                                            nodeInfo.enabled
-                                              ? t("common.disable")
-                                              : t("common.enable")
-                                          }
-                                          relationship="label"
-                                        >
-                                          <Button
-                                            size="small"
-                                            appearance="subtle"
-                                            icon={
-                                              nodeInfo.enabled ? (
-                                                <ProhibitedRegular />
-                                              ) : (
-                                                <CheckmarkCircleRegular />
-                                              )
-                                            }
-                                            aria-label={
-                                              nodeInfo.enabled
-                                                ? t("common.disable")
-                                                : t("common.enable")
-                                            }
-                                            onClick={() => toggle(nodeInfo)}
-                                          />
-                                        </Tooltip>
-                                        <Tooltip
-                                          content={t("nodes.removeMember" as TK)}
-                                          relationship="label"
-                                        >
-                                          <Button
-                                            size="small"
-                                            appearance="subtle"
-                                            icon={<DeleteRegular />}
-                                            aria-label={t(
-                                              "nodes.removeMember" as TK,
-                                            )}
-                                            onClick={() =>
-                                              removeMemberDraft(m.key)
-                                            }
-                                          />
-                                        </Tooltip>
-                                      </>
-                                    ) : !isNode && groupInfo ? (
-                                      <>
-                                        <span
-                                          style={{
-                                            flex: 1,
-                                            fontSize: 13,
-                                            fontWeight: 600,
-                                          }}
-                                        >
-                                          {groupInfo.name}
-                                        </span>
-                                        {groupInfo.is_system && (
-                                          <Badge
-                                            appearance="filled"
-                                            color="brand"
-                                          >
-                                            {t("nodes.systemBadge" as TK)}
-                                          </Badge>
-                                        )}
-                                        <Tooltip
-                                          content={t("nodes.removeMember" as TK)}
-                                          relationship="label"
-                                        >
-                                          <Button
-                                            size="small"
-                                            appearance="subtle"
-                                            icon={<DeleteRegular />}
-                                            aria-label={t(
-                                              "nodes.removeMember" as TK,
-                                            )}
-                                            onClick={() =>
-                                              removeMemberDraft(m.key)
-                                            }
-                                          />
-                                        </Tooltip>
-                                      </>
-                                    ) : (
-                                      <Text
-                                        size={200}
+                                  {isNode && nodeInfo ? (
+                                    <>
+                                      <span
                                         style={{
-                                          color: tokens.colorNeutralForegroundDisabled,
+                                          fontSize: 12,
+                                          color: tokens.colorNeutralForeground3,
+                                          minWidth: 24,
+                                          textAlign: "center",
+                                          fontWeight: 600,
                                         }}
                                       >
-                                        (removed)
-                                      </Text>
-                                    )}
-                                  </div>
+                                        {m.rank != null ? m.rank + 1 : "—"}
+                                      </span>
+                                      <span
+                                        style={{
+                                          flex: 1,
+                                          fontSize: 13,
+                                          minWidth: 0,
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                          whiteSpace: "nowrap",
+                                        }}
+                                        title={nodeInfo.note || redactUrl(nodeInfo.url)}
+                                      >
+                                        {nodeInfo.note || redactUrl(nodeInfo.url)}
+                                      </span>
+                                      <StatusBadge
+                                        status={
+                                          nodeInfo.enabled
+                                            ? nodeInfo.status
+                                            : "disabled"
+                                        }
+                                      />
+                                      <span
+                                        style={{
+                                          fontSize: 13,
+                                          color: tokens.colorNeutralForeground3,
+                                          minWidth: 70,
+                                          textAlign: "right",
+                                        }}
+                                      >
+                                        {nodeInfo.latency_ms != null
+                                          ? `${Math.round(nodeInfo.latency_ms)} ms`
+                                          : "—"}
+                                      </span>
+                                      {canEdit && (
+                                        <>
+                                          <Tooltip
+                                            content={t("nodes.pinHint" as TK)}
+                                            relationship="label"
+                                          >
+                                            <Button
+                                              size="small"
+                                              appearance={
+                                                m.pinned ? "primary" : "subtle"
+                                              }
+                                              icon={
+                                                m.pinned ? (
+                                                  <PinRegular />
+                                                ) : (
+                                                  <PinOffRegular />
+                                                )
+                                              }
+                                              aria-label={
+                                                m.pinned
+                                                  ? t("nodes.unpin" as TK)
+                                                  : t("nodes.pin" as TK)
+                                              }
+                                              onClick={() => togglePin(g, m)}
+                                            />
+                                          </Tooltip>
+                                          <Tooltip
+                                            content={t("nodes.removeMember" as TK)}
+                                            relationship="label"
+                                          >
+                                            <Button
+                                              size="small"
+                                              appearance="subtle"
+                                              icon={<DeleteRegular />}
+                                              aria-label={t(
+                                                "nodes.removeMember" as TK,
+                                              )}
+                                              onClick={() => removeMember(g, m)}
+                                            />
+                                          </Tooltip>
+                                        </>
+                                      )}
+                                    </>
+                                  ) : !isNode && groupInfo ? (
+                                    <>
+                                      <span style={{ width: 24, flexShrink: 0 }} />
+                                      <span
+                                        style={{
+                                          flex: 1,
+                                          fontSize: 13,
+                                          fontWeight: 600,
+                                        }}
+                                      >
+                                        {groupInfo.name}
+                                      </span>
+                                      {groupInfo.is_system && (
+                                        <Badge
+                                          appearance="filled"
+                                          color="brand"
+                                        >
+                                          {t("nodes.systemBadge" as TK)}
+                                        </Badge>
+                                      )}
+                                      {canEdit && (
+                                        <Tooltip
+                                          content={t("nodes.removeMember" as TK)}
+                                          relationship="label"
+                                        >
+                                          <Button
+                                            size="small"
+                                            appearance="subtle"
+                                            icon={<DeleteRegular />}
+                                            aria-label={t(
+                                              "nodes.removeMember" as TK,
+                                            )}
+                                            onClick={() => removeMember(g, m)}
+                                          />
+                                        </Tooltip>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <Text
+                                      size={200}
+                                      style={{
+                                        color: tokens.colorNeutralForegroundDisabled,
+                                      }}
+                                    >
+                                      (removed)
+                                    </Text>
+                                  )}
                                 </div>
                               );
                             })}
-                            {/* Drop target at the end */}
-                            <div
-                              style={{
-                                borderTop:
-                                  dragKey != null &&
-                                  dragOverIdx === editMembers.length
-                                    ? `2px solid ${tokens.colorBrandForeground1}`
-                                    : "2px solid transparent",
-                                transition: "border-color 0.15s",
-                                minHeight: 4,
-                              }}
-                              onDragOver={(e) =>
-                                onDragOver(e, editMembers.length)
-                              }
-                              onDrop={() => onDrop(editMembers.length)}
-                            />
                           </div>
 
                           {/* Add controls */}
@@ -990,15 +939,17 @@ export function Nodes() {
                                     "nodes.addNodePlaceholder" as TK,
                                   )}
                                   selectedOptions={[]}
-                                  onOptionSelect={handleAddNodes}
+                                  onOptionSelect={(e, d) =>
+                                    handleAddNodes(g.id, e, d)
+                                  }
                                 >
                                   {availableNodes.map((n) => (
                                     <Option
                                       key={n.id}
                                       value={String(n.id)}
-                                      text={n.url || "(direct)"}
+                                      text={n.note || n.url || "(direct)"}
                                     >
-                                      {n.url || "(direct)"}
+                                      {n.note || n.url || "(direct)"}
                                       {n.status !== "active"
                                         ? ` (${n.status})`
                                         : ""}
@@ -1014,7 +965,7 @@ export function Nodes() {
                                   placeholder={t(
                                     "nodes.inheritGroupPlaceholder" as TK,
                                   )}
-                                  onOptionSelect={handleAddGroup}
+                                  onOptionSelect={(e, d) => handleAddGroup(g.id, e, d)}
                                 >
                                   {availableGroups.map((grp) => (
                                     <Option
@@ -1030,34 +981,6 @@ export function Nodes() {
                                   ))}
                                 </Dropdown>
                               </Field>
-                            </div>
-                          )}
-
-                          {/* Save / Cancel */}
-                          {canEdit && (
-                            <div
-                              style={{
-                                display: "flex",
-                                gap: 8,
-                                justifyContent: "flex-end",
-                              }}
-                            >
-                              <Button
-                                appearance="secondary"
-                                onClick={collapseGroup}
-                              >
-                                {t("common.cancel" as TK)}
-                              </Button>
-                              <Button
-                                appearance="primary"
-                                disabled={membersSaving}
-                                onClick={saveMembers}
-                                data-shortcut="save"
-                              >
-                                {membersSaving
-                                  ? t("nodes.membersSaving" as TK)
-                                  : t("common.save" as TK)}
-                              </Button>
                             </div>
                           )}
                         </div>

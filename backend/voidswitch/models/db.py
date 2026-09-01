@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    true as sqltrue,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -27,6 +28,8 @@ from sqlalchemy.orm import (
 )
 
 from voidswitch.constants import (
+    CALL_RATE_LIMIT_MAX_REQUESTS,
+    CALL_RATE_LIMIT_WINDOW_SECONDS,
     KeySelectMode,
     KeyStatus,
     NodeStatus,
@@ -95,6 +98,15 @@ class User(Base, TimestampMixin):
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )
     group_memberships: Mapped[list[RoleGroupMembership]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
+    # Adminship of role groups is stored separately from membership: being an
+    # admin of a group is a read-only observer capability (see users/stats/logs
+    # of that group's members) and does NOT imply model-access membership. A
+    # user may be a member of one group and an admin of another, or both, or
+    # neither. Kept ``selectin`` so ``get_current_user`` gets it for free with
+    # the User row.
+    group_adminships: Mapped[list[RoleGroupAdminship]] = relationship(
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -186,6 +198,9 @@ class ExposedModel(Base, TimestampMixin):
     models_dev_synced_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # Brand key (e.g. "claude", "deepseek", "openai") used to pick the model's
+    # icon. Auto-derived from models.dev when matched; overridable in the UI.
+    brand: Mapped[str | None] = mapped_column(String(64), default=None)
     # Who first registered metadata for this model (id + display-name snapshot).
     added_by: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
     added_by_name: Mapped[str | None] = mapped_column(String(255), default=None)
@@ -323,6 +338,17 @@ class Provider(Base, TimestampMixin):
     # claude-code masquerade only: when True, drop the inbound client's entire
     # "You are OpenCode…" system block instead of scrubbing it in place.
     drop_opencode_identity_block: Mapped[bool] = mapped_column(Boolean, default=False)
+    # OpenAI-style upstreams: when True, remap ``role: "developer"`` messages
+    # down to ``role: "system"`` before the request leaves. Newer OpenAI
+    # clients emit ``developer``, but many OpenAI-compatible upstreams still
+    # only accept ``[system, assistant, user, tool, function]`` and reject the
+    # request outright. Default True — matching the original ``adeddb3`` fix —
+    # so the "safer" behaviour is the out-of-the-box one; turn it off on
+    # providers that speak the modern schema natively (real OpenAI, etc.). Has
+    # no effect on non-OpenAI-style upstreams.
+    normalize_developer_role_to_system: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=sqltrue()
+    )
     # How this provider picks which upstream key to lead with for each request:
     # "round_robin" | "random" | "fallback" | "pinned_round_robin" |
     # "pinned_random". See constants.KeySelectMode.
@@ -496,6 +522,9 @@ class NodeGroupMember(Base):
     source_group_id: Mapped[int | None] = mapped_column(
         ForeignKey("node_groups.id", ondelete="CASCADE"), default=None, index=True
     )
+    # Pinned nodes are always tried first within a group (independently ranked),
+    # regardless of their dynamic quality score.
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     weight: Mapped[int] = mapped_column(Integer, default=1)
 
     group: Mapped[NodeGroup] = relationship(
@@ -552,11 +581,30 @@ class RoleGroup(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(120), unique=True)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-user call rate limit for this group's members on the OpenAI/Anthropic
+    # gateway endpoints, enforced as a sliding window per (user, group). A member
+    # of several groups may call as long as ANY of their groups still has budget.
+    # 0 max (or 0 window) = unlimited for this group.
+    call_rate_limit_window_seconds: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=CALL_RATE_LIMIT_WINDOW_SECONDS,
+        server_default=str(CALL_RATE_LIMIT_WINDOW_SECONDS),
+    )
+    call_rate_limit_max_requests: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=CALL_RATE_LIMIT_MAX_REQUESTS,
+        server_default=str(CALL_RATE_LIMIT_MAX_REQUESTS),
+    )
 
     mappings: Mapped[list[RoleGroupMapping]] = relationship(
         back_populates="group", cascade="all, delete-orphan", lazy="selectin"
     )
     memberships: Mapped[list[RoleGroupMembership]] = relationship(
+        back_populates="group", cascade="all, delete-orphan", lazy="selectin"
+    )
+    adminships: Mapped[list[RoleGroupAdminship]] = relationship(
         back_populates="group", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -566,12 +614,22 @@ class RoleGroupMapping(Base):
 
     At login the user's effective role in ``team_id`` is compared against
     ``min_role`` (using ``constants.TEAM_ROLE_RANK``); a role that ranks equal or
-    higher grants membership of ``group``.
+    higher receives the group. ``grants`` decides *what* they receive:
+
+    * ``"member"`` — regular membership (model call access).
+    * ``"admin"`` — read-only observer adminship (see the group's users,
+      statistics, and logs; no model call access on its own).
+
+    To grant both from the same team+min_role, add two mapping rows (one with
+    each ``grants`` value). The built-in moderator group only ever accepts
+    ``grants="member"`` — admin mappings on it are rejected.
     """
 
     __tablename__ = "role_group_mappings"
     __table_args__ = (
-        UniqueConstraint("role_group_id", "team_id", "min_role", name="uq_group_team_role"),
+        UniqueConstraint(
+            "role_group_id", "team_id", "min_role", "grants", name="uq_group_team_role_grants"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -580,6 +638,10 @@ class RoleGroupMapping(Base):
     )
     team_id: Mapped[str] = mapped_column(String(120), index=True)
     min_role: Mapped[str] = mapped_column(String(32), default=Role.MEMBER.value)
+    # What the mapping grants: "member" (model access) or "admin" (read-only
+    # observer capability over the group's users / stats / logs). Defaults to
+    # "member" so existing rows keep their meaning after the migration.
+    grants: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, server_default=func.now()
     )
@@ -613,6 +675,39 @@ class RoleGroupMembership(Base):
 
     user: Mapped[User] = relationship(back_populates="group_memberships", lazy="selectin")
     group: Mapped[RoleGroup] = relationship(back_populates="memberships", lazy="selectin")
+
+
+class RoleGroupAdminship(Base):
+    """A user's adminship (read-only observer) of a (custom) role group.
+
+    Adminship is orthogonal to membership: an admin of a group sees the group's
+    users / stats / logs but does NOT gain model access from it. Rows are
+    recomputed at every login from the ``grants="admin"`` mappings; ``source``
+    records how the adminship was granted. The built-in moderator group cannot
+    have adminships — its permissions come from the user's platform role.
+
+    ``managed_group_ids`` (used everywhere on the request path to scope a
+    role-group admin's view) is a projection of this table for the caller.
+    """
+
+    __tablename__ = "role_group_adminships"
+    __table_args__ = (UniqueConstraint("user_id", "role_group_id", name="uq_user_group_admin"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role_group_id: Mapped[int] = mapped_column(
+        ForeignKey("role_groups.id", ondelete="CASCADE"), index=True
+    )
+    # How the adminship was granted: "auto" (a grants="admin" mapping matched) or
+    # "manual" (assigned directly by an owner from the dashboard). Auto
+    # adminships are re-evaluated on every login; manual ones persist.
+    source: Mapped[str] = mapped_column(String(16), default="auto")
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="group_adminships", lazy="selectin")
+    group: Mapped[RoleGroup] = relationship(back_populates="adminships", lazy="selectin")
 
 
 class Announcement(Base, TimestampMixin):

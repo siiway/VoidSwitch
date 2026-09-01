@@ -3,6 +3,8 @@ import {
   Button,
   Dropdown,
   Input,
+  MessageBar,
+  MessageBarBody,
   Option,
   TableBody,
   TableCell,
@@ -39,15 +41,30 @@ const ASSIGNABLE_ROLES: Role[] = ["admin", "member"];
 const OWNER_TIER = OWNER_ROLES;
 const ROLE_RANK: Record<Role, number> = { member: 1, admin: 2, "co-owner": 3, owner: 3 };
 
+// "All my groups" sentinel for the group filter dropdown. Not a real group id,
+// but a stable value the Dropdown can key on.
+const ALL_GROUPS = "__all__";
+
 export function Users() {
   const { t } = useTranslation();
   type TK = keyof Translations;
   const notify = useNotify();
-  const { user: me, isOwner } = useAuth();
+  const {
+    user: me,
+    isOwner,
+    isStaff,
+    isRoleGroupAdmin,
+    managedGroupIds,
+    managedGroupNames,
+  } = useAuth();
   const users = useAsync<User[]>(() => api.get("/api/admin/users"));
   const [userSearch, setUserSearch] = useState("");
   const [userFilterRole, setUserFilterRole] = useState("");
   const [userFilterStatus, setUserFilterStatus] = useState("");
+  // Group filter for the role-group-admin view. Ignored when the caller is
+  // staff (they see everyone, no group scoping happens on the frontend). See
+  // CONTEXT.md § "Role groups" for the model.
+  const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS);
 
   const filteredUsers = useMemo(() => {
     if (!users.data) return [];
@@ -71,8 +88,26 @@ export function Users() {
     } else if (userFilterStatus === "disabled") {
       result = result.filter((u) => !u.enabled);
     }
+    // Client-side "narrow to one of my groups" filter for role-group admins.
+    // The backend already scopes to the union of managed groups; the dropdown
+    // simply lets an admin zoom into one group at a time.
+    if (isRoleGroupAdmin && groupFilter !== ALL_GROUPS) {
+      const gid = Number(groupFilter);
+      if (!Number.isNaN(gid)) {
+        result = result.filter((u) =>
+          (u.visible_via_group_ids ?? []).includes(gid),
+        );
+      }
+    }
     return result;
-  }, [users.data, userSearch, userFilterRole, userFilterStatus]);
+  }, [
+    users.data,
+    userSearch,
+    userFilterRole,
+    userFilterStatus,
+    isRoleGroupAdmin,
+    groupFilter,
+  ]);
 
   const allRoles = useMemo(() => {
     const roles = new Set<string>();
@@ -121,6 +156,13 @@ export function Users() {
     }
   }
 
+  // Role-group-admin specific view knobs: hide the platform role column
+  // (they may not see it per spec, "无法查看角色，但能查看团队角色"), hide the
+  // enable/disable action (owner-only anyway), keep force-logout with extra
+  // disable rules the backend also enforces.
+  const showRoleColumn = !isRoleGroupAdmin || isStaff;
+  const showEnableAction = isOwner || isStaff;
+
   return (
     <div>
       <PageHeader
@@ -128,6 +170,20 @@ export function Users() {
         subtitle={t("users.subtitle" as TK)}
         onRefresh={users.reload}
       />
+      {/* Hint bar: only shown to a *pure* role-group admin (isRoleGroupAdmin
+          is already gated on !isStaff), so a staff user with adminship on the
+          side never sees the "you administer …" bar — their view is the full
+          platform view. */}
+      {isRoleGroupAdmin && managedGroupNames.length > 0 && (
+        <MessageBar intent="info" style={{ marginBottom: 12 }}>
+          <MessageBarBody>
+            {t("users.roleGroupAdminHint" as TK).replace(
+              "{groups}",
+              managedGroupNames.join(", "),
+            )}
+          </MessageBarBody>
+        </MessageBar>
+      )}
       {users.loading ? (
         <Loading />
       ) : users.error ? (
@@ -149,19 +205,21 @@ export function Users() {
               value={userSearch}
               onChange={(_, d) => setUserSearch(d.value)}
             />
-            <Dropdown
-              style={{ minWidth: 130 }}
-              placeholder={t("users.userFilterAllRoles" as TK)}
-              value={userFilterRole ? userFilterRole : t("users.userFilterAllRoles" as TK)}
-              selectedOptions={userFilterRole ? [userFilterRole] : []}
-              onOptionSelect={(_, d) => setUserFilterRole(d.optionValue ?? "")}
-            >
-              {allRoles.map((role) => (
-                <Option key={role} value={role} text={role}>
-                  {role}
-                </Option>
-              ))}
-            </Dropdown>
+            {showRoleColumn && (
+              <Dropdown
+                style={{ minWidth: 130 }}
+                placeholder={t("users.userFilterAllRoles" as TK)}
+                value={userFilterRole ? userFilterRole : t("users.userFilterAllRoles" as TK)}
+                selectedOptions={userFilterRole ? [userFilterRole] : []}
+                onOptionSelect={(_, d) => setUserFilterRole(d.optionValue ?? "")}
+              >
+                {allRoles.map((role) => (
+                  <Option key={role} value={role} text={role}>
+                    {role}
+                  </Option>
+                ))}
+              </Dropdown>
+            )}
             <Dropdown
               style={{ minWidth: 130 }}
               placeholder={t("users.userFilterAllStatus" as TK)}
@@ -182,13 +240,41 @@ export function Users() {
                 {t("users.userFilterDisabled" as TK)}
               </Option>
             </Dropdown>
+            {isRoleGroupAdmin && managedGroupIds.length > 1 && (
+              // Only surface the "narrow to one group" dropdown when there's
+              // more than one group to choose from — a single-group admin's
+              // view is already unambiguous.
+              <Dropdown
+                style={{ minWidth: 160 }}
+                value={
+                  groupFilter === ALL_GROUPS
+                    ? t("users.groupFilterAll" as TK)
+                    : managedGroupNames[
+                        managedGroupIds.indexOf(Number(groupFilter))
+                      ] ?? String(groupFilter)
+                }
+                selectedOptions={[groupFilter]}
+                onOptionSelect={(_, d) => setGroupFilter(d.optionValue ?? ALL_GROUPS)}
+              >
+                <Option value={ALL_GROUPS} text={t("users.groupFilterAll" as TK)}>
+                  {t("users.groupFilterAll" as TK)}
+                </Option>
+                {managedGroupIds.map((gid, idx) => (
+                  <Option key={gid} value={String(gid)} text={managedGroupNames[idx] ?? String(gid)}>
+                    {managedGroupNames[idx] ?? String(gid)}
+                  </Option>
+                ))}
+              </Dropdown>
+            )}
           </div>
           <DataTable ariaLabel={t("users.title" as TK)}>
           <TableHeader>
             <TableRow>
               <TableHeaderCell>{t("users.user" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("users.email" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("users.role" as TK)}</TableHeaderCell>
+              {showRoleColumn && (
+                <TableHeaderCell>{t("users.role" as TK)}</TableHeaderCell>
+              )}
               <TableHeaderCell>{t("users.prismRole" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("users.status" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("users.lastLogin" as TK)}</TableHeaderCell>
@@ -202,31 +288,33 @@ export function Users() {
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {u.email ?? "—"}
                 </TableCell>
-                <TableCell>
-                  {isOwner && !OWNER_TIER.has(u.role) && u.id !== me?.id ? (
-                    <Dropdown
-                      value={u.role}
-                      selectedOptions={[u.role]}
-                      onOptionSelect={(_, d) =>
-                        d.optionValue && setRole(u, d.optionValue as Role)
-                      }
-                      style={{ minWidth: 120 }}
-                    >
-                      {ASSIGNABLE_ROLES.map((r) => (
-                        <Option key={r} value={r}>
-                          {r}
-                        </Option>
-                      ))}
-                    </Dropdown>
-                  ) : (
-                    <Badge
-                      appearance="tint"
-                      color={OWNER_TIER.has(u.role) ? "brand" : undefined}
-                    >
-                      {u.role}
-                    </Badge>
-                  )}
-                </TableCell>
+                {showRoleColumn && (
+                  <TableCell>
+                    {isOwner && !OWNER_TIER.has(u.role) && u.id !== me?.id ? (
+                      <Dropdown
+                        value={u.role}
+                        selectedOptions={[u.role]}
+                        onOptionSelect={(_, d) =>
+                          d.optionValue && setRole(u, d.optionValue as Role)
+                        }
+                        style={{ minWidth: 120 }}
+                      >
+                        {ASSIGNABLE_ROLES.map((r) => (
+                          <Option key={r} value={r}>
+                            {r}
+                          </Option>
+                        ))}
+                      </Dropdown>
+                    ) : (
+                      <Badge
+                        appearance="tint"
+                        color={OWNER_TIER.has(u.role) ? "brand" : undefined}
+                      >
+                        {u.role}
+                      </Badge>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {u.prism_role ? (
                     <>
@@ -243,22 +331,35 @@ export function Users() {
                     </>
                   ) : u.role_group_names && u.role_group_names.length > 0 ? (
                     // Not in the main team: show the role group(s) that grant
-                    // access (italic), with the placing team id(s) on hover.
-                    <Tooltip
-                      relationship="label"
-                      content={
-                        u.team_ids && u.team_ids.length > 0
-                          ? t("users.teamsTooltip" as TK).replace(
-                              "{ids}",
-                              u.team_ids.join(", "),
-                            )
-                          : t("users.noTeamInfo" as TK)
-                      }
+                    // access. For a role-group-admin viewer the backend has
+                    // already filtered ``role_group_names`` to the caller's
+                    // managed intersection, so we render them as inline chips
+                    // (the "visible via X, Y" hint requested in Q4). Staff
+                    // callers see the full list, still rendered as chips for
+                    // visual parity.
+                    <span
+                      style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}
+                      aria-label={t("users.visibleVia" as TK)}
                     >
-                      <span style={{ fontStyle: "italic" }}>
-                        {u.role_group_names.join(", ")}
-                      </span>
-                    </Tooltip>
+                      {u.role_group_names.map((name) => (
+                        <Tooltip
+                          key={name}
+                          content={
+                            u.team_ids && u.team_ids.length > 0
+                              ? t("users.teamsTooltip" as TK).replace(
+                                  "{ids}",
+                                  u.team_ids.join(", "),
+                                )
+                              : t("users.noTeamInfo" as TK)
+                          }
+                          relationship="label"
+                        >
+                          <Badge appearance="outline" size="small">
+                            {name}
+                          </Badge>
+                        </Tooltip>
+                      ))}
+                    </span>
                   ) : (
                     "—"
                   )}
@@ -280,43 +381,52 @@ export function Users() {
                       size="small"
                       appearance="subtle"
                       icon={<SignOutRegular />}
+                      // Staff must rank strictly above target. Role-group
+                      // admin (non-staff) can bounce a member of their group
+                      // as long as the target isn't staff / another admin of
+                      // a shared group — the backend enforces the "shared
+                      // admin" case; the frontend catches the easy ones.
                       disabled={
                         u.id === me?.id ||
                         !me ||
-                        ROLE_RANK[me.role] <= ROLE_RANK[u.role]
+                        (isStaff && ROLE_RANK[me.role] <= ROLE_RANK[u.role]) ||
+                        (isRoleGroupAdmin && OWNER_TIER.has(u.role)) ||
+                        (isRoleGroupAdmin && u.role === "admin")
                       }
                       onClick={() => forceLogout(u)}
                       aria-label={t("users.forceLogout" as TK)}
                     />
                   </Tooltip>
-                  <Tooltip
-                    content={
-                      u.enabled
-                        ? t("common.disable" as TK)
-                        : t("common.enable" as TK)
-                    }
-                    relationship="label"
-                  >
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={
-                        u.enabled ? <ProhibitedRegular /> : <CheckmarkCircleRegular />
-                      }
-                      disabled={
-                        u.id === me?.id ||
-                        !isOwner ||
-                        // Same-tier peers (owner/co-owner) can't disable each other.
-                        (u.enabled && OWNER_TIER.has(u.role))
-                      }
-                      onClick={() => toggle(u)}
-                      aria-label={
+                  {showEnableAction && (
+                    <Tooltip
+                      content={
                         u.enabled
                           ? t("common.disable" as TK)
                           : t("common.enable" as TK)
                       }
-                    />
-                  </Tooltip>
+                      relationship="label"
+                    >
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={
+                          u.enabled ? <ProhibitedRegular /> : <CheckmarkCircleRegular />
+                        }
+                        disabled={
+                          u.id === me?.id ||
+                          !isOwner ||
+                          // Same-tier peers (owner/co-owner) can't disable each other.
+                          (u.enabled && OWNER_TIER.has(u.role))
+                        }
+                        onClick={() => toggle(u)}
+                        aria-label={
+                          u.enabled
+                            ? t("common.disable" as TK)
+                            : t("common.enable" as TK)
+                        }
+                      />
+                    </Tooltip>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

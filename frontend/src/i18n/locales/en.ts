@@ -49,6 +49,8 @@ const en = {
     back: "Back",
     up: "Up",
     down: "Down",
+    copyId: "Copy ID",
+    copied: "Copied",
     shortcutSave: "Ctrl+S",
     shortcutApply: "Ctrl+Enter",
     shortcutRefresh: "R",
@@ -67,7 +69,7 @@ const en = {
     dashboard: "Dashboard",
     providers: "Providers",
     models: "Models",
-    nodes: "Nodes & Groups",
+    nodes: "Nodes",
     tokens: "Tokens",
     users: "Users",
     roleGroups: "Role Groups",
@@ -135,6 +137,7 @@ const en = {
     groupProbeUrl: "Probe URL",
     groupProbeInterval: "Probe interval (s)",
     groupMembers: "Members",
+    groupInherits: "Inherits",
     groupUpdated: "Group updated",
     groupCreated: "Group created",
     groupDeleteTitle: "Delete node group",
@@ -147,14 +150,14 @@ const en = {
     editMembers: "Members",
     membersTitle: "Group members",
     membersHint:
-      "Nodes and inherited groups in priority order. Drag to reorder, then save.",
+      "Nodes are ranked automatically by quality. Pinned nodes are always tried first.",
     membersEmpty: "No members yet",
     membersLabel: "Nodes",
     inheritsLabel: "Inherited groups",
     addNode: "Add nodes",
-    addNodePlaceholder: "Search nodes…",
+    addNodePlaceholder: "Add nodes…",
     inheritGroup: "Inherit groups",
-    inheritGroupPlaceholder: "Search groups…",
+    inheritGroupPlaceholder: "Add inherited group…",
     memberSource: "Source",
     selectNode: "Select node…",
     selectGroup: "Select group…",
@@ -162,6 +165,10 @@ const en = {
     membersSaving: "Saving…",
     membersSaved: "Members saved",
     dragHint: "Drag to reorder",
+    pin: "Pin",
+    unpin: "Unpin",
+    pinHint: "Pinned nodes are always tried first",
+    rank: "Order",
     removeMember: "Remove from group",
   },
   login: {
@@ -190,6 +197,7 @@ const en = {
     subtitleMember: "Your announcements and usage",
     providers: "Providers",
     activeKeys: "Active keys",
+    users: "Users",
     voidTokens: "Void-Tokens",
     requests24h: "Requests (24h)",
     success24h: "Succeeded (24h)",
@@ -276,6 +284,9 @@ const en = {
     retryZeroToken: "Auto-retry on 200 OK + 0 tokens",
     retryZeroTokenHint:
       "Treat a 200 response with zero tokens (or a stream that ends with no real content) as a transient upstream fault and retry on the next key / route / provider; the empty reply is never delivered. Streams are spooled until the first real content token, so an empty response is retried on the same connection.",
+    normalizeDeveloperRole: "Remap 'developer' role to 'system'",
+    normalizeDeveloperRoleHint:
+      "Newer OpenAI clients emit ``role: 'developer'`` for the system prompt. Many OpenAI-compatible upstreams still only accept ``[system, assistant, user, tool, function]`` and reject it — this switch rewrites developer to system before the request leaves. Leave on (the default) unless this upstream (e.g. real OpenAI) handles ``developer`` natively.",
     deleteTitle: "Delete provider",
     deleteMsg: 'Delete "{name}" and all its keys? This cannot be undone.',
     created: "Provider created",
@@ -330,7 +341,7 @@ const en = {
     useExistingKeyTitle: "Select a key to use for fetching models",
     useExistingKeyNoKeys: "No usable keys for this provider.",
     useExistingKeyNum: "#{index}",
-    providerFilterSearch: "Search name / type / URL / added by / model id…",
+    providerFilterSearch: "Search id / name / type / base URL / model id / added by…",
     providerFilterAllTypes: "All types",
     providerFilterAllAddedBy: "All added by",
     providerFilterAllStatus: "All statuses",
@@ -509,6 +520,12 @@ const en = {
     noDescription: "No description",
     editModel: "Edit model",
     editSelected: "Edit selected ({count})",
+    deleteSelected: "Delete selected ({count})",
+    batchDeleteTitle: "Delete selected models",
+    batchDeleteMsg:
+      "Delete {count} model(s)? Exposed models are removed from the catalog; passthrough models are removed from their provider's whitelist.",
+    batchDeleted: "Models deleted",
+    batchDeletedDetail: "{count} model(s) deleted.",
     selectFiltered: "Select filtered ({count})",
     clearSelection: "Clear selection ({count})",
     modelId: "Model id",
@@ -532,6 +549,8 @@ const en = {
       'Remove the description and OpenCode config for "{id}"? The model stays available (a provider still serves it) but loses its metadata.',
     deleteMsgUnserved:
       'Remove the description and OpenCode config for "{id}"? It is no longer served by any provider, so it will disappear from the catalog.',
+    deleteMsgPassthrough:
+      'Remove the passthrough model "{id}" from its provider\'s passthrough list? Any matching model metadata is also removed.',
     saved: "Model saved",
     metadataRemoved: "Metadata removed",
     invalidConfig: "Invalid config",
@@ -610,7 +629,7 @@ const en = {
     modelsDevSelected: "Linked to models.dev",
     modelsDevUse: "Use",
     modelsDevLinked: "This model is linked to models.dev. Leave fields blank to use its data as placeholder.",
-    modelsDevSync: "Sync models.dev",
+    modelsDevSync: "Sync",
     modelsDevSyncing: "Syncing…",
     modelsDevSynced: "models.dev synced",
     modelsDevSyncedDetail: "{count} models synced.",
@@ -623,10 +642,10 @@ const en = {
     providerPickerHint: "Pre-fill the first route layer with this provider and upstream model (optional)",
     displayNameAuto: "Auto-generated from model_id",
     created: "Model created",
-    category: "Category",
-    filterCategory: "Category",
-    filterAllCategories: "All categories",
-    filterUncategorized: "Uncategorized",
+    category: "Group",
+    filterCategory: "Group",
+    filterAllCategories: "All groups",
+    filterUncategorized: "Ungrouped",
     providerBadge: "Provider",
     batchCapabilities: "Capabilities",
     batchCapabilitiesLabel: "Set capabilities for all selected",
@@ -634,8 +653,15 @@ const en = {
     batchReasoningLabel: "Set reasoning for all selected",
     batchLimits: "Limits",
     batchLimitsLabel: "Set limits for all selected",
-    batchCategory: "Category",
-    batchCategoryLabel: "Set category for all selected",
+    batchCategory: "Group",
+    batchCategoryLabel: "Set group for all selected",
+    createCategory: "Create group",
+    categoryCreated: "Group created",
+    categoryName: "Group name",
+    brand: "Brand",
+    brandHint: "Icon shown beside the model. Leave empty to auto-detect.",
+    brandAuto: "Auto-detect",
+    modelsDevAutoFill: "Fill in name, description and limits from this model",
   },
   roleGroups: {
     title: "Role Groups",
@@ -672,6 +698,28 @@ const en = {
     removeMemberMsg:
       'Remove "{user}" from "{group}"? Their access to this group\'s models is revoked immediately (until they log in again).',
     memberRemoved: "Member removed",
+    callRateLimit: "Call rate limit",
+    callRateLimitHint:
+      "OpenAI / Anthropic gateway calls are counted per user against this group's sliding window. A member of several groups passes while any of them still has budget. Set max to 0 for unlimited.",
+    rateLimitWithin: "s — at most",
+    rateLimitRequests: "requests",
+    callRateSummary: "{max} calls / {window}s",
+    callRateUnlimited: "No call rate limit",
+    builtinEditNote:
+      "The built-in moderator group can't be renamed or remapped — only its call rate limit can be changed.",
+    // Read-only banner shown to platform admins (non-owner staff).
+    readOnly: "Read-only view",
+    readOnlyHint:
+      "Only owner / co-owner may edit role groups. You can view the list and members.",
+    // Mapping grants: "member" (model access) vs "admin" (read-only observer).
+    mappingGrants: "As",
+    mappingGrantsMember: "Member",
+    mappingGrantsAdmin: "Admin",
+    mappingGrantsHint:
+      "Admin mappings grant a read-only view over this group's users / statistics / logs — they do NOT grant model access. To give both, add a second 'as Member' mapping alongside.",
+    builtinAdminForbidden:
+      "The built-in moderator group cannot accept admin mappings.",
+    memberIsAdmin: "Group admin",
   },
   proxies: {
     title: "Outbound proxies",
@@ -785,6 +833,15 @@ const en = {
     userFilterAllStatus: "All statuses",
     userFilterEnabled: "Enabled",
     userFilterDisabled: "Disabled",
+    // Role-group-admin hint bar (only shown to non-staff callers who
+    // administer at least one role group). ``{groups}`` = comma-joined names.
+    roleGroupAdminHint:
+      "You administer {groups} — this list shows only their members.",
+    // Group filter dropdown on the Users page.
+    groupFilter: "Role group",
+    groupFilterAll: "All my groups",
+    // Aria label for the per-row visible-via chip cluster.
+    visibleVia: "Visible via",
   },
   reveal: {
     title: "Reveal key",
@@ -822,9 +879,10 @@ const en = {
     balanceRescanEnabled: "Balance rescan enabled (re-enable recovered keys)",
     proxyHealthCheckEnabled:
       "Enable proxy health check (off: no probing, no auto-disable, no auto-enable — for external connectivity managers)",
-    proxyProbeUrl: "Proxy probe URL",
     opencodeDefaultModel: "OpenCode default model",
     opencodeSmallModel: "OpenCode small model (for background tasks)",
+    chatPresetQuestions: "Chat preset questions",
+    chatPresetQuestionsHint: "One question per line",
     auditLogRetentionDays: "Audit log retention (days, 0 = keep forever)",
     requestLogRetentionDays: "Request log retention (days, 0 = keep forever)",
     debugLogRetentionDays: "Debug log detail retention (days, 0 = keep forever)",
@@ -846,14 +904,29 @@ const en = {
     maxKeepaliveConnections: "Max keep-alive connections",
     announcementsHomeCount:
       "Announcements shown on the dashboard (before \"view all\")",
-    sectionAnnouncements: "Announcements",
-    sectionAbuseLimits: "Rate limits (abuse protection)",
-    rateLimitOperation: "Operations",
-    rateLimitCall: "OpenAI / Anthropic calls",
-    rateLimitWithin: "s — at most",
-    rateLimitRequests: "requests",
-    abuseLimitsHint:
-      "Within N seconds, at most X requests. 0 = unlimited. Everyone (owners included) is counted independently. \"Operations\" covers dashboard changes; \"calls\" covers the gateway endpoints. An operation limit that's too low is rejected on save to avoid locking the dashboard.",
+    nodeDefaultProbeUrl: "Node probe URL",
+    nodeDefaultProbeUrlHint:
+      "The URL idle health-checks probe when a node group doesn't set its own. Should be a lightweight endpoint the upstream always serves.",
+    nodeProbeInterval: "Node probe interval (s)",
+    nodeProbeIntervalHint:
+      "How often idle nodes are health-checked when a group doesn't set its own interval.",
+    nodeRankAlpha: "Node rank α (latency weight)",
+    nodeRankAlphaHint:
+      "Score = α·EWMA latency + β·failures + γ·failure-proximity; nodes are tried lowest-score first. α is the penalty per ms of smoothed latency.",
+    nodeRankBeta: "Node rank β (failure weight)",
+    nodeRankBetaHint:
+      "Penalty added per recorded failure. Higher β pushes failing nodes to the back of the order faster.",
+    nodeRankGamma: "Node rank γ (failure-proximity weight)",
+    nodeRankGammaHint:
+      "Penalty for being close to the auto-disable failure threshold. Higher γ avoids risky nodes sooner.",
+    nodeRankEwmaHalfLife: "Node EWMA half-life (s)",
+    nodeRankEwmaHalfLifeHint:
+      "How long an idle node's smoothed latency takes to halve, letting a once-slow node recover its ranking.",
+    modelsDevSyncInterval: "models.dev sync interval (min, 0 = disabled)",
+    liveLogRowCap: "Live log rows kept in the browser",
+    liveLogRowCapHint:
+      "How many rows the live request-log stream keeps before dropping the oldest (too many can make the browser lag).",
+    sectionPlatformInfo: "Platform info",
     sectionProxy: "Proxy & routing",
     sectionKeys: "Keys & balance",
     sectionRateLimit: "Rate limiting",
@@ -861,6 +934,7 @@ const en = {
     sectionSession: "Login & session",
     sectionLogs: "Logs & retention",
     sectionOpencode: "OpenCode defaults",
+    sectionModels: "Models & catalog",
     sectionOther: "Other",
     sectionPersonal: "Personal settings",
     loginToken: "Emergency login token",
@@ -898,6 +972,9 @@ const en = {
     title: "Logs",
     subtitleStaff: "Request traffic across the platform",
     subtitleMember: "Your request traffic",
+    // Role-group-admin hint bar (Logs page: request + audit tabs share it).
+    roleGroupAdminHint:
+      "You administer {groups} — logs below are scoped to those groups' users and to the groups themselves.",
     requests: "Requests",
     audit: "Audit",
     time: "Time",
@@ -1002,6 +1079,12 @@ const en = {
   stats: {
     title: "Statistics",
     subtitle: "Usage across users, tokens, and models",
+    // Role-group-admin hint bar shown above the filter row.
+    roleGroupAdminHint:
+      "You administer {groups} — statistics below are scoped to those groups' members.",
+    // Group filter dropdown ("all my managed groups" default + one entry per group).
+    groupFilter: "Role group",
+    groupFilterAll: "All my groups",
     totalRequests: "Total requests",
     succeeded: "Succeeded",
     failed: "Failed",

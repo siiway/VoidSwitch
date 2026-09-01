@@ -35,6 +35,7 @@ from voidswitch.models.db import (
     User,
 )
 from voidswitch.models.schemas import (
+    ModelBatchDelete,
     ModelBatchResult,
     ModelBatchUpdate,
     ModelCategoryCreate,
@@ -42,7 +43,6 @@ from voidswitch.models.schemas import (
     ModelCategoryUpdate,
     ModelCleanResult,
     ModelOut,
-    ModelSyncResult,
     ModelUpsert,
     ModelWithRouteOut,
     RouteOut,
@@ -91,7 +91,11 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def _to_out(item: ExposedModel) -> ModelOut:
+def _to_out(
+    item: ExposedModel,
+    *,
+    providers_by_id: dict[int, Provider] | None = None,
+) -> ModelOut:
     upstreams = []
     route = item.route
     if route is not None:
@@ -107,6 +111,9 @@ def _to_out(item: ExposedModel) -> ModelOut:
                     continue
                 slug = provider.slug or provider.name
                 upstreams.append(f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug)
+    unserved = (
+        models_catalog.is_unserved(item, providers_by_id) if providers_by_id is not None else False
+    )
     return ModelOut(
         id=item.id,
         model_id=item.model_id,
@@ -123,6 +130,7 @@ def _to_out(item: ExposedModel) -> ModelOut:
         modalities=item.modalities or {},
         models_dev_id=item.models_dev_id,
         models_dev_synced_at=item.models_dev_synced_at,
+        brand=item.brand,
         upstreams=upstreams,
         added_by_name=item.added_by_name,
         created_at=item.created_at,
@@ -130,6 +138,7 @@ def _to_out(item: ExposedModel) -> ModelOut:
         category_id=item.category_id,
         category_name=item.category.name if item.category is not None else None,
         category_slug=item.category.slug if item.category is not None else None,
+        unserved=unserved,
     )
 
 
@@ -169,14 +178,16 @@ async def list_models(
     user: User = Depends(get_current_user),
 ) -> list[ModelOut]:
     catalog = await models_catalog.build_catalog(session)
-    # Members must not see hidden (disabled) models at all — only staff, who can
-    # manage them, get the full list with the "unavailable (hidden)" badge.
-    if not is_staff(user):
-        catalog = [i for i in catalog if i.enabled]
-    result = [_to_out(i) for i in catalog]
+    catalog_by_id = {item.model_id: item for item in catalog}
 
     # Passthrough virtual entries: each provider with passthrough_enabled
     # contributes its whitelisted models as ``provider-slug/exposed-model-id``.
+    # A passthrough id *takes over* the matching exposed-model id so the catalog
+    # never shows the same id twice (a leftover exposed-model row from the old
+    # 1:1 sync would otherwise render alongside its passthrough twin). Any
+    # ExposedModel row saved for the passthrough id (created the first time an
+    # operator edits its metadata or access) is *merged* into the virtual entry
+    # so edits actually surface in the catalog.
     passthrough_providers = (
         (
             await session.execute(
@@ -188,24 +199,71 @@ async def list_models(
         .scalars()
         .all()
     )
+    passthrough_ids: set[str] = set()
+    virtual: list[ModelOut] = []
     virtual_id = -1
     for provider in passthrough_providers:
+        seen: set[str] = set()
         for entry in provider.passthrough_models or []:
             parsed = _parse_passthrough_entry(entry)
             exposed_id = parsed["exposed"]
             model_id = f"{provider.slug}/{exposed_id}"
-            result.append(
-                ModelOut(
-                    id=virtual_id,
-                    model_id=model_id,
-                    display_name=exposed_id,
-                    enabled=True,
-                    category_name=provider.name,
-                    category_slug=provider.slug,
-                    provider=True,
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            passthrough_ids.add(model_id)
+
+            existing = catalog_by_id.get(model_id)
+            if existing is not None:
+                # Members must not see hidden (disabled) models at all — even
+                # for passthrough ids that would otherwise be surfaced by the
+                # provider whitelist.
+                if not is_staff(user) and not existing.enabled:
+                    continue
+                # Merge the saved metadata into the virtual entry. ``unserved``
+                # is meaningless for passthrough (the provider forwards the id
+                # directly), so it stays False.
+                out = _to_out(existing)
+                out.provider = True
+                out.category_name = provider.name
+                out.category_slug = provider.slug
+                if not out.display_name:
+                    out.display_name = exposed_id
+                virtual.append(out)
+            else:
+                virtual.append(
+                    ModelOut(
+                        id=virtual_id,
+                        model_id=model_id,
+                        display_name=exposed_id,
+                        enabled=True,
+                        category_name=provider.name,
+                        category_slug=provider.slug,
+                        provider=True,
+                    )
                 )
-            )
-            virtual_id -= 1
+                virtual_id -= 1
+
+    # Enabled providers by id, used to flag unserved exposed models.
+    enabled_providers = {
+        p.id: p
+        for p in (
+            (await session.execute(select(Provider).where(Provider.enabled.is_(True))))
+            .scalars()
+            .all()
+        )
+    }
+
+    result: list[ModelOut] = []
+    for item in catalog:
+        # Members must not see hidden (disabled) models at all.
+        if not is_staff(user) and not item.enabled:
+            continue
+        # Passthrough serves these ids directly — drop any stale duplicate.
+        if item.model_id in passthrough_ids:
+            continue
+        result.append(_to_out(item, providers_by_id=enabled_providers))
+    result.extend(virtual)
 
     return result
 
@@ -284,6 +342,9 @@ async def upsert_model(
             if value:
                 entry.models_dev_synced_at = dt.datetime.now(dt.UTC)
             continue
+        if field == "brand":
+            entry.brand = value or None
+            continue
         if field == "category_id":
             entry.category_id = await _validate_category_id(session, value)
             continue
@@ -306,9 +367,16 @@ async def upsert_model(
         },
         ip=request.client.host if request.client else None,
     )
-    entry = await session.get(ExposedModel, entry.id)
-    if entry is None:  # pragma: no cover - just written above
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Model not found.")
+    # Expire + re-select so selectin relationships (route → layers → entries)
+    # reload. session.get alone returns the identity-map instance whose route
+    # may still be unloaded after get_or_create_route; accessing it in sync
+    # _to_out raises MissingGreenlet under asyncpg. Capture the PK before
+    # expire — reading entry.id afterwards would itself lazy-load.
+    entry_id = entry.id
+    session.expire(entry)
+    entry = (
+        await session.execute(select(ExposedModel).where(ExposedModel.id == entry_id))
+    ).scalar_one()
     return _to_out(entry)
 
 
@@ -356,28 +424,77 @@ async def batch_update_models(
     return ModelBatchResult(updated=len(ids))
 
 
-@router.post("/sync", response_model=ModelSyncResult)
-async def sync_models(
+@router.post("/batch-delete", response_model=ModelCleanResult)
+async def batch_delete_models(
+    body: ModelBatchDelete,
     request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_staff),
-) -> ModelSyncResult:
-    """Auto-expose every currently-served upstream id with a 1:1 route."""
-    added, total = await models_catalog.sync_from_providers(
-        session, added_by=user.id, added_by_name=actor_display_name(user)
+) -> ModelCleanResult:
+    """Delete many models by public id (exposed rows and/or passthrough entries)."""
+    ids = [m.strip() for m in body.model_ids if m and m.strip()]
+    if not ids:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "model_ids is required.")
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for mid in ids:
+        if mid in seen:
+            continue
+        seen.add(mid)
+        ordered.append(mid)
+
+    removed: list[str] = []
+    # Passthrough: strip matching whitelist entries from each provider.
+    passthrough_providers = (
+        (await session.execute(select(Provider).where(Provider.passthrough_enabled.is_(True))))
+        .scalars()
+        .all()
     )
-    if added:
+    for mid in ordered:
+        slash = mid.find("/")
+        if slash <= 0:
+            continue
+        slug, exposed = mid[:slash], mid[slash + 1 :]
+        for provider in passthrough_providers:
+            if provider.slug != slug:
+                continue
+            kept: list[str] = []
+            hit = False
+            for entry in provider.passthrough_models or []:
+                parsed = _parse_passthrough_entry(entry)
+                if parsed["exposed"] == exposed:
+                    hit = True
+                    continue
+                kept.append(entry)
+            if hit:
+                provider.passthrough_models = kept
+                if mid not in removed:
+                    removed.append(mid)
+
+    # Exposed-model rows (also covers leftover metadata for passthrough ids).
+    rows = (
+        (await session.execute(select(ExposedModel).where(ExposedModel.model_id.in_(ordered))))
+        .scalars()
+        .all()
+    )
+    for entry in rows:
+        if entry.model_id not in removed:
+            removed.append(entry.model_id)
+        await session.delete(entry)
+
+    if removed:
+        await session.flush()
         await record_audit(
             session,
-            action=AuditAction.MODEL_SYNC,
+            action=AuditAction.MODEL_DELETE,
             actor_sub=user.sub,
             actor_name=actor_display_name(user),
             target_type="model",
-            detail={"added": added, "total": total},
+            detail={"model_ids": removed, "batch": True},
             ip=request.client.host if request.client else None,
-            scope=audit_scope_for(user),
         )
-    return ModelSyncResult(added=added, total=total)
+    return ModelCleanResult(deleted=len(removed), model_ids=removed)
 
 
 @router.post("/clean", response_model=ModelCleanResult)
@@ -422,6 +539,61 @@ async def delete_model(
         target_type="model",
         target_id=entry_id,
         detail={"model_id": model_id},
+        ip=request.client.host if request.client else None,
+    )
+
+
+@router.delete("/passthrough/{slug}/{exposed}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_passthrough_model(
+    slug: str,
+    exposed: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> None:
+    """Remove a passthrough model from its provider's whitelist.
+
+    The model's id is ``slug/exposed``. Deletes the matching entry(ies) from the
+    provider's ``passthrough_models`` list and drops any stale exposed-model
+    metadata row carrying the same id.
+    """
+    provider = (
+        await session.execute(
+            select(Provider).where(Provider.slug == slug, Provider.passthrough_enabled.is_(True))
+        )
+    ).scalar_one_or_none()
+    if provider is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Passthrough provider not found.")
+    kept: list[str] = []
+    removed = 0
+    for entry in provider.passthrough_models or []:
+        parsed = _parse_passthrough_entry(entry)
+        if parsed["exposed"] == exposed:
+            removed += 1
+            continue
+        kept.append(entry)
+    if removed:
+        provider.passthrough_models = kept
+    # Clean any leftover exposed-model metadata for this id.
+    stale = (
+        await session.execute(
+            select(ExposedModel).where(ExposedModel.model_id == f"{slug}/{exposed}")
+        )
+    ).scalar_one_or_none()
+    if stale is not None:
+        await session.delete(stale)
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.MODEL_DELETE,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="model",
+        detail={
+            "model_id": f"{slug}/{exposed}",
+            "provider_id": provider.id,
+            "passthrough_removed": removed,
+        },
         ip=request.client.host if request.client else None,
     )
 
@@ -642,7 +814,7 @@ async def models_dev_search(
         if models_dev.sync_enabled()
         else []
     )
-    results = models_dev.search_cached(rows, q)
+    results = models_dev.search_models(rows, q)
     return {
         "results": results,
         "synced": models_dev.sync_enabled(),

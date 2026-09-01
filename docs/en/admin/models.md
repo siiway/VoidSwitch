@@ -25,13 +25,27 @@ Route flowcharts are edited on a **dedicated page**: top model → layer pools �
 
 Staff can click **Create model** to register a new `model_id` (leave the display name
 empty and a placeholder is auto-generated from the `model_id`). Optionally, pick a
-**provider + upstream model** to pre-fill the first route layer. A category can be
-assigned at creation time.
+**provider + upstream model** to pre-fill the first route layer. A group can be
+assigned at creation time (the **Create group** button sits between **Clean up unserved**
+and **Create model** at the top of the page).
 
-Categories group models (e.g. "Coding", "Writing"). The **Models** page supports
-filtering by category; models without a category are **Uncategorized**. Provider
-passthrough models appear under their provider's name as a virtual category with a
+Groups group models (e.g. "Coding", "Writing"). The **Models** page supports
+filtering by group; models without a group are **Ungrouped**. Provider passport-through
+models appear under their **provider's name** (not its id/slug) as a virtual group with a
 **Provider** badge.
+
+## Provider passthrough models
+
+Passthrough models are served directly by their provider and bypass the routing system, so they
+**have no Route button**. To delete one, click its **Delete** button: this removes the model from the
+provider's passthrough list and cleans up any residual model metadata.
+
+Passthrough models also support metadata editing and role-group access — both **Edit** and **Access**
+buttons are available. Saving either creates an `ExposedModel` row lazily, and the passthrough entry
+then participates in the same `/v1/models` rendering and access filtering as regular models. As a
+result, a passthrough model without any configured role group is invisible to non-moderators (see
+**Access control** below). The passthrough whitelist itself is configured in the **Providers** edit
+dialog (the "Model passthrough" switch + "Passthrough models" list).
 
 ## Per-exposed-model metadata
 
@@ -55,7 +69,7 @@ For any exposed model, staff can set:
 
 Structured fields **>** custom `opencode_config` **>** models.dev placeholder **>** defaults.
 
-## Bulk edit
+## Bulk edit / delete
 
 Apply the same change to multiple models at once — description, enabled state, allowed role groups,
 OpenCode config, capabilities, reasoning, limits, or category.
@@ -66,6 +80,9 @@ For OpenCode config, choose:
 
 - **Merge** — deep-merge into each model's existing config (nested dicts merge, lists/scalars replace); or
 - **Overwrite** — replace entirely.
+
+With a selection you can also **Delete selected**: exposed models leave the catalog; passthrough models
+are removed from their provider's whitelist (`POST /api/models/batch-delete`).
 
 ## Access control
 

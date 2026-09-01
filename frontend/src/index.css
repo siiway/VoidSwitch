@@ -63,8 +63,34 @@ html[data-theme="dark"] {
   filter: invert(1);
 }
 
-/* Dialog surfaces get a subtle border so they stand out against the
-   backdrop, improving readability in both light and dark themes. */
-.fui-DialogSurface {
-  border: 1px solid var(--colorNeutralStroke2);
+/* Dialog surfaces get a soft grey border so they stand out against the
+   backdrop (this theme zeroes every shadow). The selector is doubled to beat
+   griffel's runtime-injected single-class rule that sets a transparent
+   border; the colour mixes the theme's foreground so it adapts to light/dark. */
+.fui-DialogSurface.fui-DialogSurface {
+  border: 1px solid
+    color-mix(in srgb, var(--colorNeutralForeground1) 18%, transparent);
+}
+
+/* Toast stack (see components/ui.tsx): slide in from the right, fade out when
+   the "leaving" flag is set. The countdown border is an in-component element. */
+@keyframes vs-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.vs-toast {
+  animation: vs-toast-in 0.18s ease-out;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+.vs-toast--leaving {
+  opacity: 0;
+  transform: translateX(14px);
 }

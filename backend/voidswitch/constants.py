@@ -111,6 +111,10 @@ class KeySelectMode(StrEnum):
 
 # Default operational thresholds; seeded into the settings table on first boot
 # and editable at runtime from the dashboard.
+#
+# Per-user call rate limits no longer live here: they are configured per role
+# group (see ``RoleGroup.call_rate_limit_*``). The dashboard-operation limit is
+# a fixed abuse guard below, not configurable at all.
 DEFAULT_SETTINGS: dict[str, object] = {
     "max_proxy_failures": 3,
     "max_key_failures": 3,
@@ -153,7 +157,6 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # off to leave proxy connectivity entirely to an external manager (e.g. a
     # mihomo instance): no health-check probing, no auto-disable, no auto-enable.
     "proxy_health_check_enabled": True,
-    "proxy_probe_url": "https://api.openai.com/v1/models",
     # Log retention. A background task deletes audit/request log rows older than
     # the configured number of days, to keep the database from growing without
     # bound. 0 = keep forever (no automatic deletion). The cleanup task itself
@@ -186,7 +189,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # ALL_PROXY environment variables when present.
     "static_proxy_url": "",
     # Node groups.
-    # URL probed by idle node-health checks when a group doesn't override it.
+    # URL probed by idle node-health checks when a group doesn't override it
+    # (the one shared probe-URL setting; there is no separate proxy probe URL).
     "node_default_probe_url": "https://api.openai.com/v1/models",
     # Idle probe interval (seconds) when a group doesn't override it.
     "node_probe_interval_seconds": 120,
@@ -208,19 +212,17 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # the "view all" action is needed to open the rest. 0 = show none inline
     # (only the full-list dialog). The login popup always shows recent ones.
     "announcements_home_count": 3,
-    # Per-user abuse rate limits (sliding window, in-process, single-node).
-    # Enforced for EVERYONE — including owners — with each user counted
-    # independently. 0 max = disabled.
-    #
-    # "operation" covers mutating dashboard/management actions (POST/PUT/PATCH/
-    # DELETE on the /api surface). Setting it too low is refused on save so an
-    # owner can never lock themselves (and everyone) out of the dashboard.
-    "operation_rate_limit_window_seconds": 10,
-    "operation_rate_limit_max_requests": 0,
-    # "call" covers the OpenAI/Anthropic gateway endpoints (/v1/chat/completions,
-    # /v1/messages).
-    "call_rate_limit_window_seconds": 60,
-    "call_rate_limit_max_requests": 0,
+    # Preset questions shown in the dashboard Chat page's empty state. A JSON
+    # list of strings; empty list = no presets. Editable by admins in Settings.
+    "chat_preset_questions": [
+        "Explain async/await in Python with a short example",
+        "Write a regex to validate an email address",
+        "Summarize the CAP theorem in three bullets",
+        "Refactor this loop into a list comprehension",
+    ],
+    # Per-user abuse rate limits moved out of this table:
+    #   * dashboard operations  -> the fixed constants below (not configurable),
+    #   * OpenAI/Anthropic calls -> per role group (RoleGroup.call_rate_limit_*).
     # Outbound connection pool sizing. Tune these up for high-concurrency streaming
     # workloads to avoid PoolTimeout; tune them down if memory/port pressure is a
     # concern. Effective only after a restart (new clients are created with the
@@ -229,3 +231,22 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "max_connections": 400,
     "max_keepalive_connections": 150,
 }
+
+# --------------------------------------------------------------------------- #
+# Fixed (non-configurable) rate limits
+# --------------------------------------------------------------------------- #
+# Mutating dashboard/management actions (POST/PUT/PATCH/DELETE on the /api
+# surface) are throttled per signed-in user to this fixed sliding window. It is
+# deliberately NOT a runtime setting: a generous, hard-coded floor means nobody
+# (owners included) can be locked out of the dashboard by a bad value, while
+# still stopping runaway automation.
+OPERATION_RATE_LIMIT_WINDOW_SECONDS = 20
+OPERATION_RATE_LIMIT_MAX_REQUESTS = 30
+
+# Default per-role-group call rate limits applied to the OpenAI/Anthropic
+# gateway endpoints (/v1/chat/completions, /v1/messages). Each role group stores
+# its own window/max; these are the seeded defaults (the built-in moderator
+# group is seeded with the higher moderator default). 0 max = unlimited.
+CALL_RATE_LIMIT_WINDOW_SECONDS = 30
+CALL_RATE_LIMIT_MAX_REQUESTS = 30
+MODERATOR_CALL_RATE_LIMIT_MAX_REQUESTS = 50

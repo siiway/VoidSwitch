@@ -35,11 +35,25 @@ class UserOut(BaseModel):
     # hover for users who are not in the main team.
     team_ids: list[str] = []
     # Names of the (custom) role groups the user belongs to. Used to label a
-    # non-main-team user's "team role" cell with their role group(s).
+    # non-main-team user's "team role" cell with their role group(s). For a
+    # non-staff role-group admin viewing the user list, this is filtered to the
+    # groups the caller manages (so an organisation admin never sees which
+    # *other* groups a user is in) — staff callers see the full list.
     role_group_names: list[str] = []
+    # For a role-group admin caller, the ids of *their managed* groups this
+    # user belongs to (i.e. why the user shows up in the caller's user list).
+    # Empty for members, and equal to the user's full membership set for staff.
+    # Used by the dashboard to render "visible via" chips per row.
+    visible_via_group_ids: list[int] = []
     enabled: bool
     last_login_at: dt.datetime | None = None
     created_at: dt.datetime
+    # Ids of role groups the user is *admin of* (read-only observer view over
+    # the group's users / stats / logs). Surfaced only on ``/api/me`` so the
+    # frontend knows whether to render the role-group-admin views/hints; not
+    # populated on the admin user list.
+    managed_group_ids: list[int] = []
+    managed_group_names: list[str] = []
 
 
 class SessionOut(BaseModel):
@@ -95,6 +109,11 @@ class ProviderBase(BaseModel):
     retry_on_zero_token: bool = False
     # claude-code only: drop the whole "You are OpenCode…" system block.
     drop_opencode_identity_block: bool = False
+    # OpenAI-style upstreams: remap ``role: "developer"`` to ``role: "system"``
+    # before sending. Default True (safe for the majority of OpenAI-compatible
+    # upstreams that reject ``developer``); turn off for upstreams that speak
+    # the modern schema natively. Ignored for non-OpenAI-style upstreams.
+    normalize_developer_role_to_system: bool = True
     # Outbound node group this provider's upstream requests use; null = default.
     node_group_id: int | None = None
     # Key selection: "round_robin" | "random" | "fallback" |
@@ -125,6 +144,7 @@ class ProviderUpdate(BaseModel):
     timeout_seconds: int | None = None
     retry_on_zero_token: bool | None = None
     drop_opencode_identity_block: bool | None = None
+    normalize_developer_role_to_system: bool | None = None
     node_group_id: int | None = None
     key_select_mode: str | None = None
     rate_limit_cooldown_seconds: int | None = None
@@ -244,6 +264,9 @@ class ModelOut(BaseModel):
     # models.dev mapping.
     models_dev_id: str | None = None
     models_dev_synced_at: dt.datetime | None = None
+    # Brand key (e.g. "claude", "deepseek", "openai") that selects the model's
+    # icon. Auto-derived from models.dev; overridable in the UI.
+    brand: str | None = None
     # Staff-visible upstream refs reachable through the route (slug/model).
     upstreams: list[str] = Field(default_factory=list)
     added_by_name: str | None = None
@@ -255,6 +278,9 @@ class ModelOut(BaseModel):
     category_slug: str | None = None
     # True when this is a virtual passthrough model entry (not a real ExposedModel).
     provider: bool = False
+    # True when the model's route resolves to no enabled upstream (would be
+    # removed by the "clean unserved" action).
+    unserved: bool = False
 
 
 class ModelUpsert(BaseModel):
@@ -277,6 +303,8 @@ class ModelUpsert(BaseModel):
     modalities: dict | None = None
     # ""/null clears the models.dev mapping.
     models_dev_id: str | None = None
+    # Brand key for the icon; ""/null clears (fallback to auto-derivation).
+    brand: str | None = None
     category_id: int | None = None
 
 
@@ -355,6 +383,12 @@ class ModelBatchUpdate(BaseModel):
 
 class ModelBatchResult(BaseModel):
     updated: int
+
+
+class ModelBatchDelete(BaseModel):
+    """Delete many exposed / passthrough models by public id."""
+
+    model_ids: list[str]
 
 
 class ModelSyncResult(BaseModel):
@@ -569,6 +603,8 @@ class NodeGroupMemberIn(BaseModel):
     node_id: int | None = None
     source_group_id: int | None = None
     weight: int = 1
+    # Pinned nodes are always tried first within a group, independent of score.
+    pinned: bool = False
 
 
 class NodeGroupCreate(BaseModel):
@@ -590,12 +626,18 @@ class NodeGroupMemberOut(BaseModel):
     node_id: int | None = None
     source_group_id: int | None = None
     weight: int = 1
+    pinned: bool = False
     # Convenience projection for the UI.
     node_url: str | None = None
+    node_note: str | None = None
     node_status: str | None = None
     node_latency_ms: float | None = None
+    node_latency_ewma: float | None = None
     source_group_name: str | None = None
     source_group_is_system: bool = False
+    # Position of this direct node in the group's computed dynamic ranking
+    # (0-based; None for inherited-group refs).
+    rank: int | None = None
 
 
 class NodeGroupOut(BaseModel):
@@ -867,6 +909,29 @@ class StatsOut(BaseModel):
     total_keys: int
     active_proxies: int
     total_proxies: int
+    users: int
+    tokens: int
+    requests_24h: int
+    success_24h: int
+    failures_24h: int
+    tokens_24h: int
+    success_rate_24h: float = 0.0
+    avg_first_token_ms_24h: float | None = None
+    avg_tokens_per_request_24h: float = 0.0
+
+
+class GroupStatsOut(BaseModel):
+    """Scoped stats for a role-group admin's dashboard card.
+
+    Deliberately omits provider/keys/proxies fields (they are platform-wide
+    concerns that don't make sense for a role-group scope). ``group_ids`` and
+    ``group_names`` echo the effective scope so the frontend can render the
+    "for groups X, Y" label without a second call.
+    """
+
+    group_ids: list[int] = Field(default_factory=list)
+    group_names: list[str] = Field(default_factory=list)
+    users: int
     tokens: int
     requests_24h: int
     success_24h: int
@@ -1049,13 +1114,23 @@ class AnnouncementOut(BaseModel):
 class RoleGroupMappingIn(BaseModel):
     """One team→role auto-assignment rule.
 
-    A member whose *effective* role in ``team_id`` is at least ``min_role`` is
-    auto-assigned the group at login.
+    A user whose *effective* role in ``team_id`` is at least ``min_role`` is
+    auto-assigned the group at login. ``grants`` decides what kind of
+    assignment they get:
+
+    * ``"member"`` — regular membership (model call access).
+    * ``"admin"`` — read-only observer adminship (see the group's users /
+      stats / logs; does NOT imply model access — to grant both, add two
+      rules with the same team+min_role, one for each ``grants`` value).
+
+    ``"admin"`` is rejected on the built-in moderator group.
     """
 
     team_id: str
     # owner | co-owner | admin | member (team roles).
     min_role: str = "member"
+    # "member" (default, backward-compatible) or "admin".
+    grants: str = "member"
 
 
 class RoleGroupMappingOut(RoleGroupMappingIn):
@@ -1068,6 +1143,10 @@ class RoleGroupCreate(BaseModel):
     name: str
     description: str | None = None
     mappings: list[RoleGroupMappingIn] = Field(default_factory=list)
+    # Per-user call rate limit for this group's members on the OpenAI/Anthropic
+    # gateway endpoints. Omitted → the seeded defaults (30 per 30s). 0 = unlimited.
+    call_rate_limit_window_seconds: int | None = None
+    call_rate_limit_max_requests: int | None = None
 
 
 class RoleGroupUpdate(BaseModel):
@@ -1075,6 +1154,10 @@ class RoleGroupUpdate(BaseModel):
     description: str | None = None
     # When provided, fully replaces the group's mapping set.
     mappings: list[RoleGroupMappingIn] | None = None
+    # Per-user call rate limit. Only these two fields may be changed on the
+    # built-in moderator group. 0 = unlimited.
+    call_rate_limit_window_seconds: int | None = None
+    call_rate_limit_max_requests: int | None = None
 
 
 class RoleGroupOut(BaseModel):
@@ -1085,6 +1168,8 @@ class RoleGroupOut(BaseModel):
     name: str
     description: str | None = None
     builtin: bool = False
+    call_rate_limit_window_seconds: int = 30
+    call_rate_limit_max_requests: int = 30
     mappings: list[RoleGroupMappingOut] = Field(default_factory=list)
     member_count: int = 0
     created_at: dt.datetime
@@ -1101,3 +1186,7 @@ class RoleGroupMemberOut(BaseModel):
     # How the membership was granted: "auto" (a team mapping) or "manual".
     source: str = "auto"
     enabled: bool = True
+    # Whether this user is *also* an admin (read-only observer) of the group.
+    # A user can be an admin without being a member; those rows show up only
+    # when the member list view includes adminship-only users too.
+    is_admin: bool = False

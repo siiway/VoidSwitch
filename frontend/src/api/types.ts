@@ -16,10 +16,22 @@ export interface User {
   // Prism team ids the user belongs to (snapshot at last login).
   team_ids?: string[];
   // Names of the (custom) role groups the user belongs to.
+  // For a role-group-admin viewing the admin user list this is filtered to
+  // just the groups the caller manages (so an org admin never learns what
+  // *other* groups a user is also in). Staff callers see the full list.
   role_group_names?: string[];
+  // For each row on the admin user list, the ids of *the caller's* managed
+  // groups this user belongs to — i.e. why this user is visible to me.
+  // Populated by the backend to drive per-row "visible via X, Y" chips.
+  visible_via_group_ids?: number[];
   enabled: boolean;
   last_login_at?: string | null;
   created_at: string;
+  // Role groups the current user is a *read-only observer admin* of.
+  // Surfaced only on /api/me (never on the admin user list) so the dashboard
+  // knows whether to render the role-group-admin views/hints.
+  managed_group_ids?: number[];
+  managed_group_names?: string[];
 }
 
 export interface Provider {
@@ -36,6 +48,12 @@ export interface Provider {
   timeout_seconds: number;
   retry_on_zero_token: boolean;
   drop_opencode_identity_block: boolean;
+  // OpenAI-style upstreams: when true, rewrite ``role: "developer"`` messages
+  // down to ``role: "system"`` before dispatch. Default true — some upstreams
+  // (real OpenAI, etc.) speak the modern schema natively and want the
+  // original role, so this can be turned off per provider. Ignored for
+  // non-OpenAI-style upstreams.
+  normalize_developer_role_to_system: boolean;
   node_group_id: number | null;
   key_select_mode: KeySelectMode;
   rate_limit_cooldown_seconds: number;
@@ -135,11 +153,15 @@ export interface NodeGroupMember {
   node_id?: number | null;
   source_group_id?: number | null;
   weight: number;
+  pinned?: boolean;
   node_url?: string | null;
+  node_note?: string | null;
   node_status?: string | null;
   node_latency_ms?: number | null;
+  node_latency_ewma?: number | null;
   source_group_name?: string | null;
   source_group_is_system?: boolean;
+  rank?: number | null;
 }
 
 export interface NodeGroup {
@@ -199,6 +221,8 @@ export interface ModelEntry {
   modalities: Record<string, unknown>;
   models_dev_id?: string | null;
   models_dev_synced_at?: string | null;
+  // Brand key (e.g. "claude", "deepseek", "openai") selecting the model's icon.
+  brand?: string | null;
   // Staff-visible upstream refs reachable through the route (slug/model).
   upstreams: string[];
   added_by_name?: string | null;
@@ -210,6 +234,8 @@ export interface ModelEntry {
   category_slug?: string | null;
   // True when this is a virtual passthrough model entry (not a real ExposedModel).
   provider?: boolean;
+  // True when the model's route resolves to no enabled upstream.
+  unserved?: boolean;
 }
 
 export interface ModelCategory {
@@ -257,15 +283,21 @@ export interface ModelsDevSearchResult {
 // Role groups ("身份组").
 export type TeamRole = "owner" | "co-owner" | "admin" | "member";
 
+// What a mapping hands out: "member" (model access) or "admin" (read-only
+// observer view over the group's users / stats / logs). See CONTEXT.md.
+export type RoleGroupGrants = "member" | "admin";
+
 export interface RoleGroupMapping {
   id: number;
   team_id: string;
   min_role: TeamRole;
+  grants: RoleGroupGrants;
 }
 
 export interface RoleGroupMappingIn {
   team_id: string;
   min_role: TeamRole;
+  grants: RoleGroupGrants;
 }
 
 export interface RoleGroup {
@@ -274,6 +306,10 @@ export interface RoleGroup {
   name: string;
   description?: string | null;
   builtin: boolean;
+  // Per-user call rate limit for this group's members on the OpenAI/Anthropic
+  // gateway endpoints. 0 = unlimited.
+  call_rate_limit_window_seconds: number;
+  call_rate_limit_max_requests: number;
   mappings: RoleGroupMapping[];
   member_count: number;
   created_at: string;
@@ -287,6 +323,26 @@ export interface RoleGroupMember {
   role: Role;
   source: "auto" | "manual";
   enabled: boolean;
+  // True when this user is *also* an admin of the group (read-only observer).
+  // Admin-only users (no membership) still appear in the member list with
+  // is_admin=true.
+  is_admin?: boolean;
+}
+
+// Scoped stats for a role-group admin's dashboard card. Deliberately omits
+// platform-wide provider/keys/proxies figures.
+export interface GroupStats {
+  group_ids: number[];
+  group_names: string[];
+  users: number;
+  tokens: number;
+  requests_24h: number;
+  success_24h: number;
+  failures_24h: number;
+  tokens_24h: number;
+  success_rate_24h: number;
+  avg_first_token_ms_24h?: number | null;
+  avg_tokens_per_request_24h: number;
 }
 
 export interface Announcement {
@@ -315,6 +371,7 @@ export interface Stats {
   total_keys: number;
   active_proxies: number;
   total_proxies: number;
+  users: number;
   tokens: number;
   requests_24h: number;
   success_24h: number;
@@ -564,6 +621,7 @@ export interface AuthConfig {
   issuer: string;
   version: string;
   commit?: string | null;
+  chat_preset_questions?: string[];
 }
 
 export interface LoginTokenStatus {

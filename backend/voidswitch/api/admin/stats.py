@@ -58,6 +58,7 @@ async def stats(
     tokens = await _count(
         session, select(func.count(VoidToken.id)).where(VoidToken.deleted.is_(False))
     )
+    users = await _count(session, select(func.count(User.id)))
 
     requests_24h = await _count(
         session, select(func.count(RequestLog.id)).where(RequestLog.ts >= since)
@@ -89,6 +90,7 @@ async def stats(
         total_keys=total_keys,
         active_proxies=active_proxies,
         total_proxies=total_proxies,
+        users=users,
         tokens=tokens,
         requests_24h=requests_24h,
         success_24h=success_24h,

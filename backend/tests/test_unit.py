@@ -108,6 +108,86 @@ async def test_openai_request_to_anthropic_system_and_tools():
     assert out["max_tokens"] == 100
 
 
+async def test_openai_roles_to_system():
+    payload = {
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "developer", "content": "be brief"},
+            {"role": "user", "content": "hi"},
+        ],
+    }
+    out = transform.openai_roles_to_system(payload)
+    assert out["messages"] == [
+        {"role": "system", "content": "be brief"},
+        {"role": "user", "content": "hi"},
+    ]
+    assert out["model"] == "gpt-4o"
+
+
+async def test_openai_roles_to_system_noop_without_developer():
+    payload = {
+        "model": "gpt-4o",
+        "messages": [{"role": "system", "content": "be brief"}],
+    }
+    out = transform.openai_roles_to_system(payload)
+    assert out is payload
+
+
+async def test_prepare_body_developer_gate_per_provider():
+    """The per-provider ``normalize_developer_role_to_system`` flag decides
+    whether ``_prepare_body`` rewrites ``developer`` → ``system`` on the way
+    out. Default (True) preserves the ``adeddb3`` behaviour; False sends the
+    role through untouched — needed for upstreams (like real OpenAI) that
+    handle ``developer`` natively."""
+    from voidswitch.constants import ApiStyle
+    from voidswitch.models.db import Provider
+    from voidswitch.services.dispatcher import DispatchRequest, _prepare_body
+    from voidswitch.services.providers.openai import OpenAIProvider
+
+    payload = {
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "developer", "content": "be brief"},
+            {"role": "user", "content": "hi"},
+        ],
+    }
+    req = DispatchRequest(
+        inbound_style=ApiStyle.OPENAI,
+        model="gpt-4o",
+        payload=payload,
+        stream=False,
+        token_id=1,
+    )
+    adapter = OpenAIProvider(
+        Provider(name="p", type="openai", base_url="https://api.openai.com/v1")
+    )
+
+    # Default provider (normalize=True): developer downgraded to system.
+    remap_on = Provider(
+        name="p-on",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        normalize_developer_role_to_system=True,
+    )
+    _, _, body_on = _prepare_body(req, adapter, ApiStyle.OPENAI, "gpt-4o", "sk", remap_on)
+    assert body_on["messages"][0]["role"] == "system"
+
+    # Opt-out provider: developer preserved verbatim.
+    remap_off = Provider(
+        name="p-off",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        normalize_developer_role_to_system=False,
+    )
+    _, _, body_off = _prepare_body(req, adapter, ApiStyle.OPENAI, "gpt-4o", "sk", remap_off)
+    assert body_off["messages"][0]["role"] == "developer"
+
+    # No provider passed (defensive path, e.g. a caller that hasn't threaded it
+    # through yet): behave like normalize=True so the safer default holds.
+    _, _, body_default = _prepare_body(req, adapter, ApiStyle.OPENAI, "gpt-4o", "sk")
+    assert body_default["messages"][0]["role"] == "system"
+
+
 async def test_anthropic_request_to_openai_roundtrips_system():
     payload = {
         "model": "claude-3-5-haiku-latest",
@@ -1202,24 +1282,27 @@ async def test_session_key_precedence():
     assert _session_key(_req(session_id="x")) != _session_key(_req(token_id=6, session_id="x"))
 
 
-async def test_served_upstream_ids_ignore_wildcards_and_serve_checks():
+async def test_passthrough_model_ids():
     from voidswitch.models.db import Provider
-    from voidswitch.services.models_catalog import providers_serving, served_upstream_ids
+    from voidswitch.services.models_catalog import passthrough_model_ids
 
-    # Only concrete upstream names become served ids; wildcards match but name
-    # nothing (so the public catalog is never polluted by "*").
     prov = Provider(
-        name="ds",
-        type="deepseek",
-        models=["deepseek-v4-flash", "deepseek-v4-pro", "*"],
+        name="cc",
+        slug="cc",
+        type="claude-code",
+        passthrough_enabled=True,
+        passthrough_models=[
+            "claude-fable-5",
+            "claude-opus-4-6 => claude-opus-4-6-20250929 @ prod",
+            "ox-alpha @ stealth",
+        ],
     )
-    assert served_upstream_ids([prov]) == {"deepseek-v4-flash", "deepseek-v4-pro"}
-    assert set(providers_serving([prov], "deepseek-v4-flash")) == {"ds"}
-    assert set(providers_serving([prov], "anything-at-all")) == {"ds"}
-
-    narrow = Provider(name="x", type="openai", models=["exact"])
-    assert providers_serving([narrow], "exact") == ["x"]
-    assert providers_serving([narrow], "other") == []
+    disabled = Provider(name="off", slug="off", type="openai", passthrough_models=["nope"])
+    assert passthrough_model_ids([prov, disabled]) == {
+        "cc/claude-fable-5",
+        "cc/claude-opus-4-6",
+        "cc/ox-alpha",
+    }
 
 
 async def test_deleting_node_group_scrubs_provider_references(db):
@@ -1908,7 +1991,7 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
             "node_group_members",
             "request_logs",
         } <= tables
-        assert ver == "58e48e546df2"  # the current head
+        assert ver == "e5f2a9c1b3d7"  # the current head
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()

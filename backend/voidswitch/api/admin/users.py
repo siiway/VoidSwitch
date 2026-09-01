@@ -1,7 +1,10 @@
 """Admin: user listing and role/enable management.
 
-Viewing the user list is staff-level. *Mutating* a user — granting the local
-admin override or disabling an account — is owner-only.
+Reading the user list is open to staff and to role-group admins (the latter
+see only their groups' members). *Mutating* a user — granting the local admin
+override or disabling an account — is owner-only. *Force-logout* is open to
+staff and to role-group admins, with extra guards so a group admin can't kick
+staff or peer group-admins.
 """
 
 from __future__ import annotations
@@ -16,12 +19,15 @@ from voidswitch.core.auth import (
     LOCAL_ASSIGNABLE_ROLES,
     OWNER_ROLES,
     actor_display_name,
+    is_role_group_admin,
+    is_staff,
+    managed_group_ids,
     require_owner,
-    require_staff,
+    require_staff_or_role_group_admin,
     role_rank,
 )
 from voidswitch.core.database import get_session
-from voidswitch.models.db import User
+from voidswitch.models.db import RoleGroupAdminship, RoleGroupMembership, User
 from voidswitch.models.schemas import UserOut
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin:users"])
@@ -44,22 +50,73 @@ def _auto_disable_tokens(target: User) -> int:
     return disabled
 
 
-def _to_user_out(u: User) -> UserOut:
+def _to_user_out(u: User, visible_groups: set[int] | None) -> UserOut:
+    """Serialise ``u`` for the caller.
+
+    ``visible_groups=None`` → the caller sees everything (staff). The full
+    role-group name list is returned unchanged, and ``visible_via_group_ids``
+    is the user's actual membership set (so the frontend can render chips
+    identically for both callers).
+
+    ``visible_groups=set(...)`` → the caller is a role-group admin. The
+    user's ``role_group_names`` is filtered down to the *intersection* with
+    the caller's managed groups (so we never leak that this user is also in
+    some *other* organisation's group), and ``visible_via_group_ids`` shows
+    only the same intersection.
+    """
     out = UserOut.model_validate(u)
-    # Role-group names come from the user's (auto/manual) memberships; the
-    # built-in moderator group is never stored there, so this lists only the
-    # custom groups that gate model access.
-    out.role_group_names = sorted(m.group.name for m in u.group_memberships if m.group is not None)
+    all_membership_ids = [m.role_group_id for m in u.group_memberships if m.group is not None]
+    all_membership_names = {
+        m.role_group_id: m.group.name for m in u.group_memberships if m.group is not None
+    }
+    if visible_groups is None:
+        # Staff: full membership set + names.
+        out.role_group_names = sorted(all_membership_names.values())
+        out.visible_via_group_ids = sorted(all_membership_ids)
+    else:
+        visible_ids = sorted(gid for gid in all_membership_ids if gid in visible_groups)
+        out.role_group_names = sorted(all_membership_names[gid] for gid in visible_ids)
+        out.visible_via_group_ids = visible_ids
     return out
 
 
 @router.get("", response_model=list[UserOut])
 async def list_users(
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    caller: User = Depends(require_staff_or_role_group_admin),
 ) -> list[UserOut]:
-    rows = (await session.execute(select(User).order_by(User.id))).scalars().all()
-    return [_to_user_out(u) for u in rows]
+    """List users.
+
+    Staff callers get every user. A role-group admin caller gets only the
+    union of their managed groups' members — the query filters on
+    :class:`RoleGroupMembership` so a user who is *only* an admin of some
+    other group they share isn't leaked.
+    """
+    if is_staff(caller):
+        rows = (await session.execute(select(User).order_by(User.id))).scalars().all()
+        return [_to_user_out(u, None) for u in rows]
+
+    managed = managed_group_ids(caller)
+    if not managed:
+        # Defensive: require_staff_or_role_group_admin already filters this
+        # out, but if a caller with empty managed set ever reaches here just
+        # return nothing rather than exposing the full list.
+        return []
+    visible_user_ids_stmt = (
+        select(RoleGroupMembership.user_id)
+        .where(RoleGroupMembership.role_group_id.in_(managed))
+        .distinct()
+    )
+    rows = (
+        (
+            await session.execute(
+                select(User).where(User.id.in_(visible_user_ids_stmt)).order_by(User.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_to_user_out(u, managed) for u in rows]
 
 
 @router.patch("/{user_id}", response_model=UserOut)
@@ -135,23 +192,93 @@ async def update_user(
     return target
 
 
+async def _target_shares_admin_group_with(
+    session: AsyncSession, actor: User, target_id: int
+) -> bool:
+    """True when ``target`` is a role-group admin of a group ``actor`` also administers.
+
+    Used to reject peer-vs-peer force-logout: a role-group admin can bounce
+    their group's regular members, but not fellow admins of the same group —
+    that class of "am I allowed to kick a peer?" question stays with staff.
+    """
+    actor_managed = managed_group_ids(actor)
+    if not actor_managed:
+        return False
+    row = (
+        await session.execute(
+            select(RoleGroupAdminship.id).where(
+                RoleGroupAdminship.user_id == target_id,
+                RoleGroupAdminship.role_group_id.in_(actor_managed),
+            )
+        )
+    ).first()
+    return row is not None
+
+
+async def _target_visible_to_group_admin(
+    session: AsyncSession, actor: User, target_id: int
+) -> bool:
+    """True when ``target`` is a member of at least one group ``actor`` administers."""
+    actor_managed = managed_group_ids(actor)
+    if not actor_managed:
+        return False
+    row = (
+        await session.execute(
+            select(RoleGroupMembership.id).where(
+                RoleGroupMembership.user_id == target_id,
+                RoleGroupMembership.role_group_id.in_(actor_managed),
+            )
+        )
+    ).first()
+    return row is not None
+
+
 @router.post("/{user_id}/force-logout", response_model=UserOut)
 async def force_logout_user(
     user_id: int,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    actor: User = Depends(require_staff),
+    actor: User = Depends(require_staff_or_role_group_admin),
 ) -> User:
     target = await session.get(User, user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
     if target.id == actor.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot force logout yourself.")
-    if role_rank(actor.role) <= role_rank(target.role):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "You can only force logout users below your role tier.",
-        )
+
+    if is_staff(actor):
+        # Existing rule: staff may only force-logout users below their tier.
+        if role_rank(actor.role) <= role_rank(target.role):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "You can only force logout users below your role tier.",
+            )
+    else:
+        # Role-group admin path (non-staff): target must be a member of a group
+        # this actor administers, and must not be staff or a peer admin of the
+        # same group. Force-logout here is essentially "refresh their membership
+        # / adminship at their next login"; it's deliberately not a management
+        # action against another observer.
+        if not is_role_group_admin(actor):
+            # Defensive — the guard already covers this.
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted.")
+        if is_staff(target):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Cannot force logout a platform moderator.",
+            )
+        if not await _target_visible_to_group_admin(session, actor, target.id):
+            # Same 403 rather than 404 to avoid a "does this user id exist"
+            # oracle for cross-organisation guessing.
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "This user is not in a role group you administer.",
+            )
+        if await _target_shares_admin_group_with(session, actor, target.id):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Cannot force logout another admin of a role group you share.",
+            )
 
     target.session_epoch = (target.session_epoch or 0) + 1
     disabled = _auto_disable_tokens(target)

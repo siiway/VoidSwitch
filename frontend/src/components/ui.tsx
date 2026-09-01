@@ -13,20 +13,19 @@ import {
   Spinner,
   Table,
   Text,
-  Toast,
-  ToastBody,
-  ToastTitle,
-  Toaster,
   Tooltip,
   mergeClasses,
   tokens,
-  useId,
-  useToastController,
 } from "@fluentui/react-components";
 import {
   ArrowSyncRegular,
+  CheckmarkCircleRegular,
   ChevronLeftRegular,
   ChevronRightRegular,
+  DismissCircleRegular,
+  DismissRegular,
+  InfoRegular,
+  WarningRegular,
 } from "@fluentui/react-icons";
 import { useTranslation } from "react-i18next";
 import {
@@ -36,6 +35,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import { makeStyles } from "@fluentui/react-components";
@@ -104,33 +104,188 @@ export function useDebouncedValue<T>(value: T, delay = 350): T {
 }
 
 // --- toasts ---------------------------------------------------------------- //
+//
+// Bespoke toast stack (instead of Fluent's Toaster) so notifications can be
+// pinned above every dialog, carry a close button, pause their countdown on
+// hover, and show the remaining time as a border that shrinks away.
 
 type Intent = "success" | "error" | "warning" | "info";
 type Notify = (title: string, body?: string, intent?: Intent) => void;
 
+interface ToastItem {
+  id: number;
+  title: string;
+  body?: string;
+  intent: Intent;
+  leaving?: boolean;
+}
+
+// Every toast auto-closes after this long (unless hovered).
+const TOAST_TTL_MS = 3000;
+const TOAST_LEAVE_MS = 160;
+
 const ToastContext = createContext<Notify>(() => {});
 
-export function ToastProvider({ children }: { children: ReactNode }) {
-  const toasterId = useId("toaster");
-  const { dispatchToast } = useToastController(toasterId);
+const INTENT_META: Record<Intent, { icon: ReactElement; color: string }> = {
+  success: {
+    icon: <CheckmarkCircleRegular />,
+    color: tokens.colorStatusSuccessForeground1,
+  },
+  error: {
+    icon: <DismissCircleRegular />,
+    color: tokens.colorStatusDangerForeground1,
+  },
+  warning: {
+    icon: <WarningRegular />,
+    color: tokens.colorStatusWarningForeground1,
+  },
+  info: {
+    icon: <InfoRegular />,
+    color: tokens.colorBrandForeground1,
+  },
+};
 
-  const notify: Notify = useCallback(
-    (title, body, intent = "info") => {
-      dispatchToast(
-        <Toast>
-          <ToastTitle>{title}</ToastTitle>
-          {body ? <ToastBody>{body}</ToastBody> : null}
-        </Toast>,
-        { intent, timeout: intent === "error" ? 6000 : 3000 },
-      );
-    },
-    [dispatchToast],
+function ToastCard({
+  toast,
+  onDismiss,
+}: {
+  toast: ToastItem;
+  onDismiss: (id: number) => void;
+}) {
+  const { t } = useTranslation();
+  // Remaining time as a fraction of the TTL — drives the shrinking border.
+  const [remaining, setRemaining] = useState(1);
+  const [paused, setPaused] = useState(false);
+  const elapsedRef = useRef(0);
+  const meta = INTENT_META[toast.intent];
+
+  useEffect(() => {
+    if (paused) return;
+    const base = elapsedRef.current;
+    const started = performance.now();
+    const iv = window.setInterval(() => {
+      const elapsed = base + (performance.now() - started);
+      elapsedRef.current = elapsed;
+      if (elapsed >= TOAST_TTL_MS) {
+        window.clearInterval(iv);
+        onDismiss(toast.id);
+      } else {
+        setRemaining(1 - elapsed / TOAST_TTL_MS);
+      }
+    }, 50);
+    return () => window.clearInterval(iv);
+  }, [paused, toast.id, onDismiss]);
+
+  return (
+    <div
+      role="status"
+      className={toast.leaving ? "vs-toast vs-toast--leaving" : "vs-toast"}
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      style={{
+        position: "relative",
+        overflow: "hidden",
+        width: 340,
+        maxWidth: "calc(100vw - 32px)",
+        background: tokens.colorNeutralBackground1,
+        border: `1px solid ${tokens.colorNeutralStroke1}`,
+        borderRadius: 8,
+        pointerEvents: "auto",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 8,
+          padding: "10px 8px 10px 12px",
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            color: meta.color,
+            fontSize: 18,
+            display: "inline-flex",
+            marginTop: 1,
+          }}
+        >
+          {meta.icon}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Text weight="semibold" size={300} block>
+            {toast.title}
+          </Text>
+          {toast.body ? (
+            <Text
+              size={200}
+              block
+              style={{ color: tokens.colorNeutralForeground2, overflowWrap: "anywhere" }}
+            >
+              {toast.body}
+            </Text>
+          ) : null}
+        </div>
+        <Button
+          size="small"
+          appearance="transparent"
+          icon={<DismissRegular fontSize={12} />}
+          onClick={() => onDismiss(toast.id)}
+          aria-label={t("common.close")}
+        />
+      </div>
+      {/* Countdown border: shrinks with the remaining time, gone at 0. */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: 0,
+          bottom: 0,
+          height: 2,
+          width: `${Math.max(0, remaining) * 100}%`,
+          background: meta.color,
+        }}
+      />
+    </div>
   );
+}
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const nextId = useRef(1);
+
+  const dismiss = useCallback((id: number) => {
+    setToasts((ts) => ts.map((t) => (t.id === id ? { ...t, leaving: true } : t)));
+    window.setTimeout(() => {
+      setToasts((ts) => ts.filter((t) => t.id !== id));
+    }, TOAST_LEAVE_MS);
+  }, []);
+
+  const notify: Notify = useCallback((title, body, intent = "info") => {
+    const id = nextId.current++;
+    setToasts((ts) => [{ id, title, body, intent }, ...ts].slice(0, 6));
+  }, []);
 
   return (
     <ToastContext.Provider value={notify}>
-      <Toaster toasterId={toasterId} position="top-end" />
       {children}
+      {/* Above every dialog/popover portal, pinned to the top-right corner. */}
+      <div
+        style={{
+          position: "fixed",
+          top: 16,
+          right: 16,
+          zIndex: 200000,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          pointerEvents: "none",
+        }}
+      >
+        {toasts.map((toast) => (
+          <ToastCard key={toast.id} toast={toast} onDismiss={dismiss} />
+        ))}
+      </div>
     </ToastContext.Provider>
   );
 }
@@ -253,6 +408,14 @@ export function PageHeader({
   const { t } = useTranslation();
   const [spinning, setSpinning] = useState(false);
   const spin = spinning || !!refreshing;
+
+  // Reflect the page title in the browser tab, dynamically.
+  useEffect(() => {
+    document.title = title ? `VoidSwitch | ${title}` : "VoidSwitch";
+    return () => {
+      document.title = "VoidSwitch";
+    };
+  }, [title]);
 
   const handleRefresh = useCallback(() => {
     if (!onRefresh) return;

@@ -20,14 +20,23 @@ from voidswitch.core.auth import (
     actor_display_name,
     get_current_user,
     is_owner,
+    is_role_group_admin,
     is_staff,
+    managed_group_ids,
     require_owner,
-    require_staff,
+    require_staff_or_role_group_admin,
 )
 from voidswitch.core.config import Settings, get_settings
 from voidswitch.core.database import get_database, get_session
 from voidswitch.core.security import decrypt_secret
-from voidswitch.models.db import ApiKey, AuditLog, RequestLog, User, VoidToken
+from voidswitch.models.db import (
+    ApiKey,
+    AuditLog,
+    RequestLog,
+    RoleGroupMembership,
+    User,
+    VoidToken,
+)
 from voidswitch.models.schemas import (
     AuditActor,
     AuditFilterOptions,
@@ -41,6 +50,40 @@ from voidswitch.models.schemas import (
 from voidswitch.services import settings_store
 
 router = APIRouter(prefix="/api/admin/logs", tags=["admin:logs"])
+
+
+async def _visible_user_ids_for(session: AsyncSession, user: User) -> set[int]:
+    """User ids a role-group admin can see (union of their groups' members).
+
+    Staff callers should not call this — they see everything and the caller is
+    expected to skip the extra WHERE. Returns an empty set when the caller has
+    no adminships (which shouldn't happen for anyone reaching an endpoint that
+    invokes this, but defensive: an empty set trivially filters to no rows).
+    """
+    managed = managed_group_ids(user)
+    if not managed:
+        return set()
+    rows = (
+        await session.execute(
+            select(RoleGroupMembership.user_id)
+            .where(RoleGroupMembership.role_group_id.in_(managed))
+            .distinct()
+        )
+    ).all()
+    return {int(uid) for (uid,) in rows if uid is not None}
+
+
+async def _visible_user_subs_for(session: AsyncSession, user: User) -> set[str]:
+    """User subs a role-group admin can see (translated from :func:`_visible_user_ids_for`).
+
+    Request logs key on ``user_sub`` (a Prism identifier), not on the internal
+    ``user_id`` — so anything scoping the request log side wants this instead.
+    """
+    ids = await _visible_user_ids_for(session, user)
+    if not ids:
+        return set()
+    rows = (await session.execute(select(User.sub).where(User.id.in_(ids)))).all()
+    return {s for (s,) in rows if s}
 
 
 def _text_match(column: Any, q: str) -> ColumnElement:
@@ -95,6 +138,39 @@ def _audit_filters(
     return clauses
 
 
+async def _audit_group_admin_scope(session: AsyncSession, caller: User) -> ColumnElement:
+    """WHERE clause restricting an audit query to a role-group admin's view.
+
+    Includes audit entries whose ``target_type='user'`` targets a user in one
+    of the caller's managed groups, plus entries whose ``target_type='role_
+    group'`` targets one of those groups itself (so the caller can see edits
+    to the groups they manage). ``actor_sub`` deliberately does NOT open the
+    view — a group admin isn't entitled to see what an unrelated staff user
+    did to unrelated resources just because that staff user *also* happens to
+    belong to one of their groups.
+    """
+    visible_user_ids = await _visible_user_ids_for(session, caller)
+    managed = managed_group_ids(caller)
+    clauses: list[ColumnElement] = []
+    if visible_user_ids:
+        clauses.append(
+            (AuditLog.target_type == "user")
+            & (AuditLog.target_id.in_([str(i) for i in visible_user_ids]))
+        )
+    if managed:
+        clauses.append(
+            (AuditLog.target_type == "role_group")
+            & (AuditLog.target_id.in_([str(i) for i in managed]))
+        )
+    if not clauses:
+        # No visible scope → force an unmatchable predicate so the query is
+        # empty rather than raising or returning everything by accident.
+        return AuditLog.id.is_(None)
+    from sqlalchemy import or_ as _or
+
+    return _or(*clauses)
+
+
 @router.get("/audit", response_model=Page[AuditLogOut])
 async def audit_logs(
     limit: int = Query(default=50, ge=1, le=500),
@@ -114,7 +190,7 @@ async def audit_logs(
         default=None, description="Only entries at or before this instant (ISO 8601)."
     ),
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    caller: User = Depends(require_staff_or_role_group_admin),
 ) -> Page[AuditLogOut]:
     stmt = select(AuditLog).order_by(AuditLog.id.desc())
     count_stmt = select(func.count(AuditLog.id))
@@ -131,6 +207,11 @@ async def audit_logs(
     ):
         stmt = stmt.where(clause)
         count_stmt = count_stmt.where(clause)
+
+    if not is_staff(caller):
+        scope_clause = await _audit_group_admin_scope(session, caller)
+        stmt = stmt.where(scope_clause)
+        count_stmt = count_stmt.where(scope_clause)
 
     total = (await session.execute(count_stmt)).scalar_one()
     rows = (await session.execute(stmt.limit(limit).offset(offset))).scalars().all()
@@ -159,7 +240,7 @@ async def audit_locate(
     start: dt.datetime | None = Query(default=None),
     end: dt.datetime | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    caller: User = Depends(require_staff_or_role_group_admin),
 ) -> dict[str, object]:
     """Return the zero-based offset of audit entry ``id`` under the given filters.
 
@@ -183,6 +264,10 @@ async def audit_locate(
     for clause in filters:
         exists_stmt = exists_stmt.where(clause)
         before_stmt = before_stmt.where(clause)
+    if not is_staff(caller):
+        scope_clause = await _audit_group_admin_scope(session, caller)
+        exists_stmt = exists_stmt.where(scope_clause)
+        before_stmt = before_stmt.where(scope_clause)
     found = (await session.execute(exists_stmt)).scalar_one() > 0
     offset = int((await session.execute(before_stmt)).scalar_one())
     return {"id": id, "offset": offset, "found": found}
@@ -191,38 +276,39 @@ async def audit_locate(
 @router.get("/audit/filters", response_model=AuditFilterOptions)
 async def audit_filter_options(
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_staff),
+    caller: User = Depends(require_staff_or_role_group_admin),
 ) -> AuditFilterOptions:
-    """Distinct values present in the trail, to populate the dashboard filters."""
-    actions = (
-        (await session.execute(select(AuditLog.action).distinct().order_by(AuditLog.action)))
-        .scalars()
-        .all()
+    """Distinct values present in the trail, to populate the dashboard filters.
+
+    Scoped to the caller's visible entries — a role-group admin's dropdowns
+    only offer values that appear inside their scope, so choosing a value
+    never surfaces the existence of an out-of-scope resource.
+    """
+    base_actions = select(AuditLog.action).distinct().order_by(AuditLog.action)
+    base_scopes = select(AuditLog.scope).distinct().order_by(AuditLog.scope)
+    base_target_types = (
+        select(AuditLog.target_type)
+        .where(AuditLog.target_type.is_not(None))
+        .distinct()
+        .order_by(AuditLog.target_type)
     )
-    scopes = (
-        (await session.execute(select(AuditLog.scope).distinct().order_by(AuditLog.scope)))
-        .scalars()
-        .all()
+    base_actor_rows = (
+        select(AuditLog.actor_sub, AuditLog.actor_name)
+        .where(AuditLog.actor_sub.is_not(None))
+        .distinct()
     )
-    target_types = (
-        (
-            await session.execute(
-                select(AuditLog.target_type)
-                .where(AuditLog.target_type.is_not(None))
-                .distinct()
-                .order_by(AuditLog.target_type)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    actor_rows = (
-        await session.execute(
-            select(AuditLog.actor_sub, AuditLog.actor_name)
-            .where(AuditLog.actor_sub.is_not(None))
-            .distinct()
-        )
-    ).all()
+    if not is_staff(caller):
+        scope_clause = await _audit_group_admin_scope(session, caller)
+        base_actions = base_actions.where(scope_clause)
+        base_scopes = base_scopes.where(scope_clause)
+        base_target_types = base_target_types.where(scope_clause)
+        base_actor_rows = base_actor_rows.where(scope_clause)
+
+    actions = (await session.execute(base_actions)).scalars().all()
+    scopes = (await session.execute(base_scopes)).scalars().all()
+    target_types = (await session.execute(base_target_types)).scalars().all()
+    actor_rows = (await session.execute(base_actor_rows)).all()
+
     # Collapse to the most-recent display name per subject.
     actors: dict[str, str] = {}
     for sub, name in actor_rows:
@@ -305,6 +391,7 @@ def _request_log_filters(
     req_status: str | None = None,
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
+    visible_subs: set[str] | None = None,
 ) -> list[ColumnElement]:
     """Shared WHERE clauses for the request-log list and locate endpoints.
 
@@ -313,10 +400,26 @@ def _request_log_filters(
     ``Nxx`` class; ``client_ip`` is a substring/glob match on the caller's IP
     (mirroring the audit-log IP filter, so ``10.0.*`` works); ``start``/``end``
     bound the indexed ``ts`` timestamp inclusively.
+
+    ``visible_subs`` is the pre-computed role-group-admin scope (the set of
+    ``user_sub`` values the caller may see). Callers must resolve it *before*
+    calling this function (the resolution needs a DB session — see
+    :func:`_visible_user_subs_for`). ``None`` means "no scoping" (staff caller);
+    an empty set means "no visible users" (an unmatchable predicate is added).
+    Non-staff, non-role-group-admin callers still fall through to the
+    member-self-scope path.
     """
     clauses: list[ColumnElement] = []
-    if not is_staff(user):
-        # Members may browse the request log, but only their own traffic.
+    if is_staff(user):
+        pass  # sees everything
+    elif visible_subs is not None:
+        # Role-group admin: restrict to the union of managed groups' members.
+        if not visible_subs:
+            clauses.append(RequestLog.id.is_(None))  # forces empty result
+        else:
+            clauses.append(RequestLog.user_sub.in_(visible_subs))
+    else:
+        # Ordinary member: only their own traffic.
         clauses.append(RequestLog.user_sub == user.sub)
     if success is not None:
         clauses.append(RequestLog.success.is_(success))
@@ -373,6 +476,11 @@ async def request_logs(
 ) -> Page[RequestLogOut]:
     stmt = select(RequestLog).order_by(RequestLog.id.desc())
     count_stmt = select(func.count(RequestLog.id))
+    visible_subs = (
+        await _visible_user_subs_for(session, user)
+        if not is_staff(user) and is_role_group_admin(user)
+        else None
+    )
     for clause in _request_log_filters(
         user,
         success=success,
@@ -385,6 +493,7 @@ async def request_logs(
         req_status=req_status,
         start=start,
         end=end,
+        visible_subs=visible_subs,
     ):
         stmt = stmt.where(clause)
         count_stmt = count_stmt.where(clause)
@@ -464,6 +573,11 @@ async def request_locate(
     user: User = Depends(get_current_user),
 ) -> dict[str, object]:
     """Zero-based offset of request log ``id`` under the given filters (id desc)."""
+    visible_subs = (
+        await _visible_user_subs_for(session, user)
+        if not is_staff(user) and is_role_group_admin(user)
+        else None
+    )
     clauses = _request_log_filters(
         user,
         success=success,
@@ -476,6 +590,7 @@ async def request_locate(
         req_status=req_status,
         start=start,
         end=end,
+        visible_subs=visible_subs,
     )
     exists_stmt = select(func.count(RequestLog.id)).where(RequestLog.id == id)
     before_stmt = select(func.count(RequestLog.id)).where(RequestLog.id > id)
@@ -494,11 +609,20 @@ async def request_filter_options(
 ) -> RequestFilterOptions:
     """Distinct values present in the request log, to drive the UI filters.
 
-    Scoped to the caller's own traffic for members (mirroring the log list), so a
-    member never learns which models/tokens/users exist beyond their own.
+    Scoped to the caller's visible traffic (member = own, role-group admin =
+    managed groups' members, staff = all) so choosing a dropdown value never
+    surfaces a model/token/user the caller couldn't already see in the list.
     """
     scope: list[ColumnElement] = []
-    if not is_staff(user):
+    if is_staff(user):
+        pass
+    elif is_role_group_admin(user):
+        visible_subs = await _visible_user_subs_for(session, user)
+        if not visible_subs:
+            scope.append(RequestLog.id.is_(None))
+        else:
+            scope.append(RequestLog.user_sub.in_(visible_subs))
+    else:
         scope.append(RequestLog.user_sub == user.sub)
 
     def _distinct(column: Any):
@@ -656,6 +780,11 @@ async def request_log_stream(
     """
     max_streams = settings_store.get_int("log_stream_max_connections", 2)
     await _acquire_stream_slot(user.sub, max_streams)
+    visible_subs = (
+        await _visible_user_subs_for(session, user)
+        if not is_staff(user) and is_role_group_admin(user)
+        else None
+    )
     filters = _request_log_filters(
         user,
         model=model,
@@ -665,6 +794,7 @@ async def request_log_stream(
         client_ip=client_ip,
         status_code=status_code,
         req_status=req_status,
+        visible_subs=visible_subs,
     )
 
     # The stream should only ever deliver rows created *after* the client
@@ -798,20 +928,39 @@ async def request_log_detail(
 ) -> RequestLogDetail:
     """Return full detail for a single request log entry.
 
-    Owners (co-owner / owner) see everything including reveal-secret mode.
-    Admins see redacted key preview and no req/resp headers/body.
-    Members can only view their own logs.
+    Detail visibility layers, from strictest to most permissive:
+
+    * **member** — only their own traffic (no headers, no attempts, redacted
+      key preview).
+    * **role-group admin** — traffic of any user in a group they administer,
+      same detail level as ``admin`` (headers + debug attempts visible,
+      bodies stripped, key preview redacted).
+    * **admin (platform)** — every user's traffic; **may see** request &
+      response headers and the per-attempt debug trail (new — previously
+      stripped). Bodies are still stripped.
+    * **owner / co-owner** — everything, including request & response bodies.
+
+    Bodies are stored only when the void-token has ``debug_enabled`` and are
+    still owner-only. Reveal-sensitive mode is unchanged.
     """
     row = await session.get(RequestLog, log_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
 
-    # Members can only see their own traffic.
-    if not is_staff(user) and row.user_sub != user.sub:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
+    if not is_staff(user):
+        if is_role_group_admin(user):
+            # Role-group admin: gate by the visible-users set (deliberately not
+            # a "or your own row" — the group-admin view is about the members,
+            # not about themselves; their own row is already reachable via the
+            # member self-scope path in the list endpoint).
+            visible_subs = await _visible_user_subs_for(session, user)
+            if row.user_sub != user.sub and row.user_sub not in visible_subs:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
+        elif row.user_sub != user.sub:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
 
     owner = is_owner(user)
-    admin = is_staff(user) and not owner
+    admin_view = (is_staff(user) and not owner) or is_role_group_admin(user)
 
     detail = RequestLogDetail.model_validate(row)
 
@@ -835,19 +984,19 @@ async def request_log_detail(
     if row.key_id is not None:
         key = await session.get(ApiKey, row.key_id)
         if key:
-            if admin:
+            if admin_view:
                 detail.key_preview = _redact_key_preview(key.key_preview)
             else:
                 detail.key_preview = key.key_preview
 
-    # Admin: strip debug detail fields (headers, body, per-attempt trail). Admins
-    # may view the normal log info but never the debug-level request/response
-    # capture — that is owner / co-owner only.
-    if admin:
-        detail.req_headers = None
+    # Non-owner view (platform admin OR role-group admin): drop request/response
+    # *bodies* only. Headers and the per-attempt debug trail are kept so an
+    # admin has enough context to diagnose an incident without exposing the
+    # prompt/completion payload — those stay owner-only. Bodies are only ever
+    # populated when the void-token has debug enabled; when they aren't
+    # populated the strip below is a no-op.
+    if admin_view:
         detail.req_body = None
-        detail.resp_headers = None
         detail.resp_body = None
-        detail.debug_attempts = None
 
     return detail

@@ -27,11 +27,19 @@ Each group can set its own `probe_url` and `probe_interval_seconds` for idle hea
 Nodes within a group are ordered by health/latency:
 
 - The ordering uses **EWMA latency + failure score**, whose weights are adjustable in Settings
-  (`node_rank_alpha/beta/gamma`).
+  (`node_rank_alpha/beta/gamma`, with a decay half-life `node_rank_ewma_half_life_seconds`).
 - Requests walk the ordered list front-to-back and fall back on failure.
 - When all nodes fail and retries are exhausted, a connection error is returned.
 - Max retries per request (`max_retries`) and the failure threshold before a node is disabled
   (`max_proxy_failures`) are settings.
+
+### Pinned nodes
+
+In a node group's expanded member list, any node can be **pinned**: pinned nodes **always lead the list**
+and are ranked independently of the quality score (they are still ordered by score among themselves).
+This makes it easy to force certain nodes to be tried first (e.g. a high-quality dedicated line) without
+tweaking their latency/failure metrics. The node-group page no longer offers manual drag-to-reorder —
+ordering is determined entirely by the dynamic score above (plus pinning).
 
 ### Empty group → direct (lockout-proof)
 

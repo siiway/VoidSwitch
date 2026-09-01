@@ -9,6 +9,8 @@ import {
   Dropdown,
   Input,
   Link,
+  MessageBar,
+  MessageBarBody,
   Option,
   Switch,
   Tab,
@@ -874,7 +876,7 @@ function UserHeatmapDialog({
 export function Statistics() {
   const { t } = useTranslation();
   type TK = keyof Translations;
-  const { isStaff } = useAuth();
+  const { isStaff, isRoleGroupAdmin, managedGroupIds, managedGroupNames } = useAuth();
   const [overTimeMode] = useOverTimeMode();
   const [heatmapUser, setHeatmapUser] = useState<{ sub: string; label: string } | null>(
     null,
@@ -890,14 +892,24 @@ export function Statistics() {
     [preset, pick, customStart, customEnd],
   );
 
+  // Role-group-admin group filter. ``null`` = the whole managed set (backend
+  // uses this when ``group_ids`` is omitted); a number = only that group. The
+  // dropdown only appears when the caller administers >1 group.
+  const [groupFilter, setGroupFilter] = useState<number | null>(null);
+
   const stats = useAsync<UsageAnalytics>(
     () =>
       api.get("/api/usage", {
         start: timeWindow.start,
         end: timeWindow.end,
         time_mode: overTimeMode,
+        // Only send group_ids when we've narrowed to one; omitting the param
+        // lets the backend use the caller's managed set (staff → all).
+        ...(isRoleGroupAdmin && groupFilter != null
+          ? { group_ids: String(groupFilter) }
+          : {}),
       }),
-    [timeWindow.start, timeWindow.end, overTimeMode],
+    [timeWindow.start, timeWindow.end, overTimeMode, isRoleGroupAdmin, groupFilter],
   );
 
   return (
@@ -922,6 +934,47 @@ export function Statistics() {
           />
         }
       />
+
+      {/* Role-group admin hint bar — same shape as the Users page bar so the
+          "which groups you administer" affordance is consistent across pages. */}
+      {isRoleGroupAdmin && managedGroupNames.length > 0 && (
+        <MessageBar intent="info" style={{ marginBottom: 12 }}>
+          <MessageBarBody>
+            {t("stats.roleGroupAdminHint" as TK).replace(
+              "{groups}",
+              managedGroupNames.join(", "),
+            )}
+          </MessageBarBody>
+        </MessageBar>
+      )}
+      {isRoleGroupAdmin && managedGroupIds.length > 1 && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+          <Text size={200}>{t("stats.groupFilter" as TK)}</Text>
+          <Dropdown
+            style={{ minWidth: 180 }}
+            value={
+              groupFilter == null
+                ? t("stats.groupFilterAll" as TK)
+                : managedGroupNames[managedGroupIds.indexOf(groupFilter)] ??
+                  String(groupFilter)
+            }
+            selectedOptions={[groupFilter == null ? "__all__" : String(groupFilter)]}
+            onOptionSelect={(_, d) => {
+              const v = d.optionValue;
+              setGroupFilter(v == null || v === "__all__" ? null : Number(v));
+            }}
+          >
+            <Option value="__all__" text={t("stats.groupFilterAll" as TK)}>
+              {t("stats.groupFilterAll" as TK)}
+            </Option>
+            {managedGroupIds.map((gid, idx) => (
+              <Option key={gid} value={String(gid)} text={managedGroupNames[idx] ?? String(gid)}>
+                {managedGroupNames[idx] ?? String(gid)}
+              </Option>
+            ))}
+          </Dropdown>
+        </div>
+      )}
 
       {stats.loading ? (
         <Loading />
