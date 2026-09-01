@@ -429,19 +429,32 @@ const en = {
     rescanning: "Rescanning…",
     pasteClaudeCode: "Paste the code from Claude",
     pasteGrokBuildCode: "Paste the callback URL from Grok Build",
+    pasteCodexCode: "Paste the callback URL from OpenAI",
     grokBuildOAuthHint:
       "Sign in with a Grok Build (grok CLI) subscription to add an OAuth credential",
+    codexOAuthHint: "Sign in with a ChatGPT subscription using browser OAuth or a device code",
     oauthTitleClaude: "Sign in with Claude (OAuth)",
     oauthTitleGrokBuild: "Sign in with Grok Build (OAuth)",
+    oauthTitleCodex: "Sign in with OpenAI Codex",
     oauthDescClaude:
       "Use a Claude Pro/Max subscription instead of an API key. This opens Claude's authorization page in a new tab; after approving, copy the code it shows (looks like code#state) and paste it back here.",
     oauthDescGrokBuild:
       "Use a Grok Build (grok CLI) subscription instead of an API key. This opens xAI's authorization page in a new tab. After approving, the browser redirects to http://127.0.0.1:56121/callback and shows a page that fails to load — that is expected. Copy the full URL from the address bar and paste it back here.",
+    oauthDescCodex:
+      "Use a ChatGPT subscription for Codex. Browser login asks you to paste the localhost callback URL; device login uses a short code and works without a callback listener.",
+    codexBrowserLogin: "Browser login",
+    codexDeviceLogin: "Device-code login",
+    codexDeviceInstructions: "Enter this code on the OpenAI page, approve access, then check approval:",
+    codexCheckApproval: "Check approval",
+    codexDevicePending: "Waiting for approval",
+    codexDevicePendingDesc: "Approve the code in the OpenAI tab, then try again.",
     oauthStart: "Start sign-in",
     oauthComplete: "Complete sign-in",
     oauthPlaceholderClaude: "abc123…#xyz789…",
     oauthPlaceholderGrokBuild:
       "http://127.0.0.1:56121/callback?code=…&state=…",
+    oauthPlaceholderCodex:
+      "http://localhost:1455/auth/callback?code=…&state=…",
     keyPoolHint: "Key pool (optional tag — e.g. leaked, members)",
     noBalanceDays: "No balance for ≥ (days)",
     noBalanceDaysHint:

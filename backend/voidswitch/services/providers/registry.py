@@ -9,6 +9,7 @@ from .base import BaseProvider
 from .cerebras import CerebrasProvider
 from .claude_code import ClaudeCodeProvider
 from .cloudflare import CloudflareProvider
+from .codex import CodexProvider
 from .deepinfra import DeepInfraProvider
 from .deepseek import DeepSeekProvider
 from .fireworks import FireworksProvider
@@ -45,6 +46,7 @@ _ADAPTERS: dict[str, type[BaseProvider]] = {
         OpenAIResponsesProvider,
         AnthropicProvider,
         ClaudeCodeProvider,
+        CodexProvider,
         DeepSeekProvider,
         SiliconFlowProvider,
         OpenRouterProvider,

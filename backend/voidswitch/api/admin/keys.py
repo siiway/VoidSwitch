@@ -38,8 +38,11 @@ from voidswitch.models.schemas import (
     AuthImportResult,
     ClaudeOAuthComplete,
     ClaudeOAuthStart,
+    CodexDeviceComplete,
+    CodexDevicePoll,
+    CodexDeviceStart,
 )
-from voidswitch.services import auth_import, keymgmt, oauth_tokens, xai_oauth
+from voidswitch.services import auth_import, codex_oauth, keymgmt, oauth_tokens, xai_oauth
 
 router = APIRouter(prefix="/api/admin/providers/{provider_id}/keys", tags=["admin:keys"])
 
@@ -250,20 +253,22 @@ async def delete_key(
 
 
 # --------------------------------------------------------------------------- #
-# Subscription OAuth login (claude-code + grok-build providers)
+# Subscription OAuth login (Claude Code, Grok Build, and OpenAI Codex)
 # --------------------------------------------------------------------------- #
 
 # Each entry maps a provider type to the service module that implements the
 # manual redirect-paste OAuth flow (begin_login / complete_login / parse_bundle
-# + LoginError / LoginUpstreamError). Both modules share the same public shape.
+# + LoginError / LoginUpstreamError). All modules share the same public shape.
 _OAUTH_MODULES = {
     "claude-code": oauth_tokens,
     "grok-build": xai_oauth,
+    "codex": codex_oauth,
 }
 
 _OAUTH_DEFAULT_NOTE = {
     "claude-code": "Claude subscription (OAuth)",
     "grok-build": "Grok Build (OAuth)",
+    "codex": "OpenAI Codex subscription (OAuth)",
 }
 
 
@@ -357,6 +362,92 @@ async def oauth_complete(
         ip=request.client.host if request.client else None,
     )
     return key
+
+
+@router.post("/oauth/device/start", response_model=CodexDeviceStart)
+async def codex_device_start(
+    provider_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> CodexDeviceStart:
+    """Start Codex's browserless device-code flow."""
+    provider = await _get_provider(session, provider_id)
+    if provider.type != "codex":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Device login is only available for Codex."
+        )
+    try:
+        result = await codex_oauth.begin_device_login(session)
+    except codex_oauth.LoginError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except codex_oauth.LoginUpstreamError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    await record_audit(
+        session,
+        action=AuditAction.KEY_OAUTH_START,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="provider",
+        target_id=provider_id,
+        detail={"provider_name": provider.name, "flow": "device"},
+        ip=request.client.host if request.client else None,
+    )
+    return CodexDeviceStart(**result)
+
+
+@router.post("/oauth/device/complete", response_model=CodexDevicePoll)
+async def codex_device_complete(
+    provider_id: int,
+    body: CodexDeviceComplete,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+    settings: Settings = Depends(get_settings),
+) -> CodexDevicePoll:
+    """Poll a Codex device grant once and store its credential when approved."""
+    provider = await _get_provider(session, provider_id)
+    if provider.type != "codex":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Device login is only available for Codex."
+        )
+    try:
+        bundle = await codex_oauth.complete_device_login(
+            body.device_auth_id, body.user_code, session=session
+        )
+    except codex_oauth.LoginError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except codex_oauth.LoginUpstreamError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    if bundle is None:
+        return CodexDevicePoll(status="pending")
+
+    plaintext = json.dumps(bundle)
+    key = ApiKey(
+        provider_id=provider_id,
+        key_ciphertext=encrypt_secret(plaintext, secret=settings.server.secret_key),
+        key_hash=hash_token(plaintext),
+        key_preview=keymgmt.oauth_preview(bundle),
+        status=KeyStatus.ACTIVE.value,
+        note=body.note or _OAUTH_DEFAULT_NOTE["codex"],
+        added_by=user.id,
+        added_by_name=actor_display_name(user),
+    )
+    session.add(key)
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.KEY_OAUTH_ADD,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="provider",
+        target_id=provider_id,
+        detail={"provider_name": provider.name, "key_id": key.id, "flow": "device"},
+        sensitive={"keys": [{"key": plaintext, "preview": key.key_preview}]},
+        secret_key=settings.server.secret_key,
+        ip=request.client.host if request.client else None,
+    )
+    return CodexDevicePoll(status="complete", key=ApiKeyOut.model_validate(key))
 
 
 @router.post("/{key_id}/reveal")

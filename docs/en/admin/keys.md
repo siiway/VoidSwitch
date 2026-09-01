@@ -31,6 +31,17 @@ For `claude-code` providers, you can add keys via **subscription OAuth**: start 
 then paste the callback code back. VoidSwitch stores the resulting credential bundle as a key and refreshes it
 automatically.
 
+## OpenAI Codex subscription keys
+
+A `codex` provider supports two ChatGPT subscription login methods:
+
+- **Browser login**: after approval the browser redirects to `http://localhost:1455/auth/callback`. A failed-to-load
+  page is expected; copy the complete URL from the address bar and paste it into the keys page.
+- **Device-code login**: enter the short code on the opened OpenAI page, approve it, then return and click
+  **Check approval**.
+
+Both methods store an automatically refreshed OAuth credential.
+
 ## Import sub2api / CLIProxyAPI Auth files
 
 For import-capable providers such as `claude-code`, `grok`, and `xai`, you can directly import Auth credentials
