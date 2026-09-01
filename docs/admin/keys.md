@@ -29,6 +29,16 @@
 对于 `claude-code` 供应商，你可以通过**订阅 OAuth** 添加密钥：启动登录、授权，
 然后将回调码粘贴回来。VoidSwitch 将生成的凭证包存储为密钥并自动刷新。
 
+## OpenAI Codex 订阅密钥
+
+`codex` 供应商支持两种 ChatGPT 订阅登录方式：
+
+- **浏览器登录**：授权后浏览器会跳转到 `http://localhost:1455/auth/callback`；页面无法加载是正常的，
+  请复制地址栏中的完整 URL 并粘贴回密钥页。
+- **设备代码登录**：在打开的 OpenAI 页面输入短代码并批准，然后回到密钥页点击“检查授权”。
+
+两种方式都会保存可自动刷新的 OAuth 凭证。
+
 ## 导入 sub2api / CLIProxyAPI 的 Auth 文件
 
 对于 `claude-code`、`grok`、`xai` 等支持导入的供应商，你可以直接导入从

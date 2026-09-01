@@ -495,11 +495,30 @@ class ClaudeOAuthStart(BaseModel):
 
 
 class ClaudeOAuthComplete(BaseModel):
-    # ``code`` accepts what Claude's manual page shows (``code#state``), a full
-    # callback URL, or the bare code. ``state`` is the value from ``/oauth/start``.
+    # ``code`` accepts what the provider's manual page shows, a full callback
+    # URL, or the bare code. ``state`` is the value from ``/oauth/start``.
     code: str
     state: str
     note: str | None = None
+
+
+class CodexDeviceStart(BaseModel):
+    device_auth_id: str
+    user_code: str
+    verification_url: str
+    interval: int = 5
+    expires_in: int = 900
+
+
+class CodexDeviceComplete(BaseModel):
+    device_auth_id: str
+    user_code: str
+    note: str | None = None
+
+
+class CodexDevicePoll(BaseModel):
+    status: str  # "pending" | "complete"
+    key: ApiKeyOut | None = None
 
 
 # --------------------------------------------------------------------------- #

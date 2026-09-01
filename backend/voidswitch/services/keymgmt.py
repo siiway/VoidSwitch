@@ -35,7 +35,14 @@ from voidswitch.models.schemas import (
     ApiKeyReorder,
     ApiKeyUpdate,
 )
-from voidswitch.services import oauth_tokens, refresh_context, routing, settings_store, xai_oauth
+from voidswitch.services import (
+    codex_oauth,
+    oauth_tokens,
+    refresh_context,
+    routing,
+    settings_store,
+    xai_oauth,
+)
 from voidswitch.services.balance import refresh_key_balance
 from voidswitch.services.providers.registry import get_adapter
 
@@ -550,18 +557,26 @@ async def refresh_token_one(
         await adapter.resolve_credential(
             session, key, settings.server.secret_key, force_refresh=True
         )
-    except (oauth_tokens.NotRefreshable, xai_oauth.NotRefreshable) as exc:
+    except (
+        oauth_tokens.NotRefreshable,
+        xai_oauth.NotRefreshable,
+        codex_oauth.NotRefreshable,
+    ) as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, f"This key cannot be refreshed: {exc}"
         ) from exc
-    except oauth_tokens.LoginError as exc:
+    except (oauth_tokens.LoginError, codex_oauth.LoginError) as exc:
         # A definitive upstream rejection on the refresh grant (e.g. the refresh
         # token was revoked / expired) — a user-correctable state, surfaced as a
         # 400 rather than a 500.
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, f"Claude rejected the refresh: {exc}"
+            status.HTTP_400_BAD_REQUEST, f"The provider rejected the refresh: {exc}"
         ) from exc
-    except (oauth_tokens.LoginUpstreamError, xai_oauth.RefreshUpstreamError) as exc:
+    except (
+        oauth_tokens.LoginUpstreamError,
+        xai_oauth.RefreshUpstreamError,
+        codex_oauth.LoginUpstreamError,
+    ) as exc:
         error = str(exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, error) from exc
     finally:

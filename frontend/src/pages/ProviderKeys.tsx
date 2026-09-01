@@ -184,16 +184,23 @@ export function ProviderKeys() {
   const [oauthState, setOauthState] = useState<string | null>(null);
   const [oauthCode, setOauthCode] = useState("");
   const [oauthBusy, setOauthBusy] = useState(false);
+  const [deviceLogin, setDeviceLogin] = useState<{
+    device_auth_id: string;
+    user_code: string;
+    verification_url: string;
+  } | null>(null);
 
   // Reset any in-flight login when navigating between providers in place.
   useEffect(() => {
     setOauthState(null);
     setOauthCode("");
+    setDeviceLogin(null);
   }, [providerId]);
 
   const current = provider.data?.find((p) => p.id === providerId);
   const isClaudeCode = current?.type === "claude-code";
   const isGrokBuild = current?.type === "grok-build";
+  const isCodex = current?.type === "codex";
   const supportsBalance = current?.supports_balance ?? false;
   const supportsImport = current?.supports_import ?? false;
   const supportsRefresh = current?.supports_refresh ?? false;
@@ -348,6 +355,60 @@ export function ProviderKeys() {
       notify(t("providerKeys.oauthSignedIn" as TK), t("providerKeys.oauthCredentialAdded" as TK), "success");
       setOauthState(null);
       setOauthCode("");
+      keys.reload();
+    } catch (e) {
+      notify(
+        t("providerKeys.oauthSignInFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setOauthBusy(false);
+    }
+  }
+
+  async function startDeviceLogin() {
+    setOauthBusy(true);
+    try {
+      const result = await api.post<{
+        device_auth_id: string;
+        user_code: string;
+        verification_url: string;
+      }>(`/api/admin/providers/${providerId}/keys/oauth/device/start`);
+      setDeviceLogin(result);
+      window.open(result.verification_url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      notify(
+        t("providerKeys.oauthStartFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    } finally {
+      setOauthBusy(false);
+    }
+  }
+
+  async function checkDeviceLogin() {
+    if (!deviceLogin) return;
+    setOauthBusy(true);
+    try {
+      const result = await api.post<{ status: "pending" | "complete" }>(
+        `/api/admin/providers/${providerId}/keys/oauth/device/complete`,
+        {
+          device_auth_id: deviceLogin.device_auth_id,
+          user_code: deviceLogin.user_code,
+        },
+      );
+      if (result.status === "pending") {
+        notify(
+          t("providerKeys.codexDevicePending" as TK),
+          t("providerKeys.codexDevicePendingDesc" as TK),
+          "info",
+        );
+        return;
+      }
+      notify(t("providerKeys.oauthSignedIn" as TK), t("providerKeys.oauthCredentialAdded" as TK), "success");
+      setDeviceLogin(null);
       keys.reload();
     } catch (e) {
       notify(
@@ -776,7 +837,9 @@ export function ProviderKeys() {
             ? t("providerKeys.claudeOAuthHint" as TK)
             : isGrokBuild
               ? t("providerKeys.grokBuildOAuthHint" as TK)
-              : t("providerKeys.bulkPasteHint" as TK)
+              : isCodex
+                ? t("providerKeys.codexOAuthHint" as TK)
+                : t("providerKeys.bulkPasteHint" as TK)
         }
         onRefresh={() => {
           keys.reload();
@@ -844,7 +907,9 @@ export function ProviderKeys() {
           <Text weight="semibold" block>
             {isGrokBuild
               ? t("providerKeys.oauthTitleGrokBuild" as TK)
-              : t("providerKeys.oauthTitleClaude" as TK)}
+              : isCodex
+                ? t("providerKeys.oauthTitleCodex" as TK)
+                : t("providerKeys.oauthTitleClaude" as TK)}
           </Text>
           <Text
             size={200}
@@ -853,25 +918,37 @@ export function ProviderKeys() {
           >
             {isGrokBuild
               ? t("providerKeys.oauthDescGrokBuild" as TK)
-              : t("providerKeys.oauthDescClaude" as TK)}
+              : isCodex
+                ? t("providerKeys.oauthDescCodex" as TK)
+                : t("providerKeys.oauthDescClaude" as TK)}
           </Text>
           {oauthState === null ? (
-            <Button
-              appearance="primary"
-              icon={<PersonRegular />}
-              disabled={oauthBusy}
-              onClick={startOAuth}
-              style={{ alignSelf: "flex-start", marginTop: 4 }}
-            >
-              {t("providerKeys.oauthStart" as TK)}
-            </Button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+              <Button
+                appearance="primary"
+                icon={<PersonRegular />}
+                disabled={oauthBusy || deviceLogin !== null}
+                onClick={startOAuth}
+              >
+                {isCodex
+                  ? t("providerKeys.codexBrowserLogin" as TK)
+                  : t("providerKeys.oauthStart" as TK)}
+              </Button>
+              {isCodex && deviceLogin === null ? (
+                <Button disabled={oauthBusy} onClick={startDeviceLogin}>
+                  {t("providerKeys.codexDeviceLogin" as TK)}
+                </Button>
+              ) : null}
+            </div>
           ) : (
             <>
               <Field
                 label={
                   isGrokBuild
                     ? t("providerKeys.pasteGrokBuildCode" as TK)
-                    : t("providerKeys.pasteClaudeCode" as TK)
+                    : isCodex
+                      ? t("providerKeys.pasteCodexCode" as TK)
+                      : t("providerKeys.pasteClaudeCode" as TK)
                 }
                 style={{ marginTop: 4 }}
               >
@@ -880,7 +957,9 @@ export function ProviderKeys() {
                   placeholder={
                     isGrokBuild
                       ? t("providerKeys.oauthPlaceholderGrokBuild" as TK)
-                      : t("providerKeys.oauthPlaceholderClaude" as TK)
+                      : isCodex
+                        ? t("providerKeys.oauthPlaceholderCodex" as TK)
+                        : t("providerKeys.oauthPlaceholderClaude" as TK)
                   }
                   onChange={(_, d) => setOauthCode(d.value)}
                 />
@@ -906,6 +985,24 @@ export function ProviderKeys() {
               </div>
             </>
           )}
+          <div style={{ display: deviceLogin ? "flex" : "none", flexDirection: "column", gap: 8 }}>
+            <Text>{t("providerKeys.codexDeviceInstructions" as TK)}</Text>
+            <Text size={500} weight="bold" style={{ letterSpacing: 2 }}>
+              {deviceLogin?.user_code ?? ""}
+            </Text>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button appearance="primary" disabled={oauthBusy} onClick={checkDeviceLogin}>
+                {t("providerKeys.codexCheckApproval" as TK)}
+              </Button>
+              <Button
+                appearance="subtle"
+                disabled={oauthBusy}
+                onClick={() => setDeviceLogin(null)}
+              >
+                {t("common.cancel" as TK)}
+              </Button>
+            </div>
+          </div>
         </div>
       ) : null}
 

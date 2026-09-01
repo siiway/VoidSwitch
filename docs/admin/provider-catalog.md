@@ -42,6 +42,7 @@
 | 适配器 `type` | 协议 | 默认 Base URL | 余额 | 导入 | OAuth 刷新 |
 | --- | --- | --- | :---: | :---: | :---: |
 | `claude-code` | Anthropic Messages | `https://api.anthropic.com` | — | ✓ | ✓ |
+| `codex` | OpenAI Responses | `https://chatgpt.com/backend-api/codex` | — | ✓ | ✓ |
 | `xai` | OpenAI Chat | `https://api.x.ai/v1` | — | ✓ | ✓ |
 | `grok-build` | OpenAI Chat | `https://cli-chat-proxy.grok.com/v1` | — | — | ✓ |
 | `grok` | OpenAI Responses | `https://console.x.ai/v1` | — | ✓ | — |
@@ -55,6 +56,10 @@
 
 详见[供应商 · Grok 说明](/admin/providers)。
 :::
+
+`codex` 使用 ChatGPT/Codex 订阅额度。密钥页支持浏览器 OAuth（批准后粘贴 localhost 回调 URL）
+和设备代码登录；访问令牌到期前会自动刷新。默认模型为 `gpt-5.6-sol`、`gpt-5.6-terra`
+和 `gpt-5.6-luna`。
 
 ## OpenAI 兼容（国际）
 

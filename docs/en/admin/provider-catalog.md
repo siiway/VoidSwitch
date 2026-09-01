@@ -47,7 +47,9 @@ cookies and can be bulk-imported.
 | Adapter `type` | Protocol | Default Base URL | Balance | Import | OAuth refresh |
 | --- | --- | --- | :---: | :---: | :---: |
 | `claude-code` | Anthropic Messages | `https://api.anthropic.com` | — | ✓ | ✓ |
+| `codex` | OpenAI Responses | `https://chatgpt.com/backend-api/codex` | — | ✓ | ✓ |
 | `xai` | OpenAI Chat | `https://api.x.ai/v1` | — | ✓ | ✓ |
+| `grok-build` | OpenAI Chat | `https://cli-chat-proxy.grok.com/v1` | — | — | ✓ |
 | `grok` | OpenAI Responses | `https://console.x.ai/v1` | — | ✓ | — |
 
 ::: tip Grok (`xai` vs `grok`)
@@ -58,6 +60,10 @@ cookies and can be bulk-imported.
 
 See [Providers · Grok notes](/en/admin/providers) for details.
 :::
+
+`codex` uses a ChatGPT/Codex subscription. Its key page supports browser OAuth (paste the localhost
+callback URL after approval) and device-code login; access tokens refresh automatically. Its default
+models are `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`.
 
 ## OpenAI-compatible (international)
 
