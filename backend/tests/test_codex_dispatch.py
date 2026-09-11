@@ -349,3 +349,40 @@ async def test_codex_store_and_stream_flags_at_adapter_level():
     _, _, body = _prepare_body(req, oai, ApiStyle.OPENAI_RESPONSES, "gpt-5", "tok")
     assert body["store"] is True  # untouched
     assert "stream" not in body  # client asked non-streaming; provider allows it
+
+
+async def test_codex_drops_unsupported_params(db, seeded):
+    """The Codex backend 400s on parameters it doesn't know (e.g.
+    ``Unsupported parameter: max_output_tokens``). prepare_body keeps only the
+    known-good wire fields, whatever the client or translator produced."""
+    await _add_codex_provider(db)
+    with respx.mock(assert_all_called=True) as mock:
+        route = mock.post(CODEX_URL).mock(
+            return_value=httpx.Response(200, content=CODEX_SSE, headers=_SSE_HEADERS)
+        )
+        result = await dispatch(
+            _codex_req(
+                stream=True,
+                store=True,
+                max_output_tokens=32000,
+                stop=["\n"],
+                top_k=40,
+                stream_options={"include_usage": True},
+                n=2,
+                seed=42,
+            )
+        )
+
+    sent = json.loads(route.calls.last.request.content)
+    for banned in ("max_output_tokens", "stop", "top_k", "stream_options", "n", "seed"):
+        assert banned not in sent, banned
+    assert sent["store"] is False
+    assert sent["stream"] is True
+    assert sent["include"] == ["reasoning.encrypted_content"]
+    # Supported fields pass through untouched.
+    assert sent["model"] == "gpt-5.6-sol"
+    assert sent["input"] == "hi"
+    assert result.status_code == 200
+    if result.stream is not None:
+        async for _ in result.stream:
+            pass

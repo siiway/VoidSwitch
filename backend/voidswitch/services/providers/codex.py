@@ -36,6 +36,37 @@ class CodexProvider(OpenAIProvider):
     upstream_requires_streaming = True
     upstream_requires_store_false = True
 
+    # The Codex backend only accepts the request fields codex-cli actually
+    # sends (its request model has no ``max_output_tokens``; it answers
+    # ``400 Unsupported parameter: max_output_tokens``). Rather than playing
+    # whack-a-mole with a denylist, keep only the known-good wire fields and
+    # drop everything else a client or the style translator produced.
+    _WIRE_FIELDS = frozenset(
+        {
+            "model",
+            "instructions",
+            "input",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "reasoning",
+            "store",
+            "stream",
+            "include",
+            "service_tier",
+            "prompt_cache_key",
+            "text",
+            "temperature",
+            "top_p",
+            "truncation",
+            "metadata",
+            "background",
+            "conversation",
+            "previous_response_id",
+            "user",
+        }
+    )
+
     async def resolve_credential(
         self, session: Any, key: Any, secret_key: str, *, force_refresh: bool = False
     ) -> str:
@@ -56,16 +87,25 @@ class CodexProvider(OpenAIProvider):
 
     # -- Outbound body hook ----------------------------------------------- #
     def prepare_body(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Enforce the Codex backend's wire contract: ``store: false`` and
-        ``stream: true``, unconditionally.
+        """Enforce the Codex backend's wire contract.
 
         This runs last (after style translation and the generic stream
         handling), so a client-supplied ``store: true`` — or any default
         injected upstream of the adapter — can never reach chatgpt.com.
+        Unknown/unsupported parameters (``max_output_tokens``, ``stop``,
+        ``stream_options``, …) are dropped: the backend 400s on them.
+        ``include: reasoning.encrypted_content`` is defaulted like codex-cli
+        so reasoning sessions round-trip.
         """
-        body = dict(body)
+        body = {k: v for k, v in body.items() if k in self._WIRE_FIELDS}
         body["store"] = False
         body["stream"] = True
+        include = body.get("include")
+        if not isinstance(include, list):
+            include = []
+        if "reasoning.encrypted_content" not in include:
+            include.append("reasoning.encrypted_content")
+        body["include"] = include
         return body
 
     def aggregate_stream_body(self, body: dict[str, Any]) -> dict[str, Any]:
