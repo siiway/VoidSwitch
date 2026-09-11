@@ -42,6 +42,16 @@ Frontend `npm run lint` is `tsc --noEmit`; also run `npm run build` for anything
 
 Use `bun` / `bunx` for frontend package and script operations where possible. Do not run commands that regenerate `package-lock.json`; this repo uses `bun.lock`, and mixing npm and Bun lockfiles creates noisy conflicts.
 
+## Docker image builds
+
+`.github/workflows/publish-images.yml` builds and pushes the GHCR images. It has three triggers:
+
+- **Tag push (`v*`)** — the release path: tags images with the version (`ghcr.io/siiway/voidswitch:0.2.3` + `:latest`) and creates the GitHub release.
+- **Manual `workflow_dispatch` on main** — a snapshot build without a release: images are tagged `sha-<short-sha>` + `:latest`. No git tag is created.
+- **Push to main whose head commit message contains `<docker-build>`** — the same snapshot build, triggerable from a commit. Useful for publishing a dev image without cutting a release or opening the Actions UI.
+
+The release job runs **only** on version-tag pushes; snapshot builds never create tags or releases.
+
 ## Database migrations
 
 **Alembic owns the schema.** The app runs `alembic upgrade head` automatically at startup (`core/database.py:run_migrations`), so deploys need no manual migration step — the first revision (`0001_baseline`) creates a fresh schema and heals pre-Alembic databases in one idempotent pass.
