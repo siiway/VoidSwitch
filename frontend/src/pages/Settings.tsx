@@ -72,6 +72,18 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
     keys: ["rate_limit_recovery_seconds", "rate_limit_max_cooldown_seconds"],
   },
   {
+    titleKey: "settings.sectionUpstreamRouting",
+    keys: [
+      "upstream_select_mode", "upstream_rank_algorithm", "upstream_rank_alpha",
+      "upstream_rank_beta", "upstream_rank_gamma", "upstream_balance_tolerance",
+      "upstream_pin_jitter", "upstream_ewma_half_life_seconds", "upstream_min_samples",
+      "upstream_tier_healthy_threshold", "upstream_max_keys_per_attempt",
+      "upstream_cooldown_status_codes", "upstream_cooldown_seconds",
+      "upstream_cooldown_backoff_cap", "upstream_retry_after_headers",
+      "upstream_all_cooled_behavior",
+    ],
+  },
+  {
     titleKey: "settings.sectionTimeouts",
     keys: [
       "connect_timeout_seconds",
@@ -91,7 +103,7 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
     titleKey: "settings.sectionLogs",
     keys: [
       "logs_page_size",
-      "log_stream_max_connections",
+      "sse_max_connections_per_user",
       "log_cleanup_enabled",
       "log_cleanup_interval_seconds",
       "audit_log_retention_days",
@@ -320,7 +332,7 @@ export function Settings() {
       log_cleanup_enabled: t("settings.logCleanupEnabled" as TK),
       log_cleanup_interval_seconds: t("settings.logCleanupInterval" as TK),
       logs_page_size: t("settings.logsPageSize" as TK),
-      log_stream_max_connections: t("settings.logStreamMaxConnections" as TK),
+      sse_max_connections_per_user: t("settings.sseMaxConnectionsPerUser" as TK),
       proxy_switching_enabled: t("settings.proxySwitchingEnabled" as TK),
       static_proxy_url: t("settings.staticProxyUrl" as TK),
       max_connections: t("settings.maxConnections" as TK),

@@ -7,7 +7,9 @@ The **Models** page lists all available model IDs on the platform, one card per 
 - The **exposed model ID** you use when calling (e.g. `fast-coder`; upstream model IDs are never
   advertised to you).
 - An optional **display name** and **description** set by staff.
-- Being backed by a **route flowchart**: layered fallback pools of upstreams, with automatic fallback on failure.
+- A concise live health state — **Healthy / Degraded / Unavailable / Learning** — plus the best
+  available upstream's success rate and time to first token. Health updates automatically over SSE.
+- Regular exposed models use dynamic routing based on recent success, time to first token, and failures.
 - Whether you are **allowed** to call it (based on your role group).
 
 ## Search and filter
@@ -25,9 +27,7 @@ or it may have been **hidden** (disabled) by staff — hidden models are not sho
 
 ## Refreshing the catalog
 
-**Reshaping the shared catalog** (registering catalog rows for newly served model IDs) is a **staff-only** action
-(admin / co-owner / owner), done via the **Sync from providers** button on the **Models** page
-(`POST /api/models/sync`). Members do not see that button.
+Staff maintain the shared catalog from the **Models** page. Members cannot create, edit, or delete models.
 
 **OpenCode users (including members)** use the `/sync-models` command (`POST /v1/models/sync`)
 to have the plugin align its model list with the models they **can currently call** — this step is open to all members, requires no admin

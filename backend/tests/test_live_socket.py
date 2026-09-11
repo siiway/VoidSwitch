@@ -19,8 +19,7 @@ from voidswitch.models.db import (
     ApiKey,
     ExposedModel,
     Provider,
-    RouteLayer,
-    RoutePoolEntry,
+    RouteUpstream,
     User,
     VoidToken,
 )
@@ -116,12 +115,9 @@ async def _seed(db, base_url: str) -> int:
         session.add(exposed)
         await session.flush()
         route = await model_routing.get_or_create_route(session, exposed)
-        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
-        session.add(layer)
-        await session.flush()
         session.add(
-            RoutePoolEntry(
-                layer_id=layer.id,
+            RouteUpstream(
+                route_id=route.id,
                 provider_id=provider.id,
                 upstream_model="mock-model",
             )

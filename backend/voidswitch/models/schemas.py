@@ -122,6 +122,10 @@ class ProviderBase(BaseModel):
     # Cooldown (seconds) for a key rate-limited by this provider when the 429 has
     # no Retry-After header. 0 = use the global rate_limit_recovery_seconds.
     rate_limit_cooldown_seconds: int = 0
+    upstream_cooldown_seconds: int = 0
+    upstream_cooldown_status_codes: list[int] = Field(default_factory=list)
+    upstream_retry_after_headers: list[str] = Field(default_factory=list)
+    upstream_max_keys_per_attempt: int = 0
     # Passthrough: when enabled, this provider's models are directly available to
     # users as ``slug/exposed-model-id`` without going through the route system.
     passthrough_enabled: bool = False
@@ -148,6 +152,10 @@ class ProviderUpdate(BaseModel):
     node_group_id: int | None = None
     key_select_mode: str | None = None
     rate_limit_cooldown_seconds: int | None = None
+    upstream_cooldown_seconds: int | None = None
+    upstream_cooldown_status_codes: list[int] | None = None
+    upstream_retry_after_headers: list[str] | None = None
+    upstream_max_keys_per_attempt: int | None = None
     passthrough_enabled: bool | None = None
     passthrough_models: list[str] | None = None
 
@@ -308,29 +316,28 @@ class ModelUpsert(BaseModel):
     category_id: int | None = None
 
 
-class RouteEntryIn(BaseModel):
-    """One upstream ref inside a route layer pool."""
+class RouteUpstreamIn(BaseModel):
+    """One dynamically ranked upstream candidate."""
 
     provider_id: int
     upstream_model: str = ""
     weight: int = 1
     enabled: bool = True
     key_pool: str = ""
-
-
-class RouteLayerIn(BaseModel):
     position: int = 0
-    max_attempts: int = 1
-    entries: list[RouteEntryIn] = Field(default_factory=list)
+    cooldown_status_codes: list[int] = Field(default_factory=list)
+    cooldown_seconds: int = 0
 
 
 class RouteUpdate(BaseModel):
-    """Replaces the full flowchart (ordered layers) of one exposed model."""
+    upstreams: list[RouteUpstreamIn] = Field(default_factory=list)
+    upstream_select_mode: str = ""
+    upstream_rank_algorithm: str = ""
+    max_upstream_attempts: int = 0
+    upstream_all_cooled_behavior: str = ""
 
-    layers: list[RouteLayerIn] = Field(default_factory=list)
 
-
-class RouteEntryOut(BaseModel):
+class RouteUpstreamOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -341,15 +348,9 @@ class RouteEntryOut(BaseModel):
     weight: int = 1
     enabled: bool = True
     key_pool: str = ""
-
-
-class RouteLayerOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
     position: int = 0
-    max_attempts: int = 1
-    entries: list[RouteEntryOut] = Field(default_factory=list)
+    cooldown_status_codes: list[int] = Field(default_factory=list)
+    cooldown_seconds: int = 0
 
 
 class RouteOut(BaseModel):
@@ -357,7 +358,38 @@ class RouteOut(BaseModel):
 
     id: int
     exposed_model_id: int
-    layers: list[RouteLayerOut] = Field(default_factory=list)
+    upstream_select_mode: str = ""
+    upstream_rank_algorithm: str = ""
+    max_upstream_attempts: int = 0
+    upstream_all_cooled_behavior: str = ""
+    upstreams: list[RouteUpstreamOut] = Field(default_factory=list)
+
+
+class UpstreamHealthOut(BaseModel):
+    upstream_id: int
+    provider_id: int | None = None
+    provider_name: str | None = None
+    provider_slug: str | None = None
+    upstream_model: str
+    key_pool: str = ""
+    status: str
+    score: float
+    success_rate: float
+    ttft_ms: float | None = None
+    samples: int
+    consecutive_failures: float
+    cooled_until: dt.datetime | None = None
+    cooldown_reason: str | None = None
+    cooldown_trigger_status: int | None = None
+    cooldown_trigger_source: str | None = None
+
+
+class ModelHealthOut(BaseModel):
+    model_id: str
+    status: str
+    best_success_rate: float | None = None
+    best_ttft_ms: float | None = None
+    upstreams: list[UpstreamHealthOut] | None = None
 
 
 class ModelWithRouteOut(ModelOut):

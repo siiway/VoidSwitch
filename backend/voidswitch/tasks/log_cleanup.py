@@ -26,7 +26,7 @@ from voidswitch.core.audit import (
 )
 from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger
-from voidswitch.models.db import AuditLog, RequestLog, SessionSpan, UsageDaily
+from voidswitch.models.db import AuditLog, RequestLog, SessionSpan, UpstreamCooldown, UsageDaily
 from voidswitch.services import settings_store
 
 log = get_logger("tasks.log_cleanup")
@@ -47,16 +47,6 @@ async def cleanup_logs() -> dict[str, int]:
     request_days = settings_store.get_int("request_log_retention_days", 0)
     debug_days = settings_store.get_int("debug_log_retention_days", 0)
     heatmap_days = settings_store.get_int("heatmap_retention_days", 0)
-    empty = {
-        "deleted_request_logs": 0,
-        "deleted_audit_logs": 0,
-        "stripped_debug_logs": 0,
-        "deleted_heatmap_days": 0,
-        "deleted_session_spans": 0,
-    }
-    if audit_days <= 0 and request_days <= 0 and debug_days <= 0 and heatmap_days <= 0:
-        return empty  # nothing to do — retention disabled for all
-
     now = dt.datetime.now(dt.UTC)
     async with db.session() as session:
         deleted_requests = 0
@@ -64,6 +54,14 @@ async def cleanup_logs() -> dict[str, int]:
         stripped_debug = 0
         deleted_heatmap = 0
         deleted_spans = 0
+        deleted_cooldowns = 0
+
+        deleted_cooldowns = await _delete_batched(
+            session,
+            UpstreamCooldown,
+            (UpstreamCooldown.until < now - dt.timedelta(days=7))
+            & (UpstreamCooldown.consecutive_trips == 0),
+        )
 
         if request_days > 0:
             cutoff = now - dt.timedelta(days=request_days)
@@ -89,7 +87,16 @@ async def cleanup_logs() -> dict[str, int]:
                 session, SessionSpan, SessionSpan.last_at < cutoff
             )
 
-        if deleted_requests or deleted_audits or stripped_debug or deleted_heatmap or deleted_spans:
+        if any(
+            (
+                deleted_requests,
+                deleted_audits,
+                stripped_debug,
+                deleted_heatmap,
+                deleted_spans,
+                deleted_cooldowns,
+            )
+        ):
             log.info(
                 "log_cleanup",
                 deleted_requests=deleted_requests,
@@ -97,6 +104,7 @@ async def cleanup_logs() -> dict[str, int]:
                 stripped_debug=stripped_debug,
                 deleted_heatmap_days=deleted_heatmap,
                 deleted_session_spans=deleted_spans,
+                deleted_upstream_cooldowns=deleted_cooldowns,
             )
             await record_audit(
                 session,
@@ -110,6 +118,7 @@ async def cleanup_logs() -> dict[str, int]:
                     "stripped_debug_logs": stripped_debug,
                     "deleted_heatmap_days": deleted_heatmap,
                     "deleted_session_spans": deleted_spans,
+                    "deleted_upstream_cooldowns": deleted_cooldowns,
                     "audit_log_retention_days": audit_days,
                     "request_log_retention_days": request_days,
                     "debug_log_retention_days": debug_days,
@@ -124,6 +133,7 @@ async def cleanup_logs() -> dict[str, int]:
             "stripped_debug_logs": stripped_debug,
             "deleted_heatmap_days": deleted_heatmap,
             "deleted_session_spans": deleted_spans,
+            "deleted_upstream_cooldowns": deleted_cooldowns,
         }
 
 

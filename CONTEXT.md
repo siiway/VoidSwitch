@@ -120,8 +120,24 @@ flag that captures request/response detail (bodies are owner-visible only).
 ## Exposed model
 
 The only model id clients see (e.g. ``fast-coder``). Routed through
-``Route → RouteLayer → RoutePoolEntry`` to a real upstream provider. Access is
+``Route → Route upstream`` to a real upstream provider. Access is
 gated by ``allowed_role_group_ids``.
+
+## Routing
+
+- **Route** — the dynamic dispatch plan for one exposed model. It contains a flat
+  set of upstream candidates; there is no static fallback ladder.
+- **Route upstream (上游候选)** — one provider, exact upstream model, and optional
+  key pool that may serve a route.
+- **Upstream score (上游评分)** — a live ordering signal derived from success rate,
+  time to first token, and consecutive failures.
+- **Upstream select mode (上游选择策略)** — best, balanced, pinned best, or pinned
+  balanced selection from the scored candidates.
+- **Upstream cooldown (上游冷却)** — a temporary platform-wide exclusion of one
+  provider/upstream-model/key-pool combination after an upstream-side fault.
+
+Upstream cooldown and key cooldown are separate: the former describes an upstream
+service condition shared by all routes, while the latter describes one credential.
 
 ## Node / node group
 

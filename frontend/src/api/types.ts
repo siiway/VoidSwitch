@@ -247,7 +247,7 @@ export interface ModelCategory {
   updated_at?: string;
 }
 
-export interface RoutePoolEntry {
+export interface RouteUpstream {
   id?: number;
   provider_id?: number | null;
   provider_name?: string | null;
@@ -256,23 +256,55 @@ export interface RoutePoolEntry {
   weight: number;
   enabled: boolean;
   key_pool: string;
+  position?: number;
+  cooldown_status_codes?: number[];
+  cooldown_seconds?: number;
 }
 
-export interface RouteLayer {
-  id?: number;
-  position: number;
-  max_attempts: number;
-  entries: RoutePoolEntry[];
-}
+export type UpstreamSelectMode = "" | "best" | "balanced" | "pinned_best" | "pinned_balanced";
+export type UpstreamRankAlgorithm = "" | "weighted" | "tiered";
+export type UpstreamAllCooledBehavior = "" | "fail_fast" | "ignore_cooldown";
 
 export interface Route {
   id?: number;
   exposed_model_id: number;
-  layers: RouteLayer[];
+  upstream_select_mode: UpstreamSelectMode;
+  upstream_rank_algorithm: UpstreamRankAlgorithm;
+  max_upstream_attempts: number;
+  upstream_all_cooled_behavior: UpstreamAllCooledBehavior;
+  upstreams: RouteUpstream[];
 }
 
 export interface ModelWithRoute extends ModelEntry {
   route?: Route | null;
+}
+
+export type ModelHealthStatus =
+  | "healthy"
+  | "degraded"
+  | "unavailable"
+  | "learning";
+
+export interface UpstreamHealth {
+  upstream_id: number;
+  provider_id?: number | null;
+  provider_name?: string | null;
+  provider_slug?: string | null;
+  upstream_model: string;
+  status: ModelHealthStatus;
+  success_rate?: number | null;
+  ttft_ms?: number | null;
+  requests?: number;
+  consecutive_failures?: number;
+  cooled_until?: string | null;
+}
+
+export interface ModelHealth {
+  model_id: string;
+  status: ModelHealthStatus;
+  best_success_rate?: number | null;
+  best_ttft_ms?: number | null;
+  upstreams?: UpstreamHealth[];
 }
 
 export interface ModelsDevSearchResult {

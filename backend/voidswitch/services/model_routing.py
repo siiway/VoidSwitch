@@ -1,21 +1,13 @@
-"""Model routing: exposed → route flow → upstream resolution + config merge.
-
-An exposed model's :class:`Route` is a vertical flow: the user-requested model
-sits on top, and each ordered :class:`RouteLayer` below is a *fallback pool* of
-upstream :class:`RoutePoolEntry` refs (provider + upstream_model). Within a
-layer, entries are tried in weighted-random order; failures eligible for
-fallback (429/404/5xx …) move down the flow until the retry budget is spent.
-"""
+"""Model routing: exposed model to dynamically ranked upstream candidates."""
 
 from __future__ import annotations
 
-import random
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from voidswitch.models.db import ExposedModel, Provider, Route, RouteLayer
+from voidswitch.models.db import ExposedModel, Provider, Route
 
 # models.dev entry keys we understand (registry entry shape is loose across
 # providers; extract the intersection that maps onto our config fields).
@@ -102,28 +94,6 @@ def build_opencode_config(exposed: ExposedModel, models_dev_entry: dict | None) 
     return config
 
 
-def weighted_entries(layer: RouteLayer, rng: random.Random | None = None) -> list[Any]:
-    """Enabled entries of a layer in weighted-random order (distinct, no repeat).
-
-    A disabled entry or a disabled/missing provider is dropped up front — the
-    pool only ever contains upstreams that could actually serve a request.
-    """
-    entries = [
-        e for e in layer.entries if e.enabled and e.provider is not None and e.provider.enabled
-    ]
-    if len(entries) <= 1:
-        return entries
-    r = rng if rng is not None else random
-    pool = list(entries)
-    ordered: list[Any] = []
-    while pool:
-        weights = [max(1, int(e.weight or 1)) for e in pool]
-        choice = r.choices(pool, weights=weights, k=1)[0]
-        ordered.append(choice)
-        pool.remove(choice)
-    return ordered
-
-
 async def get_or_create_route(session: AsyncSession, exposed_model: ExposedModel) -> Route:
     """A model's route, creating an empty one if missing (idempotent)."""
     route = (
@@ -146,9 +116,7 @@ async def resolve_route(session: AsyncSession, exposed_model: ExposedModel) -> R
     layers/entries are already ORM-linked to the same session.
     """
     route = await get_or_create_route(session, exposed_model)
-    provider_ids = {
-        e.provider_id for layer in route.layers for e in layer.entries if e.provider_id is not None
-    }
+    provider_ids = {e.provider_id for e in route.upstreams if e.provider_id is not None}
     if provider_ids:
         rows = (
             (await session.execute(select(Provider).where(Provider.id.in_(provider_ids))))
@@ -156,8 +124,7 @@ async def resolve_route(session: AsyncSession, exposed_model: ExposedModel) -> R
             .all()
         )
         by_id = {p.id: p for p in rows}
-        for layer in route.layers:
-            for entry in layer.entries:
-                if entry.provider_id in by_id:
-                    entry.provider = by_id[entry.provider_id]
+        for entry in route.upstreams:
+            if entry.provider_id in by_id:
+                entry.provider = by_id[entry.provider_id]
     return route

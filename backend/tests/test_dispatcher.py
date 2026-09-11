@@ -76,7 +76,7 @@ async def _add_node(db, url: str) -> int:
 
 async def _expose_route(db, model_id: str, provider_id: int, upstream: str, *, pool: str = ""):
     """Create an exposed model with a 1:1 route to a provider (and optional pool)."""
-    from voidswitch.models.db import ExposedModel, Route, RouteLayer, RoutePoolEntry
+    from voidswitch.models.db import ExposedModel, Route, RouteUpstream
 
     async with db.session() as session:
         entry = ExposedModel(model_id=model_id)
@@ -85,12 +85,9 @@ async def _expose_route(db, model_id: str, provider_id: int, upstream: str, *, p
         route = Route(exposed_model_id=entry.id)
         session.add(route)
         await session.flush()
-        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
-        session.add(layer)
-        await session.flush()
         session.add(
-            RoutePoolEntry(
-                layer_id=layer.id,
+            RouteUpstream(
+                route_id=route.id,
                 provider_id=provider_id,
                 upstream_model=upstream,
                 key_pool=pool,
@@ -269,9 +266,7 @@ async def test_dispatch_model_route_targets_key_pool(db, seeded):
     # A "leaked"-pooled key, plus an exposed model routed to the deepseek upstream
     # through exactly that key pool.
     leaked_id = await _add_key_pool(db, seeded["provider_id"], "sk-leaked-1", "leaked")
-    await _expose_route(
-        db, "ds-lkd", seeded["provider_id"], "deepseek-chat", pool="leaked"
-    )
+    await _expose_route(db, "ds-lkd", seeded["provider_id"], "deepseek-chat", pool="leaked")
 
     with respx.mock(assert_all_called=False) as mock:
         mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
@@ -796,10 +791,7 @@ async def test_dispatch_streaming_zero_token_retries_in_flight(db, seeded):
     await _set_zero_token(db, seeded["provider_id"], True)
     await _add_key(db, seeded["provider_id"], "sk-test-2")
 
-    empty_sse = (
-        b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\n'
-        b"data: [DONE]\n\n"
-    )
+    empty_sse = b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\ndata: [DONE]\n\n'
 
     def _req():
         return DispatchRequest(
@@ -823,7 +815,9 @@ async def test_dispatch_streaming_zero_token_retries_in_flight(db, seeded):
     with respx.mock(assert_all_called=False) as mock:
         route = mock.post(DS_URL).mock(
             side_effect=[
-                httpx.Response(200, content=empty_sse, headers={"content-type": "text/event-stream"}),
+                httpx.Response(
+                    200, content=empty_sse, headers={"content-type": "text/event-stream"}
+                ),
                 httpx.Response(200, content=sse, headers={"content-type": "text/event-stream"}),
             ]
         )
@@ -846,10 +840,7 @@ async def test_dispatch_streaming_zero_token_exhaustion_is_error(db, seeded):
     ever delivered to the client."""
     await _set_zero_token(db, seeded["provider_id"], True)
 
-    empty_sse = (
-        b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\n'
-        b"data: [DONE]\n\n"
-    )
+    empty_sse = b'data: {"choices":[{"index":0,"delta":{"content":""}}]}\n\ndata: [DONE]\n\n'
 
     def _req():
         return DispatchRequest(
@@ -877,8 +868,6 @@ async def test_dispatch_streaming_zero_token_exhaustion_is_error(db, seeded):
     assert len(route.calls) >= 1
 
 
-
-
 async def test_build_stream_response_timeout_marks_terminated(db, seeded):
     """A stream past the response timeout is force-cut: connection closed and
     the log row marked ``terminated`` (已切断)."""
@@ -896,7 +885,9 @@ async def test_build_stream_response_timeout_marks_terminated(db, seeded):
         token = VoidToken(user_id=seeded["user_id"], name="t", token_hash="tokhash")
         session.add(token)
         await session.flush()
-        row = RequestLog(token_id=token.id, user_sub=seeded["user_sub"], stream=True, req_status="pending")
+        row = RequestLog(
+            token_id=token.id, user_sub=seeded["user_sub"], stream=True, req_status="pending"
+        )
         session.add(row)
         await session.flush()
         log_id = row.id
@@ -953,7 +944,9 @@ async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
         token = VoidToken(user_id=seeded["user_id"], name="t", token_hash="tokhash")
         session.add(token)
         await session.flush()
-        row = RequestLog(token_id=token.id, user_sub=seeded["user_sub"], stream=True, req_status="pending")
+        row = RequestLog(
+            token_id=token.id, user_sub=seeded["user_sub"], stream=True, req_status="pending"
+        )
         session.add(row)
         await session.flush()
         log_id = row.id

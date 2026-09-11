@@ -59,17 +59,16 @@ async def upstream_refs(session: AsyncSession, exposed: ExposedModel) -> list[st
         return []
     refs: list[str] = []
     seen: set[tuple[int | None, str]] = set()
-    for layer in route.layers:
-        for entry in layer.entries:
-            key = (entry.provider_id, entry.upstream_model)
-            if key in seen:
-                continue
-            seen.add(key)
-            provider = entry.provider
-            if provider is None:
-                continue
-            slug = provider.slug or provider.name
-            refs.append(f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug)
+    for entry in route.upstreams:
+        key = (entry.provider_id, entry.upstream_model)
+        if key in seen:
+            continue
+        seen.add(key)
+        provider = entry.provider
+        if provider is None:
+            continue
+        slug = provider.slug or provider.name
+        refs.append(f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug)
     return refs
 
 
@@ -92,8 +91,7 @@ def is_unserved(exposed: ExposedModel, providers_by_id: dict[int, Provider]) -> 
         entry.enabled
         and entry.provider_id is not None
         and providers_by_id.get(entry.provider_id) is not None
-        for layer in route.layers
-        for entry in layer.entries
+        for entry in route.upstreams
     )
 
 

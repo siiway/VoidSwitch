@@ -8,30 +8,38 @@ layer pools → upstream refs), and match models to the models.dev registry.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime as dt
+import json
 import re
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voidswitch.constants import UpstreamRankAlgorithm, UpstreamSelectMode
+from voidswitch.core import sse
 from voidswitch.core.audit import AuditAction, AuditScope, record_audit
 from voidswitch.core.auth import (
     actor_display_name,
     audit_scope_for,
     get_current_user,
     is_staff,
+    require_owner,
     require_staff,
 )
-from voidswitch.core.database import get_session
+from voidswitch.core.database import get_database, get_session
 from voidswitch.models.db import (
     ExposedModel,
     ModelCategory,
     Provider,
     RoleGroup,
     Route,
-    RouteLayer,
-    RoutePoolEntry,
+    RouteUpstream,
+    UpstreamCooldown,
     User,
 )
 from voidswitch.models.schemas import (
@@ -48,7 +56,12 @@ from voidswitch.models.schemas import (
     RouteOut,
     RouteUpdate,
 )
-from voidswitch.services import model_routing, models_catalog, models_dev
+from voidswitch.services import (
+    model_routing,
+    models_catalog,
+    models_dev,
+    upstream_health,
+)
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -100,17 +113,16 @@ def _to_out(
     route = item.route
     if route is not None:
         seen: set[tuple[int | None, str]] = set()
-        for layer in route.layers:
-            for entry in layer.entries:
-                key = (entry.provider_id, entry.upstream_model)
-                if key in seen:
-                    continue
-                seen.add(key)
-                provider = entry.provider
-                if provider is None:
-                    continue
-                slug = provider.slug or provider.name
-                upstreams.append(f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug)
+        for entry in route.upstreams:
+            key = (entry.provider_id, entry.upstream_model)
+            if key in seen:
+                continue
+            seen.add(key)
+            provider = entry.provider
+            if provider is None:
+                continue
+            slug = provider.slug or provider.name
+            upstreams.append(f"{slug}/{entry.upstream_model}" if entry.upstream_model else slug)
     unserved = (
         models_catalog.is_unserved(item, providers_by_id) if providers_by_id is not None else False
     )
@@ -148,26 +160,25 @@ def _route_out(route: Route | None) -> RouteOut | None:
     return RouteOut(
         id=route.id,
         exposed_model_id=route.exposed_model_id,
-        layers=[
+        upstream_select_mode=route.upstream_select_mode,
+        upstream_rank_algorithm=route.upstream_rank_algorithm,
+        max_upstream_attempts=route.max_upstream_attempts,
+        upstream_all_cooled_behavior=route.upstream_all_cooled_behavior,
+        upstreams=[
             {
-                "id": layer.id,
-                "position": layer.position,
-                "max_attempts": layer.max_attempts,
-                "entries": [
-                    {
-                        "id": e.id,
-                        "provider_id": e.provider_id,
-                        "provider_name": e.provider.name if e.provider else None,
-                        "provider_slug": e.provider.slug if e.provider else None,
-                        "upstream_model": e.upstream_model,
-                        "weight": e.weight,
-                        "enabled": e.enabled,
-                        "key_pool": e.key_pool,
-                    }
-                    for e in layer.entries
-                ],
+                "id": e.id,
+                "provider_id": e.provider_id,
+                "provider_name": e.provider.name if e.provider else None,
+                "provider_slug": e.provider.slug if e.provider else None,
+                "upstream_model": e.upstream_model,
+                "weight": e.weight,
+                "enabled": e.enabled,
+                "key_pool": e.key_pool,
+                "position": e.position,
+                "cooldown_status_codes": e.cooldown_status_codes or [],
+                "cooldown_seconds": e.cooldown_seconds,
             }
-            for layer in route.layers
+            for e in route.upstreams
         ],
     )
 
@@ -266,6 +277,156 @@ async def list_models(
     result.extend(virtual)
 
     return result
+
+
+async def _health_snapshot(
+    session: AsyncSession, user: User, model_id: str | None = None
+) -> list[dict]:
+    catalog = await models_catalog.build_catalog(session)
+    is_mod = is_staff(user)
+    result: list[dict] = []
+    emitted: set[str] = set()
+    for item in catalog:
+        if model_id and item.model_id != model_id:
+            continue
+        if not is_mod and not item.enabled:
+            continue
+        route = await model_routing.resolve_route(session, item)
+        keys = {
+            (u.provider_id, u.upstream_model, u.key_pool) for u in route.upstreams if u.provider_id
+        }
+        cooldowns = await upstream_health.load_cooldowns(session, keys)
+        ranked, _ = upstream_health.rank(route, cooldowns)
+        details = []
+        for row in ranked:
+            cooldown = row.cooldown
+            details.append(
+                {
+                    "upstream_id": row.upstream.id,
+                    "provider_id": row.upstream.provider_id,
+                    "provider_name": row.upstream.provider.name if row.upstream.provider else None,
+                    "provider_slug": row.upstream.provider.slug if row.upstream.provider else None,
+                    "upstream_model": row.upstream.upstream_model,
+                    "key_pool": row.upstream.key_pool,
+                    "status": upstream_health.status_for(row),
+                    "score": row.score,
+                    "success_rate": row.success_rate,
+                    "ttft_ms": row.ttft_ms,
+                    "samples": row.samples,
+                    "consecutive_failures": row.consecutive_failures,
+                    "cooled_until": cooldown.until if cooldown else None,
+                    "cooldown_reason": cooldown.reason if cooldown else None,
+                    "cooldown_trigger_status": cooldown.trigger_status if cooldown else None,
+                    "cooldown_trigger_source": cooldown.trigger_source if cooldown else None,
+                }
+            )
+        best = ranked[0] if ranked else None
+        if not route.upstreams or not ranked:
+            overall = "unavailable"
+        else:
+            statuses = [upstream_health.status_for(row) for row in ranked]
+            overall = (
+                "healthy"
+                if "healthy" in statuses
+                else "learning"
+                if "learning" in statuses
+                else "degraded"
+            )
+        result.append(
+            {
+                "model_id": item.model_id,
+                "status": overall,
+                "best_success_rate": best.success_rate if best else None,
+                "best_ttft_ms": best.ttft_ms if best else None,
+                "upstreams": details if is_mod else None,
+            }
+        )
+        emitted.add(item.model_id)
+
+    providers = (
+        (
+            await session.execute(
+                select(Provider).where(
+                    Provider.enabled.is_(True), Provider.passthrough_enabled.is_(True)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for provider in providers:
+        for raw in provider.passthrough_models or []:
+            parsed = _parse_passthrough_entry(raw)
+            public_id = f"{provider.slug}/{parsed['exposed']}"
+            if public_id in emitted or (model_id and public_id != model_id):
+                continue
+            existing = next((item for item in catalog if item.model_id == public_id), None)
+            if existing is not None and not is_mod and not existing.enabled:
+                continue
+            upstream_model = parsed["upstream"]
+            pool = parsed["pool"]
+            upstream = SimpleNamespace(
+                id=-provider.id,
+                provider_id=provider.id,
+                provider=provider,
+                upstream_model=upstream_model,
+                key_pool=pool,
+                enabled=True,
+                weight=1,
+                position=0,
+            )
+            route = SimpleNamespace(
+                id=-provider.id,
+                upstreams=[upstream],
+                upstream_select_mode="best",
+                upstream_rank_algorithm="weighted",
+                upstream_all_cooled_behavior="ignore_cooldown",
+            )
+            key = upstream_health.key_for(provider.id, upstream_model, pool)
+            cooldowns = await upstream_health.load_cooldowns(session, {key})
+            ranked, _ = upstream_health.rank(route, cooldowns)
+            best = ranked[0] if ranked else None
+            result.append(
+                {
+                    "model_id": public_id,
+                    "status": upstream_health.status_for(best) if best else "unavailable",
+                    "best_success_rate": best.success_rate if best else None,
+                    "best_ttft_ms": best.ttft_ms if best else None,
+                    "upstreams": None,
+                }
+            )
+    return result
+
+
+@router.get("/health/stream")
+async def model_health_stream(
+    model_id: str | None = None,
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    await sse.acquire(user.sub)
+    queue = upstream_health.subscribe()
+
+    async def events():
+        try:
+            while True:
+                async with get_database().session() as stream_session:
+                    snapshot = await _health_snapshot(stream_session, user, model_id)
+                yield f"data: {json.dumps({'models': snapshot}, default=str)}\n\n"
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(queue.get(), timeout=5.0)
+        finally:
+            upstream_health.unsubscribe(queue)
+            await sse.release(user.sub)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 async def _get_or_create_entry(session: AsyncSession, model_id: str, user: User) -> ExposedModel:
@@ -367,7 +528,7 @@ async def upsert_model(
         },
         ip=request.client.host if request.client else None,
     )
-    # Expire + re-select so selectin relationships (route → layers → entries)
+    # Expire + re-select so the route upstream relationship
     # reload. session.get alone returns the identity-map instance whose route
     # may still be unloaded after get_or_create_route; accessing it in sync
     # _to_out raises MissingGreenlet under asyncpg. Capture the PK before
@@ -747,7 +908,7 @@ async def update_route(
 ) -> ModelWithRouteOut:
     entry = await _get_exposed(session, model_id)
     route = await model_routing.get_or_create_route(session, entry)
-    provider_ids = {e.provider_id for layer in body.layers for e in layer.entries if e.provider_id}
+    provider_ids = {e.provider_id for e in body.upstreams if e.provider_id}
     if provider_ids:
         found = set(
             (await session.execute(select(Provider.id).where(Provider.id.in_(provider_ids))))
@@ -759,28 +920,36 @@ async def update_route(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown provider id(s): {missing}."
             )
-    # Replace the whole flowchart.
-    for layer in list(route.layers):
-        await session.delete(layer)
-    for pos, layer_in in enumerate(body.layers):
-        layer = RouteLayer(
-            route_id=route.id,
-            position=pos,
-            max_attempts=max(1, layer_in.max_attempts),
+    if body.upstream_select_mode not in {"", *(m.value for m in UpstreamSelectMode)}:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid upstream_select_mode.")
+    if body.upstream_rank_algorithm not in {"", *(m.value for m in UpstreamRankAlgorithm)}:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid upstream_rank_algorithm."
         )
-        session.add(layer)
-        await session.flush()
-        for entry_in in layer_in.entries:
-            session.add(
-                RoutePoolEntry(
-                    layer_id=layer.id,
-                    provider_id=entry_in.provider_id,
-                    upstream_model=(entry_in.upstream_model or "").strip(),
-                    weight=max(1, entry_in.weight),
-                    enabled=entry_in.enabled,
-                    key_pool=(entry_in.key_pool or "").strip(),
-                )
+    if body.upstream_all_cooled_behavior not in {"", "ignore_cooldown", "fail_fast"}:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid upstream_all_cooled_behavior."
+        )
+    route.upstream_select_mode = body.upstream_select_mode
+    route.upstream_rank_algorithm = body.upstream_rank_algorithm
+    route.max_upstream_attempts = max(0, body.max_upstream_attempts)
+    route.upstream_all_cooled_behavior = body.upstream_all_cooled_behavior
+    for old in list(route.upstreams):
+        await session.delete(old)
+    for pos, entry_in in enumerate(body.upstreams):
+        session.add(
+            RouteUpstream(
+                route_id=route.id,
+                position=pos,
+                provider_id=entry_in.provider_id,
+                upstream_model=(entry_in.upstream_model or "").strip(),
+                weight=max(1, entry_in.weight),
+                enabled=entry_in.enabled,
+                key_pool=(entry_in.key_pool or "").strip(),
+                cooldown_status_codes=entry_in.cooldown_status_codes,
+                cooldown_seconds=max(0, entry_in.cooldown_seconds),
             )
+        )
     await session.flush()
     await record_audit(
         session,
@@ -796,6 +965,52 @@ async def update_route(
     out = ModelWithRouteOut(**_to_out(entry).model_dump())
     out.route = _route_out(route)
     return out
+
+
+@router.post(
+    "/{model_id}/route/upstreams/{upstream_id}/clear-cooldown",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def clear_upstream_cooldown(
+    model_id: str,
+    upstream_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_owner),
+) -> None:
+    entry = await _get_exposed(session, model_id)
+    route = await model_routing.resolve_route(session, entry)
+    upstream = next((item for item in route.upstreams if item.id == upstream_id), None)
+    if upstream is None or upstream.provider_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Route upstream not found.")
+    cooldown = (
+        await session.execute(
+            select(UpstreamCooldown).where(
+                UpstreamCooldown.provider_id == upstream.provider_id,
+                UpstreamCooldown.upstream_model == upstream.upstream_model,
+                UpstreamCooldown.key_pool == upstream.key_pool,
+            )
+        )
+    ).scalar_one_or_none()
+    if cooldown is not None:
+        cooldown.until = dt.datetime.now(dt.UTC)
+        cooldown.consecutive_trips = 0
+    await record_audit(
+        session,
+        action=AuditAction.UPSTREAM_COOLDOWN_CLEAR,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="upstream",
+        target_id=upstream.id,
+        detail={
+            "model_id": model_id,
+            "provider_id": upstream.provider_id,
+            "upstream_model": upstream.upstream_model,
+            "key_pool": upstream.key_pool,
+        },
+        ip=request.client.host if request.client else None,
+    )
+    upstream_health._notify()
 
 
 # --------------------------------------------------------------------------- #

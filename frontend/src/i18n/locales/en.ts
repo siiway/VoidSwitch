@@ -1,5 +1,6 @@
 const en = {
   common: {
+    default: "Follow global",
     loading: "Loading…",
     cancel: "Cancel",
     confirm: "Confirm",
@@ -494,6 +495,21 @@ const en = {
       "{{imported}} imported, {{duplicates}} duplicate(s), {{unusable}} skipped",
   },
   models: {
+    upstreamSelectMode: "Upstream selection",
+    upstreamRankAlgorithm: "Ranking algorithm",
+    maxUpstreamAttempts: "Maximum upstream attempts (0 = unlimited)",
+    allCooledBehavior: "When every upstream is cooling down",
+    successRate: "Success",
+    ttft: "TTFT",
+    clearCooldown: "Clear cooldown",
+    cooldownCleared: "Upstream cooldown cleared",
+    healthLearning: "Learning",
+    health: {
+      healthy: "Healthy",
+      degraded: "Degraded",
+      unavailable: "Unavailable",
+      learning: "Learning",
+    },
     title: "Models",
     subtitle: "Every model available across the platform",
     sync: "Sync from providers",
@@ -892,6 +908,8 @@ const en = {
     logsPageSize: "Logs page size (rows per page)",
     logStreamMaxConnections:
       "Max simultaneous live-log streams per user (0 = unlimited)",
+    sseMaxConnectionsPerUser:
+      "Max simultaneous live SSE connections per user (0 = unlimited)",
     proxySwitchingEnabled:
       "Proxy switching enabled (off = always use the static proxy below)",
     staticProxyUrl:
@@ -930,6 +948,7 @@ const en = {
     sectionProxy: "Proxy & routing",
     sectionKeys: "Keys & balance",
     sectionRateLimit: "Rate limiting",
+    sectionUpstreamRouting: "Upstream routing",
     sectionTimeouts: "Timeouts & retries",
     sectionSession: "Login & session",
     sectionLogs: "Logs & retention",

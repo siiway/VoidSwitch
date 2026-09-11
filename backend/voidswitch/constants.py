@@ -109,6 +109,22 @@ class KeySelectMode(StrEnum):
     PINNED_RANDOM = "pinned_random"
 
 
+class UpstreamSelectMode(StrEnum):
+    """How runtime health influences the first upstream for a request."""
+
+    BEST = "best"
+    BALANCED = "balanced"
+    PINNED_BEST = "pinned_best"
+    PINNED_BALANCED = "pinned_balanced"
+
+
+class UpstreamRankAlgorithm(StrEnum):
+    """How configured priority and weight constrain health-based routing."""
+
+    WEIGHTED = "weighted"
+    TIERED = "tiered"
+
+
 # Default operational thresholds; seeded into the settings table on first boot
 # and editable at runtime from the dashboard.
 #
@@ -177,7 +193,29 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "logs_page_size": 50,
     # Max simultaneous live-log-stream (SSE) connections a single user may hold
     # open at once. Extra connections beyond this are rejected with 429.
-    "log_stream_max_connections": 2,
+    "sse_max_connections_per_user": 2,
+    # Dynamic upstream health. Status 0 represents a transport/network failure.
+    "upstream_select_mode": "best",
+    "upstream_rank_algorithm": "weighted",
+    "upstream_rank_alpha": 100.0,
+    "upstream_rank_beta": 1.0,
+    "upstream_rank_gamma": 10.0,
+    "upstream_balance_tolerance": 0.2,
+    "upstream_pin_jitter": 0.15,
+    "upstream_ewma_half_life_seconds": 600,
+    "upstream_min_samples": 10,
+    "upstream_tier_healthy_threshold": 0.9,
+    "upstream_max_keys_per_attempt": 2,
+    "upstream_cooldown_status_codes": [0, 429, 500, 502, 503, 504],
+    "upstream_cooldown_seconds": 180,
+    "upstream_cooldown_backoff_cap": 3,
+    "upstream_retry_after_headers": [
+        "retry-after",
+        "x-ratelimit-reset-after",
+        "ratelimit-reset",
+        "x-ratelimit-reset-requests",
+    ],
+    "upstream_all_cooled_behavior": "ignore_cooldown",
     # Proxy switching. When False the gateway stops rotating/failover over the
     # node pool: every upstream request goes through ``static_proxy_url`` (or, if
     # that is empty, directly / via the process HTTP(S)_PROXY env vars), and a

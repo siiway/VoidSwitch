@@ -240,7 +240,7 @@ OAI_RESPONSE = {
 async def test_call_via_exposed_model_routes_to_upstream(client, db, seeded):
     """An exposed model with a different upstream_model routes to the upstream id."""
     from sqlalchemy import select
-    from voidswitch.models.db import Provider, RouteLayer, RoutePoolEntry
+    from voidswitch.models.db import Provider, RouteUpstream
     from voidswitch.services import model_routing
 
     async with db.session() as session:
@@ -252,12 +252,9 @@ async def test_call_via_exposed_model_routes_to_upstream(client, db, seeded):
         session.add(new_exp)
         await session.flush()
         route = await model_routing.get_or_create_route(session, new_exp)
-        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
-        session.add(layer)
-        await session.flush()
         session.add(
-            RoutePoolEntry(
-                layer_id=layer.id,
+            RouteUpstream(
+                route_id=route.id,
                 provider_id=seeded["provider_id"],
                 upstream_model="deepseek-chat",
             )

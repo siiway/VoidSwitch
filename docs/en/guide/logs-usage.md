@@ -63,7 +63,7 @@ When connected, newly written request-log rows appear automatically at the top o
 - It is driven by a lightweight **poll** (once per second, an indexed `id`-based query, no joins, at most 100 rows per tick),
   and does not hook the gateway's hot path, so it has almost no impact on request throughput.
 - The number of simultaneous live-log streams a single user may keep open is capped by the **Max simultaneous live-log streams per user**
-  setting (`log_stream_max_connections`, default 2; `0` = unlimited); exceeding it returns `429`.
+  setting (`sse_max_connections_per_user`, default 2; `0` = unlimited), shared with health streams; exceeding it returns `429`.
   Mind this limit if you keep several browser tabs open for the same account.
 - On a dropped connection (e.g. a timeout or a network blip) the stream stops and shows a notice — click connect again to resume.
 

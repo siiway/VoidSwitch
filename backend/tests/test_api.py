@@ -184,9 +184,7 @@ async def test_add_keys_inline_comment_overrides_batch_note(client, seeded):
 
 async def test_list_keys_returns_saved_keys(client, seeded):
     pid = seeded["provider_id"]
-    resp = await client.get(
-        f"/api/admin/providers/{pid}/keys", headers=_session_headers()
-    )
+    resp = await client.get(f"/api/admin/providers/{pid}/keys", headers=_session_headers())
     assert resp.status_code == 200, resp.text
     rows = resp.json()
     assert any(k["id"] == seeded["key_id"] for k in rows)
@@ -252,9 +250,7 @@ async def test_admin_disable_token_is_audited(client, seeded):
 
 
 async def test_self_service_token_ops_are_audited_with_self_scope(client, seeded):
-    resp = await client.post(
-        "/api/me/tokens", headers=_session_headers(), json={"name": "laptop"}
-    )
+    resp = await client.post("/api/me/tokens", headers=_session_headers(), json={"name": "laptop"})
     assert resp.status_code == 201, resp.text
 
     items = await _audit_items(client, action="me.token.create")
@@ -468,17 +464,32 @@ async def _seed_request_logs(db) -> None:
         rows = [
             # alice (owner) — two calls on token 1.
             RequestLog(
-                user_sub="user-1", token_id=1, model="deepseek-chat",
-                success=True, prompt_tokens=5, completion_tokens=2, total_tokens=7,
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                success=True,
+                prompt_tokens=5,
+                completion_tokens=2,
+                total_tokens=7,
             ),
             RequestLog(
-                user_sub="user-1", token_id=1, model="deepseek-chat",
-                success=False, prompt_tokens=3, completion_tokens=0, total_tokens=3,
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                success=False,
+                prompt_tokens=3,
+                completion_tokens=0,
+                total_tokens=3,
             ),
             # bob (member) — one call on token 2.
             RequestLog(
-                user_sub="user-2", token_id=2, model="gpt-4o",
-                success=True, prompt_tokens=10, completion_tokens=4, total_tokens=14,
+                user_sub="user-2",
+                token_id=2,
+                model="gpt-4o",
+                success=True,
+                prompt_tokens=10,
+                completion_tokens=4,
+                total_tokens=14,
             ),
         ]
         for r in rows:
@@ -542,15 +553,25 @@ async def _seed_internal_and_dated_logs(db) -> None:
         # Internal token exchange: no user, no token, synthetic model.
         session.add(
             RequestLog(
-                user_sub=None, token_id=None, model="<cc-exchange-token>",
-                success=True, prompt_tokens=0, completion_tokens=0, total_tokens=0,
+                user_sub=None,
+                token_id=None,
+                model="<cc-exchange-token>",
+                success=True,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
             )
         )
         # A real request from a year ago (outside a "recent" window).
         session.add(
             RequestLog(
-                user_sub="user-1", token_id=1, model="deepseek-chat",
-                success=True, prompt_tokens=1, completion_tokens=1, total_tokens=2,
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                success=True,
+                prompt_tokens=1,
+                completion_tokens=1,
+                total_tokens=2,
                 ts=dt.datetime.now(dt.UTC) - dt.timedelta(days=365),
             )
         )
@@ -621,23 +642,40 @@ async def test_admin_stats_24h_metrics(client, db, seeded):
     async with db.session() as session:
         session.add(
             RequestLog(
-                user_sub="user-1", token_id=1, model="deepseek-chat",
-                success=True, stream=True, first_token_ms=250.0,
-                prompt_tokens=10, completion_tokens=20, total_tokens=30,
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                success=True,
+                stream=True,
+                first_token_ms=250.0,
+                prompt_tokens=10,
+                completion_tokens=20,
+                total_tokens=30,
             )
         )
         session.add(
             RequestLog(
-                user_sub="user-1", token_id=1, model="deepseek-chat",
-                success=True, stream=False, first_token_ms=None,
-                prompt_tokens=5, completion_tokens=5, total_tokens=10,
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                success=True,
+                stream=False,
+                first_token_ms=None,
+                prompt_tokens=5,
+                completion_tokens=5,
+                total_tokens=10,
             )
         )
         session.add(
             RequestLog(
-                user_sub="user-1", token_id=1, model="deepseek-chat",
-                success=False, stream=False,
-                prompt_tokens=0, completion_tokens=0, total_tokens=0,
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                success=False,
+                stream=False,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
             )
         )
 
@@ -678,7 +716,7 @@ async def test_request_log_stream_pushes_new_rows(db, seeded):
 
     # The pre-existing matching row is pushed immediately.
     first = await asyncio.wait_for(events.__anext__(), timeout=2)
-    payload = _json.loads(first[len("data: "):])
+    payload = _json.loads(first[len("data: ") :])
     assert payload["model"] == "deepseek-chat"
 
     # A new row written while the stream is open is picked up on the next poll.
@@ -686,7 +724,7 @@ async def test_request_log_stream_pushes_new_rows(db, seeded):
         session.add(RequestLog(user_sub="user-1", model="deepseek-chat", success=True))
         await session.commit()
     second = await asyncio.wait_for(events.__anext__(), timeout=2)
-    payload = _json.loads(second[len("data: "):])
+    payload = _json.loads(second[len("data: ") :])
     assert payload["model"] == "deepseek-chat"
 
     await events.aclose()
@@ -710,8 +748,11 @@ async def test_request_log_stream_does_not_flood_history_on_connect(db, seeded):
         for _ in range(5):
             session.add(
                 RequestLog(
-                    user_sub="user-1", model="deepseek-chat", success=True,
-                    req_status="completed", finished_at=_utcnow(),
+                    user_sub="user-1",
+                    model="deepseek-chat",
+                    success=True,
+                    req_status="completed",
+                    finished_at=_utcnow(),
                 )
             )
         await session.commit()
@@ -726,7 +767,7 @@ async def test_request_log_stream_does_not_flood_history_on_connect(db, seeded):
         session.add(RequestLog(user_sub="user-1", model="deepseek-chat", success=True))
         await session.commit()
     first = await asyncio.wait_for(events.__anext__(), timeout=2)
-    payload = _json.loads(first[len("data: "):])
+    payload = _json.loads(first[len("data: ") :])
     assert payload["model"] == "deepseek-chat"
     await events.aclose()
 
@@ -749,8 +790,11 @@ async def test_request_log_stream_repushes_pending_row_on_finalise(db, seeded):
         # A row that will be pending when the stream first sees it.
         session.add(
             RequestLog(
-                user_sub="user-1", model="deepseek-chat", success=True,
-                req_status="pending", finished_at=None,
+                user_sub="user-1",
+                model="deepseek-chat",
+                success=True,
+                req_status="pending",
+                finished_at=None,
             )
         )
         await session.commit()
@@ -760,21 +804,21 @@ async def test_request_log_stream_repushes_pending_row_on_finalise(db, seeded):
     events = _stream_request_log_events(db, filters, "user-1", poll_seconds=0.05)
 
     first = await asyncio.wait_for(events.__anext__(), timeout=2)
-    payload = _json.loads(first[len("data: "):])
+    payload = _json.loads(first[len("data: ") :])
     assert payload["req_status"] == "pending"
 
     # Finalise the pending row while the stream is open → re-pushed.
     async with db.session() as session:
         row = (
-            await session.execute(
-                _select(RequestLog).where(RequestLog.req_status == "pending")
-            )
-        ).scalars().one()
+            (await session.execute(_select(RequestLog).where(RequestLog.req_status == "pending")))
+            .scalars()
+            .one()
+        )
         row.req_status = "completed"
         row.finished_at = _utcnow()
         await session.commit()
     second = await asyncio.wait_for(events.__anext__(), timeout=2)
-    payload = _json.loads(second[len("data: "):])
+    payload = _json.loads(second[len("data: ") :])
     assert payload["req_status"] == "completed"
 
     await events.aclose()
@@ -802,7 +846,7 @@ async def test_request_log_stream_scopes_members_and_honours_filters(db, seeded)
     filters = _request_log_filters(owner, model="deepseek-chat")
     events = _stream_request_log_events(db, filters, "user-1", poll_seconds=0.05)
     first = await asyncio.wait_for(events.__anext__(), timeout=2)
-    payload = _json.loads(first[len("data: "):])
+    payload = _json.loads(first[len("data: ") :])
     assert payload["model"] == "deepseek-chat"
     await events.aclose()
 
@@ -817,19 +861,19 @@ async def test_request_log_stream_scopes_members_and_honours_filters(db, seeded)
         session.add(RequestLog(user_sub="user-1", model="deepseek-chat", success=True))
         await session.commit()
     got = await asyncio.wait_for(events.__anext__(), timeout=2)
-    payload = _json.loads(got[len("data: "):])
+    payload = _json.loads(got[len("data: ") :])
     assert payload["model"] == "deepseek-chat"
     await events.aclose()
 
 
 async def test_request_log_stream_enforces_per_user_limit(client, db, seeded):
-    """More than ``log_stream_max_connections`` concurrent streams for one user
+    """More than ``sse_max_connections_per_user`` concurrent streams for one user
     are rejected with 429."""
     from voidswitch.api.admin.logs import _acquire_stream_slot, _release_stream_slot
     from voidswitch.services import settings_store
 
     async with db.session() as session:
-        await settings_store.update(session, {"log_stream_max_connections": 1})
+        await settings_store.update(session, {"sse_max_connections_per_user": 1})
 
     # Fill the single slot; the endpoint then rejects a second connection with
     # 429 (returned before streaming starts, so a plain GET works).
@@ -847,7 +891,7 @@ async def test_request_log_stream_enforces_per_user_limit(client, db, seeded):
 
     # Reset so other tests see the default.
     async with db.session() as session:
-        await settings_store.update(session, {"log_stream_max_connections": 2})
+        await settings_store.update(session, {"sse_max_connections_per_user": 2})
 
 
 async def _load_user(db, sub):
@@ -855,9 +899,7 @@ async def _load_user(db, sub):
     from voidswitch.models.db import User
 
     async with db.session() as session:
-        return (
-            await session.execute(_select(User).where(User.sub == sub))
-        ).scalar_one()
+        return (await session.execute(_select(User).where(User.sub == sub))).scalar_one()
 
 
 # --------------------------------------------------------------------------- #
@@ -1039,8 +1081,10 @@ async def test_usage_rollup_records_daily_and_span(db, seeded):
 
     async with db.session() as session:
         daily = (
-            await session.execute(select(UsageDaily).where(UsageDaily.user_sub == "user-1"))
-        ).scalars().all()
+            (await session.execute(select(UsageDaily).where(UsageDaily.user_sub == "user-1")))
+            .scalars()
+            .all()
+        )
         assert len(daily) == 1
         assert daily[0].tokens == 15
         assert daily[0].requests == 2
@@ -1076,9 +1120,7 @@ async def test_log_cleanup_prunes_heatmap_rollups(db, seeded):
             )
         )
         session.add(
-            SessionSpan(
-                session_key="fresh", user_sub="user-1", started_at=today, last_at=today
-            )
+            SessionSpan(session_key="fresh", user_sub="user-1", started_at=today, last_at=today)
         )
         await settings_store.update(session, {"heatmap_retention_days": 365})
 
@@ -1107,30 +1149,40 @@ async def test_request_log_filters_and_options(client, db, seeded):
     async with db.session() as session:
         session.add(
             RequestLog(
-                user_sub="user-1", token_id=1, model="gpt-4o",
-                provider_name="openai", status_code=200, success=True,
+                user_sub="user-1",
+                token_id=1,
+                model="gpt-4o",
+                provider_name="openai",
+                status_code=200,
+                success=True,
                 client_ip="10.0.0.1",
             )
         )
         session.add(
             RequestLog(
-                user_sub="user-1", token_id=1, model="deepseek-chat",
-                provider_name="deepseek", status_code=404, success=False,
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                provider_name="deepseek",
+                status_code=404,
+                success=False,
                 client_ip="192.168.1.5",
             )
         )
         session.add(
             RequestLog(
-                user_sub="user-1", token_id=1, model="deepseek-chat",
-                provider_name="deepseek", status_code=429, success=False,
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                provider_name="deepseek",
+                status_code=429,
+                success=False,
                 client_ip="10.0.0.2",
             )
         )
 
     async def items(**params):
-        r = await client.get(
-            "/api/admin/logs/requests", headers=_session_headers(), params=params
-        )
+        r = await client.get("/api/admin/logs/requests", headers=_session_headers(), params=params)
         assert r.status_code == 200, r.text
         return r.json()["items"]
 
@@ -1168,16 +1220,18 @@ async def test_request_log_time_range_filter(client, db, seeded):
         for offset_h, model in ((-48, "old"), (-1, "recent"), (48, "future")):
             session.add(
                 RequestLog(
-                    user_sub="user-1", token_id=1, model=model,
-                    provider_name="openai", status_code=200, success=True,
+                    user_sub="user-1",
+                    token_id=1,
+                    model=model,
+                    provider_name="openai",
+                    status_code=200,
+                    success=True,
                     ts=base + _dt.timedelta(hours=offset_h),
                 )
             )
 
     async def models(**params):
-        r = await client.get(
-            "/api/admin/logs/requests", headers=_session_headers(), params=params
-        )
+        r = await client.get("/api/admin/logs/requests", headers=_session_headers(), params=params)
         assert r.status_code == 200, r.text
         return {i["model"] for i in r.json()["items"]}
 
@@ -1203,9 +1257,7 @@ async def test_audit_ip_ua_substring_and_glob(client, db, seeded):
         session.add(
             AuditLog(action="x.a", scope="admin", ip="10.0.0.1", user_agent="Mozilla/5.0 Chrome")
         )
-        session.add(
-            AuditLog(action="x.b", scope="admin", ip="192.168.1.5", user_agent="curl/8.0")
-        )
+        session.add(AuditLog(action="x.b", scope="admin", ip="192.168.1.5", user_agent="curl/8.0"))
 
     # Glob on IP (prefix).
     by_ip = await _audit_items(client, ip="10.0.*")
@@ -1227,14 +1279,16 @@ async def test_audit_user_agent_captured_from_request(client, db, seeded):
 
     # An audit action that does NOT pass ``user_agent`` (e.g. AUTH_LOGOUT, or the
     # owner's reveal flow) must still capture the UA from the request context.
-    await client.post("/api/auth/logout", headers=_session_headers(headers={"user-agent": "curl/8.4.0"}))
+    await client.post(
+        "/api/auth/logout", headers=_session_headers(headers={"user-agent": "curl/8.4.0"})
+    )
 
     async with db.session() as session:
         rows = (
-            await session.execute(
-                _select(AuditLog).where(AuditLog.action == "auth.logout")
-            )
-        ).scalars().all()
+            (await session.execute(_select(AuditLog).where(AuditLog.action == "auth.logout")))
+            .scalars()
+            .all()
+        )
     assert rows, "expected an audit row for the logout"
     assert rows[0].user_agent == "curl/8.4.0"
     assert rows[0].ip is not None

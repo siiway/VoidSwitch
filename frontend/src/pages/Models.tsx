@@ -48,6 +48,7 @@ import type {
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import { BRAND_KEYS, getBrandIcon, resolveBrandKey } from "../components/brand_icons";
+import { useModelHealth } from "../lib/useModelHealth";
 import {
   ErrorText,
   Loading,
@@ -336,6 +337,7 @@ export function Models() {
   const navigate = useNavigate();
   const { isStaff } = useAuth();
   const catalog = useAsync<ModelEntry[]>(() => api.get("/api/models"));
+  const modelHealth = useModelHealth();
   const roleGroups = useAsync<RoleGroup[]>(() =>
     isStaff ? api.get("/api/admin/role-groups") : Promise.resolve([]),
   );
@@ -837,19 +839,20 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
     setSaving(true);
     try {
       await api.put("/api/models", payload);
-      // If a provider+upstream was picked, create the first route layer.
+      // If a provider+upstream was picked, create the first route candidate.
       if (create.provider_id && create.upstream_model.trim()) {
         try {
           await api.put(`/api/models/${encodeURIComponent(modelId)}/route`, {
-            layers: [{
-              max_attempts: 1,
-              entries: [{
+            upstream_select_mode: "",
+            upstream_rank_algorithm: "",
+            max_upstream_attempts: 0,
+            upstream_all_cooled_behavior: "",
+            upstreams: [{
                 provider_id: Number(create.provider_id),
                 upstream_model: create.upstream_model.trim(),
                 weight: 1,
                 enabled: true,
                 key_pool: "",
-              }],
             }],
           });
         } catch {
@@ -1233,6 +1236,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                 {!isCollapsed && (
                   <div className={styles.grid}>
                     {g.models.map((m) => {
+                      const health = modelHealth[m.model_id];
                       const hasConfig =
                         m.opencode_config && Object.keys(m.opencode_config).length > 0;
                       return (
@@ -1267,6 +1271,19 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                           </Text>
 
                           <div className={styles.badges}>
+                            {health && (
+                              <Tooltip
+                                content={`${health.best_success_rate == null ? "--" : `${(health.best_success_rate * 100).toFixed(1)}%`} · ${health.best_ttft_ms == null ? "--" : `${Math.round(health.best_ttft_ms)} ms`}`}
+                                relationship="description"
+                              >
+                                <Badge
+                                  appearance="tint"
+                                  color={health.status === "healthy" ? "success" : health.status === "unavailable" ? "danger" : health.status === "degraded" ? "warning" : "informative"}
+                                >
+                                  {t(`models.health.${health.status}` as TK)}
+                                </Badge>
+                              </Tooltip>
+                            )}
                             {!m.enabled && (
                               <Badge appearance="filled" color="subtle">
                                 {t("models.unavailableHidden" as TK)}

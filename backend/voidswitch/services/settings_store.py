@@ -27,6 +27,7 @@ _RENAMED_KEYS: dict[str, str] = {
     # ``proxy_resurrector_enabled`` grew from "re-enable recovered proxies" into
     # a full proxy health-check master switch (probe + auto-disable + auto-enable).
     "proxy_resurrector_enabled": "proxy_health_check_enabled",
+    "log_stream_max_connections": "sse_max_connections_per_user",
 }
 
 # Settings keys that were removed outright. Any stored rows are deleted on boot

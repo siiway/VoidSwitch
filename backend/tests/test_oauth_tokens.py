@@ -122,7 +122,11 @@ async def test_refresh_uses_static_proxy_and_records_request_log(db):
         mock.post(oauth_tokens.TOKEN_URL).mock(
             return_value=httpx.Response(
                 200,
-                json={"access_token": "new-access", "refresh_token": "refresh-2", "expires_in": 3600},
+                json={
+                    "access_token": "new-access",
+                    "refresh_token": "refresh-2",
+                    "expires_in": 3600,
+                },
             )
         )
         async with db.session() as session:
@@ -655,7 +659,7 @@ async def test_dispatch_oauth_401_forces_refresh_and_retries(db):
     await _add_default_node(db, "http://127.0.0.1:38081")
 
     # Expose the dispatched model with a 1:1 route to the claude-code provider.
-    from voidswitch.models.db import ExposedModel, Route, RouteLayer, RoutePoolEntry
+    from voidswitch.models.db import ExposedModel, Route, RouteUpstream
 
     async with db.session() as session:
         exposed = ExposedModel(model_id="claude-3-5-sonnet")
@@ -664,12 +668,9 @@ async def test_dispatch_oauth_401_forces_refresh_and_retries(db):
         route = Route(exposed_model_id=exposed.id)
         session.add(route)
         await session.flush()
-        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
-        session.add(layer)
-        await session.flush()
         session.add(
-            RoutePoolEntry(
-                layer_id=layer.id,
+            RouteUpstream(
+                route_id=route.id,
                 provider_id=provider_id,
                 upstream_model="claude-3-5-sonnet",
             )

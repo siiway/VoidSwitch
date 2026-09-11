@@ -105,6 +105,7 @@ class AuditAction(StrEnum):
     MODEL_UPSERT = "model.upsert"
     MODEL_BATCH_UPDATE = "model.batch_update"
     MODEL_SYNC = "model.sync"
+    UPSTREAM_COOLDOWN_CLEAR = "upstream.cooldown.clear"
     MODEL_CLEAN_UNSERVED = "model.clean_unserved"
     MODEL_DELETE = "model.delete"
 

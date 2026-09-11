@@ -163,7 +163,7 @@ class ExposedModel(Base, TimestampMixin):
 
     ``model_id`` is the public id (e.g. ``fast-coder``, ``astr-chat``). It has
     no direct link to a specific provider: dispatcher routing resolves it through
-    :class:`Route` → :class:`RouteLayer` → :class:`RoutePoolEntry` to reach the
+    :class:`Route` → :class:`RouteUpstream` to reach the
     real upstream (``slug/model`` refs which are never advertised). Structured
     metadata fields here feed the OpenCode plugin config block and the
     ``/v1/models`` payload. Field precedence when building the downstream config:
@@ -219,12 +219,7 @@ class ExposedModel(Base, TimestampMixin):
 
 
 class Route(Base, TimestampMixin):
-    """The dispatch flowchart for one exposed model.
-
-    Top of the flow is the user-requested model; below it sit ordered
-    :class:`RouteLayer` fallback pools (position 0 first). Each layer is a pool
-    of upstream :class:`RoutePoolEntry` refs tried with weighted randomness.
-    """
+    """Dynamic dispatch policy for one exposed model."""
 
     __tablename__ = "routes"
 
@@ -232,64 +227,74 @@ class Route(Base, TimestampMixin):
     exposed_model_id: Mapped[int] = mapped_column(
         ForeignKey("exposed_models.id", ondelete="CASCADE"), unique=True, index=True
     )
+    upstream_select_mode: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    upstream_rank_algorithm: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    max_upstream_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    upstream_all_cooled_behavior: Mapped[str] = mapped_column(
+        String(32), default="", server_default=""
+    )
 
     exposed_model: Mapped[ExposedModel] = relationship(back_populates="route", lazy="selectin")
-    layers: Mapped[list[RouteLayer]] = relationship(
+    upstreams: Mapped[list[RouteUpstream]] = relationship(
         back_populates="route",
         cascade="all, delete-orphan",
         lazy="selectin",
-        order_by="RouteLayer.position",
+        order_by="RouteUpstream.position",
     )
 
 
-class RouteLayer(Base):
-    """One fallback pool of a route flowchart (ordered by ``position``).
+class RouteUpstream(Base):
+    """One independently scored provider/model candidate in a route."""
 
-    ``max_attempts`` is how many of this layer's entries are tried (in weighted
-    order) before falling through to the next layer: 1 = pick one at random;
-    >1 = try up to that many (all entries if attempts ≥ entry count).
-    """
-
-    __tablename__ = "route_layers"
+    __tablename__ = "route_upstreams"
+    __table_args__ = (
+        UniqueConstraint(
+            "route_id", "provider_id", "upstream_model", "key_pool", name="uq_route_upstream"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     route_id: Mapped[int] = mapped_column(ForeignKey("routes.id", ondelete="CASCADE"), index=True)
-    position: Mapped[int] = mapped_column(Integer, default=0)
-    max_attempts: Mapped[int] = mapped_column(Integer, default=1)
-
-    route: Mapped[Route] = relationship(back_populates="layers", lazy="selectin")
-    entries: Mapped[list[RoutePoolEntry]] = relationship(
-        back_populates="layer",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-        order_by="RoutePoolEntry.id",
-    )
-
-
-class RoutePoolEntry(Base):
-    """One upstream reference inside a route layer pool.
-
-    Points at a provider (by id) and the exact ``upstream_model`` it should be
-    called with (provider slug + model, e.g. ``deepseek/deepseek-v4-flash``).
-    ``key_pool`` optionally restricts dispatch to keys carrying that pool tag.
-    """
-
-    __tablename__ = "route_pool_entries"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    layer_id: Mapped[int] = mapped_column(
-        ForeignKey("route_layers.id", ondelete="CASCADE"), index=True
-    )
     provider_id: Mapped[int | None] = mapped_column(
         ForeignKey("providers.id", ondelete="SET NULL"), default=None, index=True
     )
     upstream_model: Mapped[str] = mapped_column(String(255), default="")
+    position: Mapped[int] = mapped_column(Integer, default=0)
     weight: Mapped[int] = mapped_column(Integer, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     key_pool: Mapped[str] = mapped_column(String(64), default="")
+    cooldown_status_codes: Mapped[list[int]] = mapped_column(
+        JSON, default=list, server_default="[]"
+    )
+    cooldown_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
-    layer: Mapped[RouteLayer] = relationship(back_populates="entries", lazy="selectin")
+    route: Mapped[Route] = relationship(back_populates="upstreams", lazy="selectin")
     provider: Mapped[Provider | None] = relationship(lazy="joined")
+
+
+class UpstreamCooldown(Base, TimestampMixin):
+    """Platform-wide cooldown for a provider/model/key-pool tuple."""
+
+    __tablename__ = "upstream_cooldowns"
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", "upstream_model", "key_pool", name="uq_upstream_cooldown"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider_id: Mapped[int] = mapped_column(
+        ForeignKey("providers.id", ondelete="CASCADE"), index=True
+    )
+    upstream_model: Mapped[str] = mapped_column(String(255), default="")
+    key_pool: Mapped[str] = mapped_column(String(64), default="")
+    until: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), index=True)
+    reason: Mapped[str | None] = mapped_column(String(255), default=None)
+    trigger_status: Mapped[int] = mapped_column(Integer, default=0)
+    trigger_source: Mapped[str] = mapped_column(String(32), default="global")
+    triggered_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    consecutive_trips: Mapped[int] = mapped_column(Integer, default=0)
+    last_success_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
 
 
 class Provider(Base, TimestampMixin):
@@ -381,6 +386,17 @@ class Provider(Base, TimestampMixin):
     # Whitelist of passthrough model ids: each entry is a string like "model-id",
     # "model-id @ pool", "exposed-id => model-id", or "exposed-id => model-id @ pool".
     passthrough_models: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # Optional health-policy overrides. Null/zero values inherit global settings.
+    upstream_cooldown_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    upstream_cooldown_status_codes: Mapped[list[int]] = mapped_column(
+        JSON, default=list, server_default="[]"
+    )
+    upstream_retry_after_headers: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default="[]"
+    )
+    upstream_max_keys_per_attempt: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
 
     keys: Mapped[list[ApiKey]] = relationship(
         back_populates="provider", cascade="all, delete-orphan", lazy="selectin"

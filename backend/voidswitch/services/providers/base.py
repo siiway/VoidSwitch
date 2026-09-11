@@ -28,6 +28,7 @@ class ErrorClass(StrEnum):
     KEY_INVALID = "key_invalid"
     INSUFFICIENT_BALANCE = "insufficient_balance"
     RATE_LIMITED = "rate_limited"
+    UPSTREAM_OVERLOADED = "upstream_overloaded"
     # The model does not exist at this upstream — a *routable* failure: the
     # dispatcher must fall through to the next upstream/pool instead of surfacing
     # a 404 to the client (an exposed model may be routeable to another provider).
@@ -186,6 +187,8 @@ class BaseProvider:
             return ErrorClass.NOT_FOUND
         if status_code == 429:
             return ErrorClass.RATE_LIMITED
+        if status_code in (503, 529):
+            return ErrorClass.UPSTREAM_OVERLOADED
         if status_code in (408, 409, 425) or status_code >= 500:
             return ErrorClass.SERVER_ERROR
         if 400 <= status_code < 500:

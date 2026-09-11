@@ -24,8 +24,7 @@ from voidswitch.models.db import (
     Node,
     Provider,
     Route,
-    RouteLayer,
-    RoutePoolEntry,
+    RouteUpstream,
     User,
     VoidToken,
 )
@@ -112,12 +111,9 @@ async def seeded(db: Database):
         route = Route(exposed_model_id=exposed.id)
         session.add(route)
         await session.flush()
-        layer = RouteLayer(route_id=route.id, position=0, max_attempts=1)
-        session.add(layer)
-        await session.flush()
         session.add(
-            RoutePoolEntry(
-                layer_id=layer.id,
+            RouteUpstream(
+                route_id=route.id,
                 provider_id=provider.id,
                 upstream_model="deepseek-chat",
             )

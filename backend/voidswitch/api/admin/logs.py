@@ -706,37 +706,20 @@ _STREAM_BATCH = 100
 # proxies/load balancers aren't silently dropped.
 _STREAM_HEARTBEAT_SECONDS = 15.0
 
-# Active streams per user (in-process; a small module-level dict guarded by a
-# lock). Enforces the per-user connection cap without touching the hot request
-# path — this registry is only touched on connect/disconnect.
-_stream_lock = asyncio.Lock()
-_stream_active: dict[str, int] = {}
-
 
 async def _acquire_stream_slot(user_sub: str, max_streams: int) -> None:
     """Reserve one live-stream slot for ``user_sub``, raising 429 when the
     per-user cap is reached. Must be paired with a matching ``_release_stream``
     (the stream generator's ``finally``)."""
-    if max_streams <= 0:
-        return
-    async with _stream_lock:
-        active = _stream_active.get(user_sub, 0)
-        if active >= max_streams:
-            raise HTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                f"Too many active live-log streams (limit {max_streams}). "
-                "Close another live view and try again.",
-            )
-        _stream_active[user_sub] = active + 1
+    from voidswitch.core import sse
+
+    await sse.acquire(user_sub, max_streams)
 
 
 async def _release_stream_slot(user_sub: str) -> None:
-    async with _stream_lock:
-        active = _stream_active.get(user_sub, 0)
-        if active <= 1:
-            _stream_active.pop(user_sub, None)
-        else:
-            _stream_active[user_sub] = active - 1
+    from voidswitch.core import sse
+
+    await sse.release(user_sub)
 
 
 @router.get("/requests/stream")
@@ -775,10 +758,10 @@ async def request_log_stream(
     than hooking the dispatcher's hot path, so it adds no per-request overhead
     and stays correct even when request-log rows are written by another worker.
 
-    Per-user concurrency is capped by the ``log_stream_max_connections`` setting
+    Per-user concurrency is capped by the shared ``sse_max_connections_per_user`` setting
     (default 2); exceeding it returns ``429``.
     """
-    max_streams = settings_store.get_int("log_stream_max_connections", 2)
+    max_streams = settings_store.get_int("sse_max_connections_per_user", 2)
     await _acquire_stream_slot(user.sub, max_streams)
     visible_subs = (
         await _visible_user_subs_for(session, user)

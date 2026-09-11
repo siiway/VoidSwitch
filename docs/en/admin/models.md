@@ -8,24 +8,25 @@ The **Models** page is visible to everyone, but staff can manage it. See the
 The **Models** page lists **exposed models** (e.g. `fast-coder`, `astr-chat`) — the **only** ids
 users/clients ever see. Upstream model ids (e.g. `deepseek/deepseek-chat`) are never advertised.
 
-Each exposed model has a **route flowchart**:
+Each exposed model route directly contains a set of upstream candidates. VoidSwitch dynamically ranks
+them from call success rate, time to first token, and consecutive failures instead of using static layers.
+Routes can always choose the best upstream, balance among the best candidates, or pin a conversation to
+either choice. Weight only affects balancing and score ties.
 
-- The top is the **exposed model** itself;
-- below it are ordered **layers** (fallback pools);
-- each layer is a **pool** of upstream entries (provider + upstream model + weight), with a per-layer
-  **max attempts** (`max_attempts`; `1` = pick one, `>1` = try several).
+429, 529, configured 5xx responses, and network errors can cool an upstream down. Cooldowns are shared
+platform-wide by provider, upstream model, and key pool, so every exposed model referencing that same
+upstream avoids it. Retry-After/provider retry headers take precedence over route, provider, and global
+fallback cooldowns. Key rate limiting and upstream cooldown are separate states.
 
-Failures eligible for fallback (429 rate-limit / 404 model-not-found / 5xx) move down the flow / to the
-next upstream; a **400** (client error) is returned as-is; a response definitively out of quota disables
-that upstream key.
-
-Route flowcharts are edited on a **dedicated page**: top model → layer pools → upstreams.
+The Models page receives live health over SSE and labels every visible model Healthy, Degraded,
+Unavailable, or Learning. Staff see per-upstream success, TTFT, and cooldown details on the route page;
+owners can clear a cooldown manually.
 
 ## Creating models
 
 Staff can click **Create model** to register a new `model_id` (leave the display name
 empty and a placeholder is auto-generated from the `model_id`). Optionally, pick a
-**provider + upstream model** to pre-fill the first route layer. A group can be
+**provider + upstream model** to pre-fill the first upstream candidate. A group can be
 assigned at creation time (the **Create group** button sits between **Clean up unserved**
 and **Create model** at the top of the page).
 

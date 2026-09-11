@@ -1004,10 +1004,8 @@ async def test_node_group_routes_rank_and_direct_fallback():
 
 
 async def test_key_pool_selection_and_route_entries():
-    import random
-
-    from voidswitch.models.db import ApiKey, ExposedModel, Provider, RouteLayer, RoutePoolEntry
-    from voidswitch.services.model_routing import build_opencode_config, weighted_entries
+    from voidswitch.models.db import ApiKey, ExposedModel, Provider
+    from voidswitch.services.model_routing import build_opencode_config
     from voidswitch.services.selector import select_keys
 
     # Key-pool selection: a route entry's key_pool restricts dispatch to keys
@@ -1031,25 +1029,6 @@ async def test_key_pool_selection_and_route_entries():
     assert [k.key_hash for k in select_keys(prov, "leaked")] == ["leaked-1"]
     assert [k.key_hash for k in select_keys(prov, "members")] == ["member-1"]
     assert {k.key_hash for k in select_keys(prov, "")} == {"leaked-1", "member-1"}
-
-    # weighted_entries: disabled entries and missing/disabled providers are
-    # dropped up front; the remainder is emitted in a non-repeating order.
-    provider = Provider(name="p", type="openai", enabled=True, models=["*"])
-    provider.id = 9
-    layer = RouteLayer(position=0, max_attempts=2)
-    e1 = RoutePoolEntry(layer=layer, provider_id=9, upstream_model="m1", weight=1, enabled=True)
-    e1.provider = provider
-    e2 = RoutePoolEntry(layer=layer, provider_id=9, upstream_model="m2", weight=1, enabled=True)
-    e2.provider = provider
-    disabled = RoutePoolEntry(
-        layer=layer, provider_id=9, upstream_model="m3", weight=1, enabled=False
-    )
-    disabled.provider = provider
-    layer.entries = [e1, e2, disabled]
-    ordered = weighted_entries(layer, rng=random.Random(0))
-    assert {e.upstream_model for e in ordered} == {"m1", "m2"}
-    assert len(ordered) == 2
-    assert disabled not in ordered
 
     # build_opencode_config precedence: structured fields > custom config >
     # models.dev placeholder.
@@ -1983,15 +1962,15 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
             "users",
             "exposed_models",
             "routes",
-            "route_layers",
-            "route_pool_entries",
+            "route_upstreams",
+            "upstream_cooldowns",
             "providers",
             "api_keys",
             "node_groups",
             "node_group_members",
             "request_logs",
         } <= tables
-        assert ver == "e5f2a9c1b3d7"  # the current head
+        assert ver == "f6a3b8c2d1e4"  # the current head
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()

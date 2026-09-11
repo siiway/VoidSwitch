@@ -2,6 +2,7 @@ import type { Translations } from "./en";
 
 const zh: Translations = {
   common: {
+    default: "跟随全局",
     loading: "加载中…",
     cancel: "取消",
     confirm: "确认",
@@ -485,6 +486,21 @@ const zh: Translations = {
     importSummary: "已导入 {{imported}} 个，重复 {{duplicates}} 个，跳过 {{unusable}} 个",
   },
   models: {
+    upstreamSelectMode: "上游选择策略",
+    upstreamRankAlgorithm: "评分算法",
+    maxUpstreamAttempts: "最大上游尝试数（0 = 不限制）",
+    allCooledBehavior: "所有上游均在冷却时",
+    successRate: "成功率",
+    ttft: "首字时间",
+    clearCooldown: "解除冷却",
+    cooldownCleared: "已解除上游冷却",
+    healthLearning: "学习中",
+    health: {
+      healthy: "健康",
+      degraded: "降级",
+      unavailable: "不可用",
+      learning: "学习中",
+    },
     title: "模型",
     subtitle: "平台上所有可用的模型",
     sync: "从提供商同步",
@@ -865,6 +881,7 @@ const zh: Translations = {
     logCleanupInterval: "日志清理间隔（秒）",
     logsPageSize: "日志分页数量（每页行数）",
     logStreamMaxConnections: "每个用户同时连接的实时日志流上限（0 = 不限制）",
+    sseMaxConnectionsPerUser: "每个用户同时连接的实时 SSE 上限（0 = 不限制）",
     proxySwitchingEnabled: "启用代理切换（关闭后始终使用下方静态代理）",
     staticProxyUrl: "静态代理 URL（关闭切换时使用；留空 = 按环境配置）",
     testStaticProxy: "测试代理",
@@ -900,6 +917,7 @@ const zh: Translations = {
     sectionProxy: "代理与路由",
     sectionKeys: "密钥与余额",
     sectionRateLimit: "限流",
+    sectionUpstreamRouting: "上游路由",
     sectionTimeouts: "超时与重试",
     sectionSession: "登录与会话",
     sectionLogs: "日志与保留",
