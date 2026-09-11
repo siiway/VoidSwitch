@@ -58,6 +58,25 @@ class BaseProvider:
     # implementation set this True.
     supports_refresh: bool = False
 
+    # -- Upstream protocol constraints (capabilities) --------------------- #
+    # The wire protocol the upstream speaks may be narrower than what the
+    # client asked for. These flags decouple the *client* contract from the
+    # *upstream* contract:
+    #
+    # ``upstream_requires_streaming``
+    #     The endpoint only speaks SSE (e.g. the ChatGPT Codex backend at
+    #     ``/backend-api/codex/responses``). The dispatcher always sends
+    #     ``stream: true`` upstream; a client asking for ``stream: false``
+    #     gets the upstream stream consumed and folded into a single JSON
+    #     response instead.
+    # ``upstream_requires_store_false``
+    #     The endpoint rejects ``store: true`` (Codex replies
+    #     ``400 {"detail": "Store must be set to false"}``). The request
+    #     pipeline force-sets ``store: false`` regardless of what the client
+    #     (or a generic transformer default) produced.
+    upstream_requires_streaming: bool = False
+    upstream_requires_store_false: bool = False
+
     # Whether the dashboard offers an interactive OAuth sign-in panel for this
     # provider type (e.g. Claude Code, Grok Build). Backed by an oauth module
     # exposing begin_login/complete_login (see api/admin/keys.py).
@@ -121,6 +140,16 @@ class BaseProvider:
 
         Default is a no-op. Adapters override this to inject provider-specific
         requirements (e.g. the Claude Code identity system prompt for OAuth).
+        """
+        return body
+
+    def aggregate_stream_body(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Second hook, applied only when a ``stream=false`` client request is
+        being served by aggregating a mandatory streaming upstream
+        (``upstream_requires_streaming``).
+
+        Lets an adapter describe the folded reply (e.g. marking it
+        ``store: false``). Default is a no-op.
         """
         return body
 

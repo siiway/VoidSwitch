@@ -607,6 +607,13 @@ async def anthropic_stream_to_openai(
                     "total_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
                 }
             yield _data(chunk)
+        elif etype == "error":
+            # Anthropic signals stream failures as an ``error`` event followed by
+            # EOF — without surfacing it, aggregation would mistake a failed
+            # generation for a completed one.
+            err = payload.get("error")
+            message = err.get("message") if isinstance(err, dict) else None
+            raise UpstreamStreamError(str(message) or "upstream stream error")
         elif etype == "message_stop":
             break
 
@@ -1714,3 +1721,265 @@ async def responses_stream_to_openai(
         final_chunk["usage"] = usage_chunk
     yield _data(final_chunk)
     yield b"data: [DONE]\n\n"
+
+
+# --------------------------------------------------------------------------- #
+# SSE -> JSON aggregation (for streaming-only upstreams)
+# --------------------------------------------------------------------------- #
+#
+# Some upstreams (the ChatGPT Codex backend at ``/backend-api/codex/responses``)
+# only speak SSE, so a client asking for ``stream: false`` still requires a
+# streaming request upstream whose events are folded back into a single JSON
+# response here. This is a faithful event fold — never a raw SSE text concat.
+# The accumulated state lives only for the duration of the request.
+
+
+class UpstreamStreamError(Exception):
+    """The upstream signalled a failure inside an otherwise-200 SSE stream
+    (a Responses ``error`` / ``response.failed`` event, or an Anthropic
+    ``error`` event)."""
+
+
+def _event_error_message(payload: dict[str, Any]) -> str | None:
+    """Extract a human-readable message from a Responses error-ish event."""
+    candidates: list[Any] = []
+    if isinstance(payload.get("response"), dict):
+        candidates.extend((payload["response"].get("error"), payload["response"].get("message")))
+    candidates.extend((payload.get("error"), payload.get("message")))
+    for cand in candidates:
+        if isinstance(cand, dict):
+            message = cand.get("message") or cand.get("code")
+            if message:
+                return str(message)
+        elif isinstance(cand, str) and cand:
+            return cand
+    return None
+
+
+async def responses_events_to_response(
+    stream: AsyncIterator[bytes], *, model: str
+) -> dict[str, Any]:
+    """Fold a Responses SSE event stream into a single Response object.
+
+    The terminal ``response.completed`` / ``response.incomplete`` /
+    ``response.failed`` event carries the full object — that is the truth when
+    present, because it preserves every output item (reasoning, function calls,
+    web calls, …) verbatim. When the terminal object is missing pieces (a few
+    backends send a sparse one), the items already delivered through
+    ``response.output_item.done`` events and the delta-assembled text are
+    merged in as a fallback. An ``error`` event, or EOF before the terminal
+    event, raises :class:`UpstreamStreamError`.
+    """
+    terminal: dict[str, Any] | None = None
+    failed_message: str | None = None
+    done_items: dict[int, dict[str, Any]] = {}
+    item_ids: dict[int, str] = {}
+    text_parts: dict[tuple[str, int], list[str]] = {}
+
+    async for event, data in iter_sse(stream):
+        if not data or data == "[DONE]":
+            continue
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            # Malformed frames are dropped; a real failure surfaces via the
+            # error event or the missing terminal event.
+            continue
+        etype = event or payload.get("type")
+
+        if etype == "response.output_item.added":
+            item = payload.get("item")
+            if isinstance(item, dict) and item.get("id"):
+                item_ids[payload.get("output_index", 0)] = str(item["id"])
+        elif etype == "response.output_text.delta":
+            item_id = str(
+                payload.get("item_id") or item_ids.get(payload.get("output_index", 0), "")
+            )
+            delta = payload.get("delta")
+            if isinstance(delta, dict):
+                delta = delta.get("text", "")
+            if isinstance(delta, str) and delta:
+                text_parts.setdefault((item_id, payload.get("content_index", 0)), []).append(delta)
+        elif etype == "response.output_item.done":
+            item = payload.get("item")
+            if isinstance(item, dict):
+                done_items[payload.get("output_index", 0)] = item
+        elif etype == "error":
+            raise UpstreamStreamError(_event_error_message(payload) or "upstream stream error")
+        elif etype in ("response.completed", "response.incomplete", "response.failed"):
+            resp = payload.get("response")
+            if isinstance(resp, dict):
+                terminal = resp
+            if etype == "response.failed":
+                failed_message = _event_error_message(payload) or "response failed upstream"
+            break
+
+    if terminal is None:
+        raise UpstreamStreamError(
+            failed_message or "upstream stream ended before a terminal response event"
+        )
+    # A response.failed terminal event is an error regardless of payload shape.
+    if failed_message is not None:
+        raise UpstreamStreamError(failed_message)
+
+    # Merge items folded from the event stream when the terminal object does
+    # not already carry them (sparse terminal payloads).
+    if done_items:
+        merged = [done_items[i] for i in sorted(done_items)]
+        if isinstance(terminal.get("output"), list) and terminal["output"]:
+            by_id = {
+                str(it.get("id")): it for it in merged if isinstance(it, dict) and it.get("id")
+            }
+            merged = [by_id.get(str(it.get("id")), it) for it in terminal["output"]]
+        terminal = {**terminal, "output": merged}
+
+    # Last-resort text fallback for a terminal object with no output at all.
+    if text_parts and not terminal.get("output"):
+        text = "".join(part for key in sorted(text_parts) for part in text_parts[key])
+        if text:
+            terminal = {
+                **terminal,
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                ],
+            }
+
+    terminal.setdefault("object", "response")
+    terminal.setdefault("model", model)
+    return terminal
+
+
+async def openai_events_to_response(stream: AsyncIterator[bytes], *, model: str) -> dict[str, Any]:
+    """Fold a Chat Completions ``chat.completion.chunk`` SSE stream into one
+    ``chat.completion`` object. A chunk carrying an ``error`` field, or EOF
+    before any chunk, raises :class:`UpstreamStreamError`."""
+    resp: dict[str, Any] | None = None
+    contents: dict[int, list[str]] = {}
+    reasonings: dict[int, list[str]] = {}
+    tool_calls: dict[int, dict[int, dict[str, Any]]] = {}
+    finish_reasons: dict[int, str] = {}
+    saw_chunk = False
+
+    def _tool_entry(choice_index: int, tool_index: int) -> dict[str, Any]:
+        return tool_calls.setdefault(choice_index, {}).setdefault(
+            tool_index,
+            {"id": None, "type": "function", "name": "", "arguments": []},
+        )
+
+    async for _event, data in iter_sse(stream):
+        if not data or data == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        saw_chunk = True
+        error = chunk.get("error")
+        if error:
+            message = error.get("message") if isinstance(error, dict) else error
+            raise UpstreamStreamError(str(message) or "upstream stream error")
+        if resp is None:
+            resp = {
+                "id": chunk.get("id"),
+                "object": "chat.completion",
+                "created": chunk.get("created"),
+                "model": chunk.get("model", model),
+            }
+        elif isinstance(chunk.get("model"), str):
+            resp["model"] = chunk["model"]
+        if isinstance(chunk.get("usage"), dict):
+            resp["usage"] = chunk["usage"]
+        for choice in chunk.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            idx = int(choice.get("index", 0))
+            delta = choice.get("delta") or choice.get("message") or {}
+            if not isinstance(delta, dict):
+                continue
+            content = delta.get("content")
+            if isinstance(content, str) and content:
+                contents.setdefault(idx, []).append(content)
+            reasoning = delta.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning:
+                reasonings.setdefault(idx, []).append(reasoning)
+            for call in delta.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                tidx = int(call.get("index", 0))
+                entry = _tool_entry(idx, tidx)
+                if call.get("id"):
+                    entry["id"] = call["id"]
+                if call.get("type"):
+                    entry["type"] = call["type"]
+                fn = call.get("function")
+                if isinstance(fn, dict):
+                    if fn.get("name"):
+                        entry["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        entry["arguments"].append(fn["arguments"])
+            finish = choice.get("finish_reason")
+            if finish:
+                finish_reasons[idx] = str(finish)
+
+    if not saw_chunk or resp is None:
+        raise UpstreamStreamError("upstream stream ended before any chunk")
+
+    indexes = sorted(set(contents) | set(reasonings) | set(tool_calls) | set(finish_reasons))
+    choices: list[dict[str, Any]] = []
+    for idx in indexes or [0]:
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "".join(contents.get(idx, [])) or None,
+        }
+        reasoning_text = "".join(reasonings.get(idx, []))
+        if reasoning_text:
+            message["reasoning_content"] = reasoning_text
+        calls = []
+        for tidx in sorted(tool_calls.get(idx, {})):
+            entry = tool_calls[idx][tidx]
+            calls.append(
+                {
+                    "id": entry["id"] or _gen_id("call"),
+                    "type": entry["type"],
+                    "function": {
+                        "name": entry["name"],
+                        "arguments": "".join(entry["arguments"]),
+                    },
+                }
+            )
+        if calls:
+            message["tool_calls"] = calls
+        choices.append(
+            {
+                "index": idx,
+                "message": message,
+                "finish_reason": finish_reasons.get(idx) or ("tool_calls" if calls else "stop"),
+            }
+        )
+
+    resp["choices"] = choices
+    resp.setdefault("id", _gen_id("chatcmpl"))
+    resp.setdefault("created", int(time.time()))
+    resp.setdefault("model", model)
+    resp.setdefault("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+    return resp
+
+
+async def anthropic_events_to_response(
+    stream: AsyncIterator[bytes], *, model: str
+) -> dict[str, Any]:
+    """Fold an Anthropic Messages SSE stream into one ``message`` object.
+
+    Reuses :func:`anthropic_stream_to_openai` as the event fold (it already
+    understands every Anthropic event, including mid-stream ``error`` events)
+    and folds the resulting chat-completion chunks with
+    :func:`openai_events_to_response`, then reshapes it back.
+    """
+    openai_chunks = anthropic_stream_to_openai(stream, model=model)
+    completion = await openai_events_to_response(openai_chunks, model=model)
+    return openai_response_to_anthropic(completion, model=model)

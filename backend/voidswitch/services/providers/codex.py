@@ -27,6 +27,15 @@ class CodexProvider(OpenAIProvider):
     supports_import = True
     refresh_on_invalid_key = True
 
+    # The ChatGPT Codex backend only speaks SSE and rejects every other shape:
+    # ``stream: false`` or ``store: true`` are answered with HTTP 400
+    # (``{"detail": "Store must be set to false"}``). These constraints are
+    # absolute — they apply no matter what the client (or a generic
+    # transformer default) asked for, so they live on the adapter and are
+    # enforced last, after every other transform.
+    upstream_requires_streaming = True
+    upstream_requires_store_false = True
+
     async def resolve_credential(
         self, session: Any, key: Any, secret_key: str, *, force_refresh: bool = False
     ) -> str:
@@ -45,6 +54,28 @@ class CodexProvider(OpenAIProvider):
         except Exception:
             return None
 
+    # -- Outbound body hook ----------------------------------------------- #
+    def prepare_body(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Enforce the Codex backend's wire contract: ``store: false`` and
+        ``stream: true``, unconditionally.
+
+        This runs last (after style translation and the generic stream
+        handling), so a client-supplied ``store: true`` — or any default
+        injected upstream of the adapter — can never reach chatgpt.com.
+        """
+        body = dict(body)
+        body["store"] = False
+        body["stream"] = True
+        return body
+
+    def aggregate_stream_body(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A ``stream=false`` client got its reply folded from the upstream
+        SSE stream; describe it accordingly (ephemeral, not stored)."""
+        body = dict(body)
+        body["store"] = False
+        return body
+
+    # -- Headers ---------------------------------------------------------- #
     def headers(self, api_key: str, extra: dict[str, str] | None = None) -> dict[str, str]:
         base = {
             "Authorization": f"Bearer {api_key}",

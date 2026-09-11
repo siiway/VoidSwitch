@@ -24,7 +24,7 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from types import SimpleNamespace
@@ -256,6 +256,17 @@ def _translate_stream(
     if inbound == upstream:
         return byte_iter
     return _stream_from_openai(inbound, _stream_to_openai(upstream, byte_iter, model), model)
+
+
+def _aggregate_events(
+    style: ApiStyle, byte_iter: AsyncIterator[bytes], model: str
+) -> Awaitable[dict]:
+    """Fold a style's SSE event stream into a single response object."""
+    if style is ApiStyle.ANTHROPIC:
+        return transform.anthropic_events_to_response(byte_iter, model=model)
+    if style is ApiStyle.OPENAI_RESPONSES:
+        return transform.responses_events_to_response(byte_iter, model=model)
+    return transform.openai_events_to_response(byte_iter, model=model)
 
 
 # --------------------------------------------------------------------------- #
@@ -584,6 +595,12 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 )
 
                 oauth_refreshed = False
+                # The upstream wire protocol may be stricter than the client's
+                # request: when the provider requires streaming, a client asking
+                # for ``stream=false`` is still sent as ``stream=true`` and the
+                # SSE reply is aggregated into a single JSON object.
+                aggregate_stream = bool(adapter.upstream_requires_streaming and not req.stream)
+                upstream_stream = req.stream or aggregate_stream
                 for route_hop, node in routes:
                     if attempts >= max_retries:
                         break
@@ -595,17 +612,31 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                         url=url,
                         headers=headers,
                         body=body,
-                        stream=req.stream,
+                        stream=upstream_stream,
                         connect_timeout=connect_timeout,
-                        read_timeout=stream_idle if req.stream else read_timeout,
+                        read_timeout=stream_idle if upstream_stream else read_timeout,
                         # Non-streaming requests get the total response timeout as a
-                        # hard cap (streams enforce it inside _build_stream).
-                        total_timeout=response_timeout if not req.stream else None,
+                        # hard cap; streams enforce it inside _build_stream, and
+                        # aggregated streams enforce it inside _aggregate_stream.
+                        total_timeout=(response_timeout if not upstream_stream else None),
                         # Streamed requests through a zero-token-retry provider are
                         # spooled until the first real content token, so a degenerate
                         # empty 200 can be retried before anything reaches the client.
-                        spool_first_content=bool(provider.retry_on_zero_token and req.stream),
+                        spool_first_content=bool(provider.retry_on_zero_token and upstream_stream),
                     )
+
+                    if aggregate_stream and outcome.response is not None:
+                        # Consume + fold the streaming reply into one JSON object.
+                        # On a mid-stream failure (error event / EOF before the
+                        # terminal event / transport error) the outcome becomes a
+                        # network error and the normal failover rules apply.
+                        outcome = await _aggregate_stream(
+                            outcome,
+                            adapter,
+                            upstream_model,
+                            total_timeout=response_timeout,
+                            start_mono=outcome.start_mono,
+                        )
 
                     # Remember this attempt for traceability + the debug trail.
                     last_outcome = outcome
@@ -673,7 +704,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                             total = _extract_usage(outcome.body_json, upstream_style)[
                                 "total_tokens"
                             ]
-                            degenerate = outcome.degenerate_empty if req.stream else total == 0
+                            degenerate = outcome.degenerate_empty if upstream_stream else total == 0
                         if degenerate:
                             last_error = "upstream returned 200 OK with 0 tokens"
                             last_status = 200
@@ -877,12 +908,23 @@ def _prepare_body(
     ):
         body = transform.openai_roles_to_system(body)
     body["model"] = upstream_model
-    if req.stream:
+
+    # Client protocol and upstream protocol are deliberately decoupled: a
+    # provider whose endpoint only speaks SSE (e.g. the ChatGPT Codex backend,
+    # which 400s on ``stream: false``) always receives ``stream: true``, and
+    # the dispatcher folds the SSE back into a single JSON response when the
+    # client asked for non-streaming. Likewise ``upstream_requires_store_false``
+    # force-overrides any client-supplied (or transformer-defaulted)
+    # ``store: true`` before it can reach the wire.
+    effective_stream = req.stream or adapter.upstream_requires_streaming
+    if effective_stream:
         body["stream"] = True
         if upstream_style is ApiStyle.OPENAI:
             body.setdefault("stream_options", {"include_usage": True})
     else:
         body.pop("stream", None)
+    if adapter.upstream_requires_store_false:
+        body["store"] = False
     return adapter.build_request(plaintext, body, req.passthrough_headers or None)
 
 
@@ -1297,6 +1339,92 @@ def _try_json(raw: bytes) -> Any:
         return json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+async def _aggregate_stream(
+    outcome: _Attempt,
+    adapter: BaseProvider,
+    model: str,
+    *,
+    total_timeout: float | None = None,
+    start_mono: float | None = None,
+) -> _Attempt:
+    """Consume a successful SSE upstream response and fold it into a single
+    response object for a ``stream=false`` client.
+
+    The events are folded by :mod:`voidswitch.services.transform` (never a raw
+    text concat); the accumulator lives only for this call and is released when
+    it returns. A failure mid-stream — an upstream ``error`` event, EOF before
+    the terminal event, a transport error, or the wall-clock cap — closes the
+    connection and converts the outcome into a *network* error so the normal
+    failover rules retry the next route/key instead of ever serving a partial
+    response as if it were complete.
+
+    Client disconnects surface as ``asyncio.CancelledError`` which propagates
+    after the upstream connection is closed — no further consuming happens.
+    """
+    response = outcome.response
+    assert response is not None
+
+    async def _fold() -> None:
+        async def _raw() -> AsyncIterator[bytes]:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+
+        body = await _aggregate_events(adapter.style, _raw(), model)
+        outcome.body_json = adapter.aggregate_stream_body(body)
+        outcome.body_bytes = json.dumps(outcome.body_json, ensure_ascii=False).encode()
+
+    try:
+        if total_timeout and total_timeout > 0:
+            # Reuse the dispatcher's wall-clock cap so a hung upstream stream
+            # (no terminal event) is cut instead of cached forever.
+            remaining = (
+                total_timeout - (time.monotonic() - start_mono) if start_mono else total_timeout
+            )
+            if remaining <= 0:
+                raise TimeoutError("aggregation deadline already exceeded")
+            await asyncio.wait_for(_fold(), timeout=remaining)
+        else:
+            await _fold()
+    except asyncio.CancelledError:
+        # Client disconnect / task cancellation: release the upstream
+        # connection immediately instead of consuming the rest pointlessly.
+        with contextlib.suppress(Exception):
+            await response.aclose()
+        raise
+    except TimeoutError as exc:
+        with contextlib.suppress(Exception):
+            await response.aclose()
+        outcome.response = None
+        outcome.network_error = True
+        outcome.blame_proxy = False  # wall-clock capacity issue, not a proxy fault
+        outcome.error = (
+            f"Stream aggregation timed out after {int(total_timeout or 0)}s — the "
+            f"upstream did not complete its SSE stream. Original: {exc}"
+        )
+        log.warning("aggregate_timeout", url=outcome.url, error=outcome.error)
+        return outcome
+    except transform.UpstreamStreamError as exc:
+        with contextlib.suppress(Exception):
+            await response.aclose()
+        outcome.response = None
+        outcome.network_error = True
+        outcome.error = str(exc)
+        log.debug("aggregate_upstream_error", url=outcome.url, error=str(exc))
+        return outcome
+    except Exception as exc:
+        # Transport error, malformed stream, … — treat as a network fault.
+        with contextlib.suppress(Exception):
+            await response.aclose()
+        outcome.response = None
+        outcome.network_error = True
+        outcome.error = f"{type(exc).__name__}: {exc}"
+        log.debug("aggregate_failed", url=outcome.url, error=outcome.error)
+        return outcome
+
+    outcome.response = None
+    return outcome
 
 
 # Cap a captured non-JSON body so a stray HTML error page / huge payload can't
