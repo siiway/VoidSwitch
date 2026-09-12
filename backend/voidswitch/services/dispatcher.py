@@ -1826,6 +1826,12 @@ async def _build_stream(
 
     async def _raw() -> AsyncIterator[bytes]:
         async for chunk in response.aiter_bytes():
+            # Capture the actual upstream wire response, before protocol
+            # translation. This is essential when a Codex variant returns an
+            # unexpected SSE dialect: the debug log must show what it sent,
+            # not the downstream-translated stream.
+            if capture_body and len(captured) < max_capture:
+                captured.extend(chunk[: max_capture - len(captured)])
             yield chunk
 
     translated = _translate_stream(
@@ -1862,8 +1868,6 @@ async def _build_stream(
                 stream_error = f"response timeout after {int(response_timeout)}s — connection cut"
                 break
             yield piece
-            if capture_body and len(captured) < max_capture:
-                captured.extend(piece[: max_capture - len(captured)])
     except asyncio.CancelledError:
         req_status = "cancelled"
         raise

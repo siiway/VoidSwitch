@@ -85,6 +85,10 @@ and body, response status code, response headers and body — plus a **record of
 to pinpointing the specific problem. Credential values in request headers are always masked; nothing else is redacted. Admins can only see the info button,
 and never the debug capture.
 
+The lower-left corner of the debug detail dialog has a button to download a redacted request JSON.
+The export keeps the upstream SSE response, request headers, and response headers, but removes API keys,
+access tokens, and proxy URLs while retaining the proxy name. Non-owner users receive no request or response body.
+
 Even without a **debug-enabled** token, as long as a request **errors** (upstream 4xx / 5xx), that error's
 **response headers and body** are force-recorded (but not the request headers / body, and no per-attempt records), so any upstream error is traceable.
 This data is also considered debug information: only owner / co-owner can view it via the debug button, and it is cleaned up automatically according to the **debug log retention window**

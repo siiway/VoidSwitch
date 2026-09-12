@@ -612,6 +612,27 @@ async def test_responses_stream_to_openai():
     assert "data: [DONE]" in out
 
 
+async def test_responses_stream_to_openai_accepts_anthropic_envelope():
+    events = [
+        'event: message_start\ndata: {"type":"message_start","message":'
+        '{"id":"m1","role":"assistant","content":[]}}\n\n',
+        'event: content_block_start\ndata: {"type":"content_block_start",'
+        '"index":0,"content_block":{"type":"text","text":""}}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta",'
+        '"index":0,"delta":{"type":"text_delta","text":"Hello"}}\n\n',
+        'event: message_delta\ndata: {"type":"message_delta",'
+        '"delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":5,"output_tokens":2}}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ]
+    out = await _collect(
+        transform.responses_stream_to_openai(_byte_iter(events), model="gpt-5.6-terra")
+    )
+    assert '"content": "Hello"' in out
+    assert '"finish_reason": "stop"' in out
+    assert '"prompt_tokens": 5' in out
+    assert "data: [DONE]" in out
+
+
 async def test_responses_stream_to_openai_tool_call():
     events = [
         'event: response.created\ndata: {"type":"response.created","response":{"id":"r1"}}\n\n',

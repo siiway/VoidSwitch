@@ -1551,6 +1551,37 @@ async def responses_stream_to_openai(
     stream: AsyncIterator[bytes], *, model: str
 ) -> AsyncIterator[bytes]:
     """Translate a Responses SSE event stream into OpenAI chat.completion.chunk SSE."""
+    # A few ChatGPT Codex model variants have been observed returning the
+    # Anthropic Messages SSE envelope despite the Responses endpoint and
+    # request contract. Detect that wire shape before interpreting it as
+    # Responses control events; otherwise message_start/message_stop become an
+    # empty assistant response.
+    events = iter_sse(stream).__aiter__()
+    try:
+        first = await events.__anext__()
+    except StopAsyncIteration:
+        first = (None, "")
+    if first[0] in {"message_start", "content_block_start", "message_delta", "message_stop"}:
+
+        async def _prepend() -> AsyncIterator[bytes]:
+            event, data = first
+            if data:
+                yield f"event: {event}\ndata: {data}\n\n".encode()
+            async for event, data in events:
+                yield f"event: {event}\ndata: {data}\n\n".encode()
+
+        async for piece in anthropic_stream_to_openai(_prepend(), model=model):
+            yield piece
+        return
+
+    async def _prepend_responses() -> AsyncIterator[bytes]:
+        event, data = first
+        if data:
+            yield f"event: {event}\ndata: {data}\n\n".encode()
+        async for event, data in events:
+            yield f"event: {event}\ndata: {data}\n\n".encode()
+
+    stream = _prepend_responses()
     completion_id = _gen_id("chatcmpl")
     created = int(time.time())
     base = {
