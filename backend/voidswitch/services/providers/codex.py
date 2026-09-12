@@ -36,16 +36,16 @@ class CodexProvider(OpenAIProvider):
     upstream_requires_streaming = True
     upstream_requires_store_false = True
 
-    # The Codex backend only accepts the request fields codex-cli actually
-    # sends (its request model has no ``max_output_tokens``; it answers
-    # ``400 Unsupported parameter: max_output_tokens``). Rather than playing
-    # whack-a-mole with a denylist, keep only the known-good wire fields and
-    # drop everything else a client or the style translator produced.
+    # The Codex backend only accepts a narrow Responses request shape. Keep
+    # only known-good wire fields and drop everything else. In particular,
+    # temperature/top_p are unsupported, while max_output_tokens must be kept
+    # so requests do not end immediately with zero output tokens.
     _WIRE_FIELDS = frozenset(
         {
             "model",
             "instructions",
             "input",
+            "max_output_tokens",
             "tools",
             "tool_choice",
             "parallel_tool_calls",
@@ -56,8 +56,6 @@ class CodexProvider(OpenAIProvider):
             "service_tier",
             "prompt_cache_key",
             "text",
-            "temperature",
-            "top_p",
             "truncation",
             "metadata",
             "background",

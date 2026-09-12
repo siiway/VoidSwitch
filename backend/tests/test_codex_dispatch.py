@@ -353,7 +353,7 @@ async def test_codex_store_and_stream_flags_at_adapter_level():
 
 async def test_codex_drops_unsupported_params(db, seeded):
     """The Codex backend 400s on parameters it doesn't know (e.g.
-    ``Unsupported parameter: max_output_tokens``). prepare_body keeps only the
+    ``Unsupported parameter: temperature``). prepare_body keeps only the
     known-good wire fields, whatever the client or translator produced."""
     await _add_codex_provider(db)
     with respx.mock(assert_all_called=True) as mock:
@@ -374,8 +374,9 @@ async def test_codex_drops_unsupported_params(db, seeded):
         )
 
     sent = json.loads(route.calls.last.request.content)
-    for banned in ("max_output_tokens", "stop", "top_k", "stream_options", "n", "seed"):
+    for banned in ("temperature", "top_p", "stop", "top_k", "stream_options", "n", "seed"):
         assert banned not in sent, banned
+    assert sent["max_output_tokens"] == 32000
     assert sent["store"] is False
     assert sent["stream"] is True
     assert sent["include"] == ["reasoning.encrypted_content"]
