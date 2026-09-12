@@ -1062,6 +1062,8 @@ const zh: Translations = {
     clientType: "客户端",
     opencode: "OpenCode",
     debugData: "调试数据",
+    downloadJson: "下载 JSON",
+    downloadFailed: "下载失败",
     revealSecret: "查看密钥",
     revealOn: "正在查看",
     reqHeaders: "请求头",

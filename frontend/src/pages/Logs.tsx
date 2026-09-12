@@ -25,6 +25,7 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowEnterRegular,
+  ArrowDownloadRegular,
   BugRegular,
   DismissRegular,
   EyeRegular,
@@ -1004,6 +1005,26 @@ function RequestLogs({
     }
   }
 
+  async function downloadDetail() {
+    if (!detailLog) return;
+    const token = getToken();
+    const response = await fetch(
+      `${API_BASE}/api/admin/logs/requests/${detailLog.id}/download`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {}, cache: "no-store" },
+    );
+    if (!response.ok) {
+      notify(tr("logs.downloadFailed" as TK), `HTTP ${response.status}`, "error");
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `voidswitch-request-${detailLog.id}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   if (logs.loading) return <Loading />;
   if (logs.error) return <ErrorText error={logs.error} />;
   const data = logs.data;
@@ -1533,6 +1554,11 @@ function RequestLogs({
               )}
             </DialogContent>
             <DialogActions>
+              {(isStaffView || isRoleGroupAdminView) && detailLog ? (
+                <Button appearance="subtle" icon={<ArrowDownloadRegular />} onClick={() => void downloadDetail()}>
+                  {tr("logs.downloadJson" as TK)}
+                </Button>
+              ) : null}
               <Button appearance="primary" onClick={() => { detailReqRef.current = null; setDetailLog(null); }}>
                 {tr("common.close" as TK)}
               </Button>

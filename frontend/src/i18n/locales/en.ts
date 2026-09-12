@@ -1097,6 +1097,8 @@ const en = {
     clientType: "Client",
     opencode: "OpenCode",
     debugData: "Debug data",
+    downloadJson: "Download JSON",
+    downloadFailed: "Download failed",
     revealSecret: "Reveal secret",
     revealOn: "Revealing",
     reqHeaders: "Request headers",

@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,7 @@ from voidswitch.core.security import decrypt_secret
 from voidswitch.models.db import (
     ApiKey,
     AuditLog,
+    Node,
     RequestLog,
     RoleGroupMembership,
     User,
@@ -902,6 +903,69 @@ def _redact_key_preview(preview: str | None) -> str | None:
     return f"{preview[:4]}***{preview[-4:]}"
 
 
+def _redact_proxy_url(value: Any) -> str | None:
+    return "<REDACTED>" if value else value
+
+
+def _download_safe(
+    value: Any, *, proxy_name: str | None = None, include_bodies: bool = True
+) -> Any:
+    """Remove credentials/egress addresses from an exported debug payload."""
+    if isinstance(value, list):
+        return [
+            _download_safe(item, proxy_name=proxy_name, include_bodies=include_bodies)
+            for item in value
+        ]
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "proxy_url":
+                out[key] = _redact_proxy_url(item)
+            elif key in {"req_body", "resp_body"} and not include_bodies:
+                out[key] = None
+            elif key in {"key", "api_key", "access_token", "key_preview"}:
+                out[key] = _redact_key_preview(str(item)) if item else item
+            elif key in {"url", "upstream_url"} and proxy_name == "__NON_OWNER__":
+                out[key] = item
+            else:
+                out[key] = _download_safe(
+                    item, proxy_name=proxy_name, include_bodies=include_bodies
+                )
+        if proxy_name is not None and "proxy_name" not in out:
+            out.setdefault("proxy_name", proxy_name)
+        return out
+    return value
+
+
+@router.get("/requests/{log_id}/download")
+async def download_request_log(
+    log_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> JSONResponse:
+    """Download the visible request diagnostic payload with egress secrets removed."""
+    row = await session.get(RequestLog, log_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
+    if not is_staff(user):
+        if is_role_group_admin(user):
+            visible_subs = await _visible_user_subs_for(session, user)
+            if row.user_sub != user.sub and row.user_sub not in visible_subs:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
+        elif row.user_sub != user.sub:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
+    node = await session.get(Node, row.proxy_id) if row.proxy_id is not None else None
+    safe = _download_safe(
+        RequestLogDetail.model_validate(row).model_dump(mode="json"),
+        proxy_name=node.note if node else None,
+        include_bodies=is_owner(user),
+    )
+    return JSONResponse(
+        content=safe,
+        headers={"Content-Disposition": f'attachment; filename="voidswitch-request-{log_id}.json"'},
+    )
+
+
 @router.get("/requests/{log_id}", response_model=RequestLogDetail)
 async def request_log_detail(
     log_id: int,
@@ -909,48 +973,20 @@ async def request_log_detail(
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> RequestLogDetail:
-    """Return full detail for a single request log entry.
-
-    Detail visibility layers, from strictest to most permissive:
-
-    * **member** — only their own traffic (no headers, no attempts, redacted
-      key preview).
-    * **role-group admin** — traffic of any user in a group they administer,
-      same detail level as ``admin`` (headers + debug attempts visible,
-      bodies stripped, key preview redacted).
-    * **admin (platform)** — every user's traffic; **may see** request &
-      response headers and the per-attempt debug trail (new — previously
-      stripped). Bodies are still stripped.
-    * **owner / co-owner** — everything, including request & response bodies.
-
-    Bodies are stored only when the void-token has ``debug_enabled`` and are
-    still owner-only. Reveal-sensitive mode is unchanged.
-    """
+    """Return full detail for a single request log entry."""
     row = await session.get(RequestLog, log_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
-
     if not is_staff(user):
         if is_role_group_admin(user):
-            # Role-group admin: gate by the visible-users set (deliberately not
-            # a "or your own row" — the group-admin view is about the members,
-            # not about themselves; their own row is already reachable via the
-            # member self-scope path in the list endpoint).
             visible_subs = await _visible_user_subs_for(session, user)
             if row.user_sub != user.sub and row.user_sub not in visible_subs:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
         elif row.user_sub != user.sub:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
-
     owner = is_owner(user)
-    # Owner-tier users, including co-owners, keep the full detail even if they
-    # also administer a role group. The role-group restriction only applies to
-    # users who are not platform staff.
     admin_view = not owner and (is_staff(user) or is_role_group_admin(user))
-
     detail = RequestLogDetail.model_validate(row)
-
-    # Resolve names.
     if row.token_id is not None:
         tok = await session.get(VoidToken, row.token_id)
         if tok:
@@ -965,24 +1001,13 @@ async def request_log_detail(
         if u:
             label = u.username or u.name or u.email or u.sub
             detail.user_name = f"{label}#{u.id}"
-
-    # Resolve key preview.
     if row.key_id is not None:
         key = await session.get(ApiKey, row.key_id)
         if key:
-            if admin_view:
-                detail.key_preview = _redact_key_preview(key.key_preview)
-            else:
-                detail.key_preview = key.key_preview
-
-    # Non-owner view (platform admin OR role-group admin): drop request/response
-    # *bodies* only. Headers and the per-attempt debug trail are kept so an
-    # admin has enough context to diagnose an incident without exposing the
-    # prompt/completion payload — those stay owner-only. Bodies are only ever
-    # populated when the void-token has debug enabled; when they aren't
-    # populated the strip below is a no-op.
+            detail.key_preview = (
+                _redact_key_preview(key.key_preview) if admin_view else key.key_preview
+            )
     if admin_view:
         detail.req_body = None
         detail.resp_body = None
-
     return detail

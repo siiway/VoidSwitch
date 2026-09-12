@@ -1693,6 +1693,7 @@ async def _finalise_success(
             response_timeout=response_timeout,
             start_mono=outcome.start_mono,
             health_key=health_key,
+            capture_body=debug,
         )
         return DispatchResult(
             status_code=200,
@@ -1768,6 +1769,7 @@ async def _stream_cleanup(
     finished_at: dt.datetime,
     error: str | None = None,
     health_key: upstream_health.UpstreamKey | None = None,
+    resp_body: Any = None,
 ) -> None:
     """Close the upstream response and persist captured usage — shielded caller."""
     await response.aclose()
@@ -1779,6 +1781,7 @@ async def _stream_cleanup(
         first_token_ms=first_token_ms,
         finished_at=finished_at,
         error=error,
+        resp_body=resp_body,
     )
     if health_key is not None:
         if req_status == "completed":
@@ -1798,6 +1801,7 @@ async def _build_stream(
     response_timeout: float = 0,
     start_mono: float | None = None,
     health_key: upstream_health.UpstreamKey | None = None,
+    capture_body: bool = False,
 ) -> AsyncIterator[bytes]:
     """Yield translated SSE bytes, then persist token usage on completion.
 
@@ -1817,6 +1821,8 @@ async def _build_stream(
         start_mono = time.monotonic()
     # A mutable holder so _capture_usage can stamp the first-token moment.
     first_token: dict[str, float | None] = {"ms": None}
+    captured = bytearray()
+    max_capture = 2_000_000
 
     async def _raw() -> AsyncIterator[bytes]:
         async for chunk in response.aiter_bytes():
@@ -1856,6 +1862,8 @@ async def _build_stream(
                 stream_error = f"response timeout after {int(response_timeout)}s — connection cut"
                 break
             yield piece
+            if capture_body and len(captured) < max_capture:
+                captured.extend(piece[: max_capture - len(captured)])
     except asyncio.CancelledError:
         req_status = "cancelled"
         raise
@@ -1897,6 +1905,9 @@ async def _build_stream(
                     finished_at=finished_at,
                     error=stream_error,
                     health_key=health_key,
+                    resp_body=(
+                        captured.decode("utf-8", errors="replace") if capture_body else None
+                    ),
                 )
             )
         except asyncio.CancelledError:
@@ -1985,6 +1996,7 @@ async def _persist_stream_usage(
     first_token_ms: float | None = None,
     finished_at: dt.datetime | None = None,
     error: str | None = None,
+    resp_body: Any = None,
 ) -> None:
     """Write final stream token usage back to the log row + token quota.
 
@@ -2006,6 +2018,8 @@ async def _persist_stream_usage(
                     row.req_status = req_status
                     if error is not None:
                         row.error = error
+                    if resp_body is not None:
+                        row.resp_body = resp_body
                     if first_token_ms is not None:
                         row.first_token_ms = first_token_ms
                     row.finished_at = finished_at or _utcnow()
