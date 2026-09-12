@@ -45,6 +45,27 @@ async def test_health(client):
     assert resp.json()["status"] == "ok"
 
 
+async def test_updating_route_replaces_existing_upstreams(client, seeded):
+    """Saving a route with the same upstream must not hit the unique constraint."""
+    resp = await client.put(
+        "/api/models/deepseek-chat/route",
+        headers=_session_headers(),
+        json={
+            "upstreams": [
+                {
+                    "provider_id": seeded["provider_id"],
+                    "upstream_model": "deepseek-chat",
+                    "weight": 1,
+                    "enabled": True,
+                    "key_pool": "",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["route"]["upstreams"]) == 1
+
+
 async def test_root_lists_endpoints(client):
     resp = await client.get("/")
     body = resp.json()

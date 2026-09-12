@@ -943,7 +943,10 @@ async def request_log_detail(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
 
     owner = is_owner(user)
-    admin_view = (is_staff(user) and not owner) or is_role_group_admin(user)
+    # Owner-tier users, including co-owners, keep the full detail even if they
+    # also administer a role group. The role-group restriction only applies to
+    # users who are not platform staff.
+    admin_view = not owner and (is_staff(user) or is_role_group_admin(user))
 
     detail = RequestLogDetail.model_validate(row)
 

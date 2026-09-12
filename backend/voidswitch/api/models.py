@@ -1001,6 +1001,11 @@ async def update_route(
     route.upstream_all_cooled_behavior = body.upstream_all_cooled_behavior
     for old in list(route.upstreams):
         await session.delete(old)
+    # SQLAlchemy may execute pending INSERTs before DELETEs during one flush.
+    # Flush the replacement boundary first, otherwise saving an unchanged route
+    # violates uq_route_upstream when the new row has the same identity as an old
+    # row that is still present in the database.
+    await session.flush()
     for pos, entry_in in enumerate(body.upstreams):
         session.add(
             RouteUpstream(
