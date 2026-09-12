@@ -284,6 +284,24 @@ async def test_codex_upstream_error_event_is_an_error(db, seeded):
     assert b"slow down" in content
 
 
+async def test_codex_empty_max_output_incomplete_is_an_error(db, seeded):
+    await _add_codex_provider(db)
+    sse = (
+        b"event: response.incomplete\n"
+        b'data: {"type":"response.incomplete","response":{"status":"incomplete",'
+        b'"output":[],"usage":{"input_tokens":0,"output_tokens":0},'
+        b'"incomplete_details":{"reason":"max_output_tokens"}}}\n\n'
+    )
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(CODEX_URL).mock(
+            return_value=httpx.Response(200, content=sse, headers=_SSE_HEADERS)
+        )
+        result = await dispatch(_codex_req(stream=False))
+
+    assert result.status_code >= 400
+    assert b"max_output_tokens" in (result.content or b"")
+
+
 async def test_codex_interrupted_stream_is_an_error(db, seeded):
     """EOF before ``response.completed`` must not be served as a success."""
     await _add_codex_provider(db)
@@ -374,9 +392,17 @@ async def test_codex_drops_unsupported_params(db, seeded):
         )
 
     sent = json.loads(route.calls.last.request.content)
-    for banned in ("temperature", "top_p", "stop", "top_k", "stream_options", "n", "seed"):
+    for banned in (
+        "max_output_tokens",
+        "temperature",
+        "top_p",
+        "stop",
+        "top_k",
+        "stream_options",
+        "n",
+        "seed",
+    ):
         assert banned not in sent, banned
-    assert sent["max_output_tokens"] == 32000
     assert sent["store"] is False
     assert sent["stream"] is True
     assert sent["include"] == ["reasoning.encrypted_content"]

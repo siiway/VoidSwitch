@@ -1723,6 +1723,12 @@ async def responses_stream_to_openai(
 
         if etype in ("response.completed", "response.incomplete", "response.failed"):
             resp = payload.get("response", {})
+            if etype == "response.incomplete":
+                reason = (resp.get("incomplete_details") or {}).get("reason")
+                if reason == "max_output_tokens" and not resp.get("output"):
+                    raise UpstreamStreamError(
+                        "Codex upstream stopped before producing output: max_output_tokens"
+                    )
             usage = resp.get("usage") or {}
             prompt = usage.get("input_tokens", 0)
             completion = usage.get("output_tokens", 0)
@@ -1843,6 +1849,12 @@ async def responses_events_to_response(
                 terminal = resp
             if etype == "response.failed":
                 failed_message = _event_error_message(payload) or "response failed upstream"
+            elif etype == "response.incomplete" and isinstance(resp, dict):
+                reason = (resp.get("incomplete_details") or {}).get("reason")
+                if reason == "max_output_tokens" and not resp.get("output"):
+                    failed_message = (
+                        "Codex upstream stopped before producing output: max_output_tokens"
+                    )
             break
 
     if terminal is None:

@@ -37,15 +37,14 @@ class CodexProvider(OpenAIProvider):
     upstream_requires_store_false = True
 
     # The Codex backend only accepts a narrow Responses request shape. Keep
-    # only known-good wire fields and drop everything else. In particular,
-    # temperature/top_p are unsupported, while max_output_tokens must be kept
-    # so requests do not end immediately with zero output tokens.
+    # only known-good wire fields and drop everything else. The endpoint
+    # currently rejects both temperature/top_p and max_output_tokens; the
+    # client-facing token limit must not be forwarded as that field.
     _WIRE_FIELDS = frozenset(
         {
             "model",
             "instructions",
             "input",
-            "max_output_tokens",
             "tools",
             "tool_choice",
             "parallel_tool_calls",
@@ -90,8 +89,8 @@ class CodexProvider(OpenAIProvider):
         This runs last (after style translation and the generic stream
         handling), so a client-supplied ``store: true`` — or any default
         injected upstream of the adapter — can never reach chatgpt.com.
-        Unknown/unsupported parameters (``max_output_tokens``, ``stop``,
-        ``stream_options``, …) are dropped: the backend 400s on them.
+        Unknown/unsupported parameters (``max_output_tokens``, ``temperature``,
+        ``stop``, ``stream_options``, …) are dropped: the backend 400s on them.
         ``include: reasoning.encrypted_content`` is defaulted like codex-cli
         so reasoning sessions round-trip.
         """
