@@ -236,6 +236,7 @@ export interface ModelEntry {
   provider?: boolean;
   // True when the model's route resolves to no enabled upstream.
   unserved?: boolean;
+  health?: ModelHealth | null;
 }
 
 export interface ModelCategory {
@@ -305,6 +306,25 @@ export interface ModelHealth {
   best_success_rate?: number | null;
   best_ttft_ms?: number | null;
   upstreams?: UpstreamHealth[];
+  recent_success_rate?: number | null;
+  recent_request_count: number;
+  recent_since?: string | null;
+  recent_avg_ttft_ms?: number | null;
+  sufficient_data: boolean;
+}
+
+export interface NodeHealthSample {
+  ts: string;
+  success: boolean;
+  latency_ms?: number | null;
+  source: "probe" | "request";
+  status_code?: number | null;
+}
+
+export interface NodeHealth extends Node {
+  score: number;
+  groups: string[];
+  samples: NodeHealthSample[];
 }
 
 export interface ModelsDevSearchResult {

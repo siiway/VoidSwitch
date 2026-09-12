@@ -230,16 +230,19 @@ async def reward(session: AsyncSession, key: UpstreamKey) -> None:
         await session.flush()
 
 
-def _effective(key: UpstreamKey, baseline: float) -> tuple[float, float | None, float, int]:
+def _effective(key: UpstreamKey, baseline: float | None) -> tuple[float, float | None, float, int]:
     stat = _stats.get(key)
     if stat is None:
         return 1.0, baseline, 0.0, 0
     half = max(1, settings_store.get_int("upstream_ewma_half_life_seconds", 600))
     decay = 0.5 ** ((time.monotonic() - stat.updated) / half)
     success = 1.0 - (1.0 - stat.success_ewma) * decay
-    ttft = (
-        baseline if stat.ttft_ewma_ms is None else baseline + (stat.ttft_ewma_ms - baseline) * decay
-    )
+    if stat.ttft_ewma_ms is None:
+        ttft = baseline
+    elif baseline is None:
+        ttft = stat.ttft_ewma_ms
+    else:
+        ttft = baseline + (stat.ttft_ewma_ms - baseline) * decay
     return success, ttft, stat.consecutive_failures * decay, stat.samples
 
 
@@ -262,7 +265,7 @@ def rank(
         if (s := _stats.get(key_for(u.provider_id, u.upstream_model, u.key_pool)))
         and s.ttft_ewma_ms is not None
     ]
-    baseline = float(median(ttfts)) if ttfts else 0.0
+    baseline = float(median(ttfts)) if ttfts else None
     minimum = max(1, settings_store.get_int("upstream_min_samples", 10))
     healthy = settings_store.get_float("upstream_tier_healthy_threshold", 0.9)
     rows: list[Ranked] = []

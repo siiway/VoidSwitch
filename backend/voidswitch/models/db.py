@@ -488,6 +488,22 @@ class Node(Base, TimestampMixin):
     )
 
 
+class NodeHealthSample(Base):
+    """One probe or real-request health observation for an outbound node."""
+
+    __tablename__ = "node_health_samples"
+    __table_args__ = (Index("ix_node_health_samples_node_ts", "node_id", "ts"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    node_id: Mapped[int] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    source: Mapped[str] = mapped_column(String(16), default="request")
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    latency_ms: Mapped[float | None] = mapped_column(Float, default=None)
+    status_code: Mapped[int | None] = mapped_column(Integer, default=None)
+    error: Mapped[str | None] = mapped_column(String(255), default=None)
+
+
 class NodeGroup(Base, TimestampMixin):
     """A freely-created group of outbound nodes used by the routing system.
 

@@ -18,9 +18,9 @@ platform-wide by provider, upstream model, and key pool, so every exposed model 
 upstream avoids it. Retry-After/provider retry headers take precedence over route, provider, and global
 fallback cooldowns. Key rate limiting and upstream cooldown are separate states.
 
-The Models page receives live health over SSE and labels every visible model Healthy, Degraded,
-Unavailable, or Learning. Staff see per-upstream success, TTFT, and cooldown details on the route page;
-owners can clear a cooldown manually.
+The Models page receives a recent health summary with its normal catalog request and no longer keeps
+an SSE connection open. The dedicated Health page connects live updates automatically; staff see
+per-upstream details and node history, while owners can still clear cooldowns from the route page.
 
 ## Creating models
 

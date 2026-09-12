@@ -34,6 +34,7 @@ import {
   SignOutRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
+  HeartPulseRegular,
 } from "@fluentui/react-icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -100,6 +101,7 @@ const SECTIONS: NavSection[] = [
       },
       { to: "/models", label: "Models", labelKey: "nav.models", icon: <CubeRegular />, scope: "member" },
       { to: "/nodes", label: "Nodes", labelKey: "nav.nodes", icon: <CloudRegular />, scope: "staff" },
+      { to: "/health", label: "Health", labelKey: "nav.health", icon: <HeartPulseRegular />, scope: "member" },
       { to: "/tokens", label: "Tokens", labelKey: "nav.tokens", icon: <KeyRegular />, scope: "owner" },
     ],
   },

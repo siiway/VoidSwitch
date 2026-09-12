@@ -62,6 +62,21 @@ def _validate_session_ttl(effective: dict[str, object]) -> None:
         )
 
 
+def _validate_health_settings(effective: dict[str, object]) -> None:
+    count = _to_int(effective.get("model_health_recent_request_count"), 50)
+    if not 10 <= count <= 500:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Model health request count must be between 10 and 500.",
+        )
+    history_days = _to_int(effective.get("node_health_history_retention_days"), 7)
+    if not 1 <= history_days <= 365:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Node health history retention must be between 1 and 365 days.",
+        )
+
+
 @router.get("", response_model=SettingsOut)
 async def get_settings_values(
     session: AsyncSession = Depends(get_session),
@@ -82,6 +97,7 @@ async def update_settings_values(
     old_values = await settings_store.get_all(session)
     _validate_heatmap_retention({**old_values, **body.values})
     _validate_session_ttl({**old_values, **body.values})
+    _validate_health_settings({**old_values, **body.values})
     values = await settings_store.update(session, body.values)
     # Only record the settings that actually changed.
     changes = {}

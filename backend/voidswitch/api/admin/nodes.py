@@ -33,7 +33,7 @@ from voidswitch.models.schemas import (
     NodeOut,
     NodeUpdate,
 )
-from voidswitch.services import routing, settings_store
+from voidswitch.services import node_health, routing, settings_store
 from voidswitch.services.network import probe_route
 
 log = get_logger("admin.nodes")
@@ -244,6 +244,15 @@ async def probe_node(
     node.last_checked_at = dt.datetime.now(dt.UTC)
     node.latency_ms = latency
     routing.update_node_latency(node, latency)
+    node_health.add_sample(
+        session,
+        node,
+        success=ok,
+        latency_ms=latency,
+        source="probe",
+        status_code=_status,
+        error=error,
+    )
     if ok:
         node.status = NodeStatus.ACTIVE.value
         node.failed_count = 0

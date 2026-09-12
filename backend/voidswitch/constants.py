@@ -204,6 +204,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "upstream_pin_jitter": 0.15,
     "upstream_ewma_half_life_seconds": 600,
     "upstream_min_samples": 10,
+    # Number of completed model requests used by user-facing health summaries.
+    "model_health_recent_request_count": 50,
     "upstream_tier_healthy_threshold": 0.9,
     "upstream_max_keys_per_attempt": 2,
     "upstream_cooldown_status_codes": [0, 429, 500, 502, 503, 504],
@@ -241,6 +243,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # How long (seconds) a node's EWMA latency halves when idling without
     # measurements — keeps a formerly-slow node able to recover.
     "node_rank_ewma_half_life_seconds": 300,
+    # Detailed node probe/request samples retained for moderator health trends.
+    "node_health_history_retention_days": 7,
     # models.dev catalog sync. The registry is pulled from
     # https://models.dev/api.json and used as *placeholder* metadata for exposed
     # models that were matched to a models.dev model id (never overwriting

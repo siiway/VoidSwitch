@@ -1970,7 +1970,7 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
             "node_group_members",
             "request_logs",
         } <= tables
-        assert ver == "f6a3b8c2d1e4"  # the current head
+        assert ver == "7b4d9e1f2a6c"  # the current head
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()

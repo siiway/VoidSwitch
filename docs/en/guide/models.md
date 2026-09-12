@@ -8,7 +8,7 @@ The **Models** page lists all available model IDs on the platform, one card per 
   advertised to you).
 - An optional **display name** and **description** set by staff.
 - A concise live health state — **Healthy / Degraded / Unavailable / Learning** — plus the best
-  available upstream's success rate and time to first token. Health updates automatically over SSE.
+  recent request success rate and average time to first token. The row stays hidden while data is insufficient.
 - Regular exposed models use dynamic routing based on recent success, time to first token, and failures.
 - Whether you are **allowed** to call it (based on your role group).
 
@@ -38,3 +38,9 @@ Members usually don't need to sync explicitly — models that are already served
 ## Calling a model
 
 Use the model's **exposed model ID** as the `model` field in your request. See [Calling the API](/en/guide/using-the-api).
+
+## Health page
+
+The **Health** page connects live updates automatically. Members only see aggregate health for models
+they may call. Staff can switch to Nodes for rank scores, failures, and latency/success trends from
+`30m` through `7d`.

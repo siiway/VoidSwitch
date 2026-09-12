@@ -41,6 +41,7 @@ from voidswitch.core.logging import get_logger, redact_headers
 from voidswitch.models.db import ApiKey, ExposedModel, Node, Provider, RequestLog
 from voidswitch.services import (
     model_routing,
+    node_health,
     routing,
     settings_store,
     transform,
@@ -712,6 +713,14 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                             reason=last_error,
                         )
                         abandon_upstream = cooled is not None
+                    node_health.add_sample(
+                        session,
+                        node,
+                        success=False,
+                        latency_ms=outcome.duration_ms,
+                        source="request",
+                        error=last_error,
+                    )
                     await session.flush()
                     if abandon_upstream:
                         break
@@ -720,6 +729,14 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 # We have an HTTP response.
                 if node is not None:
                     routing.reward_node(node)
+                    node_health.add_sample(
+                        session,
+                        node,
+                        success=200 <= outcome.status_code < 500,
+                        latency_ms=outcome.duration_ms,
+                        source="request",
+                        status_code=outcome.status_code,
+                    )
                 err_class = adapter.classify(outcome.status_code, outcome.body_json)
                 # A provider that can *detect* "no quota" (vs a plain rate
                 # limit) turns a 429 into a permanently-disabled key.
@@ -750,7 +767,8 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     if key.failed_count:
                         key.failed_count = 0
                     _reward_key(key)
-                    upstream_health.record(health_key, success=True)
+                    if not req.stream:
+                        upstream_health.record(health_key, success=True)
                     await upstream_health.reward(session, health_key)
                     return await _finalise_success(
                         session=session,
@@ -766,6 +784,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                         attempt_summaries=attempt_summaries,
                         started_at=dispatch_started_at,
                         response_timeout=response_timeout,
+                        health_key=health_key,
                     )
 
                 if err_class in (ErrorClass.KEY_INVALID, ErrorClass.INSUFFICIENT_BALANCE):
@@ -1620,6 +1639,7 @@ async def _finalise_success(
     attempt_summaries: list[dict[str, Any]] | None = None,
     started_at: dt.datetime | None = None,
     response_timeout: float = 0,
+    health_key: upstream_health.UpstreamKey | None = None,
 ) -> DispatchResult:
     upstream_style = adapter.style
 
@@ -1672,6 +1692,7 @@ async def _finalise_success(
             token_id=token_id,
             response_timeout=response_timeout,
             start_mono=outcome.start_mono,
+            health_key=health_key,
         )
         return DispatchResult(
             status_code=200,
@@ -1746,6 +1767,7 @@ async def _stream_cleanup(
     first_token_ms: float | None,
     finished_at: dt.datetime,
     error: str | None = None,
+    health_key: upstream_health.UpstreamKey | None = None,
 ) -> None:
     """Close the upstream response and persist captured usage — shielded caller."""
     await response.aclose()
@@ -1758,6 +1780,11 @@ async def _stream_cleanup(
         finished_at=finished_at,
         error=error,
     )
+    if health_key is not None:
+        if req_status == "completed":
+            upstream_health.record(health_key, success=True, ttft_ms=first_token_ms)
+        elif req_status in {"error", "terminated"}:
+            upstream_health.record(health_key, success=False)
 
 
 async def _build_stream(
@@ -1770,6 +1797,7 @@ async def _build_stream(
     token_id: int | None,
     response_timeout: float = 0,
     start_mono: float | None = None,
+    health_key: upstream_health.UpstreamKey | None = None,
 ) -> AsyncIterator[bytes]:
     """Yield translated SSE bytes, then persist token usage on completion.
 
@@ -1868,6 +1896,7 @@ async def _build_stream(
                     first_token_ms=first_token["ms"],
                     finished_at=finished_at,
                     error=stream_error,
+                    health_key=health_key,
                 )
             )
         except asyncio.CancelledError:

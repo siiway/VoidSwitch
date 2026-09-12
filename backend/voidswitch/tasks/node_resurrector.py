@@ -15,7 +15,7 @@ from voidswitch.constants import NodeStatus
 from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger
 from voidswitch.models.db import Node, NodeGroup
-from voidswitch.services import routing, settings_store
+from voidswitch.services import node_health, routing, settings_store
 from voidswitch.services.network import probe_route
 
 log = get_logger("tasks.resurrector")
@@ -68,11 +68,20 @@ async def run_node_resurrector() -> None:
 async def _probe_node(session, node: Node, group: NodeGroup | None) -> None:
     probe_url = routing.group_probe_url(group)
     route = routing.node_route(node)
-    ok, latency, _status, error = await probe_route(route, probe_url)
+    ok, latency, probe_status, error = await probe_route(route, probe_url)
     node.last_checked_at = dt.datetime.now(dt.UTC)
     node.latency_ms = latency
     routing.update_node_latency(node, latency)
     routing.decay_ewma(node)
+    node_health.add_sample(
+        session,
+        node,
+        success=ok,
+        latency_ms=latency,
+        source="probe",
+        status_code=probe_status,
+        error=error,
+    )
     if ok:
         node.status = NodeStatus.ACTIVE.value
         node.failed_count = 0

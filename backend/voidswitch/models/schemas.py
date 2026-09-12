@@ -289,6 +289,7 @@ class ModelOut(BaseModel):
     # True when the model's route resolves to no enabled upstream (would be
     # removed by the "clean unserved" action).
     unserved: bool = False
+    health: dict[str, Any] | None = None
 
 
 class ModelUpsert(BaseModel):
@@ -390,6 +391,11 @@ class ModelHealthOut(BaseModel):
     best_success_rate: float | None = None
     best_ttft_ms: float | None = None
     upstreams: list[UpstreamHealthOut] | None = None
+    recent_success_rate: float | None = None
+    recent_request_count: int = 0
+    recent_since: dt.datetime | None = None
+    recent_avg_ttft_ms: float | None = None
+    sufficient_data: bool = False
 
 
 class ModelWithRouteOut(ModelOut):

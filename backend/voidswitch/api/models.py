@@ -8,20 +8,15 @@ layer pools → upstream refs), and match models to the models.dev registry.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import datetime as dt
-import json
 import re
 from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import UpstreamRankAlgorithm, UpstreamSelectMode
-from voidswitch.core import sse
 from voidswitch.core.audit import AuditAction, AuditScope, record_audit
 from voidswitch.core.auth import (
     actor_display_name,
@@ -31,11 +26,12 @@ from voidswitch.core.auth import (
     require_owner,
     require_staff,
 )
-from voidswitch.core.database import get_database, get_session
+from voidswitch.core.database import get_session
 from voidswitch.models.db import (
     ExposedModel,
     ModelCategory,
     Provider,
+    RequestLog,
     RoleGroup,
     Route,
     RouteUpstream,
@@ -60,6 +56,8 @@ from voidswitch.services import (
     model_routing,
     models_catalog,
     models_dev,
+    role_groups as role_group_service,
+    settings_store,
     upstream_health,
 )
 
@@ -68,6 +66,47 @@ router = APIRouter(prefix="/api/models", tags=["models"])
 _PASSTHROUGH_RE = re.compile(
     r"^(?P<exposed>[^\s@]+?)(?:\s*=>\s*(?P<upstream>[^\s@]+?))?(?:\s*@\s*(?P<pool>\S+))?$"
 )
+
+
+async def _recent_health(session: AsyncSession, model_id: str) -> dict:
+    limit = min(500, max(10, settings_store.get_int("model_health_recent_request_count", 50)))
+    rows = (
+        (
+            await session.execute(
+                select(RequestLog)
+                .where(
+                    RequestLog.model == model_id,
+                    RequestLog.req_status.in_(("completed", "error", "terminated")),
+                    or_(
+                        RequestLog.status_code.is_(None),
+                        RequestLog.status_code < 400,
+                        RequestLog.status_code >= 500,
+                        RequestLog.status_code == 429,
+                    ),
+                )
+                .order_by(RequestLog.id.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return {
+            "recent_success_rate": None,
+            "recent_request_count": 0,
+            "recent_since": None,
+            "recent_avg_ttft_ms": None,
+            "sufficient_data": False,
+        }
+    ttfts = [row.first_token_ms for row in rows if row.first_token_ms is not None]
+    return {
+        "recent_success_rate": sum(1 for row in rows if row.success) / len(rows),
+        "recent_request_count": len(rows),
+        "recent_since": min((row.started_at or row.ts) for row in rows),
+        "recent_avg_ttft_ms": sum(ttfts) / len(ttfts) if ttfts else None,
+        "sufficient_data": len(rows) >= settings_store.get_int("upstream_min_samples", 10),
+    }
 
 
 def _parse_passthrough_entry(entry: str) -> dict[str, str]:
@@ -276,20 +315,57 @@ async def list_models(
         result.append(_to_out(item, providers_by_id=enabled_providers))
     result.extend(virtual)
 
+    health_by_model = {
+        row["model_id"]: row for row in await _health_snapshot(session, user, enforce_access=False)
+    }
+    for item in result:
+        health = health_by_model.get(item.model_id)
+        if health is not None:
+            health = dict(health)
+            health["upstreams"] = None
+            item.health = health
+
     return result
 
 
 async def _health_snapshot(
-    session: AsyncSession, user: User, model_id: str | None = None
+    session: AsyncSession,
+    user: User,
+    model_id: str | None = None,
+    *,
+    enforce_access: bool = True,
 ) -> list[dict]:
     catalog = await models_catalog.build_catalog(session)
     is_mod = is_staff(user)
+    group_ids = set() if is_mod else await role_group_service.user_group_ids(session, user.id)
+    providers = (
+        (
+            await session.execute(
+                select(Provider).where(
+                    Provider.enabled.is_(True), Provider.passthrough_enabled.is_(True)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    passthrough_ids = {
+        f"{provider.slug}/{_parse_passthrough_entry(raw)['exposed']}"
+        for provider in providers
+        for raw in provider.passthrough_models or []
+    }
     result: list[dict] = []
     emitted: set[str] = set()
     for item in catalog:
         if model_id and item.model_id != model_id:
             continue
+        if item.model_id in passthrough_ids:
+            continue
         if not is_mod and not item.enabled:
+            continue
+        if enforce_access and not role_group_service.model_allowed_for_groups(
+            item, group_ids, is_mod=is_mod
+        ):
             continue
         route = await model_routing.resolve_route(session, item)
         keys = {
@@ -321,8 +397,19 @@ async def _health_snapshot(
                 }
             )
         best = ranked[0] if ranked else None
+        recent = await _recent_health(session, item.model_id)
+        enough = recent["recent_request_count"] >= settings_store.get_int(
+            "upstream_min_samples", 10
+        )
         if not route.upstreams or not ranked:
             overall = "unavailable"
+        elif enough:
+            overall = (
+                "healthy"
+                if recent["recent_success_rate"]
+                >= settings_store.get_float("upstream_tier_healthy_threshold", 0.9)
+                else "degraded"
+            )
         else:
             statuses = [upstream_health.status_for(row) for row in ranked]
             overall = (
@@ -339,21 +426,11 @@ async def _health_snapshot(
                 "best_success_rate": best.success_rate if best else None,
                 "best_ttft_ms": best.ttft_ms if best else None,
                 "upstreams": details if is_mod else None,
+                **recent,
             }
         )
         emitted.add(item.model_id)
 
-    providers = (
-        (
-            await session.execute(
-                select(Provider).where(
-                    Provider.enabled.is_(True), Provider.passthrough_enabled.is_(True)
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
     for provider in providers:
         for raw in provider.passthrough_models or []:
             parsed = _parse_passthrough_entry(raw)
@@ -362,6 +439,10 @@ async def _health_snapshot(
                 continue
             existing = next((item for item in catalog if item.model_id == public_id), None)
             if existing is not None and not is_mod and not existing.enabled:
+                continue
+            if enforce_access and not role_group_service.model_allowed_for_groups(
+                existing, group_ids, is_mod=is_mod
+            ):
                 continue
             upstream_model = parsed["upstream"]
             pool = parsed["pool"]
@@ -386,47 +467,29 @@ async def _health_snapshot(
             cooldowns = await upstream_health.load_cooldowns(session, {key})
             ranked, _ = upstream_health.rank(route, cooldowns)
             best = ranked[0] if ranked else None
+            recent = await _recent_health(session, public_id)
+            enough = recent["recent_request_count"] >= settings_store.get_int(
+                "upstream_min_samples", 10
+            )
+            status_value = upstream_health.status_for(best) if best else "unavailable"
+            if best is not None and enough:
+                status_value = (
+                    "healthy"
+                    if recent["recent_success_rate"]
+                    >= settings_store.get_float("upstream_tier_healthy_threshold", 0.9)
+                    else "degraded"
+                )
             result.append(
                 {
                     "model_id": public_id,
-                    "status": upstream_health.status_for(best) if best else "unavailable",
+                    "status": status_value,
                     "best_success_rate": best.success_rate if best else None,
                     "best_ttft_ms": best.ttft_ms if best else None,
                     "upstreams": None,
+                    **recent,
                 }
             )
     return result
-
-
-@router.get("/health/stream")
-async def model_health_stream(
-    model_id: str | None = None,
-    user: User = Depends(get_current_user),
-) -> StreamingResponse:
-    await sse.acquire(user.sub)
-    queue = upstream_health.subscribe()
-
-    async def events():
-        try:
-            while True:
-                async with get_database().session() as stream_session:
-                    snapshot = await _health_snapshot(stream_session, user, model_id)
-                yield f"data: {json.dumps({'models': snapshot}, default=str)}\n\n"
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(queue.get(), timeout=5.0)
-        finally:
-            upstream_health.unsubscribe(queue)
-            await sse.release(user.sub)
-
-    return StreamingResponse(
-        events(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
 
 
 async def _get_or_create_entry(session: AsyncSession, model_id: str, user: User) -> ExposedModel:
@@ -895,6 +958,8 @@ async def get_route(
     route = await model_routing.resolve_route(session, entry)
     out = ModelWithRouteOut(**_to_out(entry).model_dump())
     out.route = _route_out(route)
+    health = await _health_snapshot(session, _, model_id)
+    out.health = health[0] if health else None
     return out
 
 
@@ -964,6 +1029,8 @@ async def update_route(
     route = await model_routing.resolve_route(session, entry)
     out = ModelWithRouteOut(**_to_out(entry).model_dump())
     out.route = _route_out(route)
+    health = await _health_snapshot(session, user, model_id)
+    out.health = health[0] if health else None
     return out
 
 

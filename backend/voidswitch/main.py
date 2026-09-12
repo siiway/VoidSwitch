@@ -13,6 +13,7 @@ from voidswitch import __version__
 from voidswitch.api import (
     announcements as announcements_api,
     auth as auth_api,
+    health as health_api,
     install as install_api,
     me as me_api,
     models as models_api,
@@ -187,6 +188,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(me_api.router)
     app.include_router(announcements_api.router)
     app.include_router(models_api.router)
+    app.include_router(health_api.router)
     # Admin.
     app.include_router(providers_api.router)
     app.include_router(keys_api.router)

@@ -71,6 +71,7 @@ const en = {
     providers: "Providers",
     models: "Models",
     nodes: "Nodes",
+    health: "Health",
     tokens: "Tokens",
     users: "Users",
     roleGroups: "Role Groups",
@@ -89,7 +90,26 @@ const en = {
     openSidebar: "Open sidebar",
     closeSidebar: "Close sidebar",
   },
+  health: {
+    title: "Health",
+    subtitle: "Live model and outbound-node quality",
+    modelsTab: "Models",
+    nodesTab: "Nodes",
+    recentSuccess: "Recent success",
+    avgTtft: "Average TTFT",
+    samples: "Requests",
+    latency: "EWMA latency",
+    score: "Rank score",
+    failures: "Failures",
+    stream: {
+      connecting: "Connecting live updates…",
+      connected: "Live updates connected",
+      paused: "Live updates paused; showing the last snapshot",
+      error: "Live updates disconnected",
+    },
+  },
   nodes: {
+    direct: "Direct",
     title: "Nodes & Groups",
     subtitle: "Outbound nodes and the node groups that route requests",
     disabledTitle: "Routing is disabled",
@@ -504,6 +524,10 @@ const en = {
     clearCooldown: "Clear cooldown",
     cooldownCleared: "Upstream cooldown cleared",
     healthLearning: "Learning",
+    recentHealthLine: "Last {time} success {rate}% · Average TTFT {ttft} ms",
+    minutes: "{n} minutes",
+    hours: "{n} hours",
+    days: "{n} days",
     health: {
       healthy: "Healthy",
       degraded: "Degraded",
@@ -910,6 +934,8 @@ const en = {
       "Max simultaneous live-log streams per user (0 = unlimited)",
     sseMaxConnectionsPerUser:
       "Max simultaneous live SSE connections per user (0 = unlimited)",
+    modelHealthRecentRequestCount: "Recent requests used for model health (10–500)",
+    nodeHealthHistoryRetentionDays: "Node health history retention (days)",
     proxySwitchingEnabled:
       "Proxy switching enabled (off = always use the static proxy below)",
     staticProxyUrl:

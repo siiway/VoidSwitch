@@ -48,7 +48,6 @@ import type {
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import { BRAND_KEYS, getBrandIcon, resolveBrandKey } from "../components/brand_icons";
-import { useModelHealth } from "../lib/useModelHealth";
 import {
   ErrorText,
   Loading,
@@ -183,6 +182,17 @@ function intOrEmpty(value: string): number | null {
   if (!trimmed) return null;
   const n = Number(trimmed);
   return Number.isNaN(n) ? null : Math.max(0, Math.floor(n));
+}
+
+function relativeHealthTime(value: string, t: (key: string) => string): string {
+  const seconds = Math.max(1, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 3600) {
+    return t("models.minutes").replace("{n}", String(Math.max(1, Math.round(seconds / 60))));
+  }
+  if (seconds < 86400) {
+    return t("models.hours").replace("{n}", String(Math.max(1, Math.round(seconds / 3600))));
+  }
+  return t("models.days").replace("{n}", String(Math.max(1, Math.round(seconds / 86400))));
 }
 
 // Brand-aware title-casing for the display-name placeholder, e.g.
@@ -337,7 +347,6 @@ export function Models() {
   const navigate = useNavigate();
   const { isStaff } = useAuth();
   const catalog = useAsync<ModelEntry[]>(() => api.get("/api/models"));
-  const modelHealth = useModelHealth();
   const roleGroups = useAsync<RoleGroup[]>(() =>
     isStaff ? api.get("/api/admin/role-groups") : Promise.resolve([]),
   );
@@ -1236,7 +1245,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                 {!isCollapsed && (
                   <div className={styles.grid}>
                     {g.models.map((m) => {
-                      const health = modelHealth[m.model_id];
+                      const health = m.health;
                       const hasConfig =
                         m.opencode_config && Object.keys(m.opencode_config).length > 0;
                       return (
@@ -1271,19 +1280,6 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                           </Text>
 
                           <div className={styles.badges}>
-                            {health && (
-                              <Tooltip
-                                content={`${health.best_success_rate == null ? "--" : `${(health.best_success_rate * 100).toFixed(1)}%`} · ${health.best_ttft_ms == null ? "--" : `${Math.round(health.best_ttft_ms)} ms`}`}
-                                relationship="description"
-                              >
-                                <Badge
-                                  appearance="tint"
-                                  color={health.status === "healthy" ? "success" : health.status === "unavailable" ? "danger" : health.status === "degraded" ? "warning" : "informative"}
-                                >
-                                  {t(`models.health.${health.status}` as TK)}
-                                </Badge>
-                              </Tooltip>
-                            )}
                             {!m.enabled && (
                               <Badge appearance="filled" color="subtle">
                                 {t("models.unavailableHidden" as TK)}
@@ -1323,6 +1319,41 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                                 </Badge>
                               ))}
                           </div>
+
+                          {health &&
+                            health.sufficient_data &&
+                            health.recent_success_rate != null &&
+                            health.recent_since && (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "8px 10px",
+                                  borderRadius: 8,
+                                  borderLeft: `3px solid ${health.status === "healthy" ? tokens.colorPaletteGreenBorderActive : tokens.colorPaletteDarkOrangeBorderActive}`,
+                                  background: tokens.colorNeutralBackground2,
+                                }}
+                              >
+                                <Badge
+                                  appearance="tint"
+                                  color={health.status === "healthy" ? "success" : "warning"}
+                                >
+                                  {t(`models.health.${health.status}` as TK)}
+                                </Badge>
+                                <Text size={200}>
+                                  {t("models.recentHealthLine" as TK)
+                                    .replace("{time}", relativeHealthTime(health.recent_since, t))
+                                    .replace("{rate}", (health.recent_success_rate * 100).toFixed(1))
+                                    .replace(
+                                      "{ttft}",
+                                      health.recent_avg_ttft_ms == null
+                                        ? "--"
+                                        : String(Math.round(health.recent_avg_ttft_ms)),
+                                    )}
+                                </Text>
+                              </div>
+                            )}
 
                           {isStaff && (
                             <div className={styles.actions}>

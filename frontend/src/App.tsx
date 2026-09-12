@@ -18,6 +18,7 @@ import { Audit, Logs } from "./pages/Logs";
 import { Statistics } from "./pages/Statistics";
 import { MyToken } from "./pages/MyToken";
 import { Chat } from "./pages/Chat";
+import { Health } from "./pages/Health";
 import type { ReactNode } from "react";
 
 function Protected({
@@ -102,6 +103,7 @@ export function App() {
             </Protected>
           }
         />
+        <Route path="/health" element={<Protected><Health /></Protected>} />
         <Route
           path="/models/:modelId/route"
           element={

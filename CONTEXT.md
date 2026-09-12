@@ -135,6 +135,9 @@ gated by ``allowed_role_group_ids``.
   balanced selection from the scored candidates.
 - **Upstream cooldown (上游冷却)** — a temporary platform-wide exclusion of one
   provider/upstream-model/key-pool combination after an upstream-side fault.
+- **Health snapshot (健康快照)** — a user-facing summary computed from the most
+  recent completed requests. It survives restarts and is distinct from the
+  process-local upstream score used on the dispatch hot path.
 
 Upstream cooldown and key cooldown are separate: the former describes an upstream
 service condition shared by all routes, while the latter describes one credential.

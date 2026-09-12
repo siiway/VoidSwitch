@@ -37,7 +37,6 @@ import type {
 import { useAuth } from "../auth/AuthContext";
 import { ErrorText, Loading, useAsync, useNotify } from "../components/ui";
 import type { Translations } from "../i18n/locales/en";
-import { useModelHealth } from "../lib/useModelHealth";
 
 type TK = keyof Translations;
 type DraftUpstream = RouteUpstream & { pk: string };
@@ -91,7 +90,7 @@ export function ModelRoute() {
     [decoded],
   );
   const providers = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
-  const health = useModelHealth(decoded)[decoded];
+  const health = routeData.data?.health;
   const [upstreams, setUpstreams] = useState<DraftUpstream[] | null>(null);
   const [selectMode, setSelectMode] = useState<UpstreamSelectMode>("");
   const [rankAlgorithm, setRankAlgorithm] = useState<UpstreamRankAlgorithm>("");
@@ -214,6 +213,12 @@ export function ModelRoute() {
           const provider = (providers.data ?? []).find((item) => item.id === entry.provider_id);
           const query = providerQuery[entry.pk];
           const upstreamHealth = health?.upstreams?.find((item) => item.upstream_id === entry.id);
+          const useModelHistory = health?.sufficient_data && (health.upstreams?.length ?? 0) === 1;
+          const shownStatus = useModelHistory ? health.status : upstreamHealth?.status;
+          const shownSuccess = useModelHistory
+            ? health.recent_success_rate
+            : upstreamHealth?.success_rate;
+          const shownTtft = useModelHistory ? health.recent_avg_ttft_ms : upstreamHealth?.ttft_ms;
           return (
             <div key={entry.pk} className={styles.entry}>
               <Checkbox checked={entry.enabled} onChange={(_, d) => patchUpstream(entry.pk, { enabled: d.checked === true })} aria-label={t("common.enabled" as TK)} />
@@ -236,7 +241,7 @@ export function ModelRoute() {
               <Tooltip content={t("common.down" as TK)} relationship="label"><Button appearance="subtle" icon={<ArrowDownRegular />} disabled={index === (upstreams?.length ?? 0) - 1} onClick={() => moveUpstream(index, 1)} aria-label={t("common.down" as TK)} /></Tooltip>
               <Tooltip content={t("common.delete" as TK)} relationship="label"><Button appearance="subtle" icon={<DeleteRegular />} onClick={() => setUpstreams((current) => (current ?? []).filter((item) => item.pk !== entry.pk))} aria-label={t("common.delete" as TK)} /></Tooltip>
               <div className={styles.health}>
-                <Text size={200}>{upstreamHealth ? `${t(`models.health.${upstreamHealth.status}` as TK)} · ${t("models.successRate" as TK)} ${pct(upstreamHealth.success_rate)} · ${t("models.ttft" as TK)} ${upstreamHealth.ttft_ms == null ? "--" : `${Math.round(upstreamHealth.ttft_ms)} ms`}` : t("models.healthLearning" as TK)}</Text>
+                <Text size={200}>{shownStatus ? `${t(`models.health.${shownStatus}` as TK)} · ${t("models.successRate" as TK)} ${pct(shownSuccess)} · ${t("models.ttft" as TK)} ${shownTtft == null ? "--" : `${Math.round(shownTtft)} ms`}` : t("models.healthLearning" as TK)}</Text>
                 {upstreamHealth?.cooled_until && isOwner ? <Tooltip content={t("models.clearCooldown" as TK)} relationship="label"><Button size="small" appearance="subtle" icon={<WeatherSunnyRegular />} onClick={() => void clearCooldown(upstreamHealth.upstream_id)} aria-label={t("models.clearCooldown" as TK)} /></Tooltip> : null}
               </div>
             </div>

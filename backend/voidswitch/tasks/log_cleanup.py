@@ -26,7 +26,14 @@ from voidswitch.core.audit import (
 )
 from voidswitch.core.database import get_database
 from voidswitch.core.logging import get_logger
-from voidswitch.models.db import AuditLog, RequestLog, SessionSpan, UpstreamCooldown, UsageDaily
+from voidswitch.models.db import (
+    AuditLog,
+    NodeHealthSample,
+    RequestLog,
+    SessionSpan,
+    UpstreamCooldown,
+    UsageDaily,
+)
 from voidswitch.services import settings_store
 
 log = get_logger("tasks.log_cleanup")
@@ -55,12 +62,19 @@ async def cleanup_logs() -> dict[str, int]:
         deleted_heatmap = 0
         deleted_spans = 0
         deleted_cooldowns = 0
+        deleted_node_samples = 0
 
         deleted_cooldowns = await _delete_batched(
             session,
             UpstreamCooldown,
             (UpstreamCooldown.until < now - dt.timedelta(days=7))
             & (UpstreamCooldown.consecutive_trips == 0),
+        )
+        node_history_days = max(1, settings_store.get_int("node_health_history_retention_days", 7))
+        deleted_node_samples = await _delete_batched(
+            session,
+            NodeHealthSample,
+            NodeHealthSample.ts < now - dt.timedelta(days=node_history_days),
         )
 
         if request_days > 0:
@@ -95,6 +109,7 @@ async def cleanup_logs() -> dict[str, int]:
                 deleted_heatmap,
                 deleted_spans,
                 deleted_cooldowns,
+                deleted_node_samples,
             )
         ):
             log.info(
@@ -105,6 +120,7 @@ async def cleanup_logs() -> dict[str, int]:
                 deleted_heatmap_days=deleted_heatmap,
                 deleted_session_spans=deleted_spans,
                 deleted_upstream_cooldowns=deleted_cooldowns,
+                deleted_node_health_samples=deleted_node_samples,
             )
             await record_audit(
                 session,
@@ -119,6 +135,7 @@ async def cleanup_logs() -> dict[str, int]:
                     "deleted_heatmap_days": deleted_heatmap,
                     "deleted_session_spans": deleted_spans,
                     "deleted_upstream_cooldowns": deleted_cooldowns,
+                    "deleted_node_health_samples": deleted_node_samples,
                     "audit_log_retention_days": audit_days,
                     "request_log_retention_days": request_days,
                     "debug_log_retention_days": debug_days,
@@ -134,6 +151,7 @@ async def cleanup_logs() -> dict[str, int]:
             "deleted_heatmap_days": deleted_heatmap,
             "deleted_session_spans": deleted_spans,
             "deleted_upstream_cooldowns": deleted_cooldowns,
+            "deleted_node_health_samples": deleted_node_samples,
         }
 
 

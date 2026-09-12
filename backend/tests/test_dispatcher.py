@@ -938,8 +938,10 @@ async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
     import time
 
     from voidswitch.models.db import RequestLog, VoidToken
+    from voidswitch.services import upstream_health
     from voidswitch.services.dispatcher import _build_stream
 
+    upstream_health.reset_state()
     async with db.session() as session:
         token = VoidToken(user_id=seeded["user_id"], name="t", token_hash="tokhash")
         session.add(token)
@@ -982,6 +984,7 @@ async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
         log_id=log_id,
         token_id=token.id,
         start_mono=start_mono,
+        health_key=(seeded["provider_id"], "deepseek-chat", ""),
     )
     async for _ in gen:
         pass
@@ -996,6 +999,9 @@ async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
         assert row.first_token_ms >= 190.0
         assert row.first_token_ms < 300.0
         assert row.req_status == "completed"
+    stat = upstream_health._stats[(seeded["provider_id"], "deepseek-chat", "")]
+    assert stat.ttft_ewma_ms is not None
+    assert stat.ttft_ewma_ms >= 190.0
 
 
 async def test_reconcile_pending_logs_marks_orphaned_terminated(db):
