@@ -17,6 +17,9 @@ either choice. Weight only affects balancing and score ties.
 platform-wide by provider, upstream model, and key pool, so every exposed model referencing that same
 upstream avoids it. Retry-After/provider retry headers take precedence over route, provider, and global
 fallback cooldowns. Key rate limiting and upstream cooldown are separate states.
+The default **ignore cooldown** policy tries normal candidates first but retains cooled candidates as
+last-resort fallbacks. This allows routing to continue when a higher-ranked normal candidate has no
+eligible key or outbound node.
 
 The Models page receives a recent health summary with its normal catalog request and no longer keeps
 an SSE connection open. The dedicated Health page connects live updates automatically; staff see

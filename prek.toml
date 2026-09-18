@@ -7,7 +7,7 @@ repos = [
   { repo = "local", hooks = [
     { id = "i18n-keys", name = "i18n keys present in en.ts & zh.ts",
       language = "system", entry = "python3 scripts/check_i18n_keys.py",
-      pass_filenames = false, files = "frontend/src/.*\\.tsx?$" },
+      pass_filenames = false, always_run = true },
     # Backend Python gates (ruff check --fix → ruff format → ty). The ruff
     # hooks autofix in place and re-stage the files (via scripts/ruff_fix.sh),
     # so a fix is treated as success and committed with the change. ty is a

@@ -301,13 +301,19 @@ def rank(
     behavior = route.upstream_all_cooled_behavior or settings_store.get_str(
         "upstream_all_cooled_behavior", "ignore_cooldown"
     )
-    if not rows and cooling and behavior == "ignore_cooldown":
-        rows, ignored = cooling, True
+    if cooling and behavior == "ignore_cooldown":
+        # Keep cooled candidates behind normal candidates as a last-resort
+        # fallback. A normal candidate may have no eligible key or outbound route;
+        # treating its mere presence as availability previously discarded every
+        # cooled-but-usable provider and produced attempts=0.
+        rows.extend(cooling)
+        ignored = True
     algorithm = route.upstream_rank_algorithm or settings_store.get_str(
         "upstream_rank_algorithm", "weighted"
     )
     rows.sort(
         key=lambda r: (
+            r.tier == 3,
             (r.tier if algorithm == UpstreamRankAlgorithm.TIERED.value else 0),
             r.score,
             -(r.upstream.weight or 1),
@@ -323,7 +329,7 @@ def rank(
         existing = _pins.get(pin_key)
         if existing and time.monotonic() - existing[1] <= _PIN_TTL:
             found = next((r for r in rows if r.upstream.id == existing[0]), None)
-            if found:
+            if found and (found.tier != 3 or all(r.tier == 3 for r in rows)):
                 rows.remove(found)
                 rows.insert(0, found)
                 _pins[pin_key] = (existing[0], time.monotonic())
@@ -331,7 +337,9 @@ def rank(
     if mode in (UpstreamSelectMode.BALANCED.value, UpstreamSelectMode.PINNED_BALANCED.value):
         tolerance = max(0.0, settings_store.get_float("upstream_balance_tolerance", 0.2))
         limit = rows[0].score * (1 + tolerance) if rows[0].score > 0 else tolerance
-        pool = [r for r in rows if r.score <= limit]
+        pool = [r for r in rows if r.tier != 3 and r.score <= limit]
+        if not pool:
+            pool = [r for r in rows if r.score <= limit]
         chosen = randomizer.choices(
             pool, weights=[max(1, r.upstream.weight) / max(r.score, 0.001) for r in pool], k=1
         )[0]

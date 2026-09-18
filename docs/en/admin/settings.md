@@ -16,6 +16,9 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
   node is disabled).
 - **Keys & Balance** — key failure limit, auto-disable for zero-balance keys, and balance probe/rescan cadence and rate.
 - **Rate Limiting** — the default recovery window and the cap on any single cooldown.
+- **Upstream routing** — upstream selection and ranking, score weights, the health sample threshold,
+  keys tried per upstream, and cooldown status codes, duration/backoff, retry headers, and all-cooled
+  behavior. Enter status codes as a comma-separated list and retry headers one per line.
 - **Timeouts & Retries** — connection / request / stream-idle timeouts, the retry budget, plus a
   **response timeout** (`response_timeout_seconds`): a hard wall-clock cap on the whole request (streaming
   included). When a request runs past it, the connection is **force-cut** and the log row is marked

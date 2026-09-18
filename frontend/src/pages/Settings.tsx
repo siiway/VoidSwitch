@@ -336,6 +336,22 @@ export function Settings() {
       logs_page_size: t("settings.logsPageSize" as TK),
       sse_max_connections_per_user: t("settings.sseMaxConnectionsPerUser" as TK),
       model_health_recent_request_count: t("settings.modelHealthRecentRequestCount" as TK),
+      upstream_select_mode: t("settings.upstreamSelectMode" as TK),
+      upstream_rank_algorithm: t("settings.upstreamRankAlgorithm" as TK),
+      upstream_rank_alpha: t("settings.upstreamRankAlpha" as TK),
+      upstream_rank_beta: t("settings.upstreamRankBeta" as TK),
+      upstream_rank_gamma: t("settings.upstreamRankGamma" as TK),
+      upstream_balance_tolerance: t("settings.upstreamBalanceTolerance" as TK),
+      upstream_pin_jitter: t("settings.upstreamPinJitter" as TK),
+      upstream_ewma_half_life_seconds: t("settings.upstreamEwmaHalfLife" as TK),
+      upstream_min_samples: t("settings.upstreamMinSamples" as TK),
+      upstream_tier_healthy_threshold: t("settings.upstreamTierHealthyThreshold" as TK),
+      upstream_max_keys_per_attempt: t("settings.upstreamMaxKeysPerAttempt" as TK),
+      upstream_cooldown_status_codes: t("settings.upstreamCooldownStatusCodes" as TK),
+      upstream_cooldown_seconds: t("settings.upstreamCooldownSeconds" as TK),
+      upstream_cooldown_backoff_cap: t("settings.upstreamCooldownBackoffCap" as TK),
+      upstream_retry_after_headers: t("settings.upstreamRetryAfterHeaders" as TK),
+      upstream_all_cooled_behavior: t("settings.upstreamAllCooledBehavior" as TK),
       node_health_history_retention_days: t("settings.nodeHealthHistoryRetentionDays" as TK),
       proxy_switching_enabled: t("settings.proxySwitchingEnabled" as TK),
       static_proxy_url: t("settings.staticProxyUrl" as TK),
@@ -385,6 +401,44 @@ export function Settings() {
     const value = values[key];
     const label = labels[key] ?? key;
 
+    if (key === "upstream_cooldown_status_codes" && Array.isArray(value)) {
+      return (
+        <Field key={key} label={label}>
+          <Textarea
+            value={value.map((item) => String(item)).join(", ")}
+            disabled={!isOwner}
+            onChange={(_, d) =>
+              set(
+                key,
+                d.value
+                  .split(/[\s,]+/)
+                  .map((item) => Number(item))
+                  .filter((item) => Number.isInteger(item) && item >= 0),
+              )
+            }
+          />
+        </Field>
+      );
+    }
+    if (key === "upstream_retry_after_headers" && Array.isArray(value)) {
+      return (
+        <Field key={key} label={label}>
+          <Textarea
+            value={value.map((item) => String(item)).join("\n")}
+            disabled={!isOwner}
+            onChange={(_, d) =>
+              set(
+                key,
+                d.value
+                  .split(/[\n,]+/)
+                  .map((item) => item.trim().toLowerCase())
+                  .filter(Boolean),
+              )
+            }
+          />
+        </Field>
+      );
+    }
     if (key === "chat_preset_questions" && Array.isArray(value)) {
       return (
         <Field

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that every i18n key used in the frontend source exists in the locales.
+"""Check frontend i18n references and Settings-page label coverage.
 
 Scans ``frontend/src/**`` for ``t("...")`` / ``t("..." as TK)`` calls and reports
 keys that are missing from ``locales/en.ts`` and/or ``locales/zh.ts``. Used as a
@@ -24,6 +24,9 @@ LOCALES = [ROOT / "frontend" / "src" / "i18n" / "locales" / "en.ts",
 
 # t("...") and t("..." as TK) call sites.
 _CALL_RE = re.compile(r'\bt\(\s*"([^"]+)"(?:\s+as\s+TK)?\s*\)')
+
+_SETTING_KEY_RE = re.compile(r'"([a-z][a-z0-9_]+)"')
+_SETTING_LABEL_RE = re.compile(r'^\s{6}([a-z][a-z0-9_]+):\s*t\(', re.M)
 
 # "sec.key": "value" lines inside a section block.
 _KEYLINE_RE = re.compile(r'^    ([a-zA-Z0-9_]+):', re.M)
@@ -70,10 +73,26 @@ def _locales():
     return data
 
 
+def _settings_label_errors(text: str) -> list[str]:
+    """Return visible Settings keys that would fall back to raw identifiers."""
+    sections_start = text.find("const SECTIONS")
+    sections_end = text.find("const PROXY_SWITCHING_ONLY", sections_start)
+    labels_start = text.find("const labels", sections_end)
+    labels_end = text.find("const hints", labels_start)
+    if min(sections_start, sections_end, labels_start, labels_end) < 0:
+        return ["could not locate SECTIONS and labels metadata in Settings.tsx"]
+
+    section_keys = set(_SETTING_KEY_RE.findall(text[sections_start:sections_end]))
+    labels = set(_SETTING_LABEL_RE.findall(text[labels_start:labels_end]))
+    return sorted(section_keys - labels)
+
+
 def main() -> int:
     fix = "--fix" in sys.argv
     locales = _locales()
     used = _used_keys()
+    settings_path = SRC / "pages" / "Settings.tsx"
+    settings_errors = _settings_label_errors(settings_path.read_text())
 
     missing: list[tuple[str, str, set[str]]] = []
     for rel, keys in sorted(used.items()):
@@ -82,11 +101,18 @@ def main() -> int:
                 if key not in defined:
                     missing.append((rel, name, {key}))
 
-    if not missing:
+    if not missing and not settings_errors:
         print("i18n keys: all referenced keys present in en.ts and zh.ts")
         return 0
 
     if fix:
+        if settings_errors:
+            for key in settings_errors:
+                print(
+                    "[fix] unresolved: frontend/src/pages/Settings.tsx: "
+                    f"visible setting '{key}' has no localized label"
+                )
+            return 1
         # Group by locale and append missing keys as placeholders before the
         # section's closing brace (best-effort; operators fill in real text).
         by_locale: dict[str, set[str]] = {}
@@ -130,11 +156,15 @@ def main() -> int:
             return 1
         return 0
 
+    for key in settings_errors:
+        print(f"frontend/src/pages/Settings.tsx: visible setting '{key}' has no localized label")
     for rel, name, keys in missing:
         for k in keys:
             print(f"{rel}: missing {name} key '{k}'")
-    print("\nAdd the keys to frontend/src/i18n/locales/en.ts and zh.ts "
-          "(or run with --fix to insert placeholders).")
+    print(
+        "\nAdd missing Settings labels and locale entries in both en.ts and zh.ts "
+        "(--fix can insert placeholders for referenced locale keys only)."
+    )
     return 1
 
 

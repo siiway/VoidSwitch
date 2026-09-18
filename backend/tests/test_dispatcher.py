@@ -658,6 +658,76 @@ async def test_dispatch_429_sets_retry_after_cooldown(db, seeded):
     assert k2.total_requests == 1
 
 
+async def test_dispatch_default_cooldown_fallback_skips_unusable_uncooled_upstream(db, seeded):
+    """A usable cooled upstream remains a fallback behind unusable normal ones."""
+    import datetime as dt
+
+    from voidswitch.models.db import ApiKey, Provider, Route, RouteUpstream, UpstreamCooldown
+
+    async with db.session() as session:
+        first_key = await session.get(ApiKey, seeded["key_id"])
+        first_key.status = KeyStatus.RATE_LIMITED.value
+        first_key.rate_limit_until = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=2)
+
+        fallback = Provider(
+            name="deepseek-fallback",
+            slug="deepseek-fallback",
+            type="deepseek",
+            base_url="https://api.deepseek.com",
+            models=["deepseek-chat"],
+        )
+        session.add(fallback)
+        await session.flush()
+        session.add(
+            ApiKey(
+                provider_id=fallback.id,
+                key_ciphertext=encrypt_secret(
+                    "sk-fallback", secret=get_settings().server.secret_key
+                ),
+                key_hash=hash_token("sk-fallback"),
+                key_preview="sk-f",
+                status=KeyStatus.ACTIVE.value,
+            )
+        )
+        route = (await session.execute(select(Route))).scalar_one()
+        session.add(
+            RouteUpstream(
+                route_id=route.id,
+                provider_id=fallback.id,
+                upstream_model="deepseek-chat",
+                position=1,
+            )
+        )
+        session.add(
+            UpstreamCooldown(
+                provider_id=fallback.id,
+                upstream_model="deepseek-chat",
+                key_pool="",
+                until=dt.datetime.now(dt.UTC) + dt.timedelta(minutes=2),
+                reason="HTTP 502",
+                trigger_status=502,
+            )
+        )
+        await session.flush()
+
+    request = DispatchRequest(
+        inbound_style=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        stream=False,
+        token_id=seeded["token_id"],
+    )
+
+    with respx.mock(assert_all_called=False) as mock:
+        upstream = mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await dispatch(request)
+
+    assert result.status_code == 200
+    assert result.attempts == 1
+    assert result.provider_name == "deepseek-fallback"
+    assert upstream.call_count == 1
+
+
 async def test_dispatch_429_provider_cooldown_when_no_header(db, seeded):
     """Without a Retry-After header, the provider's cooldown is used (over global)."""
     import datetime as dt
