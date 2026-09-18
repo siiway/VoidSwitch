@@ -225,6 +225,7 @@ def select_keys(
     rate_limit_recovery_seconds: int = 0,
     *,
     session_key: str | None = None,
+    ignore_cooldown: bool = False,
 ) -> list[ApiKey]:
     """Per-request key try order for a provider, honouring its key-select mode.
 
@@ -235,7 +236,10 @@ def select_keys(
     A rate-limited key is **excluded from the pool entirely** until its cooldown
     elapses (``rate_limit_until``, set from the upstream ``Retry-After`` header or
     the provider/global cooldown). Once eligible again it is ranked *after* every
-    active key, so healthy keys are always tried first.
+    active key, so healthy keys are always tried first. When ``ignore_cooldown``
+    is true, currently rate-limited keys are appended as a final fallback. The
+    dispatcher enables this only for a cooled upstream restored by the route's
+    explicit all-cooled policy.
     """
     now = _utcnow()
     active: list[ApiKey] = []
@@ -243,7 +247,9 @@ def select_keys(
     for k in provider.keys:
         if k.status == KeyStatus.ACTIVE.value:
             active.append(k)
-        elif _rate_limited_eligible(k, now, rate_limit_recovery_seconds):
+        elif _rate_limited_eligible(k, now, rate_limit_recovery_seconds) or (
+            ignore_cooldown and k.status == KeyStatus.RATE_LIMITED.value
+        ):
             recovered.append(k)
     if pool:
         active = [k for k in active if (k.pool or "") == pool]

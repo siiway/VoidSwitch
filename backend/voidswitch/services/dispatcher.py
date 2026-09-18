@@ -536,6 +536,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         route, cooldowns, session_key=session_key
     )
     entries = [row.upstream for row in ranked_upstreams]
+    cooled_fallback_ids = {row.upstream.id for row in ranked_upstreams if row.tier == 3}
     max_upstreams = route.max_upstream_attempts or len(entries)
 
     # Proxy switching off (external proxy like mihomo handles egress): every
@@ -578,6 +579,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
             key_pool,
             rate_limit_recovery_seconds=rate_limit_recovery,
             session_key=session_key,
+            ignore_cooldown=_cooldown_ignored and entry.id in cooled_fallback_ids,
         )[
             : max(
                 1,
@@ -588,6 +590,17 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         upstream_style = adapter.style
         timeout_override = provider.timeout_seconds or 0
         read_timeout = float(timeout_override) if timeout_override else request_timeout
+
+        if not keys:
+            pool_detail = f" in pool '{key_pool}'" if key_pool else ""
+            last_error = f"provider '{provider.name}': no eligible keys{pool_detail}"
+            last_status = 502
+            last_ctx = {
+                "provider": provider,
+                "upstream_style": upstream_style,
+                "upstream_model": upstream_model,
+            }
+            continue
 
         secret_key = settings.server.secret_key
         health_key = upstream_health.key_for(provider.id, upstream_model, key_pool)

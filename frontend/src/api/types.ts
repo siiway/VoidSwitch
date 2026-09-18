@@ -295,6 +295,7 @@ export interface UpstreamHealth {
   status: ModelHealthStatus;
   success_rate?: number | null;
   ttft_ms?: number | null;
+  samples?: number;
   requests?: number;
   consecutive_failures?: number;
   cooled_until?: string | null;

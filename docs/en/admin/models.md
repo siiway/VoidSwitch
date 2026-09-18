@@ -19,7 +19,8 @@ upstream avoids it. Retry-After/provider retry headers take precedence over rout
 fallback cooldowns. Key rate limiting and upstream cooldown are separate states.
 The default **ignore cooldown** policy tries normal candidates first but retains cooled candidates as
 last-resort fallbacks. This allows routing to continue when a higher-ranked normal candidate has no
-eligible key or outbound node.
+eligible key or outbound node. If a restored cooled candidate only has rate-limited keys, those keys
+are also eligible as the final fallback so the request does not fail before any upstream attempt.
 
 The Models page receives a recent health summary with its normal catalog request and no longer keeps
 an SSE connection open. The dedicated Health page connects live updates automatically; staff see

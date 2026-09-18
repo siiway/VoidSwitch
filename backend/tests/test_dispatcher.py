@@ -658,6 +658,64 @@ async def test_dispatch_429_sets_retry_after_cooldown(db, seeded):
     assert k2.total_requests == 1
 
 
+async def test_dispatch_default_all_cooled_retries_rate_limited_key(db, seeded):
+    """Default ignore-cooldown retries the only key instead of making zero attempts."""
+    request = DispatchRequest(
+        inbound_style=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        stream=False,
+        token_id=seeded["token_id"],
+    )
+
+    with respx.mock(assert_all_called=False) as mock:
+        upstream = mock.post(DS_URL).mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "120"}, json={"error": "slow down"}),
+                httpx.Response(200, json=OAI_RESPONSE),
+            ]
+        )
+        first = await dispatch(request)
+        second = await dispatch(request)
+
+    assert first.status_code == 429
+    assert first.attempts == 1
+    assert second.status_code == 200
+    assert second.attempts == 1
+    assert upstream.call_count == 2
+
+
+async def test_dispatch_fail_fast_does_not_retry_rate_limited_key(db, seeded):
+    """An explicit fail-fast policy preserves the zero-attempt cooldown behavior."""
+    from voidswitch.models.db import Route
+
+    async with db.session() as session:
+        route = (await session.execute(select(Route))).scalar_one()
+        route.upstream_all_cooled_behavior = "fail_fast"
+        await session.flush()
+
+    request = DispatchRequest(
+        inbound_style=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        stream=False,
+        token_id=seeded["token_id"],
+    )
+    with respx.mock(assert_all_called=False) as mock:
+        upstream = mock.post(DS_URL).mock(
+            return_value=httpx.Response(
+                429, headers={"Retry-After": "120"}, json={"error": "slow down"}
+            )
+        )
+        first = await dispatch(request)
+        second = await dispatch(request)
+
+    assert first.attempts == 1
+    assert second.status_code == 502
+    assert second.attempts == 0
+    assert upstream.call_count == 1
+
+
 async def test_dispatch_default_cooldown_fallback_skips_unusable_uncooled_upstream(db, seeded):
     """A usable cooled upstream remains a fallback behind unusable normal ones."""
     import datetime as dt
