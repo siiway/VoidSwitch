@@ -1122,6 +1122,7 @@ const en = {
     respHeaders: "Response headers",
     respBody: "Response body",
     attempts: "Attempts",
+    skipped: "Skipped",
     networkError: "Network error",
     direct: "direct",
     debugOwnerOnly: "Debug details are only visible to owner / co-owner.",

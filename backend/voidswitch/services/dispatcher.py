@@ -538,6 +538,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     entries = [row.upstream for row in ranked_upstreams]
     cooled_fallback_ids = {row.upstream.id for row in ranked_upstreams if row.tier == 3}
     max_upstreams = route.max_upstream_attempts or len(entries)
+    upstreams_tried = 0
 
     # Proxy switching off (external proxy like mihomo handles egress): every
     # request goes through a single fixed route and no node is ever disabled.
@@ -551,12 +552,25 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     )
 
     # Upstreams are dynamically ranked once per request; key and node failover
-    # remains bounded by the global retry budget.
-    for entry in entries[:max_upstreams]:
-        if attempts >= max_retries:
+    # remains bounded by the global retry budget. ``max_upstream_attempts`` only
+    # counts upstreams that actually get a usable key — an entry skipped because
+    # its provider is disabled / has no outbound node / has no eligible keys
+    # never consumes the budget, so a single unusable lead candidate no longer
+    # ends the search.
+    for entry in entries:
+        if attempts >= max_retries or upstreams_tried >= max_upstreams:
             break
         provider = entry.provider
         if provider is None or not provider.enabled:
+            attempt_summaries.append(
+                _skip_summary(
+                    provider=provider,
+                    provider_name=provider.name if provider else None,
+                    upstream_model=entry.upstream_model or req.model,
+                    key_pool=entry.key_pool or "",
+                    reason="provider disabled",
+                )
+            )
             continue
         adapter = get_adapter(provider)
         upstream_model = entry.upstream_model or req.model
@@ -572,6 +586,15 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         if not routes:
             last_error = f"provider '{provider.name}': no available outbound node"
             last_status = 502
+            attempt_summaries.append(
+                _skip_summary(
+                    provider=provider,
+                    provider_name=provider.name,
+                    upstream_model=upstream_model,
+                    key_pool=key_pool,
+                    reason="no available outbound node",
+                )
+            )
             continue
 
         keys = select_keys(
@@ -595,6 +618,15 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
             pool_detail = f" in pool '{key_pool}'" if key_pool else ""
             last_error = f"provider '{provider.name}': no eligible keys{pool_detail}"
             last_status = 502
+            attempt_summaries.append(
+                _skip_summary(
+                    provider=provider,
+                    provider_name=provider.name,
+                    upstream_model=upstream_model,
+                    key_pool=key_pool,
+                    reason=f"no eligible keys{pool_detail}",
+                )
+            )
             last_ctx = {
                 "provider": provider,
                 "upstream_style": upstream_style,
@@ -602,6 +634,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
             }
             continue
 
+        upstreams_tried += 1
         secret_key = settings.server.secret_key
         health_key = upstream_health.key_for(provider.id, upstream_model, key_pool)
         abandon_upstream = False
@@ -1586,6 +1619,37 @@ def _trail_entry(
         "resp_headers": outcome.resp_headers,
         "resp_body": _resp_body_repr(outcome),
         "duration_ms": outcome.duration_ms,
+    }
+
+
+def _skip_summary(
+    *,
+    provider: Provider | None,
+    provider_name: str | None,
+    upstream_model: str,
+    key_pool: str,
+    reason: str,
+) -> dict[str, Any]:
+    """One evaluated-but-skipped upstream, recorded so a zero-attempt failure is
+    attributable even when nothing was ever sent upstream."""
+    return {
+        "attempt": 0,
+        "skipped": True,
+        "reason": reason,
+        "provider": provider_name,
+        "provider_id": provider.id if provider else None,
+        "key_id": None,
+        "key_preview": None,
+        "pool": key_pool,
+        "upstream_model": upstream_model,
+        "url": None,
+        "proxy_url": None,
+        "status_code": None,
+        "error_class": "skipped",
+        "network_error": False,
+        "error": reason,
+        "resp_body": None,
+        "duration_ms": None,
     }
 
 

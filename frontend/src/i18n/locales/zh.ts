@@ -1087,6 +1087,7 @@ const zh: Translations = {
     respHeaders: "响应头",
     respBody: "响应体",
     attempts: "尝试记录",
+    skipped: "已跳过",
     networkError: "网络错误",
     direct: "直连",
     debugOwnerOnly: "调试详情仅对 owner / co-owner 可见。",

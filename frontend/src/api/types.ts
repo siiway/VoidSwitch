@@ -512,6 +512,8 @@ export interface RequestLog {
 
 export interface RequestLogAttempt {
   attempt: number;
+  skipped?: boolean;
+  reason?: string | null;
   provider?: string | null;
   provider_id?: number | null;
   key_id?: number | null;

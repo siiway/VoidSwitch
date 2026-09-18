@@ -21,6 +21,10 @@ The default **ignore cooldown** policy tries normal candidates first but retains
 last-resort fallbacks. This allows routing to continue when a higher-ranked normal candidate has no
 eligible key or outbound node. If a restored cooled candidate only has rate-limited keys, those keys
 are also eligible as the final fallback so the request does not fail before any upstream attempt.
+A route's max-upstream-attempts budget counts only upstreams that actually send a request: a candidate
+skipped because it has no eligible keys, its provider is disabled, or it has no outbound node does not
+consume the budget, so one unusable lead candidate cannot fail the whole request early. Skipped
+candidates are recorded in the request detail's attempt list for diagnosis.
 
 The Models page receives a recent health summary with its normal catalog request and no longer keeps
 an SSE connection open. The dedicated Health page connects live updates automatically; staff see

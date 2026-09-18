@@ -1629,6 +1629,52 @@ function AttemptTrail({
       </Text>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {attempts.map((a, i) => {
+          if (a.skipped) {
+            return (
+              <div
+                key={a.attempt ?? i}
+                style={{
+                  border: `1px solid ${tokens.colorNeutralStroke2}`,
+                  borderRadius: tokens.borderRadiusMedium,
+                  padding: 8,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Badge appearance="tint" color="informative">
+                    #{a.attempt ?? i + 1}
+                  </Badge>
+                  <Badge appearance="filled" color="warning">
+                    {t("logs.skipped" as TK)}
+                  </Badge>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                    {a.provider ?? "—"}
+                    {a.upstream_model ? ` · ${a.upstream_model}` : ""}
+                    {a.pool ? ` · pool ${a.pool}` : ""}
+                  </Text>
+                </div>
+                {a.error ? (
+                  <Text
+                    size={200}
+                    block
+                    style={{
+                      color: tokens.colorPaletteYellowForeground1,
+                      fontFamily: "monospace",
+                      marginTop: 4,
+                    }}
+                  >
+                    {a.error}
+                  </Text>
+                ) : null}
+              </div>
+            );
+          }
           const ok =
             !a.network_error &&
             a.status_code != null &&

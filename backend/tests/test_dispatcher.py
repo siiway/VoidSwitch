@@ -786,6 +786,150 @@ async def test_dispatch_default_cooldown_fallback_skips_unusable_uncooled_upstre
     assert upstream.call_count == 1
 
 
+async def test_dispatch_skips_provider_without_eligible_keys(db, seeded):
+    """A provider with no eligible keys is skipped; dispatch continues to the next upstream."""
+    import datetime as dt
+
+    from voidswitch.models.db import ApiKey, Provider, Route, RouteUpstream
+
+    async with db.session() as session:
+        first_key = await session.get(ApiKey, seeded["key_id"])
+        first_key.status = KeyStatus.RATE_LIMITED.value
+        first_key.rate_limit_until = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
+
+        second = Provider(
+            name="deepseek-second",
+            slug="deepseek-second",
+            type="deepseek",
+            base_url="https://api.deepseek.com",
+            models=["deepseek-chat"],
+        )
+        session.add(second)
+        await session.flush()
+        session.add(
+            ApiKey(
+                provider_id=second.id,
+                key_ciphertext=encrypt_secret("sk-second", secret=get_settings().server.secret_key),
+                key_hash=hash_token("sk-second"),
+                key_preview="sk-s",
+                status=KeyStatus.ACTIVE.value,
+            )
+        )
+        route = (await session.execute(select(Route))).scalar_one()
+        session.add(
+            RouteUpstream(
+                route_id=route.id,
+                provider_id=second.id,
+                upstream_model="deepseek-chat",
+                position=1,
+            )
+        )
+        await session.flush()
+
+    request = DispatchRequest(
+        inbound_style=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        stream=False,
+        token_id=seeded["token_id"],
+    )
+
+    with respx.mock(assert_all_called=False) as mock:
+        upstream = mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await dispatch(request)
+
+    assert result.status_code == 200
+    assert result.attempts == 1
+    assert result.provider_name == "deepseek-second"
+    assert upstream.call_count == 1
+
+
+async def test_dispatch_max_attempts_not_consumed_by_keyless_provider(db, seeded):
+    """max_upstream_attempts budgets real attempts, not evaluated entries.
+
+    With max_upstream_attempts=1, a lead provider whose keys are all unusable must
+    not end the search — the next provider with usable keys is still attempted.
+    """
+    import datetime as dt
+
+    from voidswitch.models.db import ApiKey, Provider, Route, RouteUpstream
+
+    async with db.session() as session:
+        first_key = await session.get(ApiKey, seeded["key_id"])
+        first_key.status = KeyStatus.RATE_LIMITED.value
+        first_key.rate_limit_until = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
+
+        second = Provider(
+            name="deepseek-second",
+            slug="deepseek-second",
+            type="deepseek",
+            base_url="https://api.deepseek.com",
+            models=["deepseek-chat"],
+        )
+        session.add(second)
+        await session.flush()
+        session.add(
+            ApiKey(
+                provider_id=second.id,
+                key_ciphertext=encrypt_secret("sk-second", secret=get_settings().server.secret_key),
+                key_hash=hash_token("sk-second"),
+                key_preview="sk-s",
+                status=KeyStatus.ACTIVE.value,
+            )
+        )
+        route = (await session.execute(select(Route))).scalar_one()
+        route.max_upstream_attempts = 1
+        session.add(
+            RouteUpstream(
+                route_id=route.id,
+                provider_id=second.id,
+                upstream_model="deepseek-chat",
+                position=1,
+            )
+        )
+        await session.flush()
+
+    request = DispatchRequest(
+        inbound_style=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        stream=False,
+        token_id=seeded["token_id"],
+    )
+
+    with respx.mock(assert_all_called=False) as mock:
+        upstream = mock.post(DS_URL).mock(return_value=httpx.Response(200, json=OAI_RESPONSE))
+        result = await dispatch(request)
+
+    assert result.status_code == 200
+    assert result.attempts == 1
+    assert result.provider_name == "deepseek-second"
+    assert upstream.call_count == 1
+
+
+async def test_dispatch_records_skipped_provider_in_log(db, seeded):
+    """An upstream evaluated but skipped is visible in the request log."""
+    import datetime as dt
+
+    from voidswitch.models.db import ApiKey
+
+    async with db.session() as session:
+        key = await session.get(ApiKey, seeded["key_id"])
+        key.status = KeyStatus.RATE_LIMITED.value
+        key.rate_limit_until = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
+        await session.flush()
+
+    await _dispatch_hi(seeded)
+    log = await _last_log(db)
+
+    assert log is not None
+    assert log.attempts == 0
+    assert log.attempts_summary
+    skipped = [s for s in log.attempts_summary if s.get("skipped")]
+    assert any(s["provider"] == "deepseek" for s in skipped)
+    assert any("no eligible keys" in (s.get("error") or "") for s in skipped)
+
+
 async def test_dispatch_429_provider_cooldown_when_no_header(db, seeded):
     """Without a Retry-After header, the provider's cooldown is used (over global)."""
     import datetime as dt
