@@ -28,7 +28,7 @@ SCOPES = {"provider", "token", "all"}
 def _owner_label(user: User | None) -> str | None:
     if user is None:
         return None
-    label = user.username or user.name or user.email or user.sub
+    label = user.username or user.sub or user.email or user.name
     return f"{label}#{user.id}" if label else f"#{user.id}"
 
 
@@ -120,6 +120,7 @@ async def reveal_key_search(
                     name=token.name,
                     owner_id=owner.id,
                     owner_name=_owner_label(owner),
+                    owner_nickname=owner.name,
                     total_requests=token.total_requests,
                     total_tokens=token.total_tokens,
                     enabled=token.enabled,
@@ -150,6 +151,7 @@ async def reveal_key_search(
                             name=token.name,
                             owner_id=owner.id,
                             owner_name=_owner_label(owner),
+                            owner_nickname=owner.name,
                             total_requests=token.total_requests,
                             total_tokens=token.total_tokens,
                             enabled=token.enabled,

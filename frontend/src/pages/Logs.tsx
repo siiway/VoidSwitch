@@ -59,6 +59,7 @@ import {
   Loading,
   PageHeader,
   Pager,
+  UserHandle,
   formatDate,
   formatDateMs,
   useAsync,
@@ -654,10 +655,13 @@ function useLogStream({
   const onRowRef = useRef(onRow);
   const onErrorRef = useRef(onError);
   const lastIdRef = useRef(afterId);
+  const controllerRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
     onRowRef.current = onRow;
     onErrorRef.current = onError;
   }, [onRow, onError]);
+
   useEffect(() => {
     lastIdRef.current = afterId;
   }, [afterId]);
@@ -665,6 +669,10 @@ function useLogStream({
   useEffect(() => {
     if (!enabled) {
       setStatus("idle");
+      if (controllerRef.current) {
+        controllerRef.current.abort();
+        controllerRef.current = null;
+      }
       return;
     }
     const token = getToken();
@@ -674,10 +682,14 @@ function useLogStream({
     }
     let active = true;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+    controllerRef.current = controller;
+
+    // Reset lastIdRef to afterId whenever connecting/reconnecting with a new query
+    lastIdRef.current = afterId;
 
     async function connect() {
       if (!active) return;
-      const controller = new AbortController();
       setStatus("connecting");
 
       try {
@@ -689,7 +701,7 @@ function useLogStream({
           signal: controller.signal,
           cache: "no-store",
         });
-        if (!active) { controller.abort(); return; }
+        if (!active || controller.signal.aborted) { controller.abort(); return; }
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
           try {
@@ -699,7 +711,7 @@ function useLogStream({
           throw new Error(detail);
         }
         if (!res.body) throw new Error("empty stream");
-        if (!active) { controller.abort(); return; }
+        if (!active || controller.signal.aborted) { controller.abort(); return; }
         setStatus("connected");
 
         const reader = res.body.getReader();
@@ -707,7 +719,7 @@ function useLogStream({
         let buffer = "";
         for (;;) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done || !active || controller.signal.aborted) break;
           buffer += decoder.decode(value, { stream: true });
           let idx: number;
           while ((idx = buffer.indexOf("\n\n")) !== -1) {
@@ -721,26 +733,27 @@ function useLogStream({
                 const row = JSON.parse(payload);
                 if (isRequestLog(row)) {
                   lastIdRef.current = Math.max(lastIdRef.current, row.id);
-                  onRowRef.current(row);
+                  if (active && !controller.signal.aborted) {
+                    onRowRef.current(row);
+                  }
                 }
               } catch { /* skip malformed frame */ }
             }
           }
-}
+        }
         // Server closed cleanly — not an error, but no reconnect.
-        if (active) {
+        if (active && !controller.signal.aborted) {
           setStatus("error");
           onErrorRef.current("Live stream ended.");
         }
       } catch (e) {
-        if (!active) return;
-        if (controller.signal.aborted) return;
+        if (!active || controller.signal.aborted) return;
         setStatus("error");
         onErrorRef.current(e instanceof Error ? e.message : String(e));
         // Auto-reconnect after a short delay.
-        if (active) {
+        if (active && !controller.signal.aborted) {
           reconnectTimeout = setTimeout(() => {
-            if (active) void connect();
+            if (active && !controller.signal.aborted) void connect();
           }, 3000);
         }
       }
@@ -750,6 +763,10 @@ function useLogStream({
 
     return () => {
       active = false;
+      controller.abort();
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
       if (reconnectTimeout !== null) clearTimeout(reconnectTimeout);
       setStatus("idle");
     };
@@ -775,6 +792,40 @@ const MAX_IP_CHARS = 17;
 
 function truncateIp(ip: string): string {
   return ip.length > MAX_IP_CHARS ? `${ip.slice(0, MAX_IP_CHARS)}…` : ip;
+}
+
+function matchesRequestFilter(
+  r: RequestLog,
+  filters: RequestFilters,
+  clientIp: string,
+  statusCode: string,
+): boolean {
+  if (filters.model && r.model !== filters.model) return false;
+  if (filters.user_sub && r.user_sub !== filters.user_sub) return false;
+  if (filters.token_id && String(r.token_id) !== filters.token_id) return false;
+  if (filters.provider && r.provider_name !== filters.provider) return false;
+  if (clientIp) {
+    const q = clientIp.toLowerCase();
+    const ip = (r.client_ip ?? "").toLowerCase();
+    if (q.includes("*") || q.includes("?")) {
+      const escaped = q.replace(/[-/\\^$+.()|[\]{}]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+      if (!new RegExp(`^${escaped}$`, "i").test(ip)) return false;
+    } else if (!ip.includes(q)) {
+      return false;
+    }
+  }
+  if (statusCode) {
+    const s = statusCode.trim().toLowerCase();
+    const m = /^([1-5])xx$/.exec(s);
+    if (m) {
+      const cls = Number(m[1]);
+      if (r.status_code == null || Math.floor(r.status_code / 100) !== cls) return false;
+    } else if (/^\d+$/.test(s)) {
+      if (r.status_code !== Number(s)) return false;
+    }
+  }
+  if (filters.req_status && r.req_status !== filters.req_status) return false;
+  return true;
 }
 
 function RequestLogs({
@@ -885,6 +936,7 @@ function RequestLogs({
 
   const handleLiveRow = useCallback(
     (row: RequestLog) => {
+      if (!matchesRequestFilter(row, filters, debouncedIp, debouncedStatus)) return;
       // Merge by id so a streamed row that also landed in a concurrent reload
       // doesn't duplicate; keep the newest on top, capped to avoid unbounded
       // growth on a long-lived stream.
@@ -896,7 +948,7 @@ function RequestLogs({
       // Jump to page one so the freshly-arrived rows are visible.
       if (offset !== 0) setOffset(0);
     },
-    [offset, liveLogCap],
+    [offset, liveLogCap, filters, debouncedIp, debouncedStatus],
   );
 
   useLogStream({
@@ -912,10 +964,8 @@ function RequestLogs({
   // Clear live rows when the stream is disconnected or filters change, and
   // expire the transient error notice.
   useEffect(() => {
-    if (!liveEnabled) {
-      setLiveRows([]);
-      setLiveNotice(null);
-    }
+    setLiveRows([]);
+    setLiveNotice(null);
   }, [liveEnabled, liveQuery]);
 
   useEffect(() => {
@@ -928,9 +978,13 @@ function RequestLogs({
   // first) — the pre-existing page is stale by definition and would otherwise
   // sit under the live rows. When disconnected, fall back to the fetched page.
   const allRows = useMemo(() => {
-    if (liveEnabled) return liveRows;
+    if (liveEnabled) {
+      return liveRows.filter((r) =>
+        matchesRequestFilter(r, filters, debouncedIp, debouncedStatus),
+      );
+    }
     return logs.data?.items ?? [];
-  }, [liveEnabled, liveRows, logs.data]);
+  }, [liveEnabled, liveRows, logs.data, filters, debouncedIp, debouncedStatus]);
 
   // Re-render every second while the live stream is connected and any row is
   // still in progress, so the Duration column counts up live; it freezes once
@@ -1233,10 +1287,13 @@ function RequestLogs({
                   <button
                     type="button"
                     className={cellStyles.clickable}
-                    title={tr("logs.clickToFilter" as TK)}
+                    title={r.user_nickname ? `${r.user_nickname} · ${tr("logs.clickToFilter" as TK)}` : tr("logs.clickToFilter" as TK)}
                     onClick={() => setFilter("user_sub", r.user_sub ?? "")}
                   >
-                    {r.user_name ?? r.user_sub}
+                    <UserHandle
+                      handle={r.user_name ?? r.user_sub}
+                      nickname={r.user_nickname}
+                    />
                   </button>
                 ) : (
                   "—"
@@ -1255,7 +1312,10 @@ function RequestLogs({
                     </button>
                     {r.token_owner_name ? (
                       <Text size={100} block style={{ color: tokens.colorNeutralForeground3 }}>
-                        {r.token_owner_name}
+                        <UserHandle
+                          handle={r.token_owner_name}
+                          nickname={r.token_owner_nickname}
+                        />
                       </Text>
                     ) : null}
                   </div>
@@ -1451,12 +1511,19 @@ function RequestLogs({
                     />
                     <DetailRow label={tr("logs.colClientIp" as TK)} value={detailLog.client_ip ?? "—"} />
                     <DetailRow label={tr("logs.status" as TK)} value={detailLog.success ? `${detailLog.status_code} OK` : `${detailLog.status_code ?? "ERR"}`} />
-                    <DetailRow label={tr("logs.user" as TK)} value={detailLog.user_name ?? detailLog.user_sub ?? "—"} />
+                    <DetailRow
+                      label={tr("logs.user" as TK)}
+                      value={
+                        detailLog.user_nickname
+                          ? `${detailLog.user_name ?? detailLog.user_sub ?? "—"} (${detailLog.user_nickname})`
+                          : detailLog.user_name ?? detailLog.user_sub ?? "—"
+                      }
+                    />
                     <DetailRow
                       label={tr("logs.token" as TK)}
                       value={
                         detailLog.token_owner_name
-                          ? `${detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")} (${detailLog.token_owner_name})`
+                          ? `${detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")} (${detailLog.token_owner_name}${detailLog.token_owner_nickname ? ` · ${detailLog.token_owner_nickname}` : ""})`
                           : detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")
                       }
                     />

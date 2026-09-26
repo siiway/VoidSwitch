@@ -43,6 +43,7 @@ import {
   ErrorText,
   Loading,
   PageHeader,
+  UserHandle,
   useAsync,
   useConfirm,
   useNotify,
@@ -723,9 +724,11 @@ export function RoleGroups() {
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                      <Text size={200} truncate wrap={false}>
-                        {m.name}
-                      </Text>
+                      <UserHandle
+                        handle={m.name}
+                        nickname={m.nickname}
+                        style={{ fontSize: 12 }}
+                      />
                       {!m.enabled && (
                         <Badge appearance="tint" color="danger" size="small">
                           {t("common.disabled" as TK)}

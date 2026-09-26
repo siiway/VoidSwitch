@@ -915,6 +915,33 @@ async def test_request_log_stream_enforces_per_user_limit(client, db, seeded):
         await settings_store.update(session, {"sse_max_connections_per_user": 2})
 
 
+async def test_request_logs_includes_nicknames(client, db, seeded):
+    """Request logs and details surface user and token owner nicknames."""
+    from sqlalchemy import select
+    from voidswitch.models.db import RequestLog, User
+
+    async with db.session() as session:
+        user = (await session.execute(select(User).where(User.sub == "user-1"))).scalar_one()
+        user.name = "Alice Neko"
+        session.add(
+            RequestLog(
+                user_sub="user-1",
+                token_id=1,
+                model="deepseek-chat",
+                success=True,
+                status_code=200,
+            )
+        )
+        await session.commit()
+
+    resp = await client.get("/api/admin/logs/requests", headers=_session_headers())
+    assert resp.status_code == 200
+    data = resp.json()
+    item = next(i for i in data["items"] if i["user_sub"] == "user-1")
+    assert item["user_nickname"] == "Alice Neko"
+    assert item["token_owner_nickname"] == "Alice Neko"
+
+
 async def _load_user(db, sub):
     from sqlalchemy import select as _select
     from voidswitch.models.db import User

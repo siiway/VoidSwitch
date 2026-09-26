@@ -724,6 +724,7 @@ class VoidTokenOut(BaseModel):
     id: int
     user_id: int
     username: str | None = None
+    user_nickname: str | None = None
     name: str
     token_prefix: str
     enabled: bool
@@ -767,6 +768,7 @@ class KeyRevealTokenMatch(BaseModel):
     name: str
     owner_id: int
     owner_name: str | None = None
+    owner_nickname: str | None = None
     total_requests: int
     total_tokens: int
     enabled: bool
@@ -859,9 +861,11 @@ class RequestLogOut(BaseModel):
     user_sub: str | None = None
     # Resolved, human-friendly caller identity + the Void-Token used.
     user_name: str | None = None
+    user_nickname: str | None = None
     token_id: int | None = None
     token_name: str | None = None
     token_owner_name: str | None = None
+    token_owner_nickname: str | None = None
     provider_name: str | None = None
     model: str | None = None
     upstream_model: str | None = None
@@ -902,9 +906,11 @@ class RequestLogDetail(BaseModel):
     client_ip: str | None = None
     user_sub: str | None = None
     user_name: str | None = None
+    user_nickname: str | None = None
     token_id: int | None = None
     token_name: str | None = None
     token_owner_name: str | None = None
+    token_owner_nickname: str | None = None
     provider_name: str | None = None
     key_id: int | None = None
     key_preview: str | None = None
@@ -1219,6 +1225,7 @@ class RoleGroupMemberOut(BaseModel):
 
     user_id: int
     name: str
+    nickname: str | None = None
     email: str | None = None
     role: str
     # How the membership was granted: "auto" (a team mapping) or "manual".

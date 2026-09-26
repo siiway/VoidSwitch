@@ -518,7 +518,7 @@ async def _resolve_request_log_rows(
     live stream reuses it so pushed rows render identically to fetched ones)."""
     token_ids = {r.token_id for r in rows if r.token_id is not None}
     subs = {r.user_sub for r in rows if r.user_sub}
-    token_names: dict[int, tuple[str, str | None]] = {}
+    token_names: dict[int, tuple[str, str | None, str | None]] = {}
     if token_ids:
         for tid, tname, usub, username, name, email, uid in (
             await session.execute(
@@ -535,13 +535,13 @@ async def _resolve_request_log_rows(
                 .where(VoidToken.id.in_(token_ids))
             )
         ).all():
-            label = username or name or email or usub
-            token_names[tid] = (f"{tname}#{tid}", f"{label}#{uid}")
-    user_names: dict[str, str | None] = {}
+            label = username or usub or email or name
+            token_names[tid] = (f"{tname}#{tid}", f"{label}#{uid}", name)
+    user_names: dict[str, tuple[str | None, str | None]] = {}
     if subs:
         for u in (await session.execute(select(User).where(User.sub.in_(subs)))).scalars().all():
-            label = u.username or u.name or u.email or u.sub
-            user_names[u.sub] = f"{label}#{u.id}"
+            label = u.username or u.sub or u.email or u.name
+            user_names[u.sub] = (f"{label}#{u.id}", u.name)
 
     items: list[RequestLogOut] = []
     for r in rows:
@@ -551,8 +551,12 @@ async def _resolve_request_log_rows(
             if token_ref:
                 out.token_name = token_ref[0]
                 out.token_owner_name = token_ref[1]
+                out.token_owner_nickname = token_ref[2]
         if r.user_sub:
-            out.user_name = user_names.get(r.user_sub)
+            user_ref = user_names.get(r.user_sub)
+            if user_ref:
+                out.user_name = user_ref[0]
+                out.user_nickname = user_ref[1]
         items.append(out)
     return items
 
@@ -654,7 +658,7 @@ async def request_filter_options(
     if subs:
         resolved: dict[str, str] = {}
         for u in (await session.execute(select(User).where(User.sub.in_(subs)))).scalars().all():
-            label = u.username or u.name or u.email or u.sub
+            label = u.username or u.sub or u.email or u.name
             resolved[u.sub] = f"{label}#{u.id}"
         users = [AuditActor(sub=s, name=resolved.get(s, s)) for s in subs]
         users.sort(key=lambda a: a.name.lower())
@@ -677,7 +681,7 @@ async def request_filter_options(
                 .where(VoidToken.id.in_(token_ids))
             )
         ).all():
-            label = username or name or email or usub
+            label = username or usub or email or name
             resolved_tokens[tid] = (tname, usub, f"{label}#{uid}")
         tokens = [
             TokenRef(
@@ -992,15 +996,17 @@ async def request_log_detail(
         if tok:
             detail.token_name = f"{tok.name}#{tok.id}"
             if tok.user:
-                label = tok.user.username or tok.user.name or tok.user.email or tok.user.sub
+                label = tok.user.username or tok.user.sub or tok.user.email or tok.user.name
                 detail.token_owner_name = f"{label}#{tok.user.id}"
+                detail.token_owner_nickname = tok.user.name
     if row.user_sub:
         u = (
             await session.execute(select(User).where(User.sub == row.user_sub))
         ).scalar_one_or_none()
         if u:
-            label = u.username or u.name or u.email or u.sub
+            label = u.username or u.sub or u.email or u.name
             detail.user_name = f"{label}#{u.id}"
+            detail.user_nickname = u.name
     if row.key_id is not None:
         key = await session.get(ApiKey, row.key_id)
         if key:

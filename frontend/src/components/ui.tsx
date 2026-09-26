@@ -762,3 +762,31 @@ export function formatDateMs(value?: string | null): string {
   const iso = d.toISOString();
   return d.toLocaleString() + "." + iso.slice(20, 23);
 }
+
+export function UserHandle({
+  handle,
+  nickname,
+  className,
+  style,
+}: {
+  handle: string;
+  nickname?: string | null;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  if (nickname) {
+    return (
+      <Tooltip content={nickname} relationship="label">
+        <span className={className} style={style}>
+          {handle}
+        </span>
+      </Tooltip>
+    );
+  }
+  return (
+    <span className={className} style={style}>
+      {handle}
+    </span>
+  );
+}
+

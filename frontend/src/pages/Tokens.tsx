@@ -43,6 +43,7 @@ import {
   ErrorText,
   Loading,
   PageHeader,
+  UserHandle,
   formatDate,
   useAsync,
   useConfirm,
@@ -300,7 +301,12 @@ export function Tokens() {
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {t.token_prefix}
                 </TableCell>
-                <TableCell>{t.username ?? `#${t.user_id}`}</TableCell>
+                <TableCell>
+                  <UserHandle
+                    handle={t.username ?? `#${t.user_id}`}
+                    nickname={t.user_nickname}
+                  />
+                </TableCell>
                 <TableCell>{t.total_requests}</TableCell>
                 <TableCell>{t.total_tokens}</TableCell>
                 <TableCell>

@@ -527,17 +527,33 @@ export function Layout() {
                   size={32}
                 />
                 <div className={styles.userMeta}>
-                  <Text
-                    size={200}
-                    weight="semibold"
-                    truncate
-                    wrap={false}
-                    block
-                  >
-                    {user?.username || user?.name || user?.email
-                      ? `${user.username || user.name || user.email}#${user.id}`
-                      : "User"}
-                  </Text>
+                  {user?.name ? (
+                    <Tooltip content={user.name} relationship="label">
+                      <Text
+                        size={200}
+                        weight="semibold"
+                        truncate
+                        wrap={false}
+                        block
+                      >
+                        {user?.username || user?.sub || user?.email || user?.name
+                          ? `${user.username || user.sub || user.email || user.name}#${user.id}`
+                          : "User"}
+                      </Text>
+                    </Tooltip>
+                  ) : (
+                    <Text
+                      size={200}
+                      weight="semibold"
+                      truncate
+                      wrap={false}
+                      block
+                    >
+                      {user?.username || user?.sub || user?.email || user?.name
+                        ? `${user.username || user.sub || user.email || user.name}#${user.id}`
+                        : "User"}
+                    </Text>
+                  )}
                   <Badge appearance="tint" color={roleColor} size="small">
                     {user?.role}
                   </Badge>

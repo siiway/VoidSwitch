@@ -487,7 +487,7 @@ async def usage_analytics(
     user_names: dict[str, str] = {}
     if subs:
         for u in (await session.execute(select(User).where(User.sub.in_(subs)))).scalars().all():
-            label = u.username or u.name or u.email or u.sub
+            label = u.username or u.sub or u.email or u.name
             user_names[u.sub] = f"{label}#{u.id}"
     token_ids = {r[0] for r in token_rows if r[0] is not None}
     token_names: dict[int, str] = {}
@@ -509,7 +509,7 @@ async def usage_analytics(
         for u in (
             (await session.execute(select(User).where(User.id.in_(owner_ids)))).scalars().all()
         ):
-            label = u.username or u.name or u.email or u.sub
+            label = u.username or u.sub or u.email or u.name
             user_by_id[u.id] = f"{label}#{u.id}"
 
     by_user = [
@@ -714,7 +714,7 @@ async def heatmap_for_user(
     """A specific user's activity heatmap (staff only) — powers the stats popup."""
     subject = (await session.execute(select(User).where(User.sub == sub))).scalar_one_or_none()
     if subject is not None:
-        base = subject.username or subject.name or subject.email or subject.sub
+        base = subject.username or subject.sub or subject.email or subject.name
         label = f"{base}#{subject.id}"
     else:
         label = sub

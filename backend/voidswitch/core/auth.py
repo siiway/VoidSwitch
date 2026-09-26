@@ -89,7 +89,7 @@ def is_staff(user: User) -> bool:
 
 def actor_display_name(user: User) -> str | None:
     """A human-friendly label for ``added_by`` snapshots and audit entries."""
-    label = user.username or user.name or user.email or user.sub
+    label = user.username or user.sub or user.email or user.name
     return f"{label}#{user.id}"
 
 

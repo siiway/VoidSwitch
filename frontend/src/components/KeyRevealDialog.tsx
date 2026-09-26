@@ -21,7 +21,7 @@ import { api } from "../api/client";
 import type { Translations } from "../i18n/locales/en";
 import { useTranslation } from "react-i18next";
 
-import { useNotify } from "./ui";
+import { UserHandle, useNotify } from "./ui";
 
 type Scope = "provider" | "token" | "all";
 
@@ -41,6 +41,7 @@ interface TokenMatch {
   name: string;
   owner_id: number;
   owner_name?: string | null;
+  owner_nickname?: string | null;
   total_requests: number;
   total_tokens: number;
   enabled: boolean;
@@ -123,7 +124,10 @@ export function KeyRevealDialog({
                         {m.name}#{m.token_id}
                       </Text>
                       <Text size={200} block style={{ color: tokens.colorNeutralForeground3 }}>
-                        {m.owner_name || `#${m.owner_id}`} · {m.total_requests} / {m.total_tokens} · {m.enabled ? t("common.enabled" as TK) : t("common.disabled" as TK)}
+                        <UserHandle
+                          handle={m.owner_name || `#${m.owner_id}`}
+                          nickname={m.owner_nickname}
+                        /> · {m.total_requests} / {m.total_tokens} · {m.enabled ? t("common.enabled" as TK) : t("common.disabled" as TK)}
                       </Text>
                       <Button
                         size="small"

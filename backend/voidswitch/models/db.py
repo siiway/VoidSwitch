@@ -143,8 +143,13 @@ class VoidToken(Base, TimestampMixin):
         user = self.user
         if user is None:
             return None
-        label = user.username or user.name or user.email
+        label = user.username or user.sub or user.email or user.name
         return f"{label}#{user.id}" if label else None
+
+    @property
+    def user_nickname(self) -> str | None:
+        user = self.user
+        return user.name if user and user.name else None
 
 
 class ModelCategory(Base, TimestampMixin):

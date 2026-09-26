@@ -613,11 +613,12 @@ async def list_role_group_members(
     out: list[RoleGroupMemberOut] = []
     for user_id in sorted(combined):
         user, source, is_admin = combined[user_id]
-        label = user.username or user.name or user.email or user.sub
+        label = user.username or user.sub or user.email or user.name
         out.append(
             RoleGroupMemberOut(
                 user_id=user.id,
                 name=f"{label}#{user.id}",
+                nickname=user.name,
                 email=user.email,
                 role=user.role,
                 source=source,

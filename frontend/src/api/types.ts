@@ -182,6 +182,7 @@ export interface VoidToken {
   id: number;
   user_id: number;
   username?: string | null;
+  user_nickname?: string | null;
   name: string;
   token_prefix: string;
   enabled: boolean;
@@ -372,6 +373,7 @@ export interface RoleGroup {
 export interface RoleGroupMember {
   user_id: number;
   name: string;
+  nickname?: string | null;
   email?: string | null;
   role: Role;
   source: "auto" | "manual";
@@ -487,9 +489,11 @@ export interface RequestLog {
   client_ip?: string | null;
   user_sub?: string | null;
   user_name?: string | null;
+  user_nickname?: string | null;
   token_id?: number | null;
   token_name?: string | null;
   token_owner_name?: string | null;
+  token_owner_nickname?: string | null;
   provider_name?: string | null;
   model?: string | null;
   upstream_model?: string | null;

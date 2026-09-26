@@ -2053,3 +2053,73 @@ def test_reveal_partial_key_matches():
     # Non-matching partial must not match.
     assert not _provider_key_matches(p, "sk-S-token-TAmY", "zz…TAmY")
     assert not _provider_key_matches(p, "sk-S-token-TAmY", "sk-S…nope")
+
+
+def test_user_handle_and_nickname_resolution():
+    import datetime as dt
+
+    from voidswitch.core.auth import actor_display_name
+    from voidswitch.models.db import User, VoidToken
+    from voidswitch.models.schemas import RequestLogOut, RoleGroupMemberOut, VoidTokenOut
+
+    user = User(
+        id=42, sub="sub-42", username="alice", name="Alice Zhang", email="alice@example.com"
+    )
+    assert actor_display_name(user) == "alice#42"
+
+    token = VoidToken(id=7, user_id=42, user=user, name="my-token")
+    assert token.username == "alice#42"
+    assert token.user_nickname == "Alice Zhang"
+
+    # VoidTokenOut schema serialization includes user_nickname
+    out = VoidTokenOut(
+        id=7,
+        user_id=42,
+        username="alice#42",
+        user_nickname="Alice Zhang",
+        name="my-token",
+        token_prefix="vs-abc",
+        enabled=True,
+        rpm_limit=0,
+        daily_quota=0,
+        total_requests=0,
+        total_tokens=0,
+        created_at=dt.datetime.now(dt.UTC),
+    )
+    assert out.username == "alice#42"
+    assert out.user_nickname == "Alice Zhang"
+
+    # User without username falls back to sub
+    user_no_uname = User(id=99, sub="sub-99", username=None, name="Bob", email="b@example.com")
+    assert actor_display_name(user_no_uname) == "sub-99#99"
+    token_no_uname = VoidToken(id=8, user_id=99, user=user_no_uname, name="tok")
+    assert token_no_uname.username == "sub-99#99"
+    assert token_no_uname.user_nickname == "Bob"
+
+    # RoleGroupMemberOut includes nickname
+    member_out = RoleGroupMemberOut(
+        user_id=42,
+        name="alice#42",
+        nickname="Alice Zhang",
+        role="member",
+    )
+    assert member_out.name == "alice#42"
+    assert member_out.nickname == "Alice Zhang"
+
+    # RequestLogOut includes user_nickname and token_owner_nickname
+    log_out = RequestLogOut(
+        id=1,
+        ts=dt.datetime.now(dt.UTC),
+        user_name="alice#42",
+        user_nickname="Alice Zhang",
+        token_owner_name="alice#42",
+        token_owner_nickname="Alice Zhang",
+        success=True,
+        prompt_tokens=10,
+        completion_tokens=20,
+        total_tokens=30,
+        stream=False,
+        attempts=1,
+    )
+    assert log_out.user_nickname == "Alice Zhang"
+    assert log_out.token_owner_nickname == "Alice Zhang"

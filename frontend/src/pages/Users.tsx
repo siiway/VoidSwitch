@@ -31,6 +31,7 @@ import {
   ErrorText,
   Loading,
   PageHeader,
+  UserHandle,
   formatDate,
   useAsync,
   useNotify,
@@ -284,7 +285,12 @@ export function Users() {
           <TableBody>
             {filteredUsers.map((u) => (
               <TableRow key={u.id}>
-                <TableCell>{(u.name || u.username || u.sub)}#{u.id}</TableCell>
+                <TableCell>
+                  <UserHandle
+                    handle={`${u.username || u.sub || u.name}#${u.id}`}
+                    nickname={u.name}
+                  />
+                </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {u.email ?? "—"}
                 </TableCell>
