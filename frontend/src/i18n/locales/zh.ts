@@ -1088,6 +1088,7 @@ const zh: Translations = {
     userAgent: "User-Agent",
     clientType: "客户端",
     opencode: "OpenCode",
+    opencodePlugin: "OpenCode VS 插件",
     debugData: "调试数据",
     downloadJson: "下载 JSON",
     downloadFailed: "下载失败",

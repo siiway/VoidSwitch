@@ -1123,6 +1123,7 @@ const en = {
     userAgent: "User-Agent",
     clientType: "Client",
     opencode: "OpenCode",
+    opencodePlugin: "OpenCode VS Plugin",
     debugData: "Debug data",
     downloadJson: "Download JSON",
     downloadFailed: "Download failed",

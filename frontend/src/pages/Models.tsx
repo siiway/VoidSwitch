@@ -109,7 +109,8 @@ const useStyles = makeStyles({
     wordBreak: "break-all",
   },
   desc: { color: tokens.colorNeutralForeground2, minHeight: "18px" },
-  badges: { display: "flex", flexWrap: "wrap", gap: "6px" },
+  badges: { display: "flex", flexWrap: "wrap", gap: "6px", minWidth: 0 },
+  badge: { maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   actions: { display: "flex", gap: "4px" },
   dim: { color: tokens.colorNeutralForeground3 },
 });
@@ -1411,9 +1412,11 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                             )}
                             {isStaff &&
                               (m.upstreams ?? []).map((u) => (
-                                <Badge key={u} appearance="outline" color="informative">
-                                  {u}
-                                </Badge>
+                                <Tooltip key={u} content={u} relationship="label">
+                                  <Badge className={styles.badge} appearance="outline" color="informative">
+                                    {u}
+                                  </Badge>
+                                </Tooltip>
                               ))}
                           </div>
 
