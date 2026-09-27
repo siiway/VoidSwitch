@@ -671,6 +671,7 @@ const zh: Translations = {
     filterAllCategories: "全部分组",
     filterUncategorized: "未分组",
     providerBadge: "提供商",
+    modelCount: "{count} 个模型",
     batchCapabilities: "能力",
     batchCapabilitiesLabel: "为所有选中项设置能力",
     batchReasoning: "推理",

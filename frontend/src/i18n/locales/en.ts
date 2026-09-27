@@ -687,6 +687,7 @@ const en = {
     filterAllCategories: "All groups",
     filterUncategorized: "Ungrouped",
     providerBadge: "Provider",
+    modelCount: "{count} models",
     batchCapabilities: "Capabilities",
     batchCapabilitiesLabel: "Set capabilities for all selected",
     batchReasoning: "Reasoning",

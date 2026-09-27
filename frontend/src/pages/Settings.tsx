@@ -32,6 +32,12 @@ import { shortcutHint } from "../lib/useShortcuts";
 
 type TK = keyof Translations;
 
+const ROUTING_SETTING_OPTIONS: Record<string, string[]> = {
+  upstream_select_mode: ["best", "balanced", "pinned_best", "pinned_balanced"],
+  upstream_rank_algorithm: ["weighted", "tiered"],
+  upstream_all_cooled_behavior: ["ignore_cooldown", "fail_fast"],
+};
+
 interface SettingsResponse {
   values: Record<string, unknown>;
 }
@@ -400,6 +406,25 @@ export function Settings() {
     if (gate && values[gate] === false) return null;
     const value = values[key];
     const label = labels[key] ?? key;
+
+    if (key in ROUTING_SETTING_OPTIONS && typeof value === "string") {
+      return (
+        <Field key={key} label={label}>
+          <Dropdown
+            value={value}
+            selectedOptions={[value]}
+            disabled={!isOwner}
+            onOptionSelect={(_, d) => d.optionValue && set(key, d.optionValue)}
+          >
+            {ROUTING_SETTING_OPTIONS[key].map((option) => (
+              <Option key={option} value={option}>
+                {option}
+              </Option>
+            ))}
+          </Dropdown>
+        </Field>
+      );
+    }
 
     if (key === "upstream_cooldown_status_codes" && Array.isArray(value)) {
       return (

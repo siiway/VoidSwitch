@@ -1034,6 +1034,35 @@ function RequestLogs({
     }
   }
 
+  async function openRequestById(mode: "info" | "debug") {
+    const id = Number(goToId.trim());
+    if (!Number.isInteger(id) || id <= 0) return;
+    const reqId = { id, mode };
+    detailReqRef.current = reqId;
+    setDetailLoading(true);
+    setRevealMode(false);
+    setDetailMode(mode);
+    try {
+      const detail = await api.get<unknown>(`/api/admin/logs/requests/${id}`);
+      if (detailReqRef.current !== reqId) return;
+      if (!isRequestLog(detail)) throw new Error("unexpected log-detail shape");
+      if (mode === "debug" && !(detail as RequestLogDetail).debug) {
+        notify(tr("logs.debugNotAvailable" as TK), `#${id}`, "warning");
+        return;
+      }
+      setDetailLog(detail as RequestLogDetail);
+    } catch (e) {
+      if (detailReqRef.current !== reqId) return;
+      notify(
+        tr("logs.requestNotFound" as TK),
+        e instanceof Error ? e.message : String(e),
+        "warning",
+      );
+    } finally {
+      if (detailReqRef.current === reqId) setDetailLoading(false);
+    }
+  }
+
   async function openDetail(r: RequestLog, mode: "info" | "debug") {
     const reqId = { id: r.id, mode };
     detailReqRef.current = reqId;
@@ -1194,8 +1223,8 @@ function RequestLogs({
         <span style={{ flex: "1 1 auto", minWidth: 8 }} />
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "nowrap" }}>
           <Input
-            aria-label={tr("logs.goToId" as TK)}
-            placeholder={tr("logs.goToId" as TK)}
+            aria-label={tr("logs.requestId" as TK)}
+            placeholder={tr("logs.requestId" as TK)}
             value={goToId}
             type="number"
             style={{ minWidth: 120 }}
@@ -1204,15 +1233,32 @@ function RequestLogs({
               if (e.key === "Enter") void jumpToId();
             }}
           />
+          <Tooltip content={tr("logs.viewDetail" as TK)} relationship="label">
+            <Button
+              appearance="subtle"
+              icon={<InfoRegular />}
+              disabled={!goToId.trim() || detailLoading}
+              onClick={() => void openRequestById("info")}
+              aria-label={tr("logs.viewDetail" as TK)}
+            />
+          </Tooltip>
+          <Tooltip content={tr("logs.viewDebug" as TK)} relationship="label">
+            <Button
+              appearance="subtle"
+              icon={<BugRegular />}
+              disabled={!goToId.trim() || detailLoading || !(isStaffView || isRoleGroupAdminView)}
+              onClick={() => void openRequestById("debug")}
+              aria-label={tr("logs.viewDebug" as TK)}
+            />
+          </Tooltip>
           <Tooltip content={tr("logs.jump" as TK)} relationship="label">
             <Button
+              appearance="subtle"
               icon={<ArrowEnterRegular />}
               disabled={!goToId.trim()}
               onClick={() => void jumpToId()}
               aria-label={tr("logs.jump" as TK)}
-            >
-              {tr("logs.jump" as TK)}
-            </Button>
+            />
           </Tooltip>
         </div>
       </div>

@@ -1336,7 +1336,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                     </Badge>
                   )}
                   <span style={{ color: tokens.colorNeutralForeground3, fontWeight: 400 }}>
-                    {g.models.length}
+                    {t("models.modelCount" as TK).replace("{count}", String(g.models.length))}
                   </span>
                 </button>
                 {!isCollapsed && (

@@ -12,6 +12,8 @@ import {
   Field,
   Input,
   Option,
+  Popover,
+  PopoverSurface,
   SpinButton,
   Spinner,
   Switch,
@@ -40,7 +42,7 @@ import {
   KeyRegular,
   ShieldKeyholeRegular,
 } from "@fluentui/react-icons";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api, API_BASE } from "../api/client";
@@ -149,6 +151,7 @@ export function Providers() {
   const [revealOpen, setRevealOpen] = useState(false);
   // Key picker for fetch-models
   const [keyPickerOpen, setKeyPickerOpen] = useState(false);
+  const keyPickerTriggerRef = useRef<HTMLButtonElement>(null);
   const [keyPickerKeys, setKeyPickerKeys] = useState<{ id: number; index: number; note: string; pool: string; status: string }[]>([]);
   const [keyPickerLoading, setKeyPickerLoading] = useState(false);
   // Provider filtering
@@ -879,33 +882,31 @@ export function Providers() {
                   <span style={{ fontWeight: 600 }}>
                       {t("providers.fetchModelsTitle" as TK)}
                     </span>
-                  {form?.base_url?.includes("api.cloudflare.com") ? (
-                    <div style={{ 
-                      padding: 12, 
-                      backgroundColor: tokens.colorStatusWarningBackground1,
-                      border: `1px solid ${tokens.colorStatusWarningForeground1}`,
-                      borderRadius: 4,
-                      fontSize: 13,
-                    }}>
-                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                        {t("providers.cfDetected" as TK)}
-                      </div>
-                      <div>
-                        {t("providers.cfMessage" as TK)}{" "}
-                        <a 
-                          href="https://developers.cloudflare.com/workers-ai/models/" 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          style={{ color: tokens.colorBrandForeground1 }}
-                        >
-                          Cloudflare Workers AI Models
-                        </a>
-                      </div>
+                  <div style={{
+                    display: form?.base_url?.includes("api.cloudflare.com") ? "block" : "none",
+                    padding: 12,
+                    backgroundColor: tokens.colorStatusWarningBackground1,
+                    border: `1px solid ${tokens.colorStatusWarningForeground1}`,
+                    borderRadius: 4,
+                    fontSize: 13,
+                  }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                      {t("providers.cfDetected" as TK)}
                     </div>
-                  ) : (
-                    <>
-                  {phKeys.length > 0 && (
-                    <>
+                    <div>
+                      {t("providers.cfMessage" as TK)}{" "}
+                      <a
+                        href="https://developers.cloudflare.com/workers-ai/models/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: tokens.colorBrandForeground1 }}
+                      >
+                        Cloudflare Workers AI Models
+                      </a>
+                    </div>
+                  </div>
+                  <div style={{ display: form?.base_url?.includes("api.cloudflare.com") ? "none" : "contents" }}>
+                    <div style={{ display: phKeys.length > 0 ? "contents" : "none" }}>
                       {phKeys.map((k) => (
                         <Field key={k} label={k} required>
                           <Input
@@ -920,8 +921,7 @@ export function Providers() {
                           />
                         </Field>
                       ))}
-                    </>
-                  )}
+                    </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
                     <Field label="Method" style={{ flex: "0 0 auto" }}>
                       <Dropdown
@@ -953,18 +953,17 @@ export function Providers() {
                       onChange={(_, d) => setFetchToken(d.value)}
                     />
                   </Field>
-                  {form?.id ? (
-                    <div>
+                   <div style={{ display: form?.id ? "block" : "none" }}>
                       <Button
                         size="small"
                         appearance="subtle"
                         icon={<KeyRegular />}
+                        ref={keyPickerTriggerRef}
                         onClick={openKeyPicker}
                       >
                         {t("providers.useExistingKey" as TK)}
                       </Button>
-                    </div>
-                  ) : null}
+                   </div>
                   <Button
                     appearance="primary"
                     disabled={fetching || !fetchToken || !form?.base_url || (phKeys.length > 0 && !allPhFilled)}
@@ -974,18 +973,13 @@ export function Providers() {
                       ? t("providers.fetching" as TK)
                       : t("providers.fetchBtn" as TK)}
                   </Button>
-                  {fetching && (
-                    <div style={{ display: "flex", justifyContent: "center", padding: 8 }}>
-                      <Spinner size="small" />
-                    </div>
-                  )}
-                  {fetchError && (
-                    <div style={{ color: tokens.colorStatusDangerForeground1, fontSize: 13 }}>
-                      {fetchError}
-                    </div>
-                  )}
-                  {fetchedModels.length > 0 && (
-                    <>
+                   <div style={{ display: fetching ? "flex" : "none", justifyContent: "center", padding: 8 }}>
+                       <Spinner size="small" />
+                   </div>
+                   <div style={{ display: fetchError ? "block" : "none", color: tokens.colorStatusDangerForeground1, fontSize: 13 }}>
+                       {fetchError}
+                   </div>
+                   <div style={{ display: fetchedModels.length > 0 ? "contents" : "none" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <span style={{ fontSize: 13, color: tokens.colorNeutralForeground3 }}>
                           {fetchedModels.length} {t("providers.modelsFound" as TK)}
@@ -1060,10 +1054,8 @@ export function Providers() {
                           {t("providers.replace" as TK)}
                         </Button>
                       </div>
-                    </>
-                  )}
-                    </>
-                  )}
+                   </div>
+                  </div>
                 </div>
               </div>
               <Field
@@ -1308,16 +1300,13 @@ export function Providers() {
         </DialogSurface>
       </Dialog>
 
-      <Dialog
+      <Popover
         open={keyPickerOpen}
         onOpenChange={(_, d) => !d.open && setKeyPickerOpen(false)}
+        positioning={{ target: keyPickerTriggerRef.current }}
       >
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>
-              {t("providers.useExistingKeyTitle" as TK)}
-            </DialogTitle>
-            <DialogContent
+        <PopoverSurface>
+          <div
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -1325,7 +1314,8 @@ export function Providers() {
                 paddingTop: 8,
                 minWidth: 360,
               }}
-            >
+          >
+            <Text weight="semibold">{t("providers.useExistingKeyTitle" as TK)}</Text>
               <div style={{ display: keyPickerLoading ? "flex" : "none", justifyContent: "center", padding: 16 }}>
                 <Spinner size="small" />
               </div>
@@ -1348,18 +1338,17 @@ export function Providers() {
                   </Button>
                 ))}
               </div>
-            </DialogContent>
-            <DialogActions>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <Button
                 appearance="secondary"
                 onClick={() => setKeyPickerOpen(false)}
               >
                 {t("common.cancel" as TK)}
               </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
+            </div>
+          </div>
+        </PopoverSurface>
+      </Popover>
 
       <Dialog
         open={keyApiFor !== null}
