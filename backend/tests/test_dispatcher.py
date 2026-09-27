@@ -1202,6 +1202,59 @@ async def test_build_stream_response_timeout_marks_terminated(db, seeded):
         assert "response timeout" in (row.error or "")
 
 
+async def test_cancelled_stream_finishes_cleanup_before_returning(db, seeded):
+    """A client disconnect must close the upstream and finalize its log promptly."""
+    import asyncio
+
+    from voidswitch.models.db import RequestLog, VoidToken
+    from voidswitch.services.dispatcher import _build_stream
+
+    async with db.session() as session:
+        token = VoidToken(user_id=seeded["user_id"], name="t", token_hash="tokhash")
+        session.add(token)
+        await session.flush()
+        row = RequestLog(
+            token_id=token.id, user_sub=seeded["user_sub"], stream=True, req_status="pending"
+        )
+        session.add(row)
+        await session.flush()
+        log_id = row.id
+
+    entered = asyncio.Event()
+
+    class FakeResponse:
+        closed = False
+
+        async def aiter_bytes(self):
+            entered.set()
+            await asyncio.Event().wait()
+            yield b"data: [DONE]\n\n"
+
+        async def aclose(self):
+            self.closed = True
+
+    response = FakeResponse()
+    stream = _build_stream(
+        response=response,  # ty: ignore[invalid-argument-type]
+        inbound=ApiStyle.OPENAI,
+        upstream=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        log_id=log_id,
+        token_id=token.id,
+    )
+    task = asyncio.ensure_future(stream.__anext__())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert response.closed
+    async with db.session() as session:
+        row = await session.get(RequestLog, log_id)
+        assert row.req_status == "cancelled"
+        assert row.finished_at is not None
+
+
 async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
     """TTFT is measured from the upstream request start to the first real
     content token — not to the first raw byte (which only reflects the

@@ -921,6 +921,13 @@ async def delete_category(
     cat = await session.get(ModelCategory, category_id)
     if cat is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found.")
+    # Be explicit rather than relying only on the database FK action. This
+    # keeps the API contract identical across SQLite and PostgreSQL.
+    members = (
+        await session.execute(select(ExposedModel).where(ExposedModel.category_id == category_id))
+    ).scalars()
+    for member in members:
+        member.category_id = None
     await session.delete(cat)
     await record_audit(
         session,
@@ -930,6 +937,53 @@ async def delete_category(
         target_type="model_category",
         target_id=category_id,
         detail={"name": cat.name},
+        ip=request.client.host if request.client else None,
+    )
+
+
+@router.delete("/provider-groups/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_provider_group(
+    slug: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_staff),
+) -> None:
+    """Disable a provider's passthrough group and remove its model metadata.
+
+    This deliberately preserves the provider itself, including its keys and
+    ordinary provider-model configuration.
+    """
+    provider = (
+        await session.execute(
+            select(Provider).where(Provider.slug == slug, Provider.passthrough_enabled.is_(True))
+        )
+    ).scalar_one_or_none()
+    if provider is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Passthrough provider not found.")
+
+    stale_rows = (
+        (
+            await session.execute(
+                select(ExposedModel).where(ExposedModel.model_id.startswith(f"{slug}/"))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    model_ids = [entry.model_id for entry in stale_rows]
+    for entry in stale_rows:
+        await session.delete(entry)
+    provider.passthrough_enabled = False
+    provider.passthrough_models = []
+    await session.flush()
+    await record_audit(
+        session,
+        action=AuditAction.MODEL_DELETE,
+        actor_sub=user.sub,
+        actor_name=actor_display_name(user),
+        target_type="provider_passthrough_group",
+        target_id=provider.id,
+        detail={"provider_slug": slug, "deleted_model_ids": model_ids},
         ip=request.client.host if request.client else None,
     )
 

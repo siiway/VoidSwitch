@@ -33,15 +33,18 @@ per-upstream details and node history, while owners can still clear cooldowns fr
 ## Creating models
 
 Staff can click **Create model** to register a new `model_id` (leave the display name
-empty and a placeholder is auto-generated from the `model_id`). Optionally, pick a
-**provider + upstream model** to pre-fill the first upstream candidate. A group can be
-assigned at creation time (the **Create group** button sits between **Clean up unserved**
-and **Create model** at the top of the page).
+empty and a placeholder is auto-generated from the `model_id`). Use the **Choose existing
+model** icon beside the model ID to select an existing provider and model, which fills the
+model ID and first upstream candidate. Creation now exposes the same metadata fields as
+editing, including brand, limits, capabilities, reasoning, and custom OpenCode config.
 
 Groups group models (e.g. "Coding", "Writing"). The **Models** page supports
-filtering by group; models without a group are **Ungrouped**. Provider passport-through
-models appear under their **provider's name** (not its id/slug) as a virtual group with a
-**Provider** badge.
+filtering by group; models without a group are **Ungrouped**. Provider passthrough
+models appear under their **provider's name** as a virtual group and show their prefix in a
+pill (for example, `codex/`). Use **Manage groups** at the top of the page to create or
+delete groups: deleting an ordinary group keeps its models and moves them to **Ungrouped**;
+deleting a provider group disables that provider's passthrough and clears its whitelist and
+model metadata, while preserving the provider itself.
 
 ## Provider passthrough models
 

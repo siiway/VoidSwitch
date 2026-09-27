@@ -145,6 +145,16 @@ interface CreateState {
   provider_id: string;
   upstream_model: string;
   category_id: string;
+  config: string;
+  limit_context: string;
+  limit_input: string;
+  limit_output: string;
+  reasoning: boolean;
+  capabilities: EditState["capabilities"];
+  modalities_input: string;
+  modalities_output: string;
+  models_dev_id: string;
+  brand: string;
 }
 
 type BatchEnabled = "unchanged" | "enabled" | "disabled";
@@ -261,7 +271,10 @@ function providerNameOf(m: ModelEntry): string {
 
 // Auto-fill an edit form from a models.dev model entry (leave existing values
 // alone; only fill what's empty/unset).
-function applyModelsDev(f: EditState, entry: Record<string, unknown>): EditState {
+function applyModelsDev<T extends EditState | CreateState>(
+  f: T,
+  entry: Record<string, unknown>,
+): T {
   const id = String(entry.id ?? "");
   const provider = String(entry.provider ?? "");
   const fullId = provider ? `${provider}/${id}` : id;
@@ -290,7 +303,7 @@ function applyModelsDev(f: EditState, entry: Record<string, unknown>): EditState
       tool: f.capabilities.tool || entry.tool_call === true,
     },
     brand: f.brand || brand || "",
-  };
+  } as T;
 }
 
 function BrandIcon({ brand, modelId }: { brand?: string | null; modelId: string }) {
@@ -366,9 +379,11 @@ export function Models() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
   const [create, setCreate] = useState<CreateState | null>(null);
+  const [createPickerOpen, setCreatePickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [categoryOpen, setCategoryOpen] = useState(false);
+  const [manageCategoriesOpen, setManageCategoriesOpen] = useState(false);
   const [categoryName, setCategoryName] = useState("");
   const [categorySaving, setCategorySaving] = useState(false);
 
@@ -549,9 +564,15 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
 
   const providerPassthrough = Array.from(
     new Map(
-      items
-        .filter((m) => m.provider)
-        .map((m) => [providerSlugOf(m), providerNameOf(m)] as const)
+      (isStaff ? providers.data ?? [] : items.filter((m) => m.provider))
+        .filter((item) =>
+          "passthrough_enabled" in item ? item.passthrough_enabled : item.provider,
+        )
+        .map((item) =>
+          "passthrough_enabled" in item
+            ? [item.slug, item.name] as const
+            : [providerSlugOf(item), providerNameOf(item)] as const,
+        )
         .filter(([slug]) => Boolean(slug)),
     ).entries(),
   )
@@ -650,6 +671,43 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
       );
     } finally {
       setCategorySaving(false);
+    }
+  }
+
+  async function deleteCategory(category: ModelCategory) {
+    const ok = await confirm({
+      title: t("models.deleteCategoryTitle" as TK),
+      message: t("models.deleteCategoryMsg" as TK).replace("{name}", category.name),
+      confirmLabel: t("common.delete" as TK),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/api/models/categories/${category.id}`);
+      notify(t("models.categoryDeleted" as TK), category.name, "success");
+      if (filterCategory === String(category.id)) setFilterCategory("uncategorized");
+      categories.reload();
+      catalog.reload();
+    } catch (e) {
+      notify(t("common.deleteFailed" as TK), e instanceof Error ? e.message : String(e), "error");
+    }
+  }
+
+  async function deleteProviderGroup(slug: string, name: string) {
+    const ok = await confirm({
+      title: t("models.deleteProviderGroupTitle" as TK),
+      message: t("models.deleteProviderGroupMsg" as TK).replace("{name}", name),
+      confirmLabel: t("common.delete" as TK),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/api/models/provider-groups/${encodeURIComponent(slug)}`);
+      notify(t("models.providerGroupDeleted" as TK), name, "success");
+      catalog.reload();
+      providers.reload();
+    } catch (e) {
+      notify(t("common.deleteFailed" as TK), e instanceof Error ? e.message : String(e), "error");
     }
   }
 
@@ -838,13 +896,37 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
       );
       return;
     }
+    const config = parseConfig(create.config);
+    if (config === "INVALID") {
+      notify(t("models.invalidConfig" as TK), t("models.invalidConfigMsg" as TK), "error");
+      return;
+    }
     const payload: Record<string, unknown> = {
       model_id: modelId,
       enabled: create.enabled,
+      opencode_config: config,
+      reasoning: create.reasoning,
+      capabilities: {},
+      modalities: {},
     };
     if (create.display_name.trim()) payload.display_name = create.display_name.trim();
     if (create.description.trim()) payload.description = create.description.trim();
     if (create.category_id) payload.category_id = intOrEmpty(create.category_id);
+    for (const w of CAP_WORDS) {
+      if (create.capabilities[w]) (payload.capabilities as Record<string, unknown>)[w] = true;
+    }
+    const mi = intOrEmpty(create.modalities_input);
+    const mo = intOrEmpty(create.modalities_output);
+    if (mi != null) (payload.modalities as Record<string, unknown>).input = mi;
+    if (mo != null) (payload.modalities as Record<string, unknown>).output = mo;
+    const lc = intOrEmpty(create.limit_context);
+    const li = intOrEmpty(create.limit_input);
+    const lo = intOrEmpty(create.limit_output);
+    if (lc != null) payload.limit_context = lc;
+    if (li != null) payload.limit_input = li;
+    if (lo != null) payload.limit_output = lo;
+    if (create.models_dev_id.trim()) payload.models_dev_id = create.models_dev_id.trim();
+    payload.brand = create.brand.trim() || null;
     setSaving(true);
     try {
       await api.put("/api/models", payload);
@@ -864,8 +946,12 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                 key_pool: "",
             }],
           });
-        } catch {
-          // Route creation failed silently; the model was already created.
+        } catch (e) {
+          notify(
+            t("models.routeCreateFailed" as TK),
+            e instanceof Error ? e.message : String(e),
+            "error",
+          );
         }
       }
       notify(t("models.created" as TK), modelId, "success");
@@ -1058,16 +1144,16 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
             {isStaff && (
               <Button
                 icon={<FolderAddRegular />}
-                onClick={() => setCategoryOpen(true)}
+                onClick={() => setManageCategoriesOpen(true)}
               >
-                {t("models.createCategory" as TK)}
+                {t("models.manageCategories" as TK)}
               </Button>
             )}
             {isStaff && (
               <Button
                 appearance="primary"
                 icon={<AddRegular />}
-                onClick={() =>
+                onClick={() => {
                   setCreate({
                     model_id: "",
                     display_name: "",
@@ -1076,8 +1162,19 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                     provider_id: "",
                     upstream_model: "",
                     category_id: "",
-                  })
-                }
+                    config: "",
+                    limit_context: "",
+                    limit_input: "",
+                    limit_output: "",
+                    reasoning: false,
+                    capabilities: { text: false, image: false, audio: false, tool: false },
+                    modalities_input: "",
+                    modalities_output: "",
+                    models_dev_id: "",
+                    brand: "",
+                  });
+                  setCreatePickerOpen(false);
+                }}
               >
                 {t("models.create" as TK)}
               </Button>
@@ -1234,8 +1331,8 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                   <span style={{ display: "inline-flex" }}>{chevron}</span>
                   <span>{g.label}</span>
                   {g.provider && (
-                    <Badge appearance="tint" color="informative">
-                      {t("models.providerBadge" as TK)}
+                    <Badge appearance="tint" color="informative" shape="rounded">
+                      {`${g.key.slice("provider:".length)}/`}
                     </Badge>
                   )}
                   <span style={{ color: tokens.colorNeutralForeground3, fontWeight: 400 }}>
@@ -1869,6 +1966,17 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                 <Input
                   value={create?.model_id ?? ""}
                   placeholder={t("models.modelIdPlaceholder" as TK)}
+                  contentAfter={
+                    <Tooltip content={t("models.pickExistingModel" as TK)} relationship="label">
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={<SearchRegular />}
+                        aria-label={t("models.pickExistingModel" as TK)}
+                        onClick={() => setCreatePickerOpen((open) => !open)}
+                      />
+                    </Tooltip>
+                  }
                   onChange={(_, d) =>
                     setCreate((f) =>
                       f ? { ...f, model_id: d.value } : f,
@@ -1876,6 +1984,40 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                   }
                 />
               </Field>
+              <div
+                style={{
+                  display: createPickerOpen ? "flex" : "none",
+                  flexDirection: "column",
+                  gap: 8,
+                  border: `1px solid ${tokens.colorNeutralStroke2}`,
+                  borderRadius: 8,
+                  padding: 12,
+                  background: tokens.colorNeutralBackground2,
+                }}
+              >
+                <Text size={200} className={styles.dim}>
+                  {t("models.pickExistingModelHint" as TK)}
+                </Text>
+                <Field label={t("models.pickProvider" as TK)}>
+                  <Dropdown
+                    value={(providers.data ?? []).find((p) => String(p.id) === create?.provider_id)?.slug ?? t("models.pickProvider" as TK)}
+                    selectedOptions={[create?.provider_id ?? ""]}
+                    onOptionSelect={(_, d) => setCreate((f) => f ? { ...f, provider_id: d.optionValue ?? "", upstream_model: "" } : f)}
+                  >
+                    <Option value="">{t("models.pickProvider" as TK)}</Option>
+                    {(providers.data ?? []).map((p) => <Option key={p.id} value={String(p.id)}>{p.slug || p.name}</Option>)}
+                  </Dropdown>
+                </Field>
+                <Field label={t("models.upstreamModel" as TK)}>
+                  <Dropdown
+                    value={create?.upstream_model || t("models.upstreamPlaceholder" as TK)}
+                    selectedOptions={[create?.upstream_model ?? ""]}
+                    onOptionSelect={(_, d) => setCreate((f) => f ? { ...f, upstream_model: d.optionValue ?? "", model_id: d.optionValue ?? "" } : f)}
+                  >
+                    {((providers.data ?? []).find((p) => String(p.id) === create?.provider_id)?.models ?? []).map((model) => <Option key={model} value={model}>{model}</Option>)}
+                  </Dropdown>
+                </Field>
+              </div>
               <Field
                 label={t("models.displayName" as TK)}
                 hint={t("models.displayNameHint" as TK)}
@@ -1969,6 +2111,41 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                   </Field>
                 </div>
               </div>
+              <Field label={t("models.brand" as TK)} hint={t("models.brandHint" as TK)}>
+                <Dropdown
+                  value={create?.brand || t("models.brandAuto" as TK)}
+                  selectedOptions={create?.brand ? [create.brand] : []}
+                  onOptionSelect={(_, d) => setCreate((f) => f ? { ...f, brand: d.optionValue ?? "" } : f)}
+                >
+                  <Option value="">{t("models.brandAuto" as TK)}</Option>
+                  {BRAND_KEYS.map((brand) => <Option key={brand} value={brand}>{brand}</Option>)}
+                </Dropdown>
+              </Field>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {(["limit_context", "limit_input", "limit_output"] as const).map((field) => (
+                  <Field key={field} label={t(`models.${field === "limit_context" ? "limitContext" : field === "limit_input" ? "limitInput" : "limitOutput"}` as TK)}>
+                    <Input type="number" value={create?.[field] ?? ""} style={{ width: 140 }} onChange={(_, d) => setCreate((f) => f ? { ...f, [field]: d.value } : f)} />
+                  </Field>
+                ))}
+              </div>
+              <Switch label={t("models.reasoning" as TK)} checked={create?.reasoning ?? false} onChange={(_, d) => setCreate((f) => f ? { ...f, reasoning: d.checked } : f)} />
+              <Field label={t("models.capabilities" as TK)}>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  {CAP_WORDS.map((word) => <Checkbox key={word} label={word} checked={create?.capabilities[word] ?? false} onChange={(_, d) => setCreate((f) => f ? { ...f, capabilities: { ...f.capabilities, [word]: d.checked } } : f)} />)}
+                </div>
+              </Field>
+              <div style={{ display: "flex", gap: 12 }}>
+                <Field label={t("models.modalitiesInput" as TK)}><Input type="number" value={create?.modalities_input ?? ""} onChange={(_, d) => setCreate((f) => f ? { ...f, modalities_input: d.value } : f)} /></Field>
+                <Field label={t("models.modalitiesOutput" as TK)}><Input type="number" value={create?.modalities_output ?? ""} onChange={(_, d) => setCreate((f) => f ? { ...f, modalities_output: d.value } : f)} /></Field>
+              </div>
+              <Field label={t("models.configLabel" as TK)} hint={t("models.configHint" as TK)}>
+                <Textarea value={create?.config ?? ""} rows={6} placeholder={t("models.configPlaceholder" as TK)} style={{ fontFamily: tokens.fontFamilyMonospace }} onChange={(_, d) => setCreate((f) => f ? { ...f, config: d.value } : f)} />
+              </Field>
+              <Switch label={t("models.availableLabel" as TK)} checked={create?.enabled ?? true} onChange={(_, d) => setCreate((f) => f ? { ...f, enabled: d.checked } : f)} />
+              <ModelsDevSection
+                modelsDevId={create?.models_dev_id ?? ""}
+                onPick={(entry) => setCreate((f) => (f ? applyModelsDev(f, entry) : f))}
+              />
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setCreate(null)}>
@@ -2077,6 +2254,39 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
               >
                 {t("common.create" as TK)}
               </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      <Dialog open={manageCategoriesOpen} onOpenChange={(_, d) => !d.open && setManageCategoriesOpen(false)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{t("models.manageCategories" as TK)}</DialogTitle>
+            <DialogContent style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <Button icon={<FolderAddRegular />} onClick={() => setCategoryOpen(true)}>
+                {t("models.createCategory" as TK)}
+              </Button>
+              {(categories.data ?? []).map((category) => (
+                <div key={category.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <Text>{category.name}</Text>
+                  <Tooltip content={t("common.delete" as TK)} relationship="label">
+                    <Button appearance="subtle" icon={<DeleteRegular />} aria-label={t("common.delete" as TK)} onClick={() => void deleteCategory(category)} />
+                  </Tooltip>
+                </div>
+              ))}
+              {providerPassthrough.map(({ slug, name }) => (
+                <div key={slug} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <Text>{name}</Text><Badge appearance="tint" color="informative" shape="rounded">{`${slug}/`}</Badge>
+                  </div>
+                  <Tooltip content={t("common.delete" as TK)} relationship="label">
+                    <Button appearance="subtle" icon={<DeleteRegular />} aria-label={t("common.delete" as TK)} onClick={() => void deleteProviderGroup(slug, name)} />
+                  </Tooltip>
+                </div>
+              ))}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setManageCategoriesOpen(false)}>{t("common.close" as TK)}</Button>
             </DialogActions>
           </DialogBody>
         </DialogSurface>

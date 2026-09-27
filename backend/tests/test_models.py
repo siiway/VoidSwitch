@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 import respx
+from sqlalchemy import select
 from voidswitch.core.config import get_settings
 from voidswitch.core.security import (
     create_session_token,
@@ -12,7 +13,7 @@ from voidswitch.core.security import (
     hash_token,
     token_fingerprint,
 )
-from voidswitch.models.db import ExposedModel, User, VoidToken
+from voidswitch.models.db import ExposedModel, ModelCategory, Provider, User, VoidToken
 
 pytestmark = pytest.mark.asyncio
 
@@ -239,7 +240,6 @@ OAI_RESPONSE = {
 
 async def test_call_via_exposed_model_routes_to_upstream(client, db, seeded):
     """An exposed model with a different upstream_model routes to the upstream id."""
-    from sqlalchemy import select
     from voidswitch.models.db import Provider, RouteUpstream
     from voidswitch.services import model_routing
 
@@ -330,6 +330,57 @@ async def test_batch_delete_models(client, db, seeded):
     ids = {m["model_id"] for m in listed}
     assert "batch-del-a" not in ids
     assert "batch-del-b" not in ids
+
+
+async def test_delete_category_ungroups_its_models(client, db, seeded):
+    async with db.session() as session:
+        category = ModelCategory(name="Coding", slug="coding")
+        session.add(category)
+        await session.flush()
+        model = ExposedModel(model_id="categorized-model", category_id=category.id)
+        session.add(model)
+        await session.flush()
+        model_id = model.id
+
+    resp = await client.delete(f"/api/models/categories/{category.id}", headers=_session_headers())
+    assert resp.status_code == 204, resp.text
+    async with db.session() as session:
+        model = await session.get(ExposedModel, model_id)
+        assert model is not None
+        assert model.category_id is None
+
+
+async def test_delete_provider_group_disables_passthrough_and_cleans_metadata(client, db, seeded):
+    async with db.session() as session:
+        provider = Provider(
+            name="Codex",
+            slug="codex",
+            type="openai",
+            base_url="https://example.test/v1",
+            passthrough_enabled=True,
+            passthrough_models=["gpt-5", "mini => gpt-5-mini"],
+        )
+        session.add(provider)
+        session.add_all(
+            [
+                ExposedModel(model_id="codex/gpt-5", description="remove"),
+                ExposedModel(model_id="codex/mini", description="remove"),
+                ExposedModel(model_id="keep-me", description="keep"),
+            ]
+        )
+        await session.flush()
+
+    resp = await client.delete("/api/models/provider-groups/codex", headers=_session_headers())
+    assert resp.status_code == 204, resp.text
+    async with db.session() as session:
+        provider = await session.get(Provider, provider.id)
+        assert provider is not None
+        assert provider.passthrough_enabled is False
+        assert provider.passthrough_models == []
+        ids = set((await session.execute(select(ExposedModel.model_id))).scalars())
+        assert "codex/gpt-5" not in ids
+        assert "codex/mini" not in ids
+        assert "keep-me" in ids
 
 
 async def test_clean_unserved_removes_models_without_route(client, db, seeded):

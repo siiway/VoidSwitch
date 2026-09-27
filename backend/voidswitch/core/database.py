@@ -350,6 +350,11 @@ class RequestSessionMiddleware:
                 committed = True
                 if session.in_transaction():
                     await session.commit()
+                # Streaming responses can remain open for hours. The request
+                # session is only needed while dispatching; release its pool
+                # connection before forwarding the response headers. Stream
+                # finalization owns a separate transactional session.
+                await _safe_close(session)
             await send(message)
 
         try:
