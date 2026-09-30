@@ -20,7 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from voidswitch.core.database import get_database
 from voidswitch.core.security import decrypt_secret, encrypt_secret
 from voidswitch.models.db import ApiKey
-from voidswitch.services.network import Route, get_pool
+from voidswitch.services.network import (
+    NetworkExhausted,
+    NetworkTarget,
+    execute_request,
+    read_response_body,
+)
 
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 AUTH_BASE_URL = "https://auth.openai.com"
@@ -110,14 +115,6 @@ def extract_code(raw: str) -> tuple[str, str | None]:
     return raw, None
 
 
-async def _select_routes(session: AsyncSession | None) -> list[Route]:
-    if session is None:
-        return [Route()]
-    from voidswitch.services import routing
-
-    return [route for route, _ in await routing.system_routes(session)] or [Route()]
-
-
 def _reason(response: httpx.Response) -> str:
     with contextlib.suppress(Exception):
         body = response.json()
@@ -131,37 +128,59 @@ def _reason(response: httpx.Response) -> str:
 
 async def _post(
     url: str,
-    routes: list[Route],
+    session: AsyncSession | None,
     *,
     form: dict[str, Any] | None = None,
     body: dict[str, Any] | None = None,
     pending_ok: bool = False,
 ) -> dict[str, Any] | None:
-    last = "no outbound route available"
-    for route in routes or [Route()]:
-        try:
-            client = await get_pool().get(route, connect_timeout=15, read_timeout=30)
-            response = await client.post(url, data=form, json=body, headers=OAUTH_HEADERS)
-        except httpx.HTTPError as exc:
-            last = type(exc).__name__
-            continue
+    def retry_response(response: httpx.Response) -> bool:
         if response.status_code == 200:
-            try:
-                result = response.json()
-            except ValueError:
-                # A proxy/login edge occasionally returns an HTML or empty 200.
-                # Treat that as a broken route, not an unhandled application error.
-                last = "HTTP 200: invalid JSON response"
-                continue
-            return result if isinstance(result, dict) else {}
-        # Device authorization reports "not approved yet" as a 403. Do not
-        # confuse an unrelated edge/proxy 403 with a normal pending poll.
+            with contextlib.suppress(ValueError):
+                return not isinstance(response.json(), dict)
+            return True
         reason = _reason(response)
         if pending_ok and response.status_code == 403 and "pending" in reason.lower():
-            return None
-        last = f"HTTP {response.status_code}: {reason}"
-        if response.status_code not in (403, 408, 425, 429) and response.status_code < 500:
-            raise LoginError(f"OpenAI rejected the login ({last}).")
+            return False
+        return response.status_code in (403, 408, 425, 429) or response.status_code >= 500
+
+    owned = None
+    try:
+        owned = await execute_request(
+            target=NetworkTarget.system(),
+            method="POST",
+            url=url,
+            headers=OAUTH_HEADERS,
+            data=form,
+            json_body=body,
+            connect_timeout=15,
+            read_timeout=30,
+            session=session,
+            retry_response=retry_response,
+        )
+        response = owned.response
+        await read_response_body(response)
+    except (NetworkExhausted, httpx.HTTPError, TimeoutError) as exc:
+        raise LoginUpstreamError(
+            f"Could not reach OpenAI authentication (last: {type(exc).__name__})."
+        ) from exc
+    finally:
+        if owned is not None:
+            await owned.aclose()
+    if response.status_code == 200:
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise LoginUpstreamError(
+                "Could not reach OpenAI authentication (last: HTTP 200: invalid JSON response)."
+            ) from exc
+        return result if isinstance(result, dict) else {}
+    reason = _reason(response)
+    if pending_ok and response.status_code == 403 and "pending" in reason.lower():
+        return None
+    last = f"HTTP {response.status_code}: {reason}"
+    if response.status_code not in (403, 408, 425, 429) and response.status_code < 500:
+        raise LoginError(f"OpenAI rejected the login ({last}).")
     raise LoginUpstreamError(f"Could not reach OpenAI authentication (last: {last}).")
 
 
@@ -191,10 +210,10 @@ def _make_bundle(data: dict[str, Any], old_refresh: str | None = None) -> dict[s
     }
 
 
-async def _exchange(code: str, verifier: str, routes: list[Route]) -> dict[str, Any]:
+async def _exchange(code: str, verifier: str, session: AsyncSession | None) -> dict[str, Any]:
     data = await _post(
         TOKEN_URL,
-        routes,
+        session,
         form={
             "grant_type": "authorization_code",
             "client_id": CLIENT_ID,
@@ -226,7 +245,7 @@ async def complete_login(
         _pending.pop(state, None)
         raise LoginError("State mismatch — the pasted URL does not match this login.")
     try:
-        bundle = await _exchange(code, pending.verifier, await _select_routes(session))
+        bundle = await _exchange(code, pending.verifier, session)
     except LoginUpstreamError:
         raise  # preserve state so a transient route failure can be retried
     except Exception:
@@ -239,7 +258,7 @@ async def complete_login(
 async def begin_device_login(session: AsyncSession | None = None) -> dict[str, Any]:
     data = await _post(
         DEVICE_CODE_URL,
-        await _select_routes(session),
+        session,
         body={"client_id": CLIENT_ID},
     )
     assert data is not None
@@ -261,10 +280,9 @@ async def complete_device_login(
     session: AsyncSession | None = None,
 ) -> dict[str, Any] | None:
     """Poll the device grant once; return None until the user approves it."""
-    routes = await _select_routes(session)
     grant = await _post(
         DEVICE_TOKEN_URL,
-        routes,
+        session,
         body={"device_auth_id": device_auth_id, "user_code": user_code},
         pending_ok=True,
     )
@@ -273,7 +291,7 @@ async def complete_device_login(
     code, verifier = grant.get("authorization_code"), grant.get("code_verifier")
     if not code or not verifier:
         raise LoginError("OpenAI returned an invalid device authorization.")
-    return await _exchange(str(code), str(verifier), routes)
+    return await _exchange(str(code), str(verifier), session)
 
 
 def parse_bundle(plaintext: str) -> dict[str, Any] | None:
@@ -324,7 +342,7 @@ async def resolve_access_token(
             return str(fresh["access_token"])
         data = await _post(
             TOKEN_URL,
-            await _select_routes(refresh_session),
+            refresh_session,
             form={
                 "grant_type": "refresh_token",
                 "client_id": CLIENT_ID,

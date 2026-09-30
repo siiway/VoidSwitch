@@ -152,7 +152,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "balance_scan_rate_per_second": 5,
     "request_timeout_seconds": 300,
     "connect_timeout_seconds": 15,
-    "max_retries": 6,
+    "max_provider_attempts": 6,
+    # Unique pre-header node attempts inside each logical provider attempt.
+    "network_max_attempts": 3,
     "stream_idle_timeout_seconds": 120,
     # Hard wall-clock cap on a single request (streaming included): when a
     # request runs past this, the connection is force-cut and the log row marked

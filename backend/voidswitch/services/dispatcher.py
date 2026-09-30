@@ -41,17 +41,27 @@ from voidswitch.core.logging import get_logger, redact_headers
 from voidswitch.models.db import ApiKey, ExposedModel, Node, Provider, RequestLog
 from voidswitch.services import (
     model_routing,
-    node_health,
-    routing,
     settings_store,
     transform,
     upstream_health,
     usage_rollup,
 )
-from voidswitch.services.network import Route, get_pool
+from voidswitch.services.network import (
+    Deadline,
+    NetworkExhausted,
+    NetworkTarget,
+    execute_request,
+    read_response_body,
+    reset_current_deadline,
+    set_current_deadline,
+)
+from voidswitch.services.provider_error_policy import (
+    ProviderErrorDecision,
+    evaluate_provider_error_policy,
+)
 from voidswitch.services.providers.base import BaseProvider, ErrorClass
 from voidswitch.services.providers.registry import get_adapter
-from voidswitch.services.selector import select_keys, static_routes
+from voidswitch.services.selector import select_keys
 
 log = get_logger("dispatcher")
 
@@ -402,11 +412,17 @@ async def dispatch(
     req: DispatchRequest,
     session: AsyncSession | None = None,
 ) -> DispatchResult:
-    if session is None:
-        db = get_database()
-        async with db.session() as s:
-            return await _do_dispatch(req, s)
-    return await _do_dispatch(req, session)
+    response_timeout = float(settings_store.get_int("response_timeout_seconds", 3600))
+    deadline = Deadline.after(response_timeout)
+    token = set_current_deadline(deadline)
+    try:
+        if session is None:
+            db = get_database()
+            async with db.session() as s:
+                return await _do_dispatch(req, s, deadline=deadline)
+        return await _do_dispatch(req, session, deadline=deadline)
+    finally:
+        reset_current_deadline(token)
 
 
 async def _resolve_passthrough(
@@ -434,9 +450,11 @@ async def _resolve_passthrough(
     return None
 
 
-async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchResult:
+async def _do_dispatch(
+    req: DispatchRequest, session: AsyncSession, *, deadline: Deadline
+) -> DispatchResult:
     settings = get_settings()
-    max_retries = max(1, settings_store.get_int("max_retries", 6))
+    max_provider_attempts = max(1, settings_store.get_int("max_provider_attempts", 6))
     connect_timeout = float(settings_store.get_int("connect_timeout_seconds", 15))
     request_timeout = float(settings_store.get_int("request_timeout_seconds", 300))
     stream_idle = float(settings_store.get_int("stream_idle_timeout_seconds", 120))
@@ -446,8 +464,8 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     rate_limit_recovery = settings_store.get_int("rate_limit_recovery_seconds", 180)
     rate_limit_max_cooldown = settings_store.get_int("rate_limit_max_cooldown_seconds", 3600)
 
-    pool = get_pool()
-    attempts = 0
+    provider_attempts = 0
+    network_attempts = 0
     last_error = "no upstream available"
     last_status = 502
     session_key = _session_key(req)
@@ -461,6 +479,10 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     attempt_summaries: list[dict[str, Any]] = []
     last_ctx: dict[str, Any] = {}
     last_outcome: _Attempt | None = None
+    last_http_outcome: _Attempt | None = None
+    last_http_ctx: dict[str, Any] | None = None
+    last_http_error: str | None = None
+    return_last_http_outcome = False
 
     # Passthrough models (``provider-slug/exposed-model-id``) bypass the exposed
     # model + route system and dispatch directly to the provider.
@@ -540,17 +562,10 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     max_upstreams = route.max_upstream_attempts or len(entries)
     upstreams_tried = 0
 
-    # Proxy switching off (external proxy like mihomo handles egress): every
-    # request goes through a single fixed route and no node is ever disabled.
-    proxy_switching = settings_store.get_bool("proxy_switching_enabled", True)
     # When node health-checking is off, connectivity is managed externally
     # (e.g. mihomo): a failing node is never auto-disabled, so failures are
     # counted but never park a node.
     node_health_check = settings_store.get_bool("proxy_health_check_enabled", True)
-    fixed_routes = (
-        None if proxy_switching else static_routes(settings_store.get_str("static_proxy_url", ""))
-    )
-
     # Upstreams are dynamically ranked once per request; key and node failover
     # remains bounded by the global retry budget. ``max_upstream_attempts`` only
     # counts upstreams that actually get a usable key — an entry skipped because
@@ -558,7 +573,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     # never consumes the budget, so a single unusable lead candidate no longer
     # ends the search.
     for entry in entries:
-        if attempts >= max_retries or upstreams_tried >= max_upstreams:
+        if provider_attempts >= max_provider_attempts or upstreams_tried >= max_upstreams:
             break
         provider = entry.provider
         if provider is None or not provider.enabled:
@@ -575,27 +590,6 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         adapter = get_adapter(provider)
         upstream_model = entry.upstream_model or req.model
         key_pool = entry.key_pool or ""
-
-        # Per-provider outbound routes — from its node group (or the default
-        # group), unless proxy switching is disabled (single fixed route).
-        if fixed_routes is not None:
-            routes = fixed_routes
-        else:
-            group = await routing.provider_routes(session, provider)
-            routes = await routing.group_routes(session, group)
-        if not routes:
-            last_error = f"provider '{provider.name}': no available outbound node"
-            last_status = 502
-            attempt_summaries.append(
-                _skip_summary(
-                    provider=provider,
-                    provider_name=provider.name,
-                    upstream_model=upstream_model,
-                    key_pool=key_pool,
-                    reason="no available outbound node",
-                )
-            )
-            continue
 
         keys = select_keys(
             provider,
@@ -639,7 +633,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
         health_key = upstream_health.key_for(provider.id, upstream_model, key_pool)
         abandon_upstream = False
         for key in keys:
-            if attempts >= max_retries:
+            if provider_attempts >= max_provider_attempts:
                 break
             try:
                 plaintext = await _resolve_token(session, adapter, key, secret_key)
@@ -669,29 +663,30 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
             # SSE reply is aggregated into a single JSON object.
             aggregate_stream = bool(adapter.upstream_requires_streaming and not req.stream)
             upstream_stream = req.stream or aggregate_stream
-            for route_hop, node in routes:
-                if attempts >= max_retries:
+            protected_repeat_used = False
+            while True:
+                if provider_attempts >= max_provider_attempts:
                     break
-                attempts += 1
+                provider_attempts += 1
                 outcome = await _attempt(
-                    pool=pool,
                     adapter=adapter,
-                    route=route_hop,
+                    target=NetworkTarget.for_provider(provider),
                     url=url,
                     headers=headers,
                     body=body,
                     stream=upstream_stream,
                     connect_timeout=connect_timeout,
                     read_timeout=stream_idle if upstream_stream else read_timeout,
-                    # Non-streaming requests get the total response timeout as a
-                    # hard cap; streams enforce it inside _build_stream, and
-                    # aggregated streams enforce it inside _aggregate_stream.
-                    total_timeout=(response_timeout if not upstream_stream else None),
+                    deadline=deadline,
                     # Streamed requests through a zero-token-retry provider are
                     # spooled until the first real content token, so a degenerate
                     # empty 200 can be retried before anything reaches the client.
                     spool_first_content=bool(provider.retry_on_zero_token and upstream_stream),
+                    session=session,
+                    auto_disable_nodes=node_health_check,
                 )
+                network_attempts += len(outcome.network_attempts)
+                node = outcome.node
 
                 if aggregate_stream and outcome.response is not None:
                     # Consume + fold the streaming reply into one JSON object.
@@ -718,7 +713,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 # Always record a lightweight attempt summary (for the detail modal).
                 attempt_summaries.append(
                     _attempt_summary(
-                        attempt=attempts,
+                        attempt=provider_attempts,
                         provider=provider,
                         key=key,
                         adapter=adapter,
@@ -729,7 +724,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 if req.debug_enabled:
                     debug_trail.append(
                         _trail_entry(
-                            attempt=attempts,
+                            attempt=provider_attempts,
                             provider=provider,
                             key=key,
                             adapter=adapter,
@@ -741,13 +736,10 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 if outcome.network_error:
                     last_error = outcome.error or "network error"
                     last_status = 502
-                    # PoolTimeout / total-response-timeout are capacity or
-                    # wall-clock issues, NOT a node fault. Penalising the node
-                    # for these cascades failures: fewer nodes → more timeouts →
-                    # more disabled nodes → collapse.
-                    if outcome.blame_proxy and node is not None:
-                        routing.penalize_node(node, last_error, auto_disable=node_health_check)
-                    elif not outcome.blame_proxy:
+                    # Route connectivity was already recorded by the network
+                    # executor. A local pool/deadline failure is attributed to
+                    # the provider layer without corrupting node health.
+                    if not outcome.blame_proxy:
                         upstream_health.record(health_key, success=False)
                         cooled = await upstream_health.trip(
                             session,
@@ -759,31 +751,15 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                             reason=last_error,
                         )
                         abandon_upstream = cooled is not None
-                    node_health.add_sample(
-                        session,
-                        node,
-                        success=False,
-                        latency_ms=outcome.duration_ms,
-                        source="request",
-                        error=last_error,
-                    )
                     await session.flush()
-                    if abandon_upstream:
-                        break
-                    continue  # keep key, next node
+                    break
 
                 # We have an HTTP response.
-                if node is not None:
-                    routing.reward_node(node)
-                    node_health.add_sample(
-                        session,
-                        node,
-                        success=200 <= outcome.status_code < 500,
-                        latency_ms=outcome.duration_ms,
-                        source="request",
-                        status_code=outcome.status_code,
-                    )
                 err_class = adapter.classify(outcome.status_code, outcome.body_json)
+                last_http_outcome = outcome
+                last_http_ctx = dict(last_ctx)
+                last_http_error = f"HTTP {outcome.status_code}: {err_class.value}"
+                return_last_http_outcome = err_class is not ErrorClass.OK
                 # A provider that can *detect* "no quota" (vs a plain rate
                 # limit) turns a 429 into a permanently-disabled key.
                 if err_class is ErrorClass.RATE_LIMITED and adapter.detect_no_quota(
@@ -791,6 +767,43 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                 ):
                     err_class = ErrorClass.INSUFFICIENT_BALANCE
 
+                policy = evaluate_provider_error_policy(
+                    new_api_mode=provider.new_api_mode,
+                    selective_ignore_rules=provider.selective_ignore_rules or [],
+                    status_code=outcome.status_code,
+                    headers=outcome.resp_headers or {},
+                    body=(
+                        outcome.body_json if outcome.body_json is not None else outcome.body_bytes
+                    ),
+                    original_classification=err_class.value,
+                )
+                _apply_policy_to_summary(attempt_summaries[-1], policy, protected_repeat_used)
+                if policy.protected:
+                    last_error = f"{policy.final_classification}: HTTP {outcome.status_code}"
+                    last_http_error = last_error
+                    last_status = outcome.status_code
+                    upstream_health.record(health_key, success=False)
+                    if (
+                        provider.protected_error_retry_enabled
+                        and not protected_repeat_used
+                        and provider_attempts < max_provider_attempts
+                    ):
+                        protected_repeat_used = True
+                        attempt_summaries[-1]["protected_repeat_used"] = True
+                        await session.flush()
+                        continue
+                    await upstream_health.trip(
+                        session,
+                        health_key,
+                        status_code=outcome.status_code,
+                        headers=outcome.resp_headers,
+                        provider=provider,
+                        upstream=entry,
+                        reason=last_error,
+                    )
+                    abandon_upstream = True
+                    await session.flush()
+                    break
                 if err_class is ErrorClass.OK:
                     # "200 OK + 0 tokens" auto-retry: a 200 that produced nothing
                     # usable is a degenerate upstream result. Detect it (usage 0
@@ -825,7 +838,9 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                         node=node,
                         outcome=outcome,
                         upstream_model=upstream_model,
-                        attempts=attempts,
+                        attempts=network_attempts,
+                        provider_attempts=provider_attempts,
+                        network_attempts=network_attempts,
                         debug_attempts=debug_trail,
                         attempt_summaries=attempt_summaries,
                         started_at=dispatch_started_at,
@@ -855,7 +870,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                                 plaintext,
                                 provider,
                             )
-                            continue  # retry same key with the refreshed token
+                            continue  # new provider attempt, same key and refreshed token
                         except Exception as exc:
                             last_error = f"oauth refresh failed: {exc}"
                     status = (
@@ -940,7 +955,9 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
                     upstream_model=upstream_model,
                     status_code=outcome.status_code,
                     success=False,
-                    attempts=attempts,
+                    attempts=network_attempts,
+                    provider_attempts=provider_attempts,
+                    network_attempts=network_attempts,
                     error=f"client error {outcome.status_code}",
                     upstream_url=outcome.url,
                     req_method=outcome.req_method,
@@ -961,23 +978,33 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     # node / upstream model actually tried (when any attempt happened) and, for
     # debug tokens, attach the last upstream response + the full per-attempt
     # trail — so an "upstream 500" is diagnosable instead of a bare provider "—".
+    terminal_outcome = last_http_outcome or last_outcome
+    terminal_ctx = last_http_ctx or last_ctx
+    terminal_status = (
+        last_http_outcome.status_code
+        if return_last_http_outcome and last_http_outcome is not None
+        else last_status
+    )
+    terminal_error = last_http_error if return_last_http_outcome else last_error
     await _log_request(
         session,
         req,
-        provider=last_ctx.get("provider"),
-        key=last_ctx.get("key"),
-        node=last_ctx.get("node"),
-        upstream_style=last_ctx.get("upstream_style"),
-        upstream_model=last_ctx.get("upstream_model"),
-        status_code=last_status,
+        provider=terminal_ctx.get("provider"),
+        key=terminal_ctx.get("key"),
+        node=terminal_ctx.get("node"),
+        upstream_style=terminal_ctx.get("upstream_style"),
+        upstream_model=terminal_ctx.get("upstream_model"),
+        status_code=terminal_status,
         success=False,
-        attempts=attempts,
-        error=last_error,
-        upstream_url=last_outcome.url if last_outcome else None,
-        req_method=last_outcome.req_method if last_outcome else None,
-        req_headers=last_outcome.req_headers if last_outcome else None,
-        resp_headers=last_outcome.resp_headers if last_outcome else None,
-        resp_body=_resp_body_repr(last_outcome) if last_outcome else None,
+        attempts=network_attempts,
+        provider_attempts=provider_attempts,
+        network_attempts=network_attempts,
+        error=terminal_error,
+        upstream_url=terminal_outcome.url if terminal_outcome else None,
+        req_method=terminal_outcome.req_method if terminal_outcome else None,
+        req_headers=terminal_outcome.req_headers if terminal_outcome else None,
+        resp_headers=terminal_outcome.resp_headers if terminal_outcome else None,
+        resp_body=_resp_body_repr(terminal_outcome) if terminal_outcome else None,
         debug_attempts=debug_trail,
         attempt_summaries=attempt_summaries,
         started_at=dispatch_started_at,
@@ -989,6 +1016,10 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
     # exhausted) the upstream is simply unavailable — flag it as such with a
     # dedicated, machine-readable error type and a message that won't be mistaken
     # for a relay/proxy failure (a bare "Bad Gateway" reason phrase often is).
+    if return_last_http_outcome and last_http_outcome is not None:
+        result = _passthrough_error(req, last_http_outcome, terminal_ctx["upstream_style"])
+        result.attempts = network_attempts
+        return result
     return DispatchResult(
         status_code=last_status if last_status >= 400 else 502,
         is_stream=False,
@@ -998,7 +1029,7 @@ async def _do_dispatch(req: DispatchRequest, session: AsyncSession) -> DispatchR
             "upstream_unavailable",
         ),
         model=req.model,
-        attempts=attempts,
+        attempts=network_attempts,
         error="upstream_unavailable",
     )
 
@@ -1096,21 +1127,24 @@ class _Attempt:
     req_headers: dict[str, str] | None = None
     req_body: dict[str, Any] | None = None
     duration_ms: float | None = None
+    node: Node | None = None
+    network_attempts: list[dict[str, Any]] = field(default_factory=list)
 
 
 async def _attempt(
     *,
-    pool: Any,
     adapter: BaseProvider,
-    route: Route,
+    target: NetworkTarget,
     url: str,
     headers: dict[str, str],
     body: dict[str, Any],
     stream: bool,
     connect_timeout: float,
     read_timeout: float,
-    total_timeout: float | None = None,
+    deadline: Deadline | None = None,
     spool_first_content: bool = False,
+    session: Any | None = None,
+    auto_disable_nodes: bool = True,
 ) -> _Attempt:
     # Outbound request metadata, shared by every return path so the debug trail
     # always knows exactly what was sent where. Auth headers are masked here.
@@ -1118,8 +1152,6 @@ async def _attempt(
     req_meta: dict[str, Any] = {
         "req_method": "POST",
         "url": url,
-        "proxy_url": route.proxy_url,
-        "local_address": route.local_address,
         "req_headers": redacted,
         "req_body": body,
     }
@@ -1131,8 +1163,6 @@ async def _attempt(
         method="POST",
         url=url,
         stream=stream,
-        proxy=route.proxy_url,
-        local_address=route.local_address,
         headers=redacted,
         body=body,
     )
@@ -1141,14 +1171,29 @@ async def _attempt(
     def _elapsed_ms() -> float:
         return round((time.monotonic() - started) * 1000, 1)
 
+    owned = None
     try:
-        client = await pool.get(route, connect_timeout=connect_timeout, read_timeout=read_timeout)
+        owned = await execute_request(
+            target=target,
+            method="POST",
+            url=url,
+            headers=headers,
+            json_body=body,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            deadline=deadline,
+            session=session,
+            auto_disable_nodes=auto_disable_nodes,
+        )
+        response = owned.response
+        route = owned.route
+        req_meta["proxy_url"] = route.proxy_url
+        req_meta["local_address"] = route.local_address
+        network_trace = [_network_attempt_summary(item) for item in owned.attempts]
         if stream:
-            request = client.build_request("POST", url, json=body, headers=headers)
-            response = await client.send(request, stream=True)
             if response.status_code >= 300:
-                raw = await response.aread()
-                await response.aclose()
+                raw = await read_response_body(response, deadline)
+                await owned.aclose()
                 resp_headers = dict(response.headers)
                 log.debug(
                     "upstream_response",
@@ -1164,6 +1209,8 @@ async def _attempt(
                     body_text=_body_text(raw),
                     resp_headers=resp_headers,
                     duration_ms=_elapsed_ms(),
+                    node=owned.node,
+                    network_attempts=network_trace,
                     **req_meta,
                 )
             log.debug(
@@ -1180,7 +1227,9 @@ async def _attempt(
             # degenerate — retried by the caller instead of delivered empty.
             if spool_first_content:
                 try:
-                    spooled, degenerate = await _spool_first_content(response, adapter.style)
+                    spooled, degenerate = await _spool_first_content(
+                        response, adapter.style, overall_deadline=deadline
+                    )
                 except Exception:
                     # Upstream faulted while spooling — close and let the caller
                     # treat it as a network error (retry).
@@ -1193,7 +1242,9 @@ async def _attempt(
                         error="upstream stream ended with no content (200 OK, 0 tokens)",
                         resp_headers=resp_headers,
                         duration_ms=_elapsed_ms(),
-                        start_mono=started,
+                        start_mono=deadline.started_at if deadline is not None else started,
+                        node=owned.node,
+                        network_attempts=network_trace,
                         **req_meta,
                     )
                 response = spooled
@@ -1202,17 +1253,13 @@ async def _attempt(
                 response=response,
                 resp_headers=resp_headers,
                 duration_ms=_elapsed_ms(),
-                start_mono=started,
+                start_mono=deadline.started_at if deadline is not None else started,
+                node=owned.node,
+                network_attempts=network_trace,
                 **req_meta,
             )
-
-        if total_timeout and total_timeout > 0:
-            response = await asyncio.wait_for(
-                client.post(url, json=body, headers=headers), timeout=total_timeout
-            )
-        else:
-            response = await client.post(url, json=body, headers=headers)
-        raw = response.content
+        raw = await read_response_body(response, deadline)
+        await owned.aclose()
         log.debug(
             "upstream_response",
             status_code=response.status_code,
@@ -1227,43 +1274,38 @@ async def _attempt(
             body_text=_body_text(raw),
             resp_headers=dict(response.headers),
             duration_ms=_elapsed_ms(),
+            node=owned.node,
+            network_attempts=network_trace,
             **req_meta,
         )
-    except _POOL_TIMEOUT_ERRORS as exc:
-        pool_ref = get_pool()
-        pool_info = f"pool clients={len(pool_ref._clients)}"
-        detail = (
-            f"PoolTimeout on {url!r} via proxy={route.proxy_url!r} "
-            f"({pool_info}). The connection pool is saturated under high concurrency. "
-            f"Increase max_connections in network.py or reduce concurrency. "
-            f"Proxy is NOT penalised for this. Original: {exc}"
-        )
-        log.warning(
-            "outbound_pool_timeout",
-            url=url,
-            proxy=route.proxy_url,
-            pool_info=pool_info,
-            error=str(exc),
-        )
+    except NetworkExhausted as exc:
+        trace = [_network_attempt_summary(item) for item in exc.attempts]
+        last = exc.attempts[-1] if exc.attempts else None
         return _Attempt(
             network_error=True,
-            error=detail,
-            is_pool_timeout=True,
-            blame_proxy=False,
+            error=str(exc),
+            is_pool_timeout=bool(last and last.pool_timeout),
+            blame_proxy=bool(last and not last.pool_timeout and not last.deadline_timeout),
             duration_ms=_elapsed_ms(),
+            node=last.node if last else None,
+            network_attempts=trace,
             **req_meta,
         )
+    except asyncio.CancelledError:
+        if owned is not None:
+            await owned.aclose()
+        raise
     except TimeoutError as exc:
+        if owned is not None:
+            with contextlib.suppress(Exception):
+                await owned.aclose()
         detail = (
-            f"Response timeout after {int(total_timeout or 0)}s on {url!r} "
-            f"via proxy={route.proxy_url!r}. The upstream did not complete in time. "
-            f"Proxy is NOT penalised for this. Original: {exc}"
+            f"Response deadline exceeded on {url!r}. The upstream did not complete in time. "
+            f"Original: {exc}"
         )
         log.warning(
             "outbound_response_timeout",
             url=url,
-            proxy=route.proxy_url,
-            timeout=total_timeout,
             error=str(exc),
         )
         return _Attempt(
@@ -1271,24 +1313,72 @@ async def _attempt(
             error=detail,
             blame_proxy=False,
             duration_ms=_elapsed_ms(),
-            **req_meta,
-        )
-    except _NETWORK_ERRORS as exc:
-        log.debug("outbound_network_error", url=url, error=f"{type(exc).__name__}: {exc}")
-        return _Attempt(
-            network_error=True,
-            error=f"{type(exc).__name__}: {exc}",
-            duration_ms=_elapsed_ms(),
+            node=owned.node if owned is not None else None,
+            network_attempts=(
+                [_network_attempt_summary(item) for item in owned.attempts]
+                if owned is not None
+                else []
+            ),
             **req_meta,
         )
     except httpx.HTTPError as exc:  # any other httpx error -> treat as network
+        if owned is not None:
+            with contextlib.suppress(Exception):
+                await owned.aclose()
         log.debug("outbound_network_error", url=url, error=f"{type(exc).__name__}: {exc}")
         return _Attempt(
             network_error=True,
             error=f"{type(exc).__name__}: {exc}",
+            blame_proxy=False,
             duration_ms=_elapsed_ms(),
+            node=owned.node if owned is not None else None,
+            network_attempts=(
+                [_network_attempt_summary(item) for item in owned.attempts]
+                if owned is not None
+                else []
+            ),
             **req_meta,
         )
+
+
+def _network_attempt_summary(attempt: Any) -> dict[str, Any]:
+    node = attempt.node
+    route = attempt.route
+    if route.agent_node_id is not None:
+        route_type = "agent"
+    elif route.proxy_url:
+        route_type = "proxy"
+    elif route.local_address:
+        route_type = "local"
+    else:
+        route_type = "direct"
+    return {
+        "attempt": attempt.attempt,
+        "node_id": node.id if node is not None else None,
+        "route_type": route_type,
+        "status_code": attempt.status_code,
+        # Exception text can contain a proxy URL (including userinfo) or a
+        # locally-bound address. Keep the persisted trail diagnostic but coarse.
+        "error": "network request failed" if attempt.error else None,
+        "pool_timeout": attempt.pool_timeout,
+        "deadline_timeout": attempt.deadline_timeout,
+        "duration_ms": attempt.duration_ms,
+    }
+
+
+def _safe_network_attempt_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a network trail entry before it enters the persistent summary."""
+    safe = {
+        key: value for key, value in summary.items() if key not in {"proxy_url", "local_address"}
+    }
+    if "route_type" not in safe:
+        if summary.get("proxy_url"):
+            safe["route_type"] = "proxy"
+        elif summary.get("local_address"):
+            safe["route_type"] = "local"
+    if safe.get("error"):
+        safe["error"] = "network request failed"
+    return safe
 
 
 # How long we wait for the first real content token of a streamed response
@@ -1345,6 +1435,7 @@ async def _spool_first_content(
     response: httpx.Response,
     style: ApiStyle,
     spool_timeout: float = _SPOOL_FIRST_CONTENT_SECONDS,
+    overall_deadline: Deadline | None = None,
 ) -> tuple[_SpooledResponse, bool]:
     """Read the start of a streamed upstream response to detect a degenerate
     "200 OK + 0 tokens" reply.
@@ -1371,21 +1462,36 @@ async def _spool_first_content(
     reader = asyncio.create_task(_reader())
     prefix = bytearray()
     deadline = time.monotonic() + spool_timeout
+    if overall_deadline is not None and overall_deadline.expires_at is not None:
+        deadline = min(deadline, overall_deadline.expires_at)
     ended = False
-    while time.monotonic() < deadline:
-        try:
+    try:
+        while time.monotonic() < deadline:
             remaining = max(0.0, deadline - time.monotonic())
-            item = await asyncio.wait_for(queue.get(), timeout=remaining)
-        except TimeoutError:
-            break
-        if item is None:
-            ended = True
-            break
-        if isinstance(item, BaseException):
-            raise item
-        prefix += item
-        if _sse_has_content(bytes(prefix), style):
-            break
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=remaining)
+            except TimeoutError:
+                break
+            if item is None:
+                ended = True
+                break
+            if isinstance(item, BaseException):
+                raise item
+            prefix += item
+            if _sse_has_content(bytes(prefix), style):
+                break
+        if (
+            overall_deadline is not None
+            and overall_deadline.expires_at is not None
+            and overall_deadline.remaining() == 0
+        ):
+            raise TimeoutError("overall response deadline exceeded while spooling stream")
+    except BaseException:
+        reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader
+        await response.aclose()
+        raise
     spooled = _SpooledResponse(response, bytes(prefix), queue)
     spooled.attach_reader(reader)
     degenerate = ended and not _sse_has_content(bytes(prefix), style)
@@ -1556,6 +1662,7 @@ async def _aggregate_stream(
         return outcome
 
     outcome.response = None
+    await response.aclose()
     return outcome
 
 
@@ -1643,7 +1750,6 @@ def _skip_summary(
         "pool": key_pool,
         "upstream_model": upstream_model,
         "url": None,
-        "proxy_url": None,
         "status_code": None,
         "error_class": "skipped",
         "network_error": False,
@@ -1677,6 +1783,7 @@ def _attempt_summary(
         ok = error_class == ErrorClass.OK.value
     return {
         "attempt": attempt,
+        "provider_attempt": attempt,
         "provider": provider.name,
         "provider_id": provider.id,
         "key_id": key.id,
@@ -1684,16 +1791,38 @@ def _attempt_summary(
         "pool": key.pool or "",
         "upstream_model": upstream_model,
         "url": outcome.url,
-        "proxy_url": outcome.proxy_url,
         "status_code": outcome.status_code or None,
         "error_class": error_class,
         "network_error": outcome.network_error,
-        "error": outcome.error,
+        "error": "network request failed" if outcome.network_error else outcome.error,
         # Keep the upstream error body so a failed attempt is diagnosable; omit
         # the body on success (it's large and unneeded for a summary).
         "resp_body": _resp_body_repr(outcome) if not ok else None,
         "duration_ms": outcome.duration_ms,
+        "network_attempts": [
+            _safe_network_attempt_summary(item) for item in outcome.network_attempts
+        ],
     }
+
+
+def _apply_policy_to_summary(
+    summary: dict[str, Any], decision: ProviderErrorDecision, repeat_used: bool
+) -> None:
+    summary.update(
+        {
+            "original_classification": decision.original_classification,
+            "final_classification": decision.final_classification,
+            "policy_action": decision.action.value,
+            "provenance": decision.provenance.value,
+            "matched_rule_name": decision.matched_rule_name,
+            "rule_status_matched": decision.status_matched,
+            "rule_body_matched": decision.body_matched,
+            "protected_repeat_used": repeat_used,
+            "repeat_of_provider_attempt": (
+                summary["provider_attempt"] - 1 if repeat_used else None
+            ),
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1712,6 +1841,8 @@ async def _finalise_success(
     outcome: _Attempt,
     upstream_model: str,
     attempts: int,
+    provider_attempts: int,
+    network_attempts: int,
     debug_attempts: list[dict[str, Any]] | None = None,
     attempt_summaries: list[dict[str, Any]] | None = None,
     started_at: dt.datetime | None = None,
@@ -1739,6 +1870,8 @@ async def _finalise_success(
             success=True,
             stream=True,
             attempts=attempts,
+            provider_attempts=provider_attempts,
+            network_attempts=network_attempts,
             user_agent=req.user_agent,
             client_type=req.client_type,
             is_opencode=req.is_opencode,
@@ -1810,6 +1943,8 @@ async def _finalise_success(
         status_code=outcome.status_code,
         success=True,
         attempts=attempts,
+        provider_attempts=provider_attempts,
+        network_attempts=network_attempts,
         error=None,
         usage=usage,
         upstream_url=outcome.url,
@@ -2200,6 +2335,8 @@ async def _log_request(
     status_code: int,
     success: bool,
     attempts: int,
+    provider_attempts: int,
+    network_attempts: int,
     error: str | None,
     usage: dict[str, int] | None = None,
     upstream_url: str | None = None,
@@ -2250,6 +2387,8 @@ async def _log_request(
             success=success,
             stream=req.stream,
             attempts=attempts,
+            provider_attempts=provider_attempts,
+            network_attempts=network_attempts,
             prompt_tokens=usage["prompt_tokens"],
             completion_tokens=usage["completion_tokens"],
             total_tokens=usage["total_tokens"],

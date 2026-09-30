@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import socket
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -1007,7 +1007,7 @@ async def test_node_group_routes_rank_and_direct_fallback():
 
     # An empty / missing group always yields a single direct route (no 502, no
     # "no route available" — an empty group = direct).
-    routes = await routing.group_routes(None, None)  # ty: ignore[invalid-argument-type]
+    routes = await routing.group_routes(cast(Any, None), None)
     assert len(routes) == 1
     route, node = routes[0]
     assert node is None and route.proxy_url is None
@@ -1906,7 +1906,7 @@ async def test_spool_first_content_commits_on_real_content(db):
             b"data: [DONE]\n\n",
         ]
     )
-    spooled, degenerate = await _spool_first_content(resp, ApiStyle.OPENAI)  # ty: ignore[invalid-argument-type]
+    spooled, degenerate = await _spool_first_content(cast(Any, resp), ApiStyle.OPENAI)
     assert degenerate is False
     assert resp.closed is False  # stream still open for the client
     chunks = [c async for c in spooled.aiter_bytes()]
@@ -1936,9 +1936,39 @@ async def test_spool_first_content_detects_degenerate_empty(db):
             b"data: [DONE]\n\n",
         ]
     )
-    _, degenerate = await _spool_first_content(resp, ApiStyle.OPENAI)  # ty: ignore[invalid-argument-type]
+    _, degenerate = await _spool_first_content(cast(Any, resp), ApiStyle.OPENAI)
     assert degenerate is True
     assert resp.closed is True  # connection cut — nothing delivered
+
+
+async def test_spool_first_content_is_bounded_by_overall_deadline(db):
+    import asyncio
+    import time
+
+    from voidswitch.services.dispatcher import _spool_first_content
+    from voidswitch.services.network import Deadline
+
+    class FakeResponse:
+        closed = False
+
+        async def aiter_bytes(self):
+            await asyncio.Event().wait()
+            yield b""
+
+        async def aclose(self):
+            self.closed = True
+
+    resp = FakeResponse()
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="overall response deadline"):
+        await _spool_first_content(
+            cast(Any, resp),
+            ApiStyle.OPENAI,
+            spool_timeout=5,
+            overall_deadline=Deadline.after(0.01),
+        )
+    assert time.monotonic() - started < 1
+    assert resp.closed is True
 
 
 # --------------------------------------------------------------------------- #
@@ -1991,7 +2021,7 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
             "node_group_members",
             "request_logs",
         } <= tables
-        assert ver == "7b4d9e1f2a6c"  # the current head
+        assert ver == "d9a4c7e2b1f6"  # the current head
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -22,6 +23,7 @@ from voidswitch.core.security import (
 from voidswitch.models.db import ApiKey, Provider, RequestLog, User
 from voidswitch.services import oauth_tokens, settings_store
 from voidswitch.services.dispatcher import DispatchRequest, dispatch
+from voidswitch.services.network import Deadline, reset_current_deadline, set_current_deadline
 
 pytestmark = pytest.mark.asyncio
 
@@ -102,6 +104,21 @@ async def test_near_expiry_triggers_refresh(db):
     assert bundle["refresh_token"] == "refresh-2"
 
 
+async def test_token_error_body_read_uses_shared_deadline():
+    async def body():
+        await asyncio.sleep(1)
+        yield b'{"error":"late"}'
+
+    token = set_current_deadline(Deadline.after(0.01))
+    try:
+        with respx.mock(assert_all_called=True) as mock:
+            mock.post(oauth_tokens.TOKEN_URL).mock(return_value=httpx.Response(503, content=body()))
+            with pytest.raises(oauth_tokens.LoginUpstreamError):
+                await oauth_tokens._post_token({}, None)
+    finally:
+        reset_current_deadline(token)
+
+
 async def test_refresh_uses_static_proxy_and_records_request_log(db):
     secret_key = get_settings().server.secret_key
     key_id = await _make_key(
@@ -142,6 +159,8 @@ async def test_refresh_uses_static_proxy_and_records_request_log(db):
         ).scalar_one()
     assert row.success is True
     assert row.status_code == 200
+    assert row.provider_attempts == 1
+    assert row.network_attempts == 1
     assert row.proxy_url == "http://static.local:8080"
     assert row.token_id is None
     assert row.user_sub is None

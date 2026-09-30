@@ -51,6 +51,33 @@ router = APIRouter(prefix="/api/admin/providers", tags=["admin:providers"])
 
 _KEY_SELECT_MODES = {m.value for m in KeySelectMode}
 
+_PROVIDER_CREATE_FIELDS = {
+    "name",
+    "type",
+    "slug",
+    "base_url",
+    "enabled",
+    "models",
+    "balance_url",
+    "extra_headers",
+    "timeout_seconds",
+    "retry_on_zero_token",
+    "drop_opencode_identity_block",
+    "normalize_developer_role_to_system",
+    "node_group_id",
+    "key_select_mode",
+    "rate_limit_cooldown_seconds",
+    "upstream_cooldown_seconds",
+    "upstream_cooldown_status_codes",
+    "upstream_retry_after_headers",
+    "upstream_max_keys_per_attempt",
+    "new_api_mode",
+    "protected_error_retry_enabled",
+    "selective_ignore_rules",
+    "passthrough_enabled",
+    "passthrough_models",
+}
+
 _PASSTHROUGH_MODEL_RE = re.compile(
     r"^(?P<exposed>[^\s@]+?)(?:\s*=>\s*(?P<upstream>[^\s@]+?))?(?:\s*@\s*(?P<pool>\S+))?$"
 )
@@ -222,26 +249,16 @@ async def create_provider(
     slug = (body.slug or "").strip() or _slugify(body.name)
     slug = await _unique_slug(session, slug)
 
-    provider = Provider(
-        name=body.name,
-        type=body.type,
+    provider_values = body.model_dump(mode="json", include=_PROVIDER_CREATE_FIELDS)
+    provider_values.update(
         slug=slug,
         base_url=base_url,
-        enabled=body.enabled,
         models=models,
-        balance_url=body.balance_url,
-        extra_headers=body.extra_headers,
-        timeout_seconds=body.timeout_seconds,
-        drop_opencode_identity_block=body.drop_opencode_identity_block,
-        normalize_developer_role_to_system=body.normalize_developer_role_to_system,
-        node_group_id=body.node_group_id,
-        key_select_mode=body.key_select_mode,
         rate_limit_cooldown_seconds=max(0, body.rate_limit_cooldown_seconds),
         added_by=user.id,
         added_by_name=actor_display_name(user),
-        passthrough_enabled=body.passthrough_enabled,
-        passthrough_models=list(body.passthrough_models or []),
     )
+    provider = Provider(**provider_values)
     session.add(provider)
     await session.flush()
     # Custom auth headers can hold upstream secrets — keep them owner-only.
@@ -280,7 +297,7 @@ async def update_provider(
     if provider is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found.")
     _ensure_can_edit(user, provider)
-    changes = body.model_dump(exclude_unset=True)
+    changes = body.model_dump(mode="json", exclude_unset=True)
     # Filter out fields where the value didn't actually change.
     real_changes: dict = {}
     for field, value in changes.items():

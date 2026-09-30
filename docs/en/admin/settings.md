@@ -12,15 +12,22 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
   `static_proxy_url` (or the environment). Routing-related settings include `node_default_probe_url` (the probe
   URL used when a node group doesn't set its own — the only probe-URL setting), `node_probe_interval_seconds` (idle health-check interval), `node_rank_alpha/beta/gamma`
   (weights for dynamic node ordering), `node_rank_ewma_half_life_seconds` (decay half-life of a node's EWMA
-  latency), `max_retries` (max retries per request), and `max_proxy_failures` (failure threshold before a
-  node is disabled).
+  latency), and `max_proxy_failures` (failure threshold before a node is disabled).
 - **Keys & Balance** — key failure limit, auto-disable for zero-balance keys, and balance probe/rescan cadence and rate.
 - **Rate Limiting** — the default recovery window and the cap on any single cooldown.
 - **Upstream routing** — upstream selection and ranking, score weights, the health sample threshold,
   keys tried per upstream, and cooldown status codes, duration/backoff, retry headers, and all-cooled
   behavior. Enter status codes as a comma-separated list and retry headers one per line.
-- **Timeouts & Retries** — connection / request / stream-idle timeouts, the retry budget, plus a
-  **response timeout** (`response_timeout_seconds`): a hard wall-clock cap on the whole request (streaming
+- **Timeouts & Retries** — connection / request / stream-idle timeouts and two independent attempt
+  budgets. `max_provider_attempts` is the **provider-attempt maximum**, including the initial request;
+  entering another route-upstream candidate, changing keys, calling again after OAuth refresh, and an
+  identical protected-error repeat each consume one attempt. **Maximum network attempts per provider
+  request** defaults to `3`, also including the initial attempt. It applies only to connection, DNS, TLS,
+  proxy, or protocol failures before response headers and uses each available egress route at most once.
+  Any HTTP status, including 5xx, ends network retry and moves to provider error handling. The actual
+  count is the lesser of this setting and the number of unique available routes; a sole static/direct
+  route is not called repeatedly just to reach the limit. This group also includes a **response timeout**
+  (`response_timeout_seconds`): a hard wall-clock cap on the whole request (streaming
   included). When a request runs past it, the connection is **force-cut** and the log row is marked
   **Terminated** (已切断). Streaming previously had no total-duration bound — only the idle timeout — so a
   slow-trickling or leaked connection could stay "in progress" forever; this setting cuts such hung

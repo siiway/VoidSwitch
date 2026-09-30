@@ -28,10 +28,13 @@ Nodes within a group are ordered by health/latency:
 
 - The ordering uses **EWMA latency + failure score**, whose weights are adjustable in Settings
   (`node_rank_alpha/beta/gamma`, with a decay half-life `node_rank_ewma_half_life_seconds`).
-- Requests walk the ordered list front-to-back and fall back on failure.
-- When all nodes fail and retries are exhausted, a connection error is returned.
-- Max retries per request (`max_retries`) and the failure threshold before a node is disabled
-  (`max_proxy_failures`) are settings.
+- Requests walk the ordered list front-to-back. They fall back to the next unique egress route only for
+  connection, DNS, TLS, proxy, or protocol failures before response headers arrive.
+- Receiving any HTTP response headers, including for a 5xx response, means node connectivity succeeded.
+  HTTP errors are handled by provider/route-upstream policy and do not rotate nodes at this layer.
+- Maximum network attempts per provider request defaults to `3`, including the initial attempt, and is
+  capped by the number of unique available routes. A connection error is returned when every route fails
+  or the budget is exhausted. `max_proxy_failures` controls the failure threshold before a node is disabled.
 
 ### Pinned nodes
 

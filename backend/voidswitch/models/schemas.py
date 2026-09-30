@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from voidswitch.services.provider_error_policy import normalize_status_expression
 
 # --------------------------------------------------------------------------- #
 # Auth
@@ -95,6 +97,47 @@ class ModelRoute(BaseModel):
     models_dev_id: str | None = None
 
 
+NewApiMode = Literal["auto", "enabled", "disabled"]
+
+
+class SelectiveIgnoreRule(BaseModel):
+    name: str
+    enabled: bool = True
+    status_codes: str | None = None
+    body_substrings: list[str] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("rule name must not be blank")
+        return value
+
+    @field_validator("status_codes")
+    @classmethod
+    def _normalize_status_codes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            return None
+        return normalize_status_expression(value)
+
+    @field_validator("body_substrings")
+    @classmethod
+    def _normalize_body_substrings(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("body substrings must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def _require_condition(self) -> SelectiveIgnoreRule:
+        if self.status_codes is None and not self.body_substrings:
+            raise ValueError("a status expression or body substring is required")
+        return self
+
+
 class ProviderBase(BaseModel):
     name: str
     type: str = "openai"
@@ -126,6 +169,9 @@ class ProviderBase(BaseModel):
     upstream_cooldown_status_codes: list[int] = Field(default_factory=list)
     upstream_retry_after_headers: list[str] = Field(default_factory=list)
     upstream_max_keys_per_attempt: int = 0
+    new_api_mode: NewApiMode = "auto"
+    protected_error_retry_enabled: bool = False
+    selective_ignore_rules: list[SelectiveIgnoreRule] = Field(default_factory=list)
     # Passthrough: when enabled, this provider's models are directly available to
     # users as ``slug/exposed-model-id`` without going through the route system.
     passthrough_enabled: bool = False
@@ -156,8 +202,23 @@ class ProviderUpdate(BaseModel):
     upstream_cooldown_status_codes: list[int] | None = None
     upstream_retry_after_headers: list[str] | None = None
     upstream_max_keys_per_attempt: int | None = None
+    new_api_mode: NewApiMode | None = None
+    protected_error_retry_enabled: bool | None = None
+    selective_ignore_rules: list[SelectiveIgnoreRule] | None = None
     passthrough_enabled: bool | None = None
     passthrough_models: list[str] | None = None
+
+    @field_validator(
+        "new_api_mode",
+        "protected_error_retry_enabled",
+        "selective_ignore_rules",
+        mode="before",
+    )
+    @classmethod
+    def _reject_null_policy_fields(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("field may be omitted but must not be null")
+        return value
 
 
 class ProviderOut(ProviderBase):
@@ -879,6 +940,8 @@ class RequestLogOut(BaseModel):
     total_tokens: int
     stream: bool
     attempts: int
+    provider_attempts: int = 1
+    network_attempts: int = 1
     error: str | None = None
     # Client metadata
     user_agent: str | None = None
@@ -928,6 +991,8 @@ class RequestLogDetail(BaseModel):
     total_tokens: int
     stream: bool
     attempts: int
+    provider_attempts: int = 1
+    network_attempts: int = 1
     error: str | None = None
     user_agent: str | None = None
     client_type: str | None = None

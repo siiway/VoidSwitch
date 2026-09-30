@@ -71,6 +71,18 @@ export interface Provider {
   key_api_token_preview?: string | null;
   passthrough_enabled: boolean;
   passthrough_models: string[];
+  new_api_mode: NewApiMode;
+  protected_error_retry_enabled: boolean;
+  selective_ignore_rules: SelectiveIgnoreRule[];
+}
+
+export type NewApiMode = "auto" | "enabled" | "disabled";
+
+export interface SelectiveIgnoreRule {
+  name: string;
+  enabled: boolean;
+  status_codes: string;
+  body_substrings: string[];
 }
 
 // Per-provider key-management API credential (owner-only).
@@ -507,6 +519,8 @@ export interface RequestLog {
   total_tokens: number;
   stream: boolean;
   attempts: number;
+  provider_attempts: number;
+  network_attempts: number;
   error?: string | null;
   user_agent?: string | null;
   client_type?: string | null;
@@ -516,6 +530,7 @@ export interface RequestLog {
 
 export interface RequestLogAttempt {
   attempt: number;
+  provider_attempt?: number;
   skipped?: boolean;
   reason?: string | null;
   provider?: string | null;
@@ -537,6 +552,25 @@ export interface RequestLogAttempt {
   resp_headers?: Record<string, unknown> | null;
   resp_body?: unknown;
   duration_ms?: number | null;
+  network_attempts?: Array<{
+    attempt: number;
+    node_id?: number | null;
+    route_type?: "direct" | "proxy" | "local" | "agent";
+    status_code?: number | null;
+    error?: string | null;
+    pool_timeout?: boolean;
+    deadline_timeout?: boolean;
+    duration_ms?: number | null;
+  }>;
+  original_classification?: string | null;
+  final_classification?: string | null;
+  policy_action?: string | null;
+  provenance?: string | null;
+  matched_rule_name?: string | null;
+  rule_status_matched?: boolean;
+  rule_body_matched?: boolean;
+  protected_repeat_used?: boolean;
+  repeat_of_provider_attempt?: number | null;
 }
 
 export interface RequestLogDetail extends RequestLog {

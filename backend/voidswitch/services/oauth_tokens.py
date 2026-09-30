@@ -45,7 +45,15 @@ from voidswitch.core.logging import get_logger
 from voidswitch.core.security import decrypt_secret, encrypt_secret
 from voidswitch.models.db import ApiKey, RequestLog
 from voidswitch.services import refresh_context
-from voidswitch.services.network import Route, get_pool
+from voidswitch.services.network import (
+    Deadline,
+    NetworkExhausted,
+    NetworkTarget,
+    Route,
+    current_deadline,
+    execute_request,
+    read_response_body,
+)
 
 log = get_logger("oauth")
 
@@ -252,9 +260,8 @@ async def complete_login(
         _login_states.discard(state)
         raise LoginError("State mismatch — please restart the sign-in.")
 
-    routes = await _select_routes(session)
     try:
-        bundle = await _exchange_code(code, pending.verifier, state, routes)
+        bundle = await _exchange_code(code, pending.verifier, state, session)
     except LoginError:
         # Definitive rejection / malformed response — the code is spent; burn it.
         _login_states.discard(state)
@@ -265,7 +272,7 @@ async def complete_login(
 
 
 async def _exchange_code(
-    code: str, verifier: str, state: str, routes: list[Route]
+    code: str, verifier: str, state: str, session: AsyncSession | None
 ) -> dict[str, Any]:
     data = await _post_token(
         {
@@ -276,7 +283,7 @@ async def _exchange_code(
             "code_verifier": verifier,
             "state": state,
         },
-        routes,
+        session,
         what="exchange",
     )
     if not data.get("access_token") or not data.get("refresh_token"):
@@ -288,15 +295,6 @@ async def _exchange_code(
         "expires_at": time.time() + float(data.get("expires_in", 3600)),
         "scopes": scope.split() if scope else list(LOGIN_SCOPES),
     }
-
-
-async def _select_routes(session: AsyncSession | None) -> list[Route]:
-    """Outbound routes for OAuth calls (System node group; degrades to direct)."""
-    from voidswitch.services import routing
-
-    if session is None:
-        return [Route()]
-    return [route for route, _ in await routing.system_routes(session)]
 
 
 def _short_reason(resp: httpx.Response) -> str:
@@ -313,7 +311,7 @@ def _short_reason(resp: httpx.Response) -> str:
 
 
 async def _post_token(
-    payload: dict[str, Any], routes: list[Route], *, what: str = "token"
+    payload: dict[str, Any], session: AsyncSession | None, *, what: str = "token"
 ) -> dict[str, Any]:
     """POST to the OAuth token endpoint, trying each route until one returns 2xx.
 
@@ -325,32 +323,60 @@ async def _post_token(
     """
     last_status: int | None = None
     last_reason = "no outbound route available"
-    attempt_count = 0
-    for route in routes or [Route()]:
-        attempt_count += 1
-        label = route.proxy_url or "direct"
+    network_attempts = 0
+    provider_attempts = 0
+    deadline = current_deadline() or Deadline.after(30.0)
+    while True:
+        owned = None
+        provider_attempts += 1
         try:
-            client = await get_pool().get(route, connect_timeout=15.0, read_timeout=30.0)
-            resp = await client.post(TOKEN_URL, json=payload, headers=_TOKEN_HEADERS)
-        except httpx.HTTPError as exc:
-            last_status, last_reason = None, type(exc).__name__
-            log.warning("oauth_token_network_error", op=what, route=label, error=str(exc))
+            owned = await execute_request(
+                target=NetworkTarget.system(),
+                method="POST",
+                url=TOKEN_URL,
+                headers=_TOKEN_HEADERS,
+                json_body=payload,
+                connect_timeout=15.0,
+                read_timeout=30.0,
+                deadline=deadline,
+                session=session,
+                retry_response=lambda response: (
+                    response.status_code in (403, 408, 425, 429) or response.status_code >= 500
+                ),
+            )
+            network_attempts += len(owned.attempts)
+            resp = owned.response
+            await read_response_body(resp, deadline)
+        except (NetworkExhausted, httpx.HTTPError, TimeoutError) as exc:
+            network_attempts += len(exc.attempts) if isinstance(exc, NetworkExhausted) else 1
+            route = (
+                exc.attempts[-1].route
+                if isinstance(exc, NetworkExhausted) and exc.attempts
+                else Route()
+            )
             await _log_token_request(
                 op=what,
                 route=route,
                 status_code=None,
                 success=False,
-                attempts=attempt_count,
+                provider_attempts=provider_attempts,
+                network_attempts=network_attempts,
                 error=f"{type(exc).__name__}: {exc}",
             )
-            continue
+            break
+        finally:
+            if owned is not None:
+                await owned.aclose()
+        route = owned.route
+        label = route.proxy_url or "direct"
         if resp.status_code == 200:
             await _log_token_request(
                 op=what,
                 route=route,
                 status_code=resp.status_code,
                 success=True,
-                attempts=attempt_count,
+                provider_attempts=provider_attempts,
+                network_attempts=network_attempts,
                 error=None,
             )
             return resp.json()
@@ -367,11 +393,12 @@ async def _post_token(
             route=route,
             status_code=resp.status_code,
             success=False,
-            attempts=attempt_count,
+            provider_attempts=provider_attempts,
+            network_attempts=network_attempts,
             error=f"HTTP {resp.status_code}: {last_reason}",
         )
         if resp.status_code in (403, 408, 425, 429) or resp.status_code >= 500:
-            continue  # block / transient — try the next egress IP
+            break
         raise LoginError(f"Claude rejected the {what} (HTTP {resp.status_code}: {last_reason}).")
     detail = f"HTTP {last_status}: {last_reason}" if last_status else last_reason
     raise LoginUpstreamError(
@@ -386,7 +413,8 @@ async def _log_token_request(
     route: Route,
     status_code: int | None,
     success: bool,
-    attempts: int,
+    provider_attempts: int,
+    network_attempts: int,
     error: str | None,
 ) -> None:
     model = f"<cc-{op}-token>"
@@ -406,7 +434,9 @@ async def _log_token_request(
                     status_code=status_code,
                     success=success,
                     stream=False,
-                    attempts=attempts,
+                    attempts=network_attempts,
+                    provider_attempts=provider_attempts,
+                    network_attempts=network_attempts,
                     error=error,
                     user_agent=OAUTH_USER_AGENT,
                     client_type="claude-code-oauth-refresh" if actor else "claude-code-oauth",
@@ -483,15 +513,14 @@ async def resolve_access_token(
         bundle = parse_bundle(plaintext) or bundle
         if not force_refresh and not _near_expiry(bundle):
             return str(bundle["access_token"])
-        routes = await _select_routes(rot_session)
-        new_bundle = await _refresh(str(bundle["refresh_token"]), routes)
+        new_bundle = await _refresh(str(bundle["refresh_token"]), rot_session)
         fresh_key.key_ciphertext = encrypt_secret(json.dumps(new_bundle), secret=secret_key)
         fresh_key.last_checked_at = dt.datetime.now(dt.UTC)
         log.info("oauth_token_refreshed", key_id=key.id)
         return str(new_bundle["access_token"])
 
 
-async def _refresh(refresh_token: str, routes: list[Route]) -> dict[str, Any]:
+async def _refresh(refresh_token: str, session: AsyncSession | None) -> dict[str, Any]:
     data = await _post_token(
         {
             "grant_type": "refresh_token",
@@ -499,7 +528,7 @@ async def _refresh(refresh_token: str, routes: list[Route]) -> dict[str, Any]:
             "client_id": CLIENT_ID,
             "scope": " ".join(REFRESH_SCOPES),
         },
-        routes,
+        session,
         what="refresh",
     )
     return {

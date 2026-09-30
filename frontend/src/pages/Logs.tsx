@@ -1467,11 +1467,6 @@ function RequestLogs({
                 }}
               >
                 {formatDuration(requestDurationMs(r, durationNow, liveEnabled))}
-                {r.req_status === "pending" && liveEnabled ? (
-                  <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                    {" · …"}
-                  </Text>
-                ) : null}
               </TableCell>
               <TableCell>{r.total_tokens}</TableCell>
               <TableCell>{r.attempts}</TableCell>
@@ -1583,7 +1578,7 @@ function RequestLogs({
                     ) : null}
                     <DetailRow label={tr("logs.provider" as TK)} value={detailLog.provider_name ?? "—"} />
                     <DetailRow label={tr("logs.key" as TK)} value={detailLog.key_preview ?? (detailLog.key_id != null ? `#${detailLog.key_id}` : "—")} />
-                    <DetailRow label={tr("logs.proxy" as TK)} value={detailLog.proxy_url ?? (detailLog.proxy_id != null ? `#${detailLog.proxy_id}` : "—")} />
+                    <DetailRow label={tr("logs.proxy" as TK)} value={detailLog.proxy_id != null ? `#${detailLog.proxy_id}` : "—"} />
                     <DetailRow label={tr("logs.route" as TK)} value={`${detailLog.inbound_style ?? "?"}→${detailLog.upstream_style ?? "?"}`} />
                     <DetailRow label={tr("logs.stream" as TK)} value={detailLog.stream ? "yes" : "no"} />
                     <DetailRow label={tr("logs.tries" as TK)} value={String(detailLog.attempts)} />
@@ -1795,6 +1790,16 @@ function AttemptTrail({
           const statusLabel = a.network_error
             ? t("logs.networkError" as TK)
             : (a.status_code ?? "ERR");
+          const policyDetails = [
+            a.original_classification && a.final_classification
+              ? `${a.original_classification} → ${a.final_classification}`
+              : a.final_classification,
+            a.policy_action,
+            a.provenance,
+            a.matched_rule_name
+              ? `${t("logs.matchedRule" as TK)}: ${a.matched_rule_name}`
+              : null,
+          ].filter(Boolean).join(" · ");
           return (
             <div
               key={a.attempt ?? i}
@@ -1826,10 +1831,45 @@ function AttemptTrail({
                   {a.provider ?? "—"}
                   {a.upstream_model ? ` · ${a.upstream_model}` : ""}
                   {a.key_preview ? ` · ${a.key_preview}` : ""}
-                  {a.proxy_url ? ` · ${a.proxy_url}` : ` · ${t("logs.direct" as TK)}`}
                   {a.duration_ms != null ? ` · ${Math.round(a.duration_ms)}ms` : ""}
                 </Text>
               </div>
+              {policyDetails ? (
+                <Text size={200} block style={{ color: tokens.colorNeutralForeground3, marginBottom: 4 }}>
+                  {t("logs.policyDecision" as TK)}: {policyDetails}
+                  {a.protected_repeat_used ? ` · ${t("logs.protectedRepeat" as TK)}` : ""}
+                  {a.rule_status_matched ? ` · ${t("logs.statusMatched" as TK)}` : ""}
+                  {a.rule_body_matched ? ` · ${t("logs.bodyMatched" as TK)}` : ""}
+                </Text>
+              ) : null}
+              {a.network_attempts && a.network_attempts.length > 0 ? (
+                <div style={{ marginBottom: 6, paddingLeft: 12, borderLeft: `2px solid ${tokens.colorNeutralStroke2}` }}>
+                  <Text size={200} weight="semibold" block style={{ color: tokens.colorNeutralForeground3, marginBottom: 2 }}>
+                    {t("logs.networkAttempts" as TK)} ({a.network_attempts.length})
+                  </Text>
+                  {a.network_attempts.map((networkAttempt, networkIndex) => {
+                    const route = networkAttempt.node_id != null
+                      ? `${t("logs.node" as TK)} #${networkAttempt.node_id}`
+                      : networkAttempt.route_type;
+                    return (
+                      <Text
+                        key={`${networkAttempt.attempt}-${networkIndex}`}
+                        size={200}
+                        block
+                        style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace", wordBreak: "break-all" }}
+                      >
+                        #{networkAttempt.attempt}
+                        {route ? ` · ${route}` : ""}
+                        {networkAttempt.status_code != null ? ` · HTTP ${networkAttempt.status_code}` : ""}
+                        {networkAttempt.pool_timeout ? ` · ${t("logs.poolTimeout" as TK)}` : ""}
+                        {networkAttempt.deadline_timeout ? ` · ${t("logs.deadlineTimeout" as TK)}` : ""}
+                        {networkAttempt.duration_ms != null ? ` · ${Math.round(networkAttempt.duration_ms)}ms` : ""}
+                        {networkAttempt.error ? ` · ${networkAttempt.error}` : ""}
+                      </Text>
+                    );
+                  })}
+                </div>
+              ) : null}
               <Text
                 size={200}
                 block

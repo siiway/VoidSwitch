@@ -911,6 +911,84 @@ def _redact_proxy_url(value: Any) -> str | None:
     return "<REDACTED>" if value else value
 
 
+_URL_AUTHORITY_RE = re.compile(
+    r"(?P<scheme>\b[a-z][a-z0-9+.-]*://)(?P<authority>[^\s/?#]+)",
+    flags=re.IGNORECASE,
+)
+
+
+def _route_values(value: Any) -> tuple[set[str], set[str]]:
+    """Collect persisted route values that may also occur inside error strings."""
+    proxies: set[str] = set()
+    local_addresses: set[str] = set()
+
+    def collect(item: Any) -> None:
+        if isinstance(item, list):
+            for child in item:
+                collect(child)
+        elif isinstance(item, dict):
+            for key, child in item.items():
+                if key == "proxy_url" and child:
+                    proxies.add(str(child))
+                elif key == "local_address" and child:
+                    local_addresses.add(str(child))
+                collect(child)
+
+    collect(value)
+    return proxies, local_addresses
+
+
+def _sanitize_route_strings(value: Any, *, proxy_urls: set[str], local_addresses: set[str]) -> Any:
+    """Recursively remove URL credentials and known private route values.
+
+    Exception text remains useful: only the sensitive URL/value is replaced,
+    rather than collapsing the whole message to a generic network error.
+    """
+    if isinstance(value, list):
+        return [
+            _sanitize_route_strings(item, proxy_urls=proxy_urls, local_addresses=local_addresses)
+            for item in value
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_route_strings(
+                item, proxy_urls=proxy_urls, local_addresses=local_addresses
+            )
+            for key, item in value.items()
+        }
+    if not isinstance(value, str):
+        return value
+
+    safe = value
+    for proxy_url in sorted(proxy_urls, key=len, reverse=True):
+        safe = safe.replace(proxy_url, "<REDACTED:proxy>")
+    for local_address in sorted(local_addresses, key=len, reverse=True):
+        safe = safe.replace(local_address, "<REDACTED:local-address>")
+
+    def strip_userinfo(match: re.Match[str]) -> str:
+        authority = match.group("authority")
+        _, separator, host = authority.rpartition("@")
+        return f"{match.group('scheme')}{host if separator else authority}"
+
+    return _URL_AUTHORITY_RE.sub(strip_userinfo, safe)
+
+
+def _safe_attempt_summaries(value: Any) -> Any:
+    """Strip route secrets from current and legacy persisted attempt summaries."""
+    if isinstance(value, list):
+        return [_safe_attempt_summaries(item) for item in value]
+    if isinstance(value, dict):
+        safe = {
+            key: _safe_attempt_summaries(item)
+            for key, item in value.items()
+            if key not in {"proxy_url", "local_address"}
+        }
+        if (value.get("proxy_url") or value.get("local_address")) and "route_type" not in safe:
+            safe["route_type"] = "proxy" if value.get("proxy_url") else "local"
+        return safe
+    return value
+
+
 def _download_safe(
     value: Any, *, proxy_name: str | None = None, include_bodies: bool = True
 ) -> Any:
@@ -925,7 +1003,9 @@ def _download_safe(
         for key, item in value.items():
             if key == "proxy_url":
                 out[key] = _redact_proxy_url(item)
-            elif key in {"req_body", "resp_body"} and not include_bodies:
+            elif key == "local_address" or (
+                key in {"req_body", "resp_body"} and not include_bodies
+            ):
                 out[key] = None
             elif key in {"key", "api_key", "access_token", "key_preview"}:
                 out[key] = _redact_key_preview(str(item)) if item else item
@@ -959,11 +1039,16 @@ async def download_request_log(
         elif row.user_sub != user.sub:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Request log not found.")
     node = await session.get(Node, row.proxy_id) if row.proxy_id is not None else None
+    raw = RequestLogDetail.model_validate(row).model_dump(mode="json")
+    proxy_urls, local_addresses = _route_values(raw)
     safe = _download_safe(
-        RequestLogDetail.model_validate(row).model_dump(mode="json"),
+        raw,
         proxy_name=node.note if node else None,
         include_bodies=is_owner(user),
     )
+    if not is_owner(user):
+        safe["debug_attempts"] = None
+        safe = _sanitize_route_strings(safe, proxy_urls=proxy_urls, local_addresses=local_addresses)
     return JSONResponse(
         content=safe,
         headers={"Content-Disposition": f'attachment; filename="voidswitch-request-{log_id}.json"'},
@@ -991,6 +1076,8 @@ async def request_log_detail(
     owner = is_owner(user)
     admin_view = not owner and (is_staff(user) or is_role_group_admin(user))
     detail = RequestLogDetail.model_validate(row)
+    raw_detail = detail.model_dump(mode="json")
+    proxy_urls, local_addresses = _route_values(raw_detail)
     if row.token_id is not None:
         tok = await session.get(VoidToken, row.token_id)
         if tok:
@@ -1016,4 +1103,19 @@ async def request_log_detail(
     if admin_view:
         detail.req_body = None
         detail.resp_body = None
+        detail.proxy_url = None
+        detail.debug_attempts = None
+    elif not owner:
+        detail.proxy_url = None
+        detail.debug_attempts = None
+    if not owner:
+        safe_detail = detail.model_dump(mode="json")
+        safe_detail["attempts_summary"] = _safe_attempt_summaries(safe_detail["attempts_summary"])
+        detail = RequestLogDetail.model_validate(
+            _sanitize_route_strings(
+                safe_detail,
+                proxy_urls=proxy_urls,
+                local_addresses=local_addresses,
+            )
+        )
     return detail

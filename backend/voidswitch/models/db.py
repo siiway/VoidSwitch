@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false as sqlfalse,
     func,
     true as sqltrue,
 )
@@ -401,6 +402,15 @@ class Provider(Base, TimestampMixin):
     )
     upstream_max_keys_per_attempt: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
+    )
+    new_api_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="auto", server_default="auto"
+    )
+    protected_error_retry_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sqlfalse()
+    )
+    selective_ignore_rules: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
     )
 
     keys: Mapped[list[ApiKey]] = relationship(
@@ -856,6 +866,8 @@ class RequestLog(Base):
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     stream: Mapped[bool] = mapped_column(Boolean, default=False)
     attempts: Mapped[int] = mapped_column(Integer, default=1)
+    provider_attempts: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    network_attempts: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     error: Mapped[str | None] = mapped_column(Text, default=None)
     # Client metadata
     user_agent: Mapped[str | None] = mapped_column(String(512), default=None)

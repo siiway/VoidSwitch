@@ -142,6 +142,23 @@ gated by ``allowed_role_group_ids``.
 Upstream cooldown and key cooldown are separate: the former describes an upstream
 service condition shared by all routes, while the latter describes one credential.
 
+### Provider error provenance
+
+- **Relay provider (中转提供商)** — a provider that also forwards calls to
+  another model service. It remains a provider and uses the same routing, key,
+  health, and failover model as every other provider.
+- **Origin service (源站)** — the model service behind a relay provider; it is
+  not a separately managed provider or routing layer in VoidSwitch.
+- **Relay error (中转错误)** — a failure attributable to the relay provider
+  itself, including its authentication, account, quota, or configuration.
+- **Origin error (源站错误)** — a failure produced by the origin service and
+  forwarded through a relay provider.
+
+Relay awareness is an error-handling capability of a provider, not a separate
+provider model. An origin error does not establish that the provider's API key
+is invalid, out of balance, or rate-limited; error provenance and error category
+are separate facts.
+
 ## Node / node group
 
 Egress paths (direct / HTTP proxy / SOCKS5). Providers and system requests

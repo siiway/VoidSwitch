@@ -68,9 +68,7 @@ async def test_enable_rotate_reveal_disable(client, seeded):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["enabled"] is False
-    dead = await client.get(
-        "/provider-api/keys", headers={"Authorization": f"Bearer {rotated}"}
-    )
+    dead = await client.get("/provider-api/keys", headers={"Authorization": f"Bearer {rotated}"})
     assert dead.status_code == 401
     # Reveal now fails (nothing to reveal).
     resp = await client.post(
@@ -94,9 +92,7 @@ async def test_key_api_requires_owner(client, db, seeded):
             extra={"role": "admin", "name": "bob"},
         )
     }
-    resp = await client.post(
-        f"/api/admin/providers/{pid}/key-api/enable", headers=headers
-    )
+    resp = await client.post(f"/api/admin/providers/{pid}/key-api/enable", headers=headers)
     assert resp.status_code == 403
 
 
@@ -141,9 +137,7 @@ async def test_subapp_crud_and_isolation(client, seeded):
     new_id = created[0]["id"]
 
     # Edit: disable it.
-    resp = await client.patch(
-        f"/provider-api/keys/{new_id}", headers=hdr, json={"enabled": False}
-    )
+    resp = await client.patch(f"/provider-api/keys/{new_id}", headers=hdr, json={"enabled": False})
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "disabled"
 
@@ -165,9 +159,7 @@ async def test_key_reorder(client, seeded):
     seeded_id = seeded["key_id"]
 
     # Default order is insertion order (seeded first, then the two new keys).
-    resp = await client.get(
-        f"/api/admin/providers/{pid}/keys", headers=_session_headers()
-    )
+    resp = await client.get(f"/api/admin/providers/{pid}/keys", headers=_session_headers())
     assert [k["id"] for k in resp.json()] == [seeded_id, *new_ids]
 
     # Reorder: put the last key first.
@@ -182,9 +174,7 @@ async def test_key_reorder(client, seeded):
     assert [k["sort_order"] for k in resp.json()] == [0, 1, 2]
 
     # The new order persists on a fresh list.
-    resp = await client.get(
-        f"/api/admin/providers/{pid}/keys", headers=_session_headers()
-    )
+    resp = await client.get(f"/api/admin/providers/{pid}/keys", headers=_session_headers())
     assert [k["id"] for k in resp.json()] == new_order
 
     # A partial order list appends the omitted keys after the listed ones.
@@ -226,6 +216,68 @@ async def test_provider_key_select_mode(client, seeded):
         f"/api/admin/providers/{pid}",
         headers=_session_headers(),
         json={"key_select_mode": "nonsense"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_provider_create_and_update_persist_policy_and_existing_fields(client, db, seeded):
+    payload = {
+        "name": "relay",
+        "type": "openai",
+        "retry_on_zero_token": True,
+        "upstream_cooldown_seconds": 45,
+        "upstream_cooldown_status_codes": [429, 503],
+        "upstream_retry_after_headers": ["retry-after", "x-ratelimit-reset"],
+        "upstream_max_keys_per_attempt": 4,
+        "new_api_mode": "enabled",
+        "protected_error_retry_enabled": True,
+        "selective_ignore_rules": [
+            {
+                "name": "  quota  ",
+                "enabled": True,
+                "status_codes": " 400 - 403, 402-405 ",
+                "body_substrings": [" quota exceeded "],
+            }
+        ],
+    }
+    resp = await client.post("/api/admin/providers", headers=_session_headers(), json=payload)
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    assert created["retry_on_zero_token"] is True
+    assert created["upstream_cooldown_seconds"] == 45
+    assert created["upstream_cooldown_status_codes"] == [429, 503]
+    assert created["upstream_retry_after_headers"] == ["retry-after", "x-ratelimit-reset"]
+    assert created["upstream_max_keys_per_attempt"] == 4
+    assert created["new_api_mode"] == "enabled"
+    assert created["protected_error_retry_enabled"] is True
+    assert created["selective_ignore_rules"] == [
+        {
+            "name": "quota",
+            "enabled": True,
+            "status_codes": "400-405",
+            "body_substrings": ["quota exceeded"],
+        }
+    ]
+
+    resp = await client.patch(
+        f"/api/admin/providers/{created['id']}",
+        headers=_session_headers(),
+        json={"selective_ignore_rules": [], "new_api_mode": "disabled"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["selective_ignore_rules"] == []
+    assert resp.json()["new_api_mode"] == "disabled"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["new_api_mode", "protected_error_retry_enabled", "selective_ignore_rules"],
+)
+async def test_provider_policy_fields_reject_explicit_null(client, seeded, field: str):
+    resp = await client.patch(
+        f"/api/admin/providers/{seeded['provider_id']}",
+        headers=_session_headers(),
+        json={field: None},
     )
     assert resp.status_code == 422
 

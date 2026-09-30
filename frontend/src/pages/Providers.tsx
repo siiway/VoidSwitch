@@ -29,9 +29,11 @@ import {
 } from "@fluentui/react-components";
 import {
   AddRegular,
+  ArrowDownRegular,
   ArrowLeftRegular,
   ArrowRightRegular,
   ArrowSwapRegular,
+  ArrowUpRegular,
   CheckmarkCircleFilled,
   ChevronDownRegular,
   ChevronRightRegular,
@@ -43,6 +45,7 @@ import {
   ShieldKeyholeRegular,
 } from "@fluentui/react-icons";
 import { useState, useMemo, useRef } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api, API_BASE } from "../api/client";
@@ -51,9 +54,11 @@ import type {
   AdapterMeta,
   ApiKey,
   KeySelectMode,
+  NewApiMode,
   NodeGroup,
   Provider,
   ProviderKeyApi,
+  SelectiveIgnoreRule,
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
@@ -91,8 +96,73 @@ interface FormState {
   rate_limit_cooldown_seconds: number;
   passthrough_enabled: boolean;
   passthrough_models: string;
+  new_api_mode: NewApiMode;
+  protected_error_retry_enabled: boolean;
+  selective_ignore_rules: RuleFormState[];
   initial_keys: string;
   initial_keys_pool: string;
+}
+
+interface RuleFormState extends SelectiveIgnoreRule {
+  localKey: string;
+  body_substrings_text: string;
+}
+
+let nextRuleKey = 0;
+
+function makeRule(rule?: SelectiveIgnoreRule): RuleFormState {
+  nextRuleKey += 1;
+  return {
+    localKey: `selective-ignore-rule-${nextRuleKey}`,
+    name: rule?.name ?? "",
+    enabled: rule?.enabled ?? true,
+    status_codes: rule?.status_codes ?? "",
+    body_substrings: rule?.body_substrings ?? [],
+    body_substrings_text: (rule?.body_substrings ?? []).join("\n"),
+  };
+}
+
+function statusExpressionError(value: string): "format" | "range" | null {
+  const expression = value.trim();
+  if (!expression) return null;
+  const parts = expression.split(",");
+  for (const part of parts) {
+    const match = part.trim().match(/^(\d{3})(?:\s*-\s*(\d{3}))?$/);
+    if (!match) return "format";
+    const start = Number(match[1]);
+    const end = Number(match[2] ?? match[1]);
+    if (start < 100 || start > 599 || end < 100 || end > 599 || start > end) {
+      return "range";
+    }
+  }
+  return null;
+}
+
+function normalizeStatusExpression(value: string): string {
+  return value
+    .split(",")
+    .map((part) => part.trim().replace(/\s*-\s*/, "-"))
+    .filter(Boolean)
+    .join(", ");
+}
+
+function ruleBodySubstrings(rule: RuleFormState): string[] {
+  return rule.body_substrings_text
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function ruleValidation(rule: RuleFormState) {
+  const statusError = statusExpressionError(rule.status_codes);
+  return {
+    name: rule.name.trim() ? null : "name",
+    status: statusError,
+    conditions:
+      !rule.status_codes.trim() && ruleBodySubstrings(rule).length === 0
+        ? "conditions"
+        : null,
+  } as const;
 }
 
 const EMPTY: FormState = {
@@ -111,9 +181,217 @@ const EMPTY: FormState = {
   rate_limit_cooldown_seconds: 0,
   passthrough_enabled: false,
   passthrough_models: "",
+  new_api_mode: "auto",
+  protected_error_retry_enabled: false,
+  selective_ignore_rules: [],
   initial_keys: "",
   initial_keys_pool: "",
 };
+
+function SelectiveIgnoreRuleEditor({
+  form,
+  setForm,
+}: {
+  form: FormState | null;
+  setForm: Dispatch<SetStateAction<FormState | null>>;
+}) {
+  const { t } = useTranslation();
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+
+  function updateRule(
+    localKey: string,
+    update: Partial<RuleFormState>,
+  ) {
+    setForm((current) =>
+      current
+        ? {
+            ...current,
+            selective_ignore_rules: current.selective_ignore_rules.map((rule) =>
+              rule.localKey === localKey ? { ...rule, ...update } : rule,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function addRule() {
+    const rule = makeRule();
+    setForm((current) =>
+      current
+        ? {
+            ...current,
+            selective_ignore_rules: [...current.selective_ignore_rules, rule],
+          }
+        : current,
+    );
+    requestAnimationFrame(() =>
+      document.getElementById(`${rule.localKey}-name`)?.focus(),
+    );
+  }
+
+  function moveRule(index: number, offset: -1 | 1) {
+    setForm((current) => {
+      if (!current) return current;
+      const rules = [...current.selective_ignore_rules];
+      const target = index + offset;
+      if (target < 0 || target >= rules.length) return current;
+      [rules[index], rules[target]] = [rules[target], rules[index]];
+      return { ...current, selective_ignore_rules: rules };
+    });
+  }
+
+  function deleteRule(localKey: string) {
+    setForm((current) =>
+      current
+        ? {
+            ...current,
+            selective_ignore_rules: current.selective_ignore_rules.filter(
+              (rule) => rule.localKey !== localKey,
+            ),
+          }
+        : current,
+    );
+    requestAnimationFrame(() => addButtonRef.current?.focus());
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        padding: 12,
+        border: `1px solid ${tokens.colorNeutralStroke2}`,
+        borderRadius: 8,
+      }}
+    >
+      <div>
+        <Text weight="semibold">
+          {t("providers.selectiveIgnoreRules" as TK)}
+        </Text>
+        <div style={{ color: tokens.colorNeutralForeground3, fontSize: 12 }}>
+          {t("providers.selectiveIgnoreRulesHint" as TK)}
+        </div>
+      </div>
+      {(form?.selective_ignore_rules ?? []).map((rule, index) => {
+        const validation = ruleValidation(rule);
+        const conditionMessage = validation.conditions
+          ? t("providers.ruleConditionsRequired" as TK)
+          : undefined;
+        return (
+          <div
+            key={rule.localKey}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              padding: 12,
+              borderRadius: 6,
+              background: tokens.colorNeutralBackground2,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              <Switch
+                label={t("providers.ruleEnabled" as TK)}
+                checked={rule.enabled}
+                onChange={(_, d) =>
+                  updateRule(rule.localKey, { enabled: d.checked })
+                }
+              />
+              <div style={{ display: "flex" }}>
+                <Tooltip content={t("providers.ruleMoveUp" as TK)} relationship="label">
+                  <Button
+                    appearance="subtle"
+                    icon={<ArrowUpRegular />}
+                    disabled={index === 0}
+                    onClick={() => moveRule(index, -1)}
+                    aria-label={t("providers.ruleMoveUp" as TK)}
+                  />
+                </Tooltip>
+                <Tooltip content={t("providers.ruleMoveDown" as TK)} relationship="label">
+                  <Button
+                    appearance="subtle"
+                    icon={<ArrowDownRegular />}
+                    disabled={index === (form?.selective_ignore_rules.length ?? 0) - 1}
+                    onClick={() => moveRule(index, 1)}
+                    aria-label={t("providers.ruleMoveDown" as TK)}
+                  />
+                </Tooltip>
+                <Tooltip content={t("providers.ruleDelete" as TK)} relationship="label">
+                  <Button
+                    appearance="subtle"
+                    icon={<DeleteRegular />}
+                    onClick={() => deleteRule(rule.localKey)}
+                    aria-label={t("providers.ruleDelete" as TK)}
+                  />
+                </Tooltip>
+              </div>
+            </div>
+            <Field
+              label={t("providers.ruleName" as TK)}
+              required
+              validationState={validation.name ? "error" : "none"}
+              validationMessage={
+                validation.name ? t("providers.ruleNameRequired" as TK) : undefined
+              }
+            >
+              <Input
+                id={`${rule.localKey}-name`}
+                value={rule.name}
+                onChange={(_, d) => updateRule(rule.localKey, { name: d.value })}
+              />
+            </Field>
+            <Field
+              label={t("providers.ruleStatusCodes" as TK)}
+              hint={t("providers.ruleStatusCodesHint" as TK)}
+              validationState={validation.status || validation.conditions ? "error" : "none"}
+              validationMessage={
+                validation.status === "format"
+                  ? t("providers.ruleStatusInvalid" as TK)
+                  : validation.status === "range"
+                    ? t("providers.ruleStatusRangeInvalid" as TK)
+                    : conditionMessage
+              }
+            >
+              <Input
+                value={rule.status_codes}
+                placeholder="400-403, 409, 451"
+                onChange={(_, d) =>
+                  updateRule(rule.localKey, { status_codes: d.value })
+                }
+              />
+            </Field>
+            <Field
+              label={t("providers.ruleBodySubstrings" as TK)}
+              hint={t("providers.ruleBodySubstringsHint" as TK)}
+              validationState={validation.conditions ? "error" : "none"}
+              validationMessage={conditionMessage}
+            >
+              <Textarea
+                rows={3}
+                value={rule.body_substrings_text}
+                placeholder={t("providers.ruleBodySubstringsPlaceholder" as TK)}
+                onChange={(_, d) =>
+                  updateRule(rule.localKey, { body_substrings_text: d.value })
+                }
+              />
+            </Field>
+          </div>
+        );
+      })}
+      <Button ref={addButtonRef} icon={<AddRegular />} onClick={addRule}>
+        {t("providers.ruleAdd" as TK)}
+      </Button>
+    </div>
+  );
+}
 
 export function Providers() {
   const { t } = useTranslation();
@@ -201,6 +479,9 @@ export function Providers() {
       rate_limit_cooldown_seconds: p.rate_limit_cooldown_seconds ?? 0,
       passthrough_enabled: p.passthrough_enabled ?? false,
       passthrough_models: (p.passthrough_models ?? []).join("\n"),
+      new_api_mode: p.new_api_mode ?? "auto",
+      protected_error_retry_enabled: p.protected_error_retry_enabled ?? false,
+      selective_ignore_rules: (p.selective_ignore_rules ?? []).map(makeRule),
       initial_keys: "",
       initial_keys_pool: "",
     });
@@ -349,6 +630,10 @@ export function Providers() {
 
   async function save() {
     if (!form) return;
+    if (form.selective_ignore_rules.some((rule) => {
+      const validation = ruleValidation(rule);
+      return validation.name || validation.status || validation.conditions;
+    })) return;
     const models = form.models
       .split(/[\n,]/)
       .map((s) => s.trim())
@@ -374,6 +659,14 @@ export function Providers() {
         .split(/[\n,]/)
         .map((s) => s.trim())
         .filter(Boolean),
+      new_api_mode: form.new_api_mode,
+      protected_error_retry_enabled: form.protected_error_retry_enabled,
+      selective_ignore_rules: form.selective_ignore_rules.map((rule) => ({
+        name: rule.name.trim(),
+        enabled: rule.enabled,
+        status_codes: normalizeStatusExpression(rule.status_codes),
+        body_substrings: ruleBodySubstrings(rule),
+      })),
     };
     setSaving(true);
     try {
@@ -785,6 +1078,7 @@ export function Providers() {
       )}
 
       <Dialog
+        modalType="non-modal"
         open={form !== null}
         onOpenChange={(_, d) => !d.open && setForm(null)}
       >
@@ -1181,6 +1475,61 @@ export function Providers() {
                   }}
                 />
               </Field>
+              <Field
+                label={t("providers.newApiMode" as TK)}
+                hint={t("providers.newApiModeHint" as TK)}
+              >
+                <Dropdown
+                  value={t(`providers.newApiMode${
+                    form?.new_api_mode === "enabled"
+                      ? "Enabled"
+                      : form?.new_api_mode === "disabled"
+                        ? "Disabled"
+                        : "Auto"
+                  }` as TK)}
+                  selectedOptions={[form?.new_api_mode ?? "auto"]}
+                  onOptionSelect={(_, d) =>
+                    d.optionValue &&
+                    setForm((f) =>
+                      f
+                        ? { ...f, new_api_mode: d.optionValue as NewApiMode }
+                        : f,
+                    )
+                  }
+                >
+                  <Option value="auto" text={t("providers.newApiModeAuto" as TK)}>
+                    {t("providers.newApiModeAuto" as TK)}
+                  </Option>
+                  <Option value="enabled" text={t("providers.newApiModeEnabled" as TK)}>
+                    {t("providers.newApiModeEnabled" as TK)}
+                  </Option>
+                  <Option value="disabled" text={t("providers.newApiModeDisabled" as TK)}>
+                    {t("providers.newApiModeDisabled" as TK)}
+                  </Option>
+                </Dropdown>
+              </Field>
+              <Field
+                label={t("providers.protectedErrorRetry" as TK)}
+                hint={t("providers.protectedErrorRetryWarning" as TK)}
+                style={{
+                  padding: 12,
+                  borderRadius: 6,
+                  background: tokens.colorStatusWarningBackground1,
+                  border: `1px solid ${tokens.colorStatusWarningBorder1}`,
+                }}
+              >
+                <Switch
+                  checked={form?.protected_error_retry_enabled ?? false}
+                  onChange={(_, d) =>
+                    setForm((f) =>
+                      f
+                        ? { ...f, protected_error_retry_enabled: d.checked }
+                        : f,
+                    )
+                  }
+                />
+              </Field>
+              <SelectiveIgnoreRuleEditor form={form} setForm={setForm} />
               {form?.type === "claude-code" && (
                 <Switch
                   label={t("providers.dropIdentityLabel" as TK)}
@@ -1289,7 +1638,14 @@ export function Providers() {
               </Button>
               <Button
                 appearance="primary"
-                disabled={saving || !form?.name}
+                disabled={
+                  saving ||
+                  !form?.name ||
+                  !!form?.selective_ignore_rules.some((rule) => {
+                    const validation = ruleValidation(rule);
+                    return validation.name || validation.status || validation.conditions;
+                  })
+                }
                 onClick={save}
                 data-shortcut={form?.id ? "save" : "apply"}
               >

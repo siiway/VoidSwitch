@@ -942,6 +942,118 @@ async def test_request_logs_includes_nicknames(client, db, seeded):
     assert item["token_owner_nickname"] == "Alice Neko"
 
 
+async def test_non_owner_request_log_detail_and_download_sanitize_route_secrets(client, db, seeded):
+    from voidswitch.models.db import (
+        RequestLog,
+        RoleGroup,
+        RoleGroupAdminship,
+        RoleGroupMembership,
+        User,
+    )
+
+    secret = "proxy-password"
+    proxy_url = f"http://proxy-user:{secret}@proxy.example:8080"
+    incidental_url = "https://fallback-user:fallback-password@fallback.example/path"
+    local_address = "192.168.50.7"
+    async with db.session() as session:
+        owner = await session.get(User, seeded["user_id"])
+        owner.role = "member"
+        group = RoleGroup(name="log-observers")
+        observer = User(sub="observer-1", username="observer", role="member")
+        admin = User(sub="admin-1", username="admin", role="admin")
+        session.add_all([group, observer, admin])
+        await session.flush()
+        session.add_all(
+            [
+                RoleGroupMembership(user_id=owner.id, role_group_id=group.id, source="manual"),
+                RoleGroupAdminship(user_id=observer.id, role_group_id=group.id, source="manual"),
+            ]
+        )
+        row = RequestLog(
+            user_sub=owner.sub,
+            model="deepseek-chat",
+            success=False,
+            error=(
+                f"connection failed via {proxy_url} from {local_address}; "
+                f"fallback {incidental_url}; retryable"
+            ),
+            proxy_url=proxy_url,
+            debug_attempts=[
+                {
+                    "attempt": 1,
+                    "proxy_url": proxy_url,
+                    "local_address": local_address,
+                    "error": f"debug transport error at {proxy_url} from {local_address}",
+                }
+            ],
+            attempts_summary=[
+                {
+                    "attempt": 1,
+                    "proxy_url": proxy_url,
+                    "local_address": local_address,
+                    "network_error": True,
+                    "error": f"failed via {proxy_url} bound to {local_address}",
+                    "network_attempts": [
+                        {
+                            "attempt": 1,
+                            "proxy_url": proxy_url,
+                            "local_address": local_address,
+                            "error": f"failed via {proxy_url} bound to {local_address}",
+                        }
+                    ],
+                }
+            ],
+        )
+        session.add(row)
+        await session.flush()
+        log_id = row.id
+
+    for headers in (
+        _session_headers(role="member"),
+        _session_headers(sub="observer-1", role="member", name="observer"),
+        _session_headers(sub="admin-1", role="admin", name="admin"),
+    ):
+        for suffix in ("", "/download"):
+            response = await client.get(
+                f"/api/admin/logs/requests/{log_id}{suffix}", headers=headers
+            )
+            assert response.status_code == 200, response.text
+            payload = response.text
+            assert secret not in payload
+            assert proxy_url not in payload
+            assert "fallback-password" not in payload
+            assert "fallback-user" not in payload
+            assert "https://fallback.example/path" in payload
+            assert local_address not in payload
+            assert "connection failed via" in payload
+            data = response.json()
+            summary = data["attempts_summary"][0]
+            assert data["proxy_url"] is None or data["proxy_url"] == "<REDACTED>"
+            assert data["debug_attempts"] is None
+            assert "proxy_url" not in summary or summary["proxy_url"] == "<REDACTED>"
+            assert "local_address" not in summary or summary["local_address"] is None
+            network_attempt = summary["network_attempts"][0]
+            assert (
+                "proxy_url" not in network_attempt or network_attempt["proxy_url"] == "<REDACTED>"
+            )
+            assert (
+                "local_address" not in network_attempt or network_attempt["local_address"] is None
+            )
+
+    async with db.session() as session:
+        owner = await session.get(User, seeded["user_id"])
+        owner.role = "owner"
+        await session.commit()
+
+    owner_detail = await client.get(
+        f"/api/admin/logs/requests/{log_id}", headers=_session_headers()
+    )
+    assert owner_detail.status_code == 200
+    assert proxy_url in owner_detail.text
+    assert local_address in owner_detail.text
+    assert owner_detail.json()["debug_attempts"][0]["error"].startswith("debug transport error")
+
+
 async def _load_user(db, sub):
     from sqlalchemy import select as _select
     from voidswitch.models.db import User

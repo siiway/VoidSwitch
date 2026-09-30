@@ -9,6 +9,7 @@ exports), or on a forced 401 retry.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -21,6 +22,7 @@ from voidswitch.core.config import get_settings
 from voidswitch.core.security import decrypt_secret, encrypt_secret, hash_token
 from voidswitch.models.db import ApiKey, Provider, RequestLog
 from voidswitch.services import settings_store, xai_oauth
+from voidswitch.services.network import Deadline, reset_current_deadline, set_current_deadline
 
 pytestmark = pytest.mark.asyncio
 
@@ -139,6 +141,21 @@ async def test_near_expiry_triggers_refresh(db):
     assert bundle["refresh_token"] == "refresh-2"
 
 
+async def test_token_error_body_read_uses_shared_deadline():
+    async def body():
+        await asyncio.sleep(1)
+        yield b'{"error":"late"}'
+
+    token = set_current_deadline(Deadline.after(0.01))
+    try:
+        with respx.mock(assert_all_called=True) as mock:
+            mock.post(xai_oauth.TOKEN_URL).mock(return_value=httpx.Response(503, content=body()))
+            with pytest.raises(xai_oauth.RefreshUpstreamError):
+                await xai_oauth._post_token({}, None)
+    finally:
+        reset_current_deadline(token)
+
+
 async def test_healthy_bundle_not_refreshed(db):
     secret_key = get_settings().server.secret_key
     key_id = await _make_key(
@@ -187,6 +204,8 @@ async def test_refresh_uses_static_proxy_and_records_request_log(db):
         ).scalar_one()
     assert row.success is True
     assert row.status_code == 200
+    assert row.provider_attempts == 1
+    assert row.network_attempts == 1
     assert row.proxy_url == "http://static.local:8080"
     assert row.client_type == "xai-oauth"
 

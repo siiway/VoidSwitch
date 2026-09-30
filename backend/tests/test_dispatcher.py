@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import httpx
 import pytest
@@ -27,6 +28,46 @@ OAI_RESPONSE = {
     ],
     "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
 }
+
+
+async def test_attempt_summary_omits_route_secrets():
+    from types import SimpleNamespace
+
+    from voidswitch.services.dispatcher import _Attempt, _attempt_summary
+
+    outcome = _Attempt(
+        status_code=502,
+        proxy_url="http://user:secret@proxy.internal:8080",
+        local_address="10.0.0.7",
+        network_error=True,
+        error="failed via http://user:secret@proxy.internal:8080 from 10.0.0.7",
+        network_attempts=[
+            {
+                "attempt": 1,
+                "node_id": 2,
+                "proxy_url": "http://user:secret@proxy.internal:8080",
+                "local_address": "10.0.0.7",
+                "error": "failed via http://user:secret@proxy.internal:8080 from 10.0.0.7",
+                "status_code": 502,
+            }
+        ],
+    )
+    summary = _attempt_summary(
+        attempt=1,
+        provider=SimpleNamespace(id=1, name="provider"),  # ty: ignore[invalid-argument-type]
+        key=SimpleNamespace(id=2, key_preview="key", pool=""),  # ty: ignore[invalid-argument-type]
+        adapter=SimpleNamespace(  # ty: ignore[invalid-argument-type]
+            classify=lambda *_: SimpleNamespace(value="server_error")
+        ),
+        upstream_model="model",
+        outcome=outcome,
+    )
+    assert "proxy_url" not in summary
+    assert "local_address" not in summary
+    assert "proxy_url" not in summary["network_attempts"][0]
+    assert "local_address" not in summary["network_attempts"][0]
+    assert "secret" not in str(summary)
+    assert "10.0.0.7" not in str(summary)
 
 
 async def _add_key(db, provider_id: int, raw: str) -> int:
@@ -163,6 +204,176 @@ async def test_dispatch_insufficient_balance_disables_key(db, seeded):
     async with db.session() as session:
         key = await session.get(ApiKey, seeded["key_id"])
     assert key.status == KeyStatus.INSUFFICIENT_BALANCE.value
+
+
+async def test_new_api_origin_403_protects_key_and_returns_raw_error(db, seeded):
+    from voidswitch.models.db import Provider
+
+    async with db.session() as session:
+        provider = await session.get(Provider, seeded["provider_id"])
+        provider.new_api_mode = "auto"
+        await session.flush()
+
+    error = {"error": {"message": "origin denied", "type": "upstream_error"}}
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(DS_URL).mock(
+            return_value=httpx.Response(403, headers={"X-New-Api-Version": "0.9"}, json=error)
+        )
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 403
+    assert json.loads(result.content or b"{}") == error
+    async with db.session() as session:
+        key = await session.get(ApiKey, seeded["key_id"])
+    assert key.status == KeyStatus.ACTIVE.value
+    assert key.failed_count == 0
+    log = await _last_log(db)
+    assert log.provider_attempts == 1
+    assert log.network_attempts == 1
+    assert log.attempts == 1
+    summary = log.attempts_summary[0]
+    assert summary["original_classification"] == "key_invalid"
+    assert summary["final_classification"] == "protected_origin_error"
+    assert summary["provenance"] == "origin"
+
+
+async def test_protected_repeat_uses_same_key_once(db, seeded):
+    from voidswitch.models.db import Provider
+
+    async with db.session() as session:
+        provider = await session.get(Provider, seeded["provider_id"])
+        provider.new_api_mode = "enabled"
+        provider.protected_error_retry_enabled = True
+        await session.flush()
+
+    error = {"error": {"message": "origin denied", "type": "upstream_error"}}
+    with respx.mock(assert_all_called=True) as mock:
+        endpoint = mock.post(DS_URL).mock(
+            side_effect=[httpx.Response(403, json=error), httpx.Response(200, json=OAI_RESPONSE)]
+        )
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 200
+    assert endpoint.call_count == 2
+    assert (
+        endpoint.calls[0].request.headers["authorization"]
+        == endpoint.calls[1].request.headers["authorization"]
+    )
+    log = await _last_log(db)
+    assert log.provider_attempts == 2
+    assert log.network_attempts == 2
+    assert log.attempts_summary[0]["protected_repeat_used"] is True
+    assert log.attempts_summary[1]["provider_attempt"] == 2
+
+
+async def test_protected_response_then_network_failure_keeps_http_status(db, seeded):
+    from voidswitch.models.db import Provider
+
+    async with db.session() as session:
+        provider = await session.get(Provider, seeded["provider_id"])
+        provider.new_api_mode = "enabled"
+        provider.protected_error_retry_enabled = True
+        await session.flush()
+
+    error = {"error": {"message": "origin denied", "type": "upstream_error"}}
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(DS_URL).mock(
+            side_effect=[httpx.Response(403, json=error), httpx.ConnectError("down")]
+        )
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 403
+    assert result.status_code != 0
+    assert json.loads(result.content or b"{}") == error
+    log = await _last_log(db)
+    assert log.status_code == 403
+    assert log.resp_body == error
+    assert log.attempts_summary[-1]["network_error"] is True
+
+
+async def test_protected_response_then_ordinary_5xx_returns_last_http(db, seeded):
+    from voidswitch.models.db import Provider
+
+    async with db.session() as session:
+        provider = await session.get(Provider, seeded["provider_id"])
+        provider.new_api_mode = "enabled"
+        provider.protected_error_retry_enabled = True
+        await session.flush()
+
+    protected = {"error": {"message": "origin denied", "type": "upstream_error"}}
+    terminal = {"error": {"message": "later server failure", "type": "server_error"}}
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(DS_URL).mock(
+            side_effect=[httpx.Response(403, json=protected), httpx.Response(503, json=terminal)]
+        )
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 503
+    assert json.loads(result.content or b"{}") == terminal
+    log = await _last_log(db)
+    assert log.status_code == 503
+    assert log.resp_body == terminal
+
+
+async def test_protected_repeat_blocked_by_budget_applies_cooldown(db, seeded, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from voidswitch.models.db import Provider
+    from voidswitch.services import settings_store, upstream_health
+
+    async with db.session() as session:
+        provider = await session.get(Provider, seeded["provider_id"])
+        provider.new_api_mode = "enabled"
+        provider.protected_error_retry_enabled = True
+        provider.upstream_cooldown_status_codes = [403]
+        provider.upstream_cooldown_seconds = 60
+        await settings_store.update(session, {"max_provider_attempts": 1})
+
+    trip = AsyncMock(return_value=object())
+    monkeypatch.setattr(upstream_health, "trip", trip)
+
+    with respx.mock(assert_all_called=True) as mock:
+        endpoint = mock.post(DS_URL).mock(
+            return_value=httpx.Response(
+                403, json={"error": {"message": "origin denied", "type": "upstream_error"}}
+            )
+        )
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 403
+    assert endpoint.call_count == 1
+    assert trip.await_count == 1
+    assert trip.await_args_list[0].kwargs["status_code"] == 403
+
+
+async def test_stream_error_body_read_uses_dispatch_deadline(db, seeded):
+    import asyncio
+    import time
+
+    from voidswitch.services import settings_store
+
+    async with db.session() as session:
+        await settings_store.update(session, {"response_timeout_seconds": 1})
+
+    async def body():
+        await asyncio.sleep(10)
+        yield b'{"error":{"message":"late"}}'
+
+    request = DispatchRequest(
+        inbound_style=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        payload={"model": "deepseek-chat", "messages": [{"role": "user", "content": "hi"}]},
+        stream=True,
+        token_id=seeded["token_id"],
+    )
+    started = time.monotonic()
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post(DS_URL).mock(return_value=httpx.Response(503, content=body()))
+        result = await dispatch(request)
+
+    assert time.monotonic() - started < 3
+    assert result.status_code == 502
+    assert result.error == "upstream_unavailable"
 
 
 async def test_dispatch_proxy_failover_on_network_error(db, seeded):
@@ -1178,7 +1389,7 @@ async def test_build_stream_response_timeout_marks_terminated(db, seeded):
 
     resp = FakeResponse()
     gen = _build_stream(
-        response=resp,  # ty: ignore[invalid-argument-type]  # FakeResponse mocks httpx.Response
+        response=cast(httpx.Response, resp),
         inbound=ApiStyle.OPENAI,
         upstream=ApiStyle.OPENAI,
         model="deepseek-chat",
@@ -1235,7 +1446,7 @@ async def test_cancelled_stream_finishes_cleanup_before_returning(db, seeded):
 
     response = FakeResponse()
     stream = _build_stream(
-        response=response,  # ty: ignore[invalid-argument-type]
+        response=cast(httpx.Response, response),
         inbound=ApiStyle.OPENAI,
         upstream=ApiStyle.OPENAI,
         model="deepseek-chat",
@@ -1302,7 +1513,7 @@ async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
     # 100ms before the generator starts being consumed.
     start_mono = time.monotonic() - 0.1
     gen = _build_stream(
-        response=resp,  # ty: ignore[invalid-argument-type]
+        response=cast(httpx.Response, resp),
         inbound=ApiStyle.OPENAI,
         upstream=ApiStyle.OPENAI,
         model="deepseek-chat",
