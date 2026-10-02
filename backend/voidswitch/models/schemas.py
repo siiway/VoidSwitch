@@ -379,13 +379,14 @@ class ModelUpsert(BaseModel):
 
 
 class RouteUpstreamIn(BaseModel):
-    """One dynamically ranked upstream candidate."""
+    """One dynamically ranked upstream candidate in an ordered fallback group."""
 
     provider_id: int
     upstream_model: str = ""
     weight: int = 1
     enabled: bool = True
     key_pool: str = ""
+    group_position: int = 0
     position: int = 0
     cooldown_status_codes: list[int] = Field(default_factory=list)
     cooldown_seconds: int = 0
@@ -410,6 +411,7 @@ class RouteUpstreamOut(BaseModel):
     weight: int = 1
     enabled: bool = True
     key_pool: str = ""
+    group_position: int = 0
     position: int = 0
     cooldown_status_codes: list[int] = Field(default_factory=list)
     cooldown_seconds: int = 0

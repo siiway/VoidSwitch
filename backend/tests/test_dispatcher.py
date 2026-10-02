@@ -1055,6 +1055,65 @@ async def test_dispatch_skips_provider_without_eligible_keys(db, seeded):
     assert upstream.call_count == 1
 
 
+async def test_dispatch_respects_ordered_upstream_groups(db, seeded):
+    """A healthy later group cannot bypass the configured fallback order."""
+    from voidswitch.models.db import ApiKey, Provider, Route, RouteUpstream
+    from voidswitch.services import upstream_health
+
+    async with db.session() as session:
+        first = (await session.execute(select(RouteUpstream))).scalar_one()
+        first.group_position = 0
+        fallback = Provider(
+            name="deepseek-group-two",
+            slug="deepseek-group-two",
+            type="deepseek",
+            base_url="https://api.deepseek.com",
+            models=["deepseek-chat"],
+        )
+        session.add(fallback)
+        await session.flush()
+        session.add(
+            ApiKey(
+                provider_id=fallback.id,
+                key_ciphertext=encrypt_secret(
+                    "sk-group-two", secret=get_settings().server.secret_key
+                ),
+                key_hash=hash_token("sk-group-two"),
+                key_preview="sk-g",
+                status=KeyStatus.ACTIVE.value,
+            )
+        )
+        route = (await session.execute(select(Route))).scalar_one()
+        session.add(
+            RouteUpstream(
+                route_id=route.id,
+                provider_id=fallback.id,
+                upstream_model="deepseek-chat",
+                group_position=1,
+                position=0,
+            )
+        )
+        await session.flush()
+
+    for _ in range(10):
+        upstream_health.record(
+            upstream_health.key_for(seeded["provider_id"], "deepseek-chat"), success=False
+        )
+        upstream_health.record(upstream_health.key_for(fallback.id, "deepseek-chat"), success=True)
+    with respx.mock(assert_all_called=False) as mock:
+        upstream = mock.post(DS_URL).mock(
+            side_effect=[
+                httpx.Response(503, json={"error": "group one unavailable"}),
+                httpx.Response(200, json=OAI_RESPONSE),
+            ]
+        )
+        result = await _dispatch_hi(seeded)
+
+    assert result.status_code == 200
+    assert result.provider_name == "deepseek-group-two"
+    assert upstream.call_count == 2
+
+
 async def test_dispatch_max_attempts_not_consumed_by_keyless_provider(db, seeded):
     """max_upstream_attempts budgets real attempts, not evaluated entries.
 

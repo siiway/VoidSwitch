@@ -311,35 +311,45 @@ def rank(
     algorithm = route.upstream_rank_algorithm or settings_store.get_str(
         "upstream_rank_algorithm", "weighted"
     )
-    rows.sort(
-        key=lambda r: (
-            r.tier == 3,
-            (r.tier if algorithm == UpstreamRankAlgorithm.TIERED.value else 0),
-            r.score,
-            -(r.upstream.weight or 1),
-            r.upstream.position,
-            r.upstream.id or 0,
+
+    def sort_group(group_rows: list[Ranked]) -> list[Ranked]:
+        group_rows.sort(
+            key=lambda r: (
+                r.tier == 3,
+                (r.tier if algorithm == UpstreamRankAlgorithm.TIERED.value else 0),
+                r.score,
+                -(r.upstream.weight or 1),
+                r.upstream.position,
+                r.upstream.id or 0,
+            )
         )
-    )
+        return group_rows
+
+    grouped: dict[int, list[Ranked]] = {}
+    for row in rows:
+        grouped.setdefault(max(0, row.upstream.group_position), []).append(row)
+    rows = [row for group in sorted(grouped) for row in sort_group(grouped[group])]
     if not rows:
         return [], ignored
     mode = route.upstream_select_mode or settings_store.get_str("upstream_select_mode", "best")
     pin_key = (route.id or 0, session_key or "")
+    first_group = max(0, rows[0].upstream.group_position)
+    selectable = [row for row in rows if max(0, row.upstream.group_position) == first_group]
     if mode.startswith("pinned_") and session_key:
         existing = _pins.get(pin_key)
         if existing and time.monotonic() - existing[1] <= _PIN_TTL:
-            found = next((r for r in rows if r.upstream.id == existing[0]), None)
-            if found and (found.tier != 3 or all(r.tier == 3 for r in rows)):
+            found = next((r for r in selectable if r.upstream.id == existing[0]), None)
+            if found and (found.tier != 3 or all(r.tier == 3 for r in selectable)):
                 rows.remove(found)
                 rows.insert(0, found)
                 _pins[pin_key] = (existing[0], time.monotonic())
                 return rows, ignored
     if mode in (UpstreamSelectMode.BALANCED.value, UpstreamSelectMode.PINNED_BALANCED.value):
         tolerance = max(0.0, settings_store.get_float("upstream_balance_tolerance", 0.2))
-        limit = rows[0].score * (1 + tolerance) if rows[0].score > 0 else tolerance
-        pool = [r for r in rows if r.tier != 3 and r.score <= limit]
+        limit = selectable[0].score * (1 + tolerance) if selectable[0].score > 0 else tolerance
+        pool = [r for r in selectable if r.tier != 3 and r.score <= limit]
         if not pool:
-            pool = [r for r in rows if r.score <= limit]
+            pool = [r for r in selectable if r.score <= limit]
         chosen = randomizer.choices(
             pool, weights=[max(1, r.upstream.weight) / max(r.score, 0.001) for r in pool], k=1
         )[0]
@@ -347,7 +357,7 @@ def rank(
         rows.insert(0, chosen)
     elif mode == UpstreamSelectMode.PINNED_BEST.value:
         jitter = max(0.0, settings_store.get_float("upstream_pin_jitter", 0.15))
-        chosen = min(rows, key=lambda r: r.score * (1 + randomizer.uniform(-jitter, jitter)))
+        chosen = min(selectable, key=lambda r: r.score * (1 + randomizer.uniform(-jitter, jitter)))
         rows.remove(chosen)
         rows.insert(0, chosen)
     if mode.startswith("pinned_") and session_key and rows[0].upstream.id is not None:

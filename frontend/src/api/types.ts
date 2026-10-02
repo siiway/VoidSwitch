@@ -270,6 +270,7 @@ export interface RouteUpstream {
   weight: number;
   enabled: boolean;
   key_pool: string;
+  group_position?: number;
   position?: number;
   cooldown_status_codes?: number[];
   cooldown_seconds?: number;

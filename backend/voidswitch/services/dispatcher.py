@@ -508,6 +508,7 @@ async def _do_dispatch(
             key_pool=passthrough_pool,
             enabled=True,
             weight=1,
+            group_position=0,
             position=0,
             cooldown_status_codes=[],
             cooldown_seconds=0,

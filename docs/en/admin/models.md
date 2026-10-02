@@ -8,10 +8,12 @@ The **Models** page is visible to everyone, but staff can manage it. See the
 The **Models** page lists **exposed models** (e.g. `fast-coder`, `astr-chat`) — the **only** ids
 users/clients ever see. Upstream model ids (e.g. `deepseek/deepseek-chat`) are never advertised.
 
-Each exposed model route directly contains a set of upstream candidates. VoidSwitch dynamically ranks
-them from call success rate, time to first token, and consecutive failures instead of using static layers.
-Routes can always choose the best upstream, balance among the best candidates, or pin a conversation to
-either choice. Weight only affects balancing and score ties.
+Each exposed-model route contains ordered **upstream groups**. A group is a strict fallback stage:
+VoidSwitch dynamically ranks and selects candidates by call success rate, time to first token, and
+consecutive failures only within the current group. It moves to the next group only after every candidate
+in the preceding group fails or is unavailable, so a healthier later group never bypasses it. Routes can
+always choose the best upstream, balance among the best candidates in a group, or pin a conversation to
+either choice. Weight only affects balancing and score ties within a group.
 
 429, 529, configured 5xx responses, and network errors can cool an upstream down. Cooldowns are shared
 platform-wide by provider, upstream model, and key pool, so every exposed model referencing that same

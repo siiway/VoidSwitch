@@ -213,6 +213,7 @@ def _route_out(route: Route | None) -> RouteOut | None:
                 "weight": e.weight,
                 "enabled": e.enabled,
                 "key_pool": e.key_pool,
+                "group_position": e.group_position,
                 "position": e.position,
                 "cooldown_status_codes": e.cooldown_status_codes or [],
                 "cooldown_seconds": e.cooldown_seconds,
@@ -454,6 +455,7 @@ async def _health_snapshot(
                 key_pool=pool,
                 enabled=True,
                 weight=1,
+                group_position=0,
                 position=0,
             )
             route = SimpleNamespace(
@@ -1070,6 +1072,7 @@ async def update_route(
                 weight=max(1, entry_in.weight),
                 enabled=entry_in.enabled,
                 key_pool=(entry_in.key_pool or "").strip(),
+                group_position=max(0, entry_in.group_position),
                 cooldown_status_codes=entry_in.cooldown_status_codes,
                 cooldown_seconds=max(0, entry_in.cooldown_seconds),
             )

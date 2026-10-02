@@ -250,12 +250,17 @@ class Route(Base, TimestampMixin):
 
 
 class RouteUpstream(Base):
-    """One independently scored provider/model candidate in a route."""
+    """One independently scored provider/model candidate in an ordered route group."""
 
     __tablename__ = "route_upstreams"
     __table_args__ = (
         UniqueConstraint(
-            "route_id", "provider_id", "upstream_model", "key_pool", name="uq_route_upstream"
+            "route_id",
+            "group_position",
+            "provider_id",
+            "upstream_model",
+            "key_pool",
+            name="uq_route_upstream",
         ),
     )
 
@@ -265,6 +270,9 @@ class RouteUpstream(Base):
         ForeignKey("providers.id", ondelete="SET NULL"), default=None, index=True
     )
     upstream_model: Mapped[str] = mapped_column(String(255), default="")
+    # Groups are strict fallback stages: candidates are dynamically selected
+    # within a group, but later groups are never considered first.
+    group_position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     position: Mapped[int] = mapped_column(Integer, default=0)
     weight: Mapped[int] = mapped_column(Integer, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

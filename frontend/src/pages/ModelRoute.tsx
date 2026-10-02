@@ -40,6 +40,7 @@ import type { Translations } from "../i18n/locales/en";
 
 type TK = keyof Translations;
 type DraftUpstream = RouteUpstream & { pk: string };
+type DraftGroup = { pk: string; upstreams: DraftUpstream[] };
 
 const useStyles = makeStyles({
   flow: { display: "flex", flexDirection: "column", gap: "10px" },
@@ -53,6 +54,16 @@ const useStyles = makeStyles({
     borderRadius: "10px",
     background: tokens.colorNeutralBackground1,
   },
+  group: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    padding: "12px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: "8px",
+    background: tokens.colorNeutralBackground2,
+  },
+  groupHeader: { display: "flex", alignItems: "center", gap: "8px" },
   entry: {
     display: "flex",
     gap: "8px",
@@ -91,7 +102,7 @@ export function ModelRoute() {
   );
   const providers = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
   const health = routeData.data?.health;
-  const [upstreams, setUpstreams] = useState<DraftUpstream[] | null>(null);
+  const [groups, setGroups] = useState<DraftGroup[] | null>(null);
   const [selectMode, setSelectMode] = useState<UpstreamSelectMode>("");
   const [rankAlgorithm, setRankAlgorithm] = useState<UpstreamRankAlgorithm>("");
   const [maxAttempts, setMaxAttempts] = useState(3);
@@ -103,17 +114,26 @@ export function ModelRoute() {
 
   useEffect(() => {
     const route = routeData.data?.route;
-    if (!route || upstreams !== null) return;
+    if (!route || groups !== null) return;
     setSelectMode(route.upstream_select_mode);
     setRankAlgorithm(route.upstream_rank_algorithm);
     setMaxAttempts(route.max_upstream_attempts);
     setAllCooled(route.upstream_all_cooled_behavior);
-    setUpstreams((route.upstreams ?? []).map((entry) => ({ ...entry, pk: nextPk() })));
-  }, [routeData.data, upstreams]);
+    const grouped = new Map<number, DraftUpstream[]>();
+    for (const entry of route.upstreams ?? []) {
+      const position = Math.max(0, entry.group_position ?? 0);
+      const members = grouped.get(position) ?? [];
+      members.push({ ...entry, pk: nextPk() });
+      grouped.set(position, members);
+    }
+    setGroups([...grouped.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, upstreams]) => ({ pk: nextPk(), upstreams })));
+  }, [routeData.data, groups]);
 
   const providerIds = useMemo(
-    () => [...new Set((upstreams ?? []).map((entry) => entry.provider_id).filter((id): id is number => id != null))],
-    [upstreams],
+    () => [...new Set((groups ?? []).flatMap((group) => group.upstreams).map((entry) => entry.provider_id).filter((id): id is number => id != null))],
+    [groups],
   );
   useEffect(() => {
     for (const id of providerIds) {
@@ -128,9 +148,20 @@ export function ModelRoute() {
     }
   }, [providerIds]);
 
-  const patchUpstream = (pk: string, patch: Partial<DraftUpstream>) =>
-    setUpstreams((current) => (current ?? []).map((entry) => entry.pk === pk ? { ...entry, ...patch } : entry));
-  const moveUpstream = (index: number, direction: -1 | 1) => setUpstreams((current) => {
+  const patchUpstream = (groupPk: string, pk: string, patch: Partial<DraftUpstream>) =>
+    setGroups((current) => (current ?? []).map((group) => group.pk !== groupPk ? group : {
+      ...group,
+      upstreams: group.upstreams.map((entry) => entry.pk === pk ? { ...entry, ...patch } : entry),
+    }));
+  const moveUpstream = (groupPk: string, index: number, direction: -1 | 1) => setGroups((current) => (current ?? []).map((group) => {
+    if (group.pk !== groupPk) return group;
+    const next = [...group.upstreams];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return group;
+    [next[index], next[target]] = [next[target], next[index]];
+    return { ...group, upstreams: next };
+  }));
+  const moveGroup = (index: number, direction: -1 | 1) => setGroups((current) => {
     const next = [...(current ?? [])];
     const target = index + direction;
     if (target < 0 || target >= next.length) return next;
@@ -144,13 +175,17 @@ export function ModelRoute() {
       upstream_rank_algorithm: rankAlgorithm,
       max_upstream_attempts: Math.max(0, maxAttempts),
       upstream_all_cooled_behavior: allCooled,
-      upstreams: (upstreams ?? []).filter((entry) => entry.provider_id != null).map(({ pk: _pk, ...entry }) => ({
-        ...entry,
-        provider_id: entry.provider_id as number,
-        upstream_model: entry.upstream_model.trim(),
-        key_pool: entry.key_pool.trim(),
-        weight: Math.max(1, entry.weight),
-      })),
+       upstreams: (groups ?? []).flatMap((group, groupPosition) => group.upstreams
+         .filter((entry) => entry.provider_id != null)
+         .map(({ pk: _pk, ...entry }, position) => ({
+           ...entry,
+           provider_id: entry.provider_id as number,
+           upstream_model: entry.upstream_model.trim(),
+           key_pool: entry.key_pool.trim(),
+           weight: Math.max(1, entry.weight),
+           group_position: groupPosition,
+           position,
+         }))),
     };
     setSaving(true);
     try {
@@ -209,7 +244,15 @@ export function ModelRoute() {
         </Field>
       </div>
       <div className={styles.flow}>
-        {(upstreams ?? []).map((entry, index) => {
+        {(groups ?? []).map((group, groupIndex) => <div key={group.pk} className={styles.group}>
+          <div className={styles.groupHeader}>
+            <Text weight="semibold">{t("models.layerLabel" as TK).replace("{n}", String(groupIndex + 1))}</Text>
+            <span style={{ flex: 1 }} />
+            <Tooltip content={t("common.up" as TK)} relationship="label"><Button appearance="subtle" icon={<ArrowUpRegular />} disabled={groupIndex === 0} onClick={() => moveGroup(groupIndex, -1)} aria-label={t("common.up" as TK)} /></Tooltip>
+            <Tooltip content={t("common.down" as TK)} relationship="label"><Button appearance="subtle" icon={<ArrowDownRegular />} disabled={groupIndex === (groups?.length ?? 0) - 1} onClick={() => moveGroup(groupIndex, 1)} aria-label={t("common.down" as TK)} /></Tooltip>
+            <Tooltip content={t("common.delete" as TK)} relationship="label"><Button appearance="subtle" icon={<DeleteRegular />} onClick={() => setGroups((current) => (current ?? []).filter((item) => item.pk !== group.pk))} aria-label={t("common.delete" as TK)} /></Tooltip>
+          </div>
+          {group.upstreams.map((entry, index) => {
           const provider = (providers.data ?? []).find((item) => item.id === entry.provider_id);
           const query = providerQuery[entry.pk];
           const upstreamHealth = health?.upstreams?.find((item) => item.upstream_id === entry.id);
@@ -221,34 +264,36 @@ export function ModelRoute() {
           const shownTtft = useModelHistory ? health.recent_avg_ttft_ms : upstreamHealth?.ttft_ms;
           return (
             <div key={entry.pk} className={styles.entry}>
-              <Checkbox checked={entry.enabled} onChange={(_, d) => patchUpstream(entry.pk, { enabled: d.checked === true })} aria-label={t("common.enabled" as TK)} />
+              <Checkbox checked={entry.enabled} onChange={(_, d) => patchUpstream(group.pk, entry.pk, { enabled: d.checked === true })} aria-label={t("common.enabled" as TK)} />
               <Field label={t("models.routeProvider" as TK)} style={{ flex: "1 1 180px" }}>
                 <Combobox freeform autoComplete="list" value={query !== undefined ? query : provider ? `${provider.name} · ${provider.slug}` : ""} selectedOptions={query === undefined && provider ? [String(provider.id)] : []} onChange={(event) => setProviderQuery((current) => ({ ...current, [entry.pk]: event.target.value }))} onOptionSelect={(_, d) => {
-                  if (d.optionValue) patchUpstream(entry.pk, { provider_id: Number(d.optionValue), key_pool: "" });
+                  if (d.optionValue) patchUpstream(group.pk, entry.pk, { provider_id: Number(d.optionValue), key_pool: "" });
                   setProviderQuery((current) => { const next = { ...current }; delete next[entry.pk]; return next; });
                 }} onBlur={() => setProviderQuery((current) => { const next = { ...current }; delete next[entry.pk]; return next; })}>
                   {(providers.data ?? []).filter((item) => !query || `${item.name} ${item.slug}`.toLowerCase().includes(query.toLowerCase())).map((item) => <Option key={item.id} value={String(item.id)} text={`${item.name} · ${item.slug}`}>{item.name} · {item.slug}</Option>)}
                 </Combobox>
               </Field>
               <Field label={t("models.routeUpstream" as TK)} style={{ flex: "1 1 180px" }}>
-                <Combobox freeform value={entry.upstream_model} onChange={(event) => patchUpstream(entry.pk, { upstream_model: event.target.value })} onOptionSelect={(_, d) => d.optionValue && patchUpstream(entry.pk, { upstream_model: d.optionValue })}>
+                <Combobox freeform value={entry.upstream_model} onChange={(event) => patchUpstream(group.pk, entry.pk, { upstream_model: event.target.value })} onOptionSelect={(_, d) => d.optionValue && patchUpstream(group.pk, entry.pk, { upstream_model: d.optionValue })}>
                   {(provider?.models ?? []).map((name) => <Option key={name} value={name}>{name}</Option>)}
                 </Combobox>
               </Field>
-              <Field label={t("models.routeKeyPool" as TK)}><Dropdown value={entry.key_pool || t("models.routeKeyPoolAny" as TK)} selectedOptions={entry.key_pool ? [entry.key_pool] : []} onOptionSelect={(_, d) => patchUpstream(entry.pk, { key_pool: d.optionValue ?? "" })}><Option value="">{t("models.routeKeyPoolAny" as TK)}</Option>{(poolsByProvider[entry.provider_id ?? 0] ?? []).map((pool) => <Option key={pool} value={pool}>{pool}</Option>)}</Dropdown></Field>
-              <Field label={t("models.routeWeight" as TK)}><Input type="number" min={1} style={{ width: 72 }} value={String(entry.weight)} onChange={(_, d) => patchUpstream(entry.pk, { weight: Math.max(1, Number(d.value) || 1) })} /></Field>
-              <Tooltip content={t("common.up" as TK)} relationship="label"><Button appearance="subtle" icon={<ArrowUpRegular />} disabled={index === 0} onClick={() => moveUpstream(index, -1)} aria-label={t("common.up" as TK)} /></Tooltip>
-              <Tooltip content={t("common.down" as TK)} relationship="label"><Button appearance="subtle" icon={<ArrowDownRegular />} disabled={index === (upstreams?.length ?? 0) - 1} onClick={() => moveUpstream(index, 1)} aria-label={t("common.down" as TK)} /></Tooltip>
-              <Tooltip content={t("common.delete" as TK)} relationship="label"><Button appearance="subtle" icon={<DeleteRegular />} onClick={() => setUpstreams((current) => (current ?? []).filter((item) => item.pk !== entry.pk))} aria-label={t("common.delete" as TK)} /></Tooltip>
+              <Field label={t("models.routeKeyPool" as TK)}><Dropdown value={entry.key_pool || t("models.routeKeyPoolAny" as TK)} selectedOptions={entry.key_pool ? [entry.key_pool] : []} onOptionSelect={(_, d) => patchUpstream(group.pk, entry.pk, { key_pool: d.optionValue ?? "" })}><Option value="">{t("models.routeKeyPoolAny" as TK)}</Option>{(poolsByProvider[entry.provider_id ?? 0] ?? []).map((pool) => <Option key={pool} value={pool}>{pool}</Option>)}</Dropdown></Field>
+              <Field label={t("models.routeWeight" as TK)}><Input type="number" min={1} style={{ width: 72 }} value={String(entry.weight)} onChange={(_, d) => patchUpstream(group.pk, entry.pk, { weight: Math.max(1, Number(d.value) || 1) })} /></Field>
+              <Tooltip content={t("common.up" as TK)} relationship="label"><Button appearance="subtle" icon={<ArrowUpRegular />} disabled={index === 0} onClick={() => moveUpstream(group.pk, index, -1)} aria-label={t("common.up" as TK)} /></Tooltip>
+              <Tooltip content={t("common.down" as TK)} relationship="label"><Button appearance="subtle" icon={<ArrowDownRegular />} disabled={index === group.upstreams.length - 1} onClick={() => moveUpstream(group.pk, index, 1)} aria-label={t("common.down" as TK)} /></Tooltip>
+              <Tooltip content={t("common.delete" as TK)} relationship="label"><Button appearance="subtle" icon={<DeleteRegular />} onClick={() => setGroups((current) => (current ?? []).map((item) => item.pk === group.pk ? { ...item, upstreams: item.upstreams.filter((candidate) => candidate.pk !== entry.pk) } : item))} aria-label={t("common.delete" as TK)} /></Tooltip>
               <div className={styles.health}>
                 <Text size={200}>{shownStatus ? `${t(`models.health.${shownStatus}` as TK)} · ${t("models.successRate" as TK)} ${pct(shownSuccess)} · ${t("models.ttft" as TK)} ${shownTtft == null ? "--" : `${Math.round(shownTtft)} ms`}` : t("models.healthLearning" as TK)}</Text>
                 {upstreamHealth?.cooled_until && isOwner ? <Tooltip content={t("models.clearCooldown" as TK)} relationship="label"><Button size="small" appearance="subtle" icon={<WeatherSunnyRegular />} onClick={() => void clearCooldown(upstreamHealth.upstream_id)} aria-label={t("models.clearCooldown" as TK)} /></Tooltip> : null}
               </div>
             </div>
           );
-        })}
+          })}
+          <Button icon={<AddRegular />} onClick={() => setGroups((current) => (current ?? []).map((item) => item.pk === group.pk ? { ...item, upstreams: [...item.upstreams, { pk: nextPk(), provider_id: null, upstream_model: "", weight: 1, enabled: true, key_pool: "" }] } : item))}>{t("models.routeAddEntry" as TK)}</Button>
+        </div>)}
       </div>
-      <Button style={{ marginTop: 16 }} icon={<AddRegular />} onClick={() => setUpstreams((current) => [...(current ?? []), { pk: nextPk(), provider_id: null, upstream_model: "", weight: 1, enabled: true, key_pool: "" }])}>{t("models.routeAddEntry" as TK)}</Button>
+      <Button style={{ marginTop: 16 }} icon={<AddRegular />} onClick={() => setGroups((current) => [...(current ?? []), { pk: nextPk(), upstreams: [] }])}>{t("models.routeAddLayer" as TK)}</Button>
     </div>
   );
 }
