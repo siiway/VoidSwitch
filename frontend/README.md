@@ -1,6 +1,6 @@
 # VoidSwitch — frontend
 
-A decoupled admin dashboard for VoidSwitch, built with **React 19 + Fluent UI v9**
+A decoupled admin dashboard for VoidSwitch, built with **Nuxt UI v3 + Vue 3**
 and managed by **Bun**. Minimalist, high-density, low-animation — fast to render
 on low-powered devices.
 
@@ -9,31 +9,42 @@ on low-powered devices.
 ```bash
 cd frontend
 bun install
-cp .env.example .env        # point VITE_API_BASE at your backend if not :8080
-bun run dev                 # Vite dev server on http://localhost:5173
+bun run dev                 # Nuxt dev server on http://localhost:3000
 ```
 
-The backend must allow the dev origin in `server.cors_origins` (it allows
-`http://localhost:5173` and `:4173` by default).
+The dev server proxies `/api`, `/v1` and `/healthz` to the backend on
+`http://localhost:8080` (see `nuxt.config.ts`). Set `NUXT_PUBLIC_API_BASE` to
+point at a backend on another host.
 
 ## Build
 
 ```bash
-bun run build               # type-check (tsc -b) + production bundle to dist/
-bun run preview             # serve the built bundle on :4173
+bun run build               # static SPA in .output/public/
+bun run preview             # serve the built bundle locally
+bun run lint                # nuxt typecheck
 ```
 
 ## What it does
 
-- **Prism OAuth** sign-in (redirects to the backend `/api/auth/login`).
-- **Dashboard** — live key/proxy health and 24h request stats + background task status.
-- **Providers** — add/edit providers (adapter-type picker), manage their model lists.
-- **Keys** — batch-add API keys (one per line), see live status, enable/disable.
-- **Proxies** — batch-add HTTP/SOCKS proxies, optional source-IP, manual probe.
-- **Tokens** — mint/rotate/revoke Void-Tokens for any user (staff) or yourself.
-- **Users** — role management (owner/admin/member) and enable/disable.
-- **Settings** — tune failure thresholds and probe intervals at runtime.
-- **Logs** — request traffic and the administrative audit trail.
+- **Prism OAuth** sign-in (redirects to the backend `/api/auth/login`), plus
+  staff token login and a dev-mode login when the backend enables it.
+- **Dashboard** — live platform stats (staff) or own usage (member).
+- **Providers** — browse providers; edit a provider and manage its API keys in
+  stacked right-side drawers.
+- **Models** — browse exposed models; open the route editor (candidate groups,
+  weights, key pools, selection strategy) in a nested drawer.
+- **Nodes** — node list with probe, plus node groups.
+- **Health** — live model/node health over SSE.
+- **Chat** — streaming chat through the gateway with a personal Void-Token.
+- **Tokens** — personal API keys (all users) and global Void-Tokens (owner).
+- **Users / Role groups** — staff and role-group-admin views.
+- **Statistics** — usage analytics with time-window and role-group filters.
+- **Logs / Audit** — request logs (live SSE) and the audit trail, with
+  owner-only secret reveal.
+- **Settings** — system settings (owner-editable, staff read-only) and the
+  personal login token.
+- **Workbench preferences** (staff) — drawer/full-page mode and command
+  palette prefixes; `Ctrl/Cmd+K` quick navigation with `/`, `!`, `@`, `#`
+  prefixes.
 
-Members (non-staff) see only **My API Key** — their tokens, usage, and connection
-snippets.
+Members (non-staff) see only the surfaces their role grants them.

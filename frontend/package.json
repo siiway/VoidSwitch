@@ -1,35 +1,22 @@
 {
   "name": "voidswitch-frontend",
   "private": true,
-  "version": "0.2.2-2026.10.2.1",
+  "version": "v0.2.2-2026.10.2.2",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "dev": "nuxt dev",
+    "build": "nuxt generate",
+    "preview": "npx serve .output/public",
+    "lint": "nuxt typecheck"
   },
   "dependencies": {
-    "@fluentui/react-components": "^9.74.7",
-    "@fluentui/react-icons": "^2.0.339",
-    "@types/node": "^25.9.5",
-    "i18next": "^26.4.0",
-    "i18next-browser-languagedetector": "^8.2.1",
-    "json5": "^2.2.3",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-i18next": "^17.0.12",
-    "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.18.3",
-    "remark-gfm": "^4.0.1",
-    "simple-icons": "^16.29.0"
+    "@nuxt/ui": "3.3.7",
+    "nuxt": "^3",
+    "tailwindcss": "^4",
+    "vue": "^3.5.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.5",
-    "@vitejs/plugin-react": "^6.1.1",
-    "prettier": "^3.9.6",
     "typescript": "^5.9.3",
-    "vite": "^8.2.2"
+    "vue-tsc": "^2.2.12"
   }
 }

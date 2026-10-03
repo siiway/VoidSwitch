@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+:root { font-family: Inter, system-ui, sans-serif; }
+.stack-panel { transition: transform 180ms ease, filter 180ms ease; }
+.stack-panel[data-behind="true"] { transform: translateX(-20px); filter: brightness(.86); pointer-events: none; }
+.stack-shake { animation: stack-shake 180ms ease-in-out; }
+@keyframes stack-shake { 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+@media (max-width: 640px) { .stack-panel[data-behind="true"] { transform: none; visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .stack-panel { transition: none; } .stack-shake { animation: none; } }

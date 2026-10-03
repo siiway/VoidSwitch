@@ -3,23 +3,23 @@
 #
 #   docker build -t voidswitch-dashboard ./frontend
 #
-# VITE_API_BASE is intentionally NOT set: the app falls back to the browser's
-# own origin (see src/api/client.ts), so the same image works on any hostname.
+# NUXT_PUBLIC_API_BASE is intentionally NOT set: the app falls back to the
+# browser's own origin (see nuxt/composables/useApi.ts), so the same image
+# works on any hostname.
 
 # ---- build the static bundle ----
 FROM oven/bun:1 AS build
 WORKDIR /app
 
 COPY package.json bun.lock ./
-RUN bun install
-# --frozen-lockfile
+RUN bun install --frozen-lockfile
 
 COPY . .
 RUN bun run build
 
 # ---- serve + proxy ----
 FROM nginx:1.27-alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=build /app/.output/public /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
