@@ -768,30 +768,34 @@ async def request_log_stream(
     """
     max_streams = settings_store.get_int("sse_max_connections_per_user", 2)
     await _acquire_stream_slot(user.sub, max_streams)
-    visible_subs = (
-        await _visible_user_subs_for(session, user)
-        if not is_staff(user) and is_role_group_admin(user)
-        else None
-    )
-    filters = _request_log_filters(
-        user,
-        model=model,
-        user_sub=user_sub,
-        token_id=token_id,
-        provider=provider,
-        client_ip=client_ip,
-        status_code=status_code,
-        req_status=req_status,
-        visible_subs=visible_subs,
-    )
+    try:
+        visible_subs = (
+            await _visible_user_subs_for(session, user)
+            if not is_staff(user) and is_role_group_admin(user)
+            else None
+        )
+        filters = _request_log_filters(
+            user,
+            model=model,
+            user_sub=user_sub,
+            token_id=token_id,
+            provider=provider,
+            client_ip=client_ip,
+            status_code=status_code,
+            req_status=req_status,
+            visible_subs=visible_subs,
+        )
 
-    # The stream should only ever deliver rows created *after* the client
-    # connects. If the client didn't pass an explicit ``after_id`` (it hasn't
-    # yet seen any row, e.g. the live view was just switched on), snapshot the
-    # current max id now so the stream doesn't flood the client with the
-    # entire request-log history on the first poll.
-    if after_id == 0:
-        after_id = (await session.execute(select(func.max(RequestLog.id)))).scalar_one() or 0
+        # The stream should only ever deliver rows created *after* the client
+        # connects. If the client didn't pass an explicit ``after_id`` (it hasn't
+        # yet seen any row, e.g. the live view was just switched on), snapshot the
+        # current max id now so the stream doesn't flood the client with the
+        # entire request-log history on the first poll.
+        if after_id == 0:
+            after_id = (await session.execute(select(func.max(RequestLog.id)))).scalar_one() or 0
+    except Exception:
+        await _release_stream_slot(user.sub)
+        raise
 
     async def _stream() -> AsyncIterator[str]:
         async for event in _stream_request_log_events(
@@ -1095,11 +1099,16 @@ async def request_log_detail(
             detail.user_name = f"{label}#{u.id}"
             detail.user_nickname = u.name
     if row.key_id is not None:
-        key = await session.get(ApiKey, row.key_id)
-        if key:
-            detail.key_preview = (
-                _redact_key_preview(key.key_preview) if admin_view else key.key_preview
-            )
+        if not (is_staff(user) or owner):
+            # Members should never see upstream provider key previews or key IDs.
+            detail.key_preview = None
+            detail.key_id = None
+        else:
+            key = await session.get(ApiKey, row.key_id)
+            if key:
+                detail.key_preview = (
+                    _redact_key_preview(key.key_preview) if admin_view else key.key_preview
+                )
     if admin_view:
         detail.req_body = None
         detail.resp_body = None

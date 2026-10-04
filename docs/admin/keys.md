@@ -20,7 +20,7 @@
 - **刷新令牌** — 适用于支持 refresh token 的供应商（Claude Code、xAI）。
   每个密钥行提供一个刷新按钮，点击后立即用其 refresh token 换取新的 access token，
   轮换并重新加密凭证包，同时把密钥重新置为**活跃**（清除失败计数与禁用原因）。
-  该操作会同时记录在[请求日志](/admin/logs)和[审计记录](/admin/audit)中，并带上执行用户信息。
+  该操作会同时记录在[请求日志](/guide/logs-usage)和[审计记录](/admin/audit)中，并带上执行用户信息。
 - **清理** — 批量删除失效密钥（`invalid` 或 `insufficient_balance`），
   可选为空余额密钥设置最小存活时间过滤。
 

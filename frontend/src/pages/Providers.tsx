@@ -48,7 +48,7 @@ import { useState, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { api, API_BASE } from "../api/client";
+import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
   AdapterMeta,
@@ -1530,7 +1530,7 @@ export function Providers() {
                 />
               </Field>
               <SelectiveIgnoreRuleEditor form={form} setForm={setForm} />
-              {form?.type === "claude-code" && (
+              <div style={{ display: form?.type === "claude-code" ? "block" : "none" }}>
                 <Switch
                   label={t("providers.dropIdentityLabel" as TK)}
                   checked={form?.drop_opencode_identity_block ?? false}
@@ -1540,7 +1540,7 @@ export function Providers() {
                     )
                   }
                 />
-              )}
+              </div>
               <Field
                 label={t("providers.retryZeroToken" as TK)}
                 hint={t("providers.retryZeroTokenHint" as TK)}
@@ -1557,7 +1557,7 @@ export function Providers() {
               {/* OpenAI-style upstreams only: gate the developer→system remap
                   per provider. Hidden for non-OpenAI-style adapters where the
                   backend already ignores the flag. */}
-              {form?.type === "openai" && (
+              <div style={{ display: form?.type === "openai" ? "block" : "none" }}>
                 <Field
                   label={t("providers.normalizeDeveloperRole" as TK)}
                   hint={t("providers.normalizeDeveloperRoleHint" as TK)}
@@ -1573,7 +1573,7 @@ export function Providers() {
                     }
                   />
                 </Field>
-              )}
+              </div>
               <Field label={t("providers.passthroughEnabled" as TK)}>
                 <Switch
                   checked={form?.passthrough_enabled ?? false}
@@ -1584,7 +1584,7 @@ export function Providers() {
                   }
                 />
               </Field>
-              {form?.passthrough_enabled && (
+              <div style={{ display: form?.passthrough_enabled ? "block" : "none" }}>
                 <Field
                   label={t("providers.passthroughModels" as TK)}
                   hint={t("providers.passthroughModelsHint" as TK)}
@@ -1600,7 +1600,7 @@ export function Providers() {
                     }
                   />
                 </Field>
-              )}
+              </div>
               {!form?.id && (
                 <>
                   <Field
@@ -1847,9 +1847,10 @@ export function Providers() {
             <DialogActions>
               <Button
                 appearance="secondary"
-                onClick={() =>
-                  window.open(`${API_BASE}/provider-api/docs`, "_blank")
-                }
+                onClick={() => {
+                  const target = new URL("/provider-api/docs", window.location.origin);
+                  window.open(target.href, "_blank", "noopener,noreferrer");
+                }}
               >
                 {t("providers.keyApiDocs" as TK)}
               </Button>

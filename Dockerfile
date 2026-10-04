@@ -56,8 +56,10 @@ COPY --from=builder --chown=voidswitch:voidswitch /app/backend /app/backend
 COPY --chown=voidswitch:voidswitch opencode-plugin/src /app/opencode-plugin/src
 
 # Put the venv on PATH so `voidswitch` resolves without `uv run`.
+ARG VOIDSWITCH_COMMIT=""
 ENV PATH="/app/backend/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
+    VOIDSWITCH_COMMIT=${VOIDSWITCH_COMMIT} \
     # Default the DB onto the /data volume so it survives container recreation.
     # Override for Postgres etc. via VOIDSWITCH_DATABASE__URL.
     VOIDSWITCH_DATABASE__URL="sqlite+aiosqlite:////data/voidswitch.db"
