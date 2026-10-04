@@ -1750,126 +1750,134 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                 onChange={(_, d) => setBatchGroupsOn(!!d.checked)}
                 label={t("models.batchAccessLabel" as TK)}
               />
-              {batchGroupsOn ? (
+              <div
+                style={{
+                  display: batchGroupsOn ? "flex" : "none",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                <Input
+                  contentBefore={<SearchRegular />}
+                  placeholder={t("models.accessSearch" as TK)}
+                  value={batchGroupSearch}
+                  onChange={(_, d) => setBatchGroupSearch(d.value)}
+                />
                 <div
-                  style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    maxHeight: 180,
+                    overflowY: "auto",
+                  }}
                 >
-                  <Input
-                    contentBefore={<SearchRegular />}
-                    placeholder={t("models.accessSearch" as TK)}
-                    value={batchGroupSearch}
-                    onChange={(_, d) => setBatchGroupSearch(d.value)}
-                  />
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 6,
-                      maxHeight: 180,
-                      overflowY: "auto",
-                    }}
-                  >
-                    {customGroups.length === 0 ? (
-                      <Text size={200} className={styles.dim}>
-                        {t("models.accessNoGroups" as TK)}
-                      </Text>
-                    ) : (
-                      customGroups
-                        .filter((g) => {
-                          const q = batchGroupSearch.trim().toLowerCase();
-                          if (!q) return true;
-                          return (
-                            g.name.toLowerCase().includes(q) ||
-                            (g.description ?? "").toLowerCase().includes(q)
-                          );
-                        })
-                        .map((g) => (
-                          <Checkbox
-                            key={g.id}
-                            checked={batchGroupIds.has(g.id)}
-                            onChange={() => toggleBatchGroup(g.id)}
-                            label={g.name}
-                          />
-                        ))
-                    )}
-                  </div>
-                  <Text size={100} className={styles.dim}>
-                    {t("models.batchAccessHint" as TK)}
-                  </Text>
+                  {customGroups.length === 0 ? (
+                    <Text size={200} className={styles.dim}>
+                      {t("models.accessNoGroups" as TK)}
+                    </Text>
+                  ) : (
+                    customGroups
+                      .filter((g) => {
+                        const q = batchGroupSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          g.name.toLowerCase().includes(q) ||
+                          (g.description ?? "").toLowerCase().includes(q)
+                        );
+                      })
+                      .map((g) => (
+                        <Checkbox
+                          key={g.id}
+                          checked={batchGroupIds.has(g.id)}
+                          onChange={() => toggleBatchGroup(g.id)}
+                          label={g.name}
+                        />
+                      ))
+                  )}
                 </div>
-              ) : null}
+                <Text size={100} className={styles.dim}>
+                  {t("models.batchAccessHint" as TK)}
+                </Text>
+              </div>
 
               <Checkbox
                 checked={batchConfigOn}
                 onChange={(_, d) => setBatchConfigOn(!!d.checked)}
                 label={t("models.batchConfigLabel" as TK)}
               />
-              {batchConfigOn ? (
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+              <div
+                style={{
+                  display: batchConfigOn ? "flex" : "none",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                <Dropdown
+                  value={
+                    batchConfigMode === "merge"
+                      ? t("models.batchConfigMerge" as TK)
+                      : t("models.batchConfigOverwrite" as TK)
+                  }
+                  selectedOptions={[batchConfigMode]}
+                  onOptionSelect={(_, d) =>
+                    setBatchConfigMode(
+                      (d.optionValue as "merge" | "overwrite") ?? "merge",
+                    )
+                  }
                 >
-                  <Dropdown
-                    value={
-                      batchConfigMode === "merge"
-                        ? t("models.batchConfigMerge" as TK)
-                        : t("models.batchConfigOverwrite" as TK)
-                    }
-                    selectedOptions={[batchConfigMode]}
-                    onOptionSelect={(_, d) =>
-                      setBatchConfigMode(
-                        (d.optionValue as "merge" | "overwrite") ?? "merge",
-                      )
-                    }
-                  >
-                    <Option value="merge">{t("models.batchConfigMerge" as TK)}</Option>
-                    <Option value="overwrite">
-                      {t("models.batchConfigOverwrite" as TK)}
-                    </Option>
-                  </Dropdown>
-                  <Textarea
-                    value={batchConfig}
-                    rows={5}
-                    placeholder={t("models.configPlaceholder" as TK)}
-                    style={{ fontFamily: tokens.fontFamilyMonospace }}
-                    onChange={(_, d) => setBatchConfig(d.value)}
-                  />
-                  <Text size={100} className={styles.dim}>
-                    {batchConfigMode === "merge"
-                      ? t("models.batchConfigMergeHint" as TK)
-                      : t("models.batchConfigOverwriteHint" as TK)}
-                  </Text>
-                </div>
-              ) : null}
+                  <Option value="merge">{t("models.batchConfigMerge" as TK)}</Option>
+                  <Option value="overwrite">
+                    {t("models.batchConfigOverwrite" as TK)}
+                  </Option>
+                </Dropdown>
+                <Textarea
+                  value={batchConfig}
+                  rows={5}
+                  placeholder={t("models.configPlaceholder" as TK)}
+                  style={{ fontFamily: tokens.fontFamilyMonospace }}
+                  onChange={(_, d) => setBatchConfig(d.value)}
+                />
+                <Text size={100} className={styles.dim}>
+                  {batchConfigMode === "merge"
+                    ? t("models.batchConfigMergeHint" as TK)
+                    : t("models.batchConfigOverwriteHint" as TK)}
+                </Text>
+              </div>
 
               <Checkbox
                 checked={batchCapabilitiesOn}
                 onChange={(_, d) => setBatchCapabilitiesOn(!!d.checked)}
                 label={t("models.batchCapabilitiesLabel" as TK)}
               />
-              {batchCapabilitiesOn ? (
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  {CAP_WORDS.map((w) => (
-                    <Checkbox
-                      key={w}
-                      label={w}
-                      checked={batchCapabilities[w]}
-                      onChange={(_, d) =>
-                        setBatchCapabilities((prev) => ({
-                          ...prev,
-                          [w]: !!d.checked,
-                        }))
-                      }
-                    />
-                  ))}
-                </div>
-              ) : null}
+              <div
+                style={{
+                  display: batchCapabilitiesOn ? "flex" : "none",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                {CAP_WORDS.map((w) => (
+                  <Checkbox
+                    key={w}
+                    label={w}
+                    checked={batchCapabilities[w]}
+                    onChange={(_, d) =>
+                      setBatchCapabilities((prev) => ({
+                        ...prev,
+                        [w]: !!d.checked,
+                      }))
+                    }
+                  />
+                ))}
+              </div>
 
               <Checkbox
                 checked={batchReasoningOn}
                 onChange={(_, d) => setBatchReasoningOn(!!d.checked)}
                 label={t("models.batchReasoningLabel" as TK)}
               />
-              {batchReasoningOn ? (
+              <div style={{ display: batchReasoningOn ? "block" : "none" }}>
                 <Dropdown
                   value={
                     batchReasoning === "unchanged"
@@ -1889,49 +1897,53 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                   <Option value="enabled">{t("models.batchAvailable" as TK)}</Option>
                   <Option value="disabled">{t("models.batchHidden" as TK)}</Option>
                 </Dropdown>
-              ) : null}
+              </div>
 
               <Checkbox
                 checked={batchLimitsOn}
                 onChange={(_, d) => setBatchLimitsOn(!!d.checked)}
                 label={t("models.batchLimitsLabel" as TK)}
               />
-              {batchLimitsOn ? (
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <Field label={t("models.limitContext" as TK)}>
-                    <Input
-                      type="number"
-                      value={batchLimitContext}
-                      placeholder="200000"
-                      style={{ width: 140 }}
-                      onChange={(_, d) => setBatchLimitContext(d.value)}
-                    />
-                  </Field>
-                  <Field label={t("models.limitInput" as TK)}>
-                    <Input
-                      type="number"
-                      value={batchLimitInput}
-                      style={{ width: 140 }}
-                      onChange={(_, d) => setBatchLimitInput(d.value)}
-                    />
-                  </Field>
-                  <Field label={t("models.limitOutput" as TK)}>
-                    <Input
-                      type="number"
-                      value={batchLimitOutput}
-                      style={{ width: 140 }}
-                      onChange={(_, d) => setBatchLimitOutput(d.value)}
-                    />
-                  </Field>
-                </div>
-              ) : null}
+              <div
+                style={{
+                  display: batchLimitsOn ? "flex" : "none",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <Field label={t("models.limitContext" as TK)}>
+                  <Input
+                    type="number"
+                    value={batchLimitContext}
+                    placeholder="200000"
+                    style={{ width: 140 }}
+                    onChange={(_, d) => setBatchLimitContext(d.value)}
+                  />
+                </Field>
+                <Field label={t("models.limitInput" as TK)}>
+                  <Input
+                    type="number"
+                    value={batchLimitInput}
+                    style={{ width: 140 }}
+                    onChange={(_, d) => setBatchLimitInput(d.value)}
+                  />
+                </Field>
+                <Field label={t("models.limitOutput" as TK)}>
+                  <Input
+                    type="number"
+                    value={batchLimitOutput}
+                    style={{ width: 140 }}
+                    onChange={(_, d) => setBatchLimitOutput(d.value)}
+                  />
+                </Field>
+              </div>
 
               <Checkbox
                 checked={batchCategoryOn}
                 onChange={(_, d) => setBatchCategoryOn(!!d.checked)}
                 label={t("models.batchCategoryLabel" as TK)}
               />
-              {batchCategoryOn ? (
+              <div style={{ display: batchCategoryOn ? "block" : "none" }}>
                 <Dropdown
                   value={categoryLabel(batchCategoryId)}
                   selectedOptions={[batchCategoryId]}
@@ -1944,7 +1956,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                     <Option key={c.id} value={String(c.id)}>{c.name}</Option>
                   ))}
                 </Dropdown>
-              ) : null}
+              </div>
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setBatchOpen(false)}>
@@ -2357,6 +2369,8 @@ function ModelsDevSection({
     }
   }
 
+  const [devSectionOpen, setDevSectionOpen] = useState(false);
+
   function label(entry: Record<string, unknown>): string {
     return String(entry.name ?? entry.id ?? "");
   }
@@ -2368,10 +2382,13 @@ function ModelsDevSection({
   }
 
   return (
-    <details>
-      <summary
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <Button
+        appearance="subtle"
+        icon={devSectionOpen ? <ChevronDownRegular /> : <ChevronRightRegular />}
+        onClick={() => setDevSectionOpen((v) => !v)}
         style={{
-          cursor: "pointer",
+          justifyContent: "flex-start",
           padding: "8px 12px",
           fontWeight: 600,
           color: tokens.colorNeutralForeground1,
@@ -2386,13 +2403,13 @@ function ModelsDevSection({
             {modelsDevId}
           </Text>
         ) : null}
-      </summary>
+      </Button>
       <div
         style={{
+          display: devSectionOpen ? "flex" : "none",
           border: `1px solid ${tokens.colorNeutralStroke2}`,
           borderRadius: 8,
           padding: 12,
-          display: "flex",
           flexDirection: "column",
           gap: 8,
           background: tokens.colorNeutralBackground2,
@@ -2478,6 +2495,6 @@ function ModelsDevSection({
           </div>
         )}
       </div>
-    </details>
+    </div>
   );
 }

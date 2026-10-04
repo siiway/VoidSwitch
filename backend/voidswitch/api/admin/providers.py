@@ -600,16 +600,29 @@ async def fetch_provider_models(
     """
     # Resolve token: prefer key_id (server-side decrypt), fall back to plain token.
     token = body.token
+    target_base_url = body.base_url
     if body.key_id is not None:
         key = await session.get(ApiKey, body.key_id)
         if key is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found.")
+        # When using an existing key_id, force target_base_url to the key's provider base_url
+        # to prevent arbitrary SSRF exfiltration of decrypted provider credentials.
+        if key.provider is None:
+            provider = await session.get(Provider, key.provider_id)
+        else:
+            provider = key.provider
+        if provider is None or not provider.base_url or not provider.base_url.strip():
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "The selected key must belong to a provider with a configured base URL.",
+            )
+        target_base_url = provider.base_url
         settings = get_settings()
         token = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
     if not token:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Either token or key_id is required.")
 
-    url = _fetch_models_url(body.base_url, body.path)
+    url = _fetch_models_url(target_base_url, body.path)
     method = body.method.upper()
     if method not in ("GET", "POST"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "method must be GET or POST")

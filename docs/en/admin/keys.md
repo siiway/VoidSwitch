@@ -21,7 +21,7 @@ Manage them from the provider's **Keys** page (**staff-only**).
   Each key row offers a refresh button; clicking it immediately uses its refresh token to exchange for a new
   access token, rotates and re-encrypts the credential bundle, and resets the key to **active** (clearing the
   failure count and disable reason).
-  This operation is recorded in both the [request logs](/en/admin/logs) and the [audit records](/en/admin/audit), along with the executing user's info.
+  This operation is recorded in both the [request logs](/en/guide/logs-usage) and the [audit records](/en/admin/audit), along with the executing user's info.
 - **Clean up** — bulk-delete failed keys (`invalid` or `insufficient_balance`),
   with an optional minimum-lifetime filter for empty-balance keys.
 

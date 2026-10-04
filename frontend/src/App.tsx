@@ -25,12 +25,14 @@ function Protected({
   children,
   staff,
   owner,
+  roleGroupAdmin,
 }: {
   children: ReactNode;
   staff?: boolean;
   owner?: boolean;
+  roleGroupAdmin?: boolean;
 }) {
-  const { user, loading, isStaff, isOwner } = useAuth();
+  const { user, loading, isStaff, isOwner, isRoleGroupAdmin } = useAuth();
   if (loading) {
     return (
       <div style={{ display: "grid", placeItems: "center", height: "100vh" }}>
@@ -40,7 +42,9 @@ function Protected({
   }
   if (!user) return <Navigate to="/login" replace />;
   if (owner && !isOwner) return <Navigate to="/dashboard" replace />;
-  if (staff && !isStaff) return <Navigate to="/dashboard" replace />;
+  if (staff && !isStaff && (!roleGroupAdmin || !isRoleGroupAdmin)) {
+    return <Navigate to="/dashboard" replace />;
+  }
   return <>{children}</>;
 }
 
@@ -123,7 +127,7 @@ export function App() {
         <Route
           path="/users"
           element={
-            <Protected staff>
+            <Protected staff roleGroupAdmin>
               <Users />
             </Protected>
           }
@@ -155,7 +159,7 @@ export function App() {
         <Route
           path="/audit"
           element={
-            <Protected staff>
+            <Protected staff roleGroupAdmin>
               <Audit />
             </Protected>
           }
