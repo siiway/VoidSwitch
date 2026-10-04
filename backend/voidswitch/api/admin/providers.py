@@ -611,8 +611,12 @@ async def fetch_provider_models(
             provider = await session.get(Provider, key.provider_id)
         else:
             provider = key.provider
-        if provider and provider.base_url:
-            target_base_url = provider.base_url
+        if provider is None or not provider.base_url or not provider.base_url.strip():
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "The selected key must belong to a provider with a configured base URL.",
+            )
+        target_base_url = provider.base_url
         settings = get_settings()
         token = decrypt_secret(key.key_ciphertext, secret=settings.server.secret_key)
     if not token:
