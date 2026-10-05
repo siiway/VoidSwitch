@@ -37,6 +37,10 @@ Staff see a platform-wide overview:
 - **Background jobs**: the status of the balance-probe, proxy-revival, and log-cleanup scheduled tasks.
 - The **Site** and **Personal** activity heatmaps at the bottom of the page (see "Activity heatmap" above).
 
+## Health page
+
+**Health → Models** shows each model's live availability status, recent success rate, average time-to-first-token, and request sample count. Use the status filter at the top of the page to show only **Healthy**, **Degraded**, **Unavailable**, or **Learning** models; choose **All statuses** to restore the complete list. Staff can also switch to the **Nodes** tab to inspect outbound-node quality.
+
 ## Sidebar navigation
 
 The sidebar groups pages into **Overview**, **Routing**, **Operations**, and **Account**. You only see pages your tier can access; theme switch, language switch, and sign out are in the footer.

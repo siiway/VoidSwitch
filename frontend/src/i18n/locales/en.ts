@@ -95,6 +95,8 @@ const en = {
     subtitle: "Live model and outbound-node quality",
     modelsTab: "Models",
     nodesTab: "Nodes",
+    statusFilter: "Filter by model status",
+    allStatuses: "All statuses",
     recentSuccess: "Recent success",
     avgTtft: "Average TTFT",
     samples: "Requests",

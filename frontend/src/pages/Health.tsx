@@ -15,7 +15,7 @@ import { LiveRegular } from "@fluentui/react-icons";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { API_BASE, getToken } from "../api/client";
-import type { ModelHealth, NodeHealth } from "../api/types";
+import type { ModelHealth, ModelHealthStatus, NodeHealth } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { PageHeader } from "../components/ui";
 import type { Translations } from "../i18n/locales/en";
@@ -23,6 +23,14 @@ import type { Translations } from "../i18n/locales/en";
 type TK = keyof Translations;
 type HealthTab = "models" | "nodes";
 type WindowKey = "30m" | "1h" | "3h" | "12h" | "1d" | "3d" | "7d";
+type ModelStatusFilter = "all" | ModelHealthStatus;
+
+const MODEL_STATUSES: ModelHealthStatus[] = [
+  "healthy",
+  "degraded",
+  "unavailable",
+  "learning",
+];
 
 const useStyles = makeStyles({
   controls: { display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" },
@@ -39,6 +47,7 @@ export function Health() {
   const { isStaff } = useAuth();
   const [tab, setTab] = useState<HealthTab>("models");
   const [windowKey, setWindowKey] = useState<WindowKey>("1d");
+  const [modelStatus, setModelStatus] = useState<ModelStatusFilter>("all");
   const [live, setLive] = useState(true);
   const [models, setModels] = useState<ModelHealth[]>([]);
   const [nodes, setNodes] = useState<NodeHealth[]>([]);
@@ -86,15 +95,33 @@ export function Health() {
     return () => { active = false; controller.abort(); };
   }, [live, tab, windowKey]);
 
+  const filteredModels = useMemo(
+    () => models.filter((model) => modelStatus === "all" || model.status === modelStatus),
+    [models, modelStatus],
+  );
+
   const actions = (
     <div className={styles.controls}>
       {isStaff && <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as HealthTab)}><Tab value="models">{t("health.modelsTab" as TK)}</Tab><Tab value="nodes">{t("health.nodesTab" as TK)}</Tab></TabList>}
+      {tab === "models" && (
+        <Dropdown
+          aria-label={t("health.statusFilter" as TK)}
+          value={modelStatus === "all" ? t("health.allStatuses" as TK) : t(`models.health.${modelStatus}` as TK)}
+          selectedOptions={[modelStatus]}
+          onOptionSelect={(_, d) => setModelStatus((d.optionValue as ModelStatusFilter) ?? "all")}
+        >
+          <Option value="all">{t("health.allStatuses" as TK)}</Option>
+          {MODEL_STATUSES.map((status) => (
+            <Option key={status} value={status}>{t(`models.health.${status}` as TK)}</Option>
+          ))}
+        </Dropdown>
+      )}
       {tab === "nodes" && <Dropdown value={windowKey} selectedOptions={[windowKey]} onOptionSelect={(_, d) => setWindowKey((d.optionValue as WindowKey) ?? "1d")}>{(["30m", "1h", "3h", "12h", "1d", "3d", "7d"] as const).map((value) => <Option key={value} value={value}>{value}</Option>)}</Dropdown>}
       <Tooltip content={live ? t("logs.liveDisconnect" as TK) : t("logs.liveConnect" as TK)} relationship="label"><Button appearance={live ? "primary" : "subtle"} icon={<LiveRegular />} onClick={() => setLive((value) => !value)}>{live ? t("logs.liveOn" as TK) : t("logs.liveConnect" as TK)}</Button></Tooltip>
     </div>
   );
 
-  return <div><PageHeader title={t("health.title" as TK)} subtitle={t("health.subtitle" as TK)} extraActions={actions} /><Text size={200}>{t(`health.stream.${state}` as TK)}</Text>{tab === "models" ? <div className={styles.grid}>{models.map((model) => <ModelCard key={model.model_id} model={model} staff={isStaff} />)}</div> : <div className={styles.grid}>{nodes.map((node) => <NodeCard key={node.id} node={node} />)}</div>}</div>;
+  return <div><PageHeader title={t("health.title" as TK)} subtitle={t("health.subtitle" as TK)} extraActions={actions} /><Text size={200}>{t(`health.stream.${state}` as TK)}</Text>{tab === "models" ? <div className={styles.grid}>{filteredModels.map((model) => <ModelCard key={model.model_id} model={model} staff={isStaff} />)}</div> : <div className={styles.grid}>{nodes.map((node) => <NodeCard key={node.id} node={node} />)}</div>}</div>;
 }
 
 function ModelCard({ model, staff }: { model: ModelHealth; staff: boolean }) {

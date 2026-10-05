@@ -97,6 +97,8 @@ const zh: Translations = {
     subtitle: "实时查看模型与出站节点质量",
     modelsTab: "模型",
     nodesTab: "节点",
+    statusFilter: "按模型状态筛选",
+    allStatuses: "全部状态",
     recentSuccess: "近期成功率",
     avgTtft: "平均首字时间",
     samples: "请求数",

@@ -1,3 +1,3 @@
 """VoidSwitch — production-grade multi-provider LLM API reverse proxy."""
 
-__version__ = "0.2.2-2026.10.5.4"
+__version__ = "0.2.2-2026.10.5.5"
