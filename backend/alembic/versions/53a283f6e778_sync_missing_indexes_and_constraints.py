@@ -8,7 +8,7 @@ Create Date: 2026-10-04 20:43:04.463739
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from alembic import op
@@ -53,10 +53,13 @@ def upgrade() -> None:
 
     req_indexes = {ix["name"] for ix in insp.get_indexes("request_logs")}
     dialect = conn.dialect.name
-    # These columns were stored as Unix epoch seconds by older schemas. Convert
-    # the values before SQLite's batch-copy operation (and use an explicit
-    # PostgreSQL USING expression) so the new DateTime columns contain dates.
-    if dialect == "sqlite":
+    # Older schemas stored these as Unix epoch seconds, while some installations
+    # already have timestamp columns. Inspect the live schema before choosing a
+    # PostgreSQL conversion: to_timestamp() only accepts numeric epoch values.
+    request_log_columns = {column["name"]: column for column in insp.get_columns("request_logs")}
+    started_is_datetime = isinstance(request_log_columns["started_at"]["type"], sa.DateTime)
+    finished_is_datetime = isinstance(request_log_columns["finished_at"]["type"], sa.DateTime)
+    if dialect == "sqlite" and not started_is_datetime:
         conn.execute(
             sa.text(
                 "UPDATE request_logs SET started_at = "
@@ -64,6 +67,7 @@ def upgrade() -> None:
                 "WHERE started_at IS NOT NULL"
             )
         )
+    if dialect == "sqlite" and not finished_is_datetime:
         conn.execute(
             sa.text(
                 "UPDATE request_logs SET finished_at = "
@@ -71,12 +75,18 @@ def upgrade() -> None:
                 "WHERE finished_at IS NOT NULL"
             )
         )
-    started_type_args = (
-        {"postgresql_using": "to_timestamp(started_at)"} if dialect == "postgresql" else {}
-    )
-    finished_type_args = (
-        {"postgresql_using": "to_timestamp(finished_at)"} if dialect == "postgresql" else {}
-    )
+
+    def timestamp_type_args(column_name: str) -> dict[str, Any]:
+        if dialect != "postgresql":
+            return {}
+        current_type = request_log_columns[column_name]["type"]
+        using = (
+            column_name if isinstance(current_type, sa.DateTime) else f"to_timestamp({column_name})"
+        )
+        return {"postgresql_using": using}
+
+    started_type_args = timestamp_type_args("started_at")
+    finished_type_args = timestamp_type_args("finished_at")
     with op.batch_alter_table("request_logs", schema=None) as batch_op:
         batch_op.alter_column(
             "started_at",
@@ -134,7 +144,10 @@ def downgrade() -> None:
             batch_op.drop_index(batch_op.f("ix_users_login_token_hash"))
 
     dialect = conn.dialect.name
-    if dialect == "sqlite":
+    request_log_columns = {column["name"]: column for column in insp.get_columns("request_logs")}
+    started_is_datetime = isinstance(request_log_columns["started_at"]["type"], sa.DateTime)
+    finished_is_datetime = isinstance(request_log_columns["finished_at"]["type"], sa.DateTime)
+    if dialect == "sqlite" and started_is_datetime:
         conn.execute(
             sa.text(
                 "UPDATE request_logs SET started_at = "
@@ -142,6 +155,7 @@ def downgrade() -> None:
                 "WHERE started_at IS NOT NULL"
             )
         )
+    if dialect == "sqlite" and finished_is_datetime:
         conn.execute(
             sa.text(
                 "UPDATE request_logs SET finished_at = "
@@ -150,10 +164,14 @@ def downgrade() -> None:
             )
         )
     finished_epoch_args = (
-        {"postgresql_using": "extract(epoch from finished_at)"} if dialect == "postgresql" else {}
+        {"postgresql_using": "extract(epoch from finished_at)"}
+        if dialect == "postgresql" and finished_is_datetime
+        else {}
     )
     started_epoch_args = (
-        {"postgresql_using": "extract(epoch from started_at)"} if dialect == "postgresql" else {}
+        {"postgresql_using": "extract(epoch from started_at)"}
+        if dialect == "postgresql" and started_is_datetime
+        else {}
     )
     with op.batch_alter_table("request_logs", schema=None) as batch_op:
         if "ix_request_logs_session_id" in req_indexes:
