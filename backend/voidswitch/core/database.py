@@ -47,15 +47,34 @@ _ASGIApp = Callable[[_Scope, _Receive, _Send], Awaitable[None]]
 class Database:
     """Owns an async engine + session factory for a single database URL."""
 
-    def __init__(self, url: str, *, echo: bool = False) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        echo: bool = False,
+        pool_size: int = 5,
+        max_overflow: int = 5,
+        pool_timeout: float = 15,
+        pool_recycle: int = 1800,
+        pool_pre_ping: bool = True,
+    ) -> None:
         connect_args: dict[str, object] = {}
+        pool_options: dict[str, object] = {}
         if url.startswith("sqlite"):
             connect_args["timeout"] = 30
+        else:
+            pool_options = {
+                "pool_size": pool_size,
+                "max_overflow": max_overflow,
+                "pool_timeout": pool_timeout,
+                "pool_recycle": pool_recycle,
+            }
         self.engine: AsyncEngine = create_async_engine(
             url,
             echo=echo,
-            pool_pre_ping=True,
+            pool_pre_ping=pool_pre_ping,
             connect_args=connect_args,
+            **pool_options,
         )
         self.session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             self.engine,
@@ -293,9 +312,26 @@ def _backfill_provider_uuids(conn: Any) -> None:
 _db: Database | None = None
 
 
-def init_database(url: str, *, echo: bool = False) -> Database:
+def init_database(
+    url: str,
+    *,
+    echo: bool = False,
+    pool_size: int = 5,
+    max_overflow: int = 5,
+    pool_timeout: float = 15,
+    pool_recycle: int = 1800,
+    pool_pre_ping: bool = True,
+) -> Database:
     global _db
-    _db = Database(url, echo=echo)
+    _db = Database(
+        url,
+        echo=echo,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
+        pool_recycle=pool_recycle,
+        pool_pre_ping=pool_pre_ping,
+    )
     return _db
 
 
@@ -400,8 +436,7 @@ async def _safe_rollback(session: AsyncSession) -> None:
     """Roll back a session, swallowing errors during cancellation/shutdown."""
     if not session.in_transaction():
         return
-    with suppress(asyncio.CancelledError, Exception):
-        await asyncio.shield(session.rollback())
+    await _finish_session_operation(session.rollback())
 
 
 async def _safe_close(session: AsyncSession) -> None:
@@ -411,5 +446,16 @@ async def _safe_close(session: AsyncSession) -> None:
     close — without this, SQLAlchemy leaks connections that the garbage
     collector later terminates with noisy tracebacks.
     """
-    with suppress(asyncio.CancelledError, Exception):
-        await asyncio.shield(session.close())
+    await _finish_session_operation(session.close())
+
+
+async def _finish_session_operation(operation: Awaitable[None]) -> None:
+    """Keep rollback/close alive and awaited after caller cancellation."""
+    task = asyncio.ensure_future(operation)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+    except Exception:
+        pass

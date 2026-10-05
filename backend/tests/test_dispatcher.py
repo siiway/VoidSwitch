@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import cast
 
 import httpx
 import pytest
 import respx
-from sqlalchemy import select
+from sqlalchemy import event, select
 from voidswitch.constants import ApiStyle, KeyStatus, NodeStatus
 from voidswitch.core.config import get_settings
 from voidswitch.core.security import encrypt_secret, hash_token
@@ -18,6 +19,109 @@ from voidswitch.services.dispatcher import DispatchRequest, dispatch
 pytestmark = pytest.mark.asyncio
 
 DS_URL = "https://api.deepseek.com/chat/completions"
+
+
+async def test_upstream_wait_does_not_checkout_database_connection(db, seeded):
+    checked_out = 0
+    peak = 0
+
+    def checkout(*_):
+        nonlocal checked_out, peak
+        checked_out += 1
+        peak = max(peak, checked_out)
+
+    def checkin(*_):
+        nonlocal checked_out
+        checked_out -= 1
+
+    event.listen(db.engine.sync_engine, "checkout", checkout)
+    event.listen(db.engine.sync_engine, "checkin", checkin)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def upstream(_request):
+        entered.set()
+        await release.wait()
+        return httpx.Response(200, json=OAI_RESPONSE)
+
+    try:
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(DS_URL).mock(side_effect=upstream)
+            task = asyncio.create_task(
+                dispatch(
+                    DispatchRequest(
+                        inbound_style=ApiStyle.OPENAI,
+                        model="deepseek-chat",
+                        payload={"model": "deepseek-chat", "messages": []},
+                        stream=False,
+                        token_id=seeded["token_id"],
+                    )
+                )
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                assert checked_out == 0
+            finally:
+                release.set()
+                await task
+        assert peak >= 1
+        assert checked_out == 0
+    finally:
+        event.remove(db.engine.sync_engine, "checkout", checkout)
+        event.remove(db.engine.sync_engine, "checkin", checkin)
+
+
+async def test_gateway_session_releases_checkout_during_upstream(db, seeded):
+    checked_out = 0
+
+    def checkout(*_):
+        nonlocal checked_out
+        checked_out += 1
+
+    def checkin(*_):
+        nonlocal checked_out
+        checked_out -= 1
+
+    event.listen(db.engine.sync_engine, "checkout", checkout)
+    event.listen(db.engine.sync_engine, "checkin", checkin)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def upstream(_request):
+        entered.set()
+        await release.wait()
+        return httpx.Response(200, json=OAI_RESPONSE)
+
+    try:
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(DS_URL).mock(side_effect=upstream)
+
+            async def run():
+                async with db.session() as session:
+                    await session.get(ApiKey, seeded["key_id"])
+                    return await dispatch(
+                        DispatchRequest(
+                            inbound_style=ApiStyle.OPENAI,
+                            model="deepseek-chat",
+                            payload={"model": "deepseek-chat", "messages": []},
+                            stream=False,
+                            token_id=seeded["token_id"],
+                        ),
+                        session=session,
+                    )
+
+            task = asyncio.create_task(run())
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                assert checked_out == 0
+            finally:
+                release.set()
+                await task
+        assert checked_out == 0
+    finally:
+        event.remove(db.engine.sync_engine, "checkout", checkout)
+        event.remove(db.engine.sync_engine, "checkin", checkin)
+
 
 OAI_RESPONSE = {
     "id": "chatcmpl-1",

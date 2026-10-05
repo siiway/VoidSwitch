@@ -57,7 +57,15 @@ error_log = get_logger("error")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
-    db = init_database(settings.database.url, echo=settings.database.echo)
+    db = init_database(
+        settings.database.url,
+        echo=settings.database.echo,
+        pool_size=settings.database.pool_size,
+        max_overflow=settings.database.max_overflow,
+        pool_timeout=settings.database.pool_timeout,
+        pool_recycle=settings.database.pool_recycle,
+        pool_pre_ping=settings.database.pool_pre_ping,
+    )
     # Schema is owned by Alembic: upgrade to head (the 0001_baseline revision
     # creates a fresh schema and heals pre-Alembic databases, so this is safe on
     # every boot and requires no manual migration step on deploy).

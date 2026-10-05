@@ -562,6 +562,9 @@ async def _do_dispatch(
     cooled_fallback_ids = {row.upstream.id for row in ranked_upstreams if row.tier == 3}
     max_upstreams = route.max_upstream_attempts or len(entries)
     upstreams_tried = 0
+    # Gateway authentication and route queries have already checked out a DB
+    # connection. ORM values remain usable with expire_on_commit=False.
+    await session.commit()
 
     # When node health-checking is off, connectivity is managed externally
     # (e.g. mihomo): a failing node is never auto-disabled, so failures are
@@ -688,6 +691,9 @@ async def _do_dispatch(
                 )
                 network_attempts += len(outcome.network_attempts)
                 node = outcome.node
+                # Network health samples are staged after HTTP headers; commit
+                # before consuming a potentially hours-long SSE aggregation.
+                await session.commit()
 
                 if aggregate_stream and outcome.response is not None:
                     # Consume + fold the streaming reply into one JSON object.
@@ -752,7 +758,7 @@ async def _do_dispatch(
                             reason=last_error,
                         )
                         abandon_upstream = cooled is not None
-                    await session.flush()
+                    await session.commit()
                     break
 
                 # We have an HTTP response.
@@ -791,7 +797,7 @@ async def _do_dispatch(
                     ):
                         protected_repeat_used = True
                         attempt_summaries[-1]["protected_repeat_used"] = True
-                        await session.flush()
+                        await session.commit()
                         continue
                     await upstream_health.trip(
                         session,
@@ -803,7 +809,7 @@ async def _do_dispatch(
                         reason=last_error,
                     )
                     abandon_upstream = True
-                    await session.flush()
+                    await session.commit()
                     break
                 if err_class is ErrorClass.OK:
                     # "200 OK + 0 tokens" auto-retry: a 200 that produced nothing
@@ -820,7 +826,7 @@ async def _do_dispatch(
                         last_status = 200
                         key.failed_count += 1
                         upstream_health.record(health_key, success=False)
-                        await session.flush()
+                        await session.commit()
                         break  # next key/provider
                     key.total_requests += 1
                     key.last_used_at = _utcnow()
@@ -882,7 +888,7 @@ async def _do_dispatch(
                     _disable_key(key, status, f"HTTP {outcome.status_code}: {err_class}")
                     last_error = f"key disabled ({err_class})"
                     last_status = outcome.status_code
-                    await session.flush()
+                    await session.commit()
                     break  # next key
 
                 if err_class is ErrorClass.RATE_LIMITED:
@@ -905,7 +911,7 @@ async def _do_dispatch(
                     )
                     last_error = f"rate limited (cooldown {int(cooldown)}s)"
                     last_status = 429
-                    await session.flush()
+                    await session.commit()
                     # A 429 also parks only the affected key. Finish trying
                     # this upstream's key budget before moving on; future
                     # requests exclude the globally cooled upstream.
@@ -923,7 +929,7 @@ async def _do_dispatch(
                     last_status = 404
                     upstream_health.record(health_key, success=False)
                     abandon_upstream = True
-                    await session.flush()
+                    await session.commit()
                     break  # next key (then next entry)
 
                 if err_class in (ErrorClass.SERVER_ERROR, ErrorClass.UPSTREAM_OVERLOADED):
@@ -942,7 +948,7 @@ async def _do_dispatch(
                     abandon_upstream = True
                     last_error = f"upstream {outcome.status_code}"
                     last_status = outcome.status_code
-                    await session.flush()
+                    await session.commit()
                     break  # next key/provider
 
                 # BAD_REQUEST: the client's request is wrong — return it as-is.
@@ -1185,6 +1191,7 @@ async def _attempt(
             deadline=deadline,
             session=session,
             auto_disable_nodes=auto_disable_nodes,
+            release_db=session.commit if session is not None else None,
         )
         response = owned.response
         route = owned.route
@@ -1985,17 +1992,19 @@ async def _stream_cleanup(
     resp_body: Any = None,
 ) -> None:
     """Close the upstream response and persist captured usage — shielded caller."""
-    await response.aclose()
-    await _persist_stream_usage(
-        log_id,
-        token_id,
-        usage,
-        req_status=req_status,
-        first_token_ms=first_token_ms,
-        finished_at=finished_at,
-        error=error,
-        resp_body=resp_body,
-    )
+    try:
+        await response.aclose()
+    finally:
+        await _persist_stream_usage(
+            log_id,
+            token_id,
+            usage,
+            req_status=req_status,
+            first_token_ms=first_token_ms,
+            finished_at=finished_at,
+            error=error,
+            resp_body=resp_body,
+        )
     if health_key is not None:
         if req_status == "completed":
             upstream_health.record(health_key, success=True, ttft_ms=first_token_ms)
@@ -2111,7 +2120,7 @@ async def _build_stream(
         # the shield, the cancellation propagates into these awaits and the
         # upstream connection leaks / usage is lost.
         try:
-            await asyncio.shield(
+            cleanup = asyncio.create_task(
                 _stream_cleanup(
                     response,
                     log_id,
@@ -2127,7 +2136,12 @@ async def _build_stream(
                     ),
                 )
             )
+            await asyncio.shield(cleanup)
         except asyncio.CancelledError:
+            # shield() alone detaches the task when cancelled. Wait for the DB
+            # session to close before the request finishes.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await cleanup
             log.debug("stream_cancelled", log_id=log_id)
 
 

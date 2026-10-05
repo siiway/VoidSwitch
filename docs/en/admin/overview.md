@@ -53,3 +53,19 @@ VoidSwitch admin), and other teams never grant tiers (they can still grant [role
 | [Void-Token](/en/admin/tokens) | Owner | Manage client tokens across users. |
 | [Settings](/en/admin/settings) | Staff/Owner | Adjust operational thresholds. |
 | [Audit & secrets](/en/admin/audit) | Staff/Owner | Review records; reveal secrets. |
+
+## Database connection pool
+
+PostgreSQL deployments can tune each worker's pool with
+`VOIDSWITCH_DATABASE__POOL_SIZE` (default 5),
+`VOIDSWITCH_DATABASE__MAX_OVERFLOW` (default 5),
+`VOIDSWITCH_DATABASE__POOL_TIMEOUT` (default 15 seconds),
+`VOIDSWITCH_DATABASE__POOL_RECYCLE` (default 1800 seconds), and
+`VOIDSWITCH_DATABASE__POOL_PRE_PING` (default true). The connection URL does not
+replace these SQLAlchemy pool settings. The theoretical connection ceiling is
+`workers × (pool_size + max_overflow)`; leave capacity in PostgreSQL
+`max_connections` for administration and other services.
+
+SQLite does not use these queue-pool capacity settings. It keeps the driver's
+default pool behavior; reduce concurrent writes and lock waits rather than adding
+connections.

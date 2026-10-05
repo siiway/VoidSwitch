@@ -53,3 +53,17 @@ VoidSwitch 管理员），其他团队也从不会授予层级（它们仍然可
 | [Void-Token](/admin/tokens) | 所有者 | 跨用户管理客户端令牌。 |
 | [设置](/admin/settings) | 管理人员/所有者 | 调整运维阈值。 |
 | [审计与机密](/admin/audit) | 管理人员/所有者 | 审查记录；显示机密信息。 |
+
+## 数据库连接池
+
+PostgreSQL 部署可通过环境变量调整每个 worker 的连接池：
+`VOIDSWITCH_DATABASE__POOL_SIZE`（默认 5）、
+`VOIDSWITCH_DATABASE__MAX_OVERFLOW`（默认 5）、
+`VOIDSWITCH_DATABASE__POOL_TIMEOUT`（默认 15 秒）、
+`VOIDSWITCH_DATABASE__POOL_RECYCLE`（默认 1800 秒）和
+`VOIDSWITCH_DATABASE__POOL_PRE_PING`（默认 true）。连接 URL 不能替代这些
+SQLAlchemy pool 参数。理论连接上限为 `worker 数 × (pool_size + max_overflow)`；
+请在 PostgreSQL `max_connections` 中为管理连接和其他服务预留余量。
+
+SQLite 不使用这些队列池容量参数；它保持当前驱动的默认池行为，重点应放在减少
+并发写入和锁等待，而不是增加连接数。

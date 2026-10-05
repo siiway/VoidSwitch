@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -189,6 +189,7 @@ async def execute_request(
     session: Any | None = None,
     auto_disable_nodes: bool = True,
     retry_response: Callable[[httpx.Response], bool] | None = None,
+    release_db: Callable[[], Awaitable[None]] | None = None,
 ) -> OwnedResponse:
     """Open a request and retry only failures that occur before HTTP headers.
 
@@ -198,6 +199,10 @@ async def execute_request(
     from voidswitch.services import node_health, routing, settings_store
 
     routes = await resolve_target(target, session)
+    # Route lookup may autobegin a transaction. Release its checkout before
+    # waiting for an upstream socket (including every retry and streamed reply).
+    if release_db is not None:
+        await release_db()
     limit = max(1, max_attempts or settings_store.get_int("network_max_attempts", 3))
     selected: list[tuple[Route, Any | None]] = []
     seen: set[tuple[str | None, str | None, int | None]] = set()

@@ -157,6 +157,7 @@ async def _post(
             read_timeout=30,
             session=session,
             retry_response=retry_response,
+            release_db=session.commit if session is not None else None,
         )
         response = owned.response
         await read_response_body(response)

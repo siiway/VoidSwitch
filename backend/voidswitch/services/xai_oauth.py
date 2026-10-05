@@ -223,6 +223,7 @@ async def _post_token(
                 retry_response=lambda response: (
                     response.status_code in (403, 408, 425, 429) or response.status_code >= 500
                 ),
+                release_db=session.commit if session is not None else None,
             )
             network_attempts += len(owned.attempts)
             resp = owned.response
