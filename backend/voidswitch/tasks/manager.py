@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from voidswitch.core.logging import get_logger
+from voidswitch.core.redis import get_redis
 from voidswitch.services import settings_store
 
 log = get_logger("tasks")
@@ -94,17 +95,26 @@ class TaskManager:
         while not self._stopping.is_set():
             if task.is_enabled():
                 try:
-                    await task.tick()
-                    task.last_error = None
+                    await self._run_tick(task)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     task.last_error = str(exc)
                     log.warning("task_tick_failed", task=task.name, error=str(exc))
-                task.runs += 1
-                task.last_run = dt.datetime.now(dt.UTC)
             interval = self._effective_interval(task)
             await self._sleep(interval)
+
+    async def _run_tick(self, task: PeriodicTask) -> bool:
+        async with get_redis().lease(
+            f"task:{task.name}", max(30, self._effective_interval(task))
+        ) as acquired:
+            if not acquired:
+                return False
+            await task.tick()
+            task.last_error = None
+            task.runs += 1
+            task.last_run = dt.datetime.now(dt.UTC)
+            return True
 
     async def _sleep(self, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):

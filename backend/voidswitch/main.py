@@ -41,6 +41,7 @@ from voidswitch.core.database import (
     run_migrations,
 )
 from voidswitch.core.logging import configure_logging, get_logger
+from voidswitch.core.redis import RedisConfig, close_redis, init_redis
 from voidswitch.services import role_groups, routing, settings_store
 from voidswitch.services.dispatcher import reconcile_pending_request_logs
 from voidswitch.services.network import get_pool
@@ -57,6 +58,16 @@ error_log = get_logger("error")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+    redis = await init_redis(
+        RedisConfig(
+            url=settings.redis.url,
+            key_prefix=settings.redis.key_prefix,
+            max_connections=settings.redis.max_connections,
+            connect_timeout=settings.redis.connect_timeout,
+            socket_timeout=settings.redis.socket_timeout,
+        )
+    )
+    app.state.redis = redis
     db = init_database(
         settings.database.url,
         echo=settings.database.echo,
@@ -72,9 +83,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await run_migrations()
     async with db.session() as session:
         await settings_store.ensure_defaults(session)
-        await settings_store.load_all(session)
+        settings_snapshot = await settings_store.load_all(session)
         await role_groups.ensure_moderator_group(session)
         await routing.ensure_seeded_groups(session)
+    await settings_store.publish(settings_snapshot)
+    await settings_store.start_listener()
     # Heal orphaned "pending" stream rows (worker killed mid-stream, abandoned
     # connections) — anything still pending past the response timeout is marked
     # terminated (已切断). Safe no-op when response_timeout_seconds = 0.
@@ -135,8 +148,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await manager.stop()
+        await settings_store.stop_listener()
         await get_pool().aclose()
         await db.dispose()
+        await close_redis()
         log.info("voidswitch_stopped")
 
 

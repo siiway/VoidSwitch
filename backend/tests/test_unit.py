@@ -881,7 +881,7 @@ async def test_xai_oauth_begin_login_and_extract_code():
 
     from voidswitch.services import xai_oauth
 
-    authorize_url, state = xai_oauth.begin_login(7)
+    authorize_url, state = await xai_oauth.begin_login(7)
     parsed = urlparse(authorize_url)
     assert parsed.netloc == "auth.x.ai"
     assert parsed.path == "/oauth2/authorize"
@@ -909,7 +909,7 @@ async def test_xai_oauth_begin_login_and_extract_code():
 async def test_xai_oauth_complete_login_happy_path():
     from voidswitch.services import xai_oauth
 
-    _, state = xai_oauth.begin_login(7)
+    _, state = await xai_oauth.begin_login(7)
 
     async def fake_post_token(payload, routes, **kwargs):
         assert payload["grant_type"] == "authorization_code"
@@ -940,7 +940,7 @@ async def test_xai_oauth_complete_login_happy_path():
     assert bundle["scopes"] == ["openid", "grok-cli:access"]
     assert bundle["expires_at"] > 0
     # State is single-use: burned after a successful exchange.
-    assert xai_oauth._login_states.peek(state) is None
+    assert await xai_oauth._login_states.peek(state) is None
 
 
 async def test_xai_oauth_complete_login_rejections():
@@ -951,13 +951,13 @@ async def test_xai_oauth_complete_login_rejections():
         await xai_oauth.complete_login("code", "no-such-state", provider_id=7)
 
     # Provider mismatch burns the state.
-    _, state = xai_oauth.begin_login(7)
+    _, state = await xai_oauth.begin_login(7)
     with pytest.raises(xai_oauth.LoginError):
         await xai_oauth.complete_login("code", state, provider_id=999)
-    assert xai_oauth._login_states.peek(state) is None
+    assert await xai_oauth._login_states.peek(state) is None
 
     # Embedded state in the pasted URL disagrees with the login's state.
-    _, state = xai_oauth.begin_login(7)
+    _, state = await xai_oauth.begin_login(7)
     with pytest.raises(xai_oauth.LoginError):
         await xai_oauth.complete_login(
             "http://127.0.0.1:56121/callback?code=X&state=WRONG",
@@ -965,10 +965,10 @@ async def test_xai_oauth_complete_login_rejections():
             provider_id=7,
             session=None,
         )
-    assert xai_oauth._login_states.peek(state) is None
+    assert await xai_oauth._login_states.peek(state) is None
 
     # A definitive upstream rejection (spent/invalid code) burns the state too.
-    _, state = xai_oauth.begin_login(7)
+    _, state = await xai_oauth.begin_login(7)
 
     async def reject(payload, routes, **kwargs):
         raise xai_oauth.LoginError("Invalid or unknown authorization code")
@@ -985,7 +985,7 @@ async def test_xai_oauth_complete_login_rejections():
             )
     finally:
         xai_oauth._post_token = original
-    assert xai_oauth._login_states.peek(state) is None
+    assert await xai_oauth._login_states.peek(state) is None
 
 
 async def test_node_group_routes_rank_and_direct_fallback():
@@ -1047,9 +1047,9 @@ async def test_key_pool_selection_and_route_entries():
         )
 
     prov.keys = [_key("leaked-1", "leaked"), _key("member-1", "members")]
-    assert [k.key_hash for k in select_keys(prov, "leaked")] == ["leaked-1"]
-    assert [k.key_hash for k in select_keys(prov, "members")] == ["member-1"]
-    assert {k.key_hash for k in select_keys(prov, "")} == {"leaked-1", "member-1"}
+    assert [k.key_hash for k in await select_keys(prov, "leaked")] == ["leaked-1"]
+    assert [k.key_hash for k in await select_keys(prov, "members")] == ["member-1"]
+    assert {k.key_hash for k in await select_keys(prov, "")} == {"leaked-1", "member-1"}
 
     # build_opencode_config precedence: structured fields > custom config >
     # models.dev placeholder.
@@ -1092,43 +1092,142 @@ async def test_key_select_modes():
 
     # fallback → always the manual order, leading with the lowest sort_order.
     prov.key_select_mode = KeySelectMode.FALLBACK.value
-    reset_selection_state()
+    await reset_selection_state()
     for _ in range(3):
-        assert [k.id for k in select_keys(prov)] == [1, 2, 3]
+        assert [k.id for k in await select_keys(prov)] == [1, 2, 3]
 
     # round_robin → a different key leads each call, full fallback chain after it.
     prov.key_select_mode = KeySelectMode.ROUND_ROBIN.value
-    reset_selection_state()
-    leads = [select_keys(prov)[0].id for _ in range(4)]
+    await reset_selection_state()
+    leads = [(await select_keys(prov))[0].id for _ in range(4)]
     assert leads == [1, 2, 3, 1]
-    assert {k.id for k in select_keys(prov)} == {1, 2, 3}
+    assert {k.id for k in await select_keys(prov)} == {1, 2, 3}
 
     # random → a permutation of every candidate.
     prov.key_select_mode = KeySelectMode.RANDOM.value
-    reset_selection_state()
-    assert sorted(k.id for k in select_keys(prov)) == [1, 2, 3]
+    await reset_selection_state()
+    assert sorted(k.id for k in await select_keys(prov)) == [1, 2, 3]
 
     # pinned_round_robin → one key per session, sticky across requests.
     prov.key_select_mode = KeySelectMode.PINNED_ROUND_ROBIN.value
-    reset_selection_state()
-    a1 = select_keys(prov, session_key="sess-a")[0].id
-    a2 = select_keys(prov, session_key="sess-a")[0].id
+    await reset_selection_state()
+    a1 = (await select_keys(prov, session_key="sess-a"))[0].id
+    a2 = (await select_keys(prov, session_key="sess-a"))[0].id
     assert a1 == a2  # same session sticks to the same key
-    b1 = select_keys(prov, session_key="sess-b")[0].id
+    b1 = (await select_keys(prov, session_key="sess-b"))[0].id
     assert b1 != a1  # next session round-robins to the next key
 
     # When the pinned key disappears (disabled), the session re-pins to a live one.
     prov.keys = [k for k in prov.keys if k.id != a1]
-    a3 = select_keys(prov, session_key="sess-a")[0].id
+    a3 = (await select_keys(prov, session_key="sess-a"))[0].id
     assert a3 != a1
     assert a3 in {k.id for k in prov.keys}
 
     # pinned_random → still sticky per session.
     prov.key_select_mode = KeySelectMode.PINNED_RANDOM.value
-    reset_selection_state()
-    c1 = select_keys(prov, session_key="sess-c")[0].id
-    c2 = select_keys(prov, session_key="sess-c")[0].id
+    await reset_selection_state()
+    c1 = (await select_keys(prov, session_key="sess-c"))[0].id
+    c2 = (await select_keys(prov, session_key="sess-c"))[0].id
     assert c1 == c2
+
+
+async def test_selector_redis_failure_uses_neutral_order(monkeypatch):
+    from redis.exceptions import RedisError
+    from voidswitch.constants import KeySelectMode
+    from voidswitch.models.db import ApiKey
+    from voidswitch.services import selector
+
+    class FailedClient:
+        async def eval(self, *args, **kwargs):
+            raise RedisError("unavailable")
+
+        async def get(self, *args, **kwargs):
+            raise RedisError("unavailable")
+
+        async def set(self, *args, **kwargs):
+            raise RedisError("unavailable")
+
+    class FailedRedis:
+        client = FailedClient()
+
+        def key(self, *parts):
+            return ":".join(str(part) for part in parts)
+
+    monkeypatch.setattr(selector, "get_redis", lambda: FailedRedis())
+    provider = Provider(name="p", type="openai", models=["*"])
+    provider.id = 12
+    provider.key_select_mode = KeySelectMode.PINNED_ROUND_ROBIN.value
+    provider.keys = []
+    for key_id in (1, 2):
+        key = ApiKey(
+            provider_id=provider.id,
+            key_ciphertext="x",
+            key_hash=f"k{key_id}",
+            status="active",
+            sort_order=key_id,
+        )
+        key.id = key_id
+        provider.keys.append(key)
+
+    assert [key.id for key in await selector.select_keys(provider, session_key="s")] == [1, 2]
+
+
+async def test_upstream_health_redis_failure_is_neutral(monkeypatch):
+    from types import SimpleNamespace
+
+    from redis.exceptions import RedisError
+    from voidswitch.services import upstream_health
+
+    class FailedPipeline:
+        def hgetall(self, key):
+            return self
+
+        async def execute(self):
+            raise RedisError("unavailable")
+
+    class FailedClient:
+        def pipeline(self, transaction=False):
+            return FailedPipeline()
+
+        async def get(self, *args, **kwargs):
+            raise RedisError("unavailable")
+
+        async def set(self, *args, **kwargs):
+            raise RedisError("unavailable")
+
+    class FailedRedis:
+        client = FailedClient()
+
+        def key(self, *parts):
+            return ":".join(str(part) for part in parts)
+
+    provider = SimpleNamespace(id=1, enabled=True)
+    first = SimpleNamespace(
+        id=1,
+        provider_id=1,
+        provider=provider,
+        upstream_model="model-a",
+        key_pool="",
+        enabled=True,
+        weight=1,
+        group_position=0,
+        position=0,
+    )
+    second = SimpleNamespace(**{**vars(first), "id": 2, "position": 1})
+    route = SimpleNamespace(
+        id=1,
+        upstreams=[first, second],
+        upstream_select_mode="pinned_best",
+        upstream_rank_algorithm="weighted",
+        upstream_all_cooled_behavior="ignore_cooldown",
+    )
+    monkeypatch.setattr(upstream_health, "get_redis", lambda: FailedRedis())
+
+    ranked, ignored = await upstream_health.rank(route, {}, session_key="s")
+
+    assert [row.upstream.id for row in ranked] == [1, 2]
+    assert all(row.samples == 0 and row.success_rate == 1.0 for row in ranked)
+    assert ignored is False
 
 
 async def test_retry_after_parsing_and_cooldown():
@@ -1233,8 +1332,8 @@ async def test_rate_limited_keys_excluded_and_ranked_last():
         ),  # recovered
         _key(4, status=KeyStatus.ACTIVE.value, order=3),
     ]
-    reset_selection_state()
-    ordered = [k.id for k in select_keys(prov)]
+    await reset_selection_state()
+    ordered = [k.id for k in await select_keys(prov)]
     # Cooling key (2) excluded; active keys (1,4) first, recovered (3) last.
     assert ordered == [1, 4, 3]
 
@@ -2021,7 +2120,7 @@ async def test_alembic_baseline_heals_pre_alembic_db(tmp_path):
             "node_group_members",
             "request_logs",
         } <= tables
-        assert ver == "53a283f6e778"  # the current head
+        assert ver == "c4e8a1f7b2d9"  # the current head
         assert n == 1  # legacy row survived
     finally:
         await db.dispose()

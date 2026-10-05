@@ -513,7 +513,7 @@ def _bearer(authorization: str | None) -> str | None:
     return authorization.strip()
 
 
-def _enforce_operation_rate_limit(request: Request, user: User) -> None:
+async def _enforce_operation_rate_limit(request: Request, user: User) -> None:
     """Per-user abuse limit on mutating dashboard actions (POST/PUT/PATCH/DELETE).
 
     Read-only requests (GET/HEAD/OPTIONS) are never limited so page loads — which
@@ -530,7 +530,7 @@ def _enforce_operation_rate_limit(request: Request, user: User) -> None:
     )
     from voidswitch.core import ratelimit
 
-    if not ratelimit.operation_limiter.allow(
+    if not await ratelimit.operation_limiter.acquire(
         f"op:{user.id}",
         window_seconds=OPERATION_RATE_LIMIT_WINDOW_SECONDS,
         max_requests=OPERATION_RATE_LIMIT_MAX_REQUESTS,
@@ -568,7 +568,7 @@ async def get_current_user(
         token_epoch = 0
     if token_epoch != (user.session_epoch or 0):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired. Please sign in again.")
-    _enforce_operation_rate_limit(request, user)
+    await _enforce_operation_rate_limit(request, user)
     return user
 
 

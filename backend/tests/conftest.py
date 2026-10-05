@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -11,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from voidswitch.constants import KeyStatus
 from voidswitch.core.config import get_settings
 from voidswitch.core.database import Database, init_database
+from voidswitch.core.redis import RedisConfig, close_redis, init_redis
 from voidswitch.core.security import (
     encrypt_secret,
     generate_void_token,
@@ -32,23 +34,23 @@ from voidswitch.services import routing, settings_store
 from voidswitch.services.network import get_pool
 
 
-@pytest.fixture(autouse=True)
-def _reset_rate_limiters():
-    """The rate limiters are process-wide singletons, but every test gets a fresh
-    database whose user/token ids restart at 1. Without a reset, hits from an
-    earlier test keep counting against the reused ids in later tests — spurious
-    429s once the always-on operation limit (30/20s) accumulates enough."""
-    from voidswitch.core import ratelimit
-
-    ratelimit.operation_limiter.clear()
-    ratelimit.call_limiter.clear()
-    ratelimit.gateway_rpm_limiter.clear()
-    yield
-
-
 @pytest.fixture
 def settings():
     return get_settings()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def redis_backend():
+    service = await init_redis(
+        RedisConfig(url="redis://localhost:6379/15", key_prefix=f"voidswitch:test:{uuid4().hex}")
+    )
+    try:
+        yield service
+    finally:
+        keys = [key async for key in service.client.scan_iter(match=f"{service.prefix}:*")]
+        if keys:
+            await service.client.delete(*keys)
+        await close_redis()
 
 
 @pytest_asyncio.fixture

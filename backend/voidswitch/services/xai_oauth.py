@@ -34,7 +34,6 @@ OAuth2 ``refresh_token`` grant against ``https://auth.x.ai/oauth2/token``.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import contextlib
 import datetime as dt
@@ -42,7 +41,6 @@ import hashlib
 import json
 import secrets
 import time
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -63,6 +61,7 @@ from voidswitch.services.network import (
     execute_request,
     read_response_body,
 )
+from voidswitch.services.oauth_coordination import LoginStateStore, refresh_lease
 
 log = get_logger("xai_oauth")
 
@@ -113,8 +112,6 @@ LOGIN_STATE_TTL_SECONDS = 600  # pending logins expire after 10 minutes
 OAUTH_USER_AGENT = "grok-cli/1.0.0"
 _TOKEN_HEADERS = {"User-Agent": OAUTH_USER_AGENT}
 
-_locks: dict[int, asyncio.Lock] = {}
-
 
 class NotRefreshable(Exception):
     """Raised when a force-refresh is requested but the key cannot be refreshed."""
@@ -130,14 +127,6 @@ class LoginError(Exception):
 
 class LoginUpstreamError(Exception):
     """Every egress route failed to reach xAI during login (maps to HTTP 502)."""
-
-
-def _lock_for(key_id: int) -> asyncio.Lock:
-    lock = _locks.get(key_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _locks[key_id] = lock
-    return lock
 
 
 def parse_bundle(plaintext: str) -> dict[str, Any] | None:
@@ -369,7 +358,8 @@ async def resolve_access_token(
     if not needs_refresh:
         return str(access)
 
-    async with _lock_for(key.id), get_database().session() as rot_session:
+    observed_ciphertext = key.key_ciphertext
+    async with refresh_lease("xai", key.id), get_database().session() as rot_session:
         # Re-read committed state in a *dedicated* session and rotate there. The
         # caller's ``session`` is shared (the request transaction / the dispatcher)
         # and may carry unrelated pending writes; committing it here would persist
@@ -380,9 +370,21 @@ async def resolve_access_token(
         if fresh_key is None:
             raise NotRefreshable("key no longer exists")
         plaintext = decrypt_secret(fresh_key.key_ciphertext, secret=secret_key)
-        bundle = parse_bundle(plaintext) or bundle
+        bundle = parse_bundle(plaintext)
+        if bundle is None:
+            if force_refresh and fresh_key.key_ciphertext == observed_ciphertext:
+                raise NotRefreshable("static API key cannot be refreshed")
+            return plaintext
         access = bundle.get("access_token")
-        refresh_token = bundle.get("refresh_token") or refresh_token
+        if fresh_key.key_ciphertext != observed_ciphertext and access:
+            return str(access)
+        refresh_token = bundle.get("refresh_token")
+        if not refresh_token:
+            if not access:
+                raise NotRefreshable("credential bundle has neither access_token nor refresh_token")
+            if force_refresh:
+                raise NotRefreshable("no refresh_token in credential bundle")
+            return str(access)
         if not force_refresh and access and not _near_expiry(bundle):
             return str(access)
         new_bundle = await _refresh(str(refresh_token), rot_session)
@@ -428,48 +430,10 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-@dataclass(slots=True)
-class _PendingLogin:
-    verifier: str
-    provider_id: int
-    created: float
+_login_states = LoginStateStore("xai", LOGIN_STATE_TTL_SECONDS)
 
 
-class _StateStore:
-    """In-memory CSRF-state -> pending-login map with a short TTL.
-
-    Login state is intentionally *not* persisted: a pending login is only valid
-    within a single browser round-trip and must not survive a restart.
-    """
-
-    def __init__(self, ttl: float = LOGIN_STATE_TTL_SECONDS) -> None:
-        self._ttl = ttl
-        self._items: dict[str, _PendingLogin] = {}
-
-    def _gc(self) -> None:
-        cutoff = time.time() - self._ttl
-        stale = [state for state, item in self._items.items() if item.created < cutoff]
-        for state in stale:
-            self._items.pop(state, None)
-
-    def put(self, state: str, verifier: str, provider_id: int) -> None:
-        self._gc()
-        self._items[state] = _PendingLogin(
-            verifier=verifier, provider_id=provider_id, created=time.time()
-        )
-
-    def peek(self, state: str) -> _PendingLogin | None:
-        self._gc()
-        return self._items.get(state)
-
-    def discard(self, state: str) -> None:
-        self._items.pop(state, None)
-
-
-_login_states = _StateStore()
-
-
-def begin_login(provider_id: int) -> tuple[str, str]:
+async def begin_login(provider_id: int) -> tuple[str, str]:
     """Start a Grok Build OAuth login; return ``(authorize_url, state)``.
 
     The caller shows ``authorize_url`` to the operator, who signs in and is then
@@ -478,7 +442,7 @@ def begin_login(provider_id: int) -> tuple[str, str]:
     """
     verifier, challenge = _pkce_pair()
     state = _b64url(secrets.token_bytes(32))
-    _login_states.put(state, verifier, provider_id)
+    await _login_states.put(state, verifier, provider_id)
     params = {
         "response_type": "code",
         "client_id": CLIENT_ID,
@@ -524,16 +488,20 @@ async def complete_login(
     session: AsyncSession | None = None,
 ) -> dict[str, Any]:
     """Exchange a pasted authorization code for an OAuth credential bundle."""
-    pending = _login_states.peek(state)
+    async with _login_states.claim(state) as pending:
+        return await _complete_claimed_login(code_input, state, provider_id, session, pending)
+
+
+async def _complete_claimed_login(code_input, state, provider_id, session, pending):
     if pending is None:
         raise LoginError("Unknown or expired login. Start the sign-in again.")
     if pending.provider_id != provider_id:
-        _login_states.discard(state)
+        await _login_states.discard(state)
         raise LoginError("This login was started for a different provider.")
 
     code, embedded_state = extract_code(code_input)
     if embedded_state is not None and embedded_state != state:
-        _login_states.discard(state)
+        await _login_states.discard(state)
         raise LoginError("State mismatch — the pasted URL does not match this login.")
 
     try:
@@ -541,9 +509,9 @@ async def complete_login(
     except LoginError:
         # A definitive rejection (spent/invalid code): burn the state so the user
         # restarts cleanly. Transient LoginUpstreamError keeps the state for retry.
-        _login_states.discard(state)
+        await _login_states.discard(state)
         raise
-    _login_states.discard(state)
+    await _login_states.discard(state)
     return bundle
 
 

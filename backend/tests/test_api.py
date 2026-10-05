@@ -898,7 +898,7 @@ async def test_request_log_stream_enforces_per_user_limit(client, db, seeded):
 
     # Fill the single slot; the endpoint then rejects a second connection with
     # 429 (returned before streaming starts, so a plain GET works).
-    await _acquire_stream_slot("user-1", 1)
+    lease_id = await _acquire_stream_slot("user-1", 1)
     resp = await client.get(
         "/api/admin/logs/requests/stream",
         headers=_session_headers(),
@@ -906,9 +906,9 @@ async def test_request_log_stream_enforces_per_user_limit(client, db, seeded):
     assert resp.status_code == 429
 
     # Release the slot → a new slot is acquirable again.
-    await _release_stream_slot("user-1")
-    await _acquire_stream_slot("user-1", 1)
-    await _release_stream_slot("user-1")
+    await _release_stream_slot("user-1", lease_id)
+    lease_id = await _acquire_stream_slot("user-1", 1)
+    await _release_stream_slot("user-1", lease_id)
 
     # Reset so other tests see the default.
     async with db.session() as session:

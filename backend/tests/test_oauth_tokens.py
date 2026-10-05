@@ -227,7 +227,7 @@ async def test_pkce_pair_is_s256_and_unpadded():
 
 
 async def test_begin_login_builds_authorize_url():
-    url, state = oauth_tokens.begin_login(provider_id=7)
+    url, state = await oauth_tokens.begin_login(provider_id=7)
     parsed = urlparse(url)
     assert parsed.scheme == "https"
     assert parsed.netloc == "claude.com"
@@ -246,12 +246,12 @@ async def test_begin_login_builds_authorize_url():
 
     # The verifier was stashed for this state+provider, and the emitted challenge
     # is genuinely the S256 of that verifier (not a plaintext/independent value).
-    pending = oauth_tokens._login_states.peek(state)
+    pending = await oauth_tokens._login_states.peek(state)
     assert pending is not None
     assert pending.provider_id == 7
     assert qs["code_challenge"] == [_expected_challenge(pending.verifier)]
-    oauth_tokens._login_states.discard(state)
-    assert oauth_tokens._login_states.peek(state) is None
+    await oauth_tokens._login_states.discard(state)
+    assert await oauth_tokens._login_states.peek(state) is None
 
 
 async def test_extract_code_variants():
@@ -265,9 +265,9 @@ async def test_extract_code_variants():
 
 
 async def test_complete_login_exchanges_code():
-    _url, state = oauth_tokens.begin_login(provider_id=1)
+    _url, state = await oauth_tokens.begin_login(provider_id=1)
     # The exact verifier whose challenge is in the authorize URL.
-    pending = oauth_tokens._login_states.peek(state)
+    pending = await oauth_tokens._login_states.peek(state)
     assert pending is not None
     issued_verifier = pending.verifier
     with respx.mock(assert_all_called=True) as mock:
@@ -300,7 +300,7 @@ async def test_complete_login_exchanges_code():
     # The bundle is exactly what the refresh path recognises.
     assert oauth_tokens.parse_bundle(json.dumps(bundle)) is not None
     # The state was consumed on success.
-    assert oauth_tokens._login_states.peek(state) is None
+    assert await oauth_tokens._login_states.peek(state) is None
 
 
 async def test_complete_login_unknown_state_raises():
@@ -309,22 +309,22 @@ async def test_complete_login_unknown_state_raises():
 
 
 async def test_complete_login_wrong_provider_raises():
-    _, state = oauth_tokens.begin_login(provider_id=1)
+    _, state = await oauth_tokens.begin_login(provider_id=1)
     with pytest.raises(oauth_tokens.LoginError):
         await oauth_tokens.complete_login(f"thecode#{state}", state, provider_id=2)
     # A mismatched provider burns the state.
-    assert oauth_tokens._login_states.peek(state) is None
+    assert await oauth_tokens._login_states.peek(state) is None
 
 
 async def test_complete_login_state_mismatch_raises():
-    _, state = oauth_tokens.begin_login(provider_id=1)
+    _, state = await oauth_tokens.begin_login(provider_id=1)
     # The paste embeds a different state than the one we issued.
     with pytest.raises(oauth_tokens.LoginError):
         await oauth_tokens.complete_login(f"thecode#{state}-tampered", state, provider_id=1)
 
 
 async def test_complete_login_definitive_rejection_burns_state():
-    _, state = oauth_tokens.begin_login(provider_id=1)
+    _, state = await oauth_tokens.begin_login(provider_id=1)
     with respx.mock(assert_all_called=True) as mock:
         mock.post(oauth_tokens.TOKEN_URL).mock(
             return_value=httpx.Response(400, json={"error": "invalid_grant"})
@@ -332,13 +332,13 @@ async def test_complete_login_definitive_rejection_burns_state():
         with pytest.raises(oauth_tokens.LoginError):
             await oauth_tokens.complete_login(f"thecode#{state}", state, provider_id=1)
     # A definitive 4xx spends the code — the state is gone.
-    assert oauth_tokens._login_states.peek(state) is None
+    assert await oauth_tokens._login_states.peek(state) is None
 
 
 async def test_complete_login_transient_block_preserves_state():
     """A 403/blocked egress raises LoginUpstreamError but keeps the state so the
     user can retry the same code once a working proxy is available."""
-    _, state = oauth_tokens.begin_login(provider_id=1)
+    _, state = await oauth_tokens.begin_login(provider_id=1)
     with respx.mock(assert_all_called=True) as mock:
         mock.post(oauth_tokens.TOKEN_URL).mock(
             return_value=httpx.Response(
@@ -348,8 +348,8 @@ async def test_complete_login_transient_block_preserves_state():
         with pytest.raises(oauth_tokens.LoginUpstreamError):
             await oauth_tokens.complete_login(f"thecode#{state}", state, provider_id=1)
     # State preserved for a retry; not echoing the raw upstream body.
-    assert oauth_tokens._login_states.peek(state) is not None
-    oauth_tokens._login_states.discard(state)
+    assert await oauth_tokens._login_states.peek(state) is not None
+    await oauth_tokens._login_states.discard(state)
 
 
 # --------------------------------------------------------------------------- #

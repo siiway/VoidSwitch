@@ -51,7 +51,7 @@ def _parse_passthrough_entry(entry: str) -> dict[str, str]:
     return {"exposed": exposed, "upstream": upstream, "pool": pool}
 
 
-def _check_rpm(token: VoidToken) -> None:
+async def _check_rpm(token: VoidToken) -> None:
     """Enforce a Void-Token's per-minute request cap (sliding 60s window).
 
     Backed by the shared, single-node :data:`ratelimit.gateway_rpm_limiter` — see
@@ -59,7 +59,7 @@ def _check_rpm(token: VoidToken) -> None:
     """
     if token.rpm_limit <= 0:
         return
-    if not ratelimit.gateway_rpm_limiter.allow(
+    if not await ratelimit.gateway_rpm_limiter.acquire(
         f"rpm:{token.id}", window_seconds=60.0, max_requests=token.rpm_limit
     ):
         raise HTTPException(
@@ -115,29 +115,19 @@ async def _check_call_rate_limit(session: AsyncSession, user: User, model: str) 
         # No group to hold a budget for this caller (e.g. a membership-less user
         # on a provider passthrough model) — nothing to throttle against.
         return
-    best_remaining = 0
-    best_group = None
-    for g in groups:
-        window = g.call_rate_limit_window_seconds
-        max_requests = g.call_rate_limit_max_requests
-        if max_requests <= 0 or window <= 0:
-            # This group is unlimited → the call always passes, uncounted.
-            return
-        remaining = ratelimit.call_limiter.remaining(
-            f"call:{user.id}:g{g.id}", window_seconds=window, max_requests=max_requests
+    candidates = [
+        ratelimit.LimitCandidate(
+            key=f"call:{user.id}:g{group.id}",
+            window_seconds=group.call_rate_limit_window_seconds,
+            max_requests=group.call_rate_limit_max_requests,
         )
-        if remaining > best_remaining:
-            best_remaining, best_group = remaining, g
-    if best_group is None:
+        for group in groups
+    ]
+    if not await ratelimit.call_limiter.reserve_any(candidates):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "Call rate limit exceeded for all of your role groups. Slow down.",
         )
-    ratelimit.call_limiter.allow(
-        f"call:{user.id}:g{best_group.id}",
-        window_seconds=best_group.call_rate_limit_window_seconds,
-        max_requests=best_group.call_rate_limit_max_requests,
-    )
 
 
 def _check_model_allowed(token: VoidToken, model: str) -> None:
@@ -239,7 +229,7 @@ async def _handle(
     # Allow-list and rate-limit are checked against the *public* id the caller
     # used, then the model is resolved to its real upstream id (if it's an alias).
     _check_model_allowed(authed.token, model)
-    _check_rpm(authed.token)
+    await _check_rpm(authed.token)
     await _check_daily_quota(session, authed.token)
     model = await _resolve_public_model(session, model)
     payload["model"] = model

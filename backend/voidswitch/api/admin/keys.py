@@ -292,7 +292,7 @@ async def oauth_start(
     """Begin a subscription OAuth login: return the authorize URL + state."""
     provider = await _get_provider(session, provider_id)
     module = _oauth_module(provider)
-    authorize_url, state = module.begin_login(provider_id)
+    authorize_url, state = await module.begin_login(provider_id)
     await record_audit(
         session,
         action=AuditAction.KEY_OAUTH_START,

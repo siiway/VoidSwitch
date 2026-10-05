@@ -938,7 +938,7 @@ async def test_dispatch_429_sets_retry_after_cooldown(db, seeded):
 
     first = seeded["key_id"]
     second = await _add_key(db, seeded["provider_id"], "sk-second")
-    reset_selection_state()
+    await reset_selection_state()
 
     with respx.mock(assert_all_called=False) as mock:
         # First key → 429 with a 2-minute Retry-After; second key → success.
@@ -1201,10 +1201,12 @@ async def test_dispatch_respects_ordered_upstream_groups(db, seeded):
         await session.flush()
 
     for _ in range(10):
-        upstream_health.record(
+        await upstream_health.record(
             upstream_health.key_for(seeded["provider_id"], "deepseek-chat"), success=False
         )
-        upstream_health.record(upstream_health.key_for(fallback.id, "deepseek-chat"), success=True)
+        await upstream_health.record(
+            upstream_health.key_for(fallback.id, "deepseek-chat"), success=True
+        )
     with respx.mock(assert_all_called=False) as mock:
         upstream = mock.post(DS_URL).mock(
             side_effect=[
@@ -1696,7 +1698,7 @@ async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
     from voidswitch.services import upstream_health
     from voidswitch.services.dispatcher import _build_stream
 
-    upstream_health.reset_state()
+    await upstream_health.reset_state()
     async with db.session() as session:
         token = VoidToken(user_id=seeded["user_id"], name="t", token_hash="tokhash")
         session.add(token)
@@ -1754,7 +1756,8 @@ async def test_build_stream_first_token_is_ttft_not_ttfb(db, seeded):
         assert row.first_token_ms >= 190.0
         assert row.first_token_ms < 300.0
         assert row.req_status == "completed"
-    stat = upstream_health._stats[(seeded["provider_id"], "deepseek-chat", "")]
+    stats = await upstream_health._load_stats([(seeded["provider_id"], "deepseek-chat", "")])
+    stat = stats[(seeded["provider_id"], "deepseek-chat", "")]
     assert stat.ttft_ewma_ms is not None
     assert stat.ttft_ewma_ms >= 190.0
 

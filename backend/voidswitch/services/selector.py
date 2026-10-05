@@ -10,12 +10,16 @@ plus the single static route used when routing is switched off.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import os
 import random
-import time
+from contextlib import suppress
 from typing import Any
 
+from redis.exceptions import RedisError
+
 from voidswitch.constants import KeySelectMode, KeyStatus
+from voidswitch.core.redis import get_redis
 from voidswitch.models.db import ApiKey, Provider
 from voidswitch.services.network import Route
 
@@ -26,68 +30,90 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
 
 
-# --------------------------------------------------------------------------- #
-# In-process key-selection state (round-robin cursors + per-session pins)
-# --------------------------------------------------------------------------- #
-#
-# These are intentionally process-local: like the gateway's RPM limiter they
-# trade perfect cross-worker coordination for zero shared-state overhead. A
-# round-robin cursor that drifts slightly between workers, or a session that
-# re-pins after a worker restart, is harmless — every mode still falls back
-# through the full key list on the dispatch path.
-
-# (provider_id, pool) -> monotonically increasing request counter.
-_rr_cursors: dict[tuple[int, str], int] = {}
-
-# (provider_id, pool, session_key) -> (pinned key id, last-seen monotonic time).
-_pins: dict[tuple[int, str, str], tuple[int, float]] = {}
-
-# How long a session pin survives without traffic before it is purged.
-_PIN_TTL_SECONDS = 3600.0
-# Purge sweeps only run once the pin table grows past this many entries.
-_PIN_PURGE_THRESHOLD = 4096
+_PIN_TTL_SECONDS = 3600
+_CURSOR_TTL_SECONDS = 86400
+_CURSOR_SCRIPT = """
+local value = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+return value
+"""
 
 
-def _next_cursor(provider_id: int, pool: str) -> int:
-    key = (provider_id, pool)
-    value = _rr_cursors.get(key, 0)
-    _rr_cursors[key] = value + 1
-    return value
+def _state_key(kind: str, provider_id: int, pool: str, session_key: str = "") -> str:
+    service = get_redis()
+    pool_id = hashlib.sha256(pool.encode()).hexdigest()[:24]
+    parts: list[object] = ["selector", kind, provider_id, pool_id]
+    if session_key:
+        parts.append(hashlib.sha256(session_key.encode()).hexdigest())
+    return service.key(*parts)
 
 
-def _purge_pins(now: float) -> None:
-    if len(_pins) <= _PIN_PURGE_THRESHOLD:
-        return
-    stale = [k for k, (_, seen) in _pins.items() if now - seen > _PIN_TTL_SECONDS]
-    for k in stale:
-        del _pins[k]
+async def _next_cursor(provider_id: int, pool: str) -> int | None:
+    try:
+        service = get_redis()
+        key = _state_key("cursor", provider_id, pool)
+        value = await service.client.eval(_CURSOR_SCRIPT, 1, key, _CURSOR_TTL_SECONDS)
+        return int(value) - 1
+    except (RedisError, RuntimeError, TypeError, ValueError):
+        return None
 
 
-def _lookup_pin(provider_id: int, pool: str, session_key: str, valid_ids: set[int]) -> int | None:
+async def _lookup_pin(
+    provider_id: int, pool: str, session_key: str, valid_ids: set[int]
+) -> int | None:
     """Return the live pinned key id for a session, or None if absent/stale/dead."""
-    entry = _pins.get((provider_id, pool, session_key))
-    if entry is None:
+    try:
+        service = get_redis()
+        redis_key = _state_key("pin", provider_id, pool, session_key)
+        raw = await service.client.get(redis_key)
+    except (RedisError, RuntimeError):
         return None
-    key_id, seen = entry
-    now = time.monotonic()
-    if now - seen > _PIN_TTL_SECONDS or key_id not in valid_ids:
-        _pins.pop((provider_id, pool, session_key), None)
+    if raw is None:
         return None
-    # Refresh the idle timer on every hit.
-    _pins[(provider_id, pool, session_key)] = (key_id, now)
+    try:
+        key_id = int(raw)
+    except (TypeError, ValueError):
+        key_id = -1
+    if key_id not in valid_ids:
+        with suppress(RedisError):
+            await service.client.delete(redis_key)
+        return None
+    try:
+        await service.client.expire(redis_key, _PIN_TTL_SECONDS)
+    except RedisError:
+        return None
     return key_id
 
 
-def _store_pin(provider_id: int, pool: str, session_key: str, key_id: int) -> None:
-    now = time.monotonic()
-    _purge_pins(now)
-    _pins[(provider_id, pool, session_key)] = (key_id, now)
+async def _store_pin(provider_id: int, pool: str, session_key: str, key_id: int) -> int | None:
+    try:
+        service = get_redis()
+        redis_key = _state_key("pin", provider_id, pool, session_key)
+        stored = await service.client.set(
+            redis_key,
+            key_id,
+            ex=_PIN_TTL_SECONDS,
+            nx=True,
+        )
+        if stored:
+            return key_id
+        raw = await service.client.get(redis_key)
+        return int(raw) if raw is not None else None
+    except (RedisError, RuntimeError):
+        return None
+    except (TypeError, ValueError):
+        return None
 
 
-def reset_selection_state() -> None:
-    """Clear all round-robin cursors and session pins (tests)."""
-    _rr_cursors.clear()
-    _pins.clear()
+async def reset_selection_state() -> None:
+    """Clear all Redis-backed round-robin cursors and session pins (tests)."""
+    try:
+        service = get_redis()
+        keys = [key async for key in service.client.scan_iter(match=service.key("selector", "*"))]
+        if keys:
+            await service.client.delete(*keys)
+    except (RedisError, RuntimeError):
+        pass
 
 
 def _lru_key(last_used: dt.datetime | None) -> dt.datetime:
@@ -103,11 +129,14 @@ def _manual_order(candidates: list[ApiKey]) -> list[ApiKey]:
     return sorted(candidates, key=lambda k: (k.sort_order or 0, k.id or 0))
 
 
-def _rotate(ordered: list[ApiKey], provider_id: int, pool: str) -> list[ApiKey]:
+async def _rotate(ordered: list[ApiKey], provider_id: int, pool: str) -> list[ApiKey]:
     """Manual order rotated so a different key leads each request (round-robin)."""
     if len(ordered) <= 1:
         return ordered
-    start = _next_cursor(provider_id, pool) % len(ordered)
+    cursor = await _next_cursor(provider_id, pool)
+    if cursor is None:
+        return ordered
+    start = cursor % len(ordered)
     return ordered[start:] + ordered[:start]
 
 
@@ -118,7 +147,7 @@ def _lead_with(ordered: list[ApiKey], key_id: int) -> list[ApiKey]:
     return lead + rest
 
 
-def _apply_mode(
+async def _apply_mode(
     provider: Provider,
     candidates: list[ApiKey],
     *,
@@ -145,7 +174,7 @@ def _apply_mode(
         random.shuffle(shuffled)
         return shuffled
     if mode == KeySelectMode.ROUND_ROBIN.value:
-        return _rotate(manual, provider_id, pool)
+        return await _rotate(manual, provider_id, pool)
 
     pinned = mode in (
         KeySelectMode.PINNED_ROUND_ROBIN.value,
@@ -155,23 +184,25 @@ def _apply_mode(
         valid_ids = {k.id for k in manual if k.id is not None}
         # Reuse a live pin when this session already has one.
         if session_key is not None:
-            existing = _lookup_pin(provider_id, pool, session_key, valid_ids)
+            existing = await _lookup_pin(provider_id, pool, session_key, valid_ids)
             if existing is not None:
                 return _lead_with(manual, existing)
         # Assign a fresh pin via the mode's sub-strategy.
         if mode == KeySelectMode.PINNED_RANDOM.value:
             chosen = random.choice(manual)
         else:  # pinned round-robin
-            chosen = _rotate(manual, provider_id, pool)[0]
+            chosen = (await _rotate(manual, provider_id, pool))[0]
         if session_key is not None and chosen.id is not None:
-            _store_pin(provider_id, pool, session_key, chosen.id)
+            pinned_id = await _store_pin(provider_id, pool, session_key, chosen.id)
+            if pinned_id in valid_ids:
+                return _lead_with(manual, pinned_id)
         return _lead_with(manual, chosen.id) if chosen.id is not None else manual
 
     # Unknown / legacy mode → round-robin.
-    return _rotate(manual, provider_id, pool)
+    return await _rotate(manual, provider_id, pool)
 
 
-def _ordered_candidates(
+async def _ordered_candidates(
     provider: Provider,
     active: list[ApiKey],
     recovered: list[ApiKey],
@@ -187,7 +218,7 @@ def _ordered_candidates(
     recently 429'd. Recovered keys are themselves ordered by who has been free
     longest.
     """
-    ordered = _apply_mode(provider, active, pool=pool, session_key=session_key)
+    ordered = await _apply_mode(provider, active, pool=pool, session_key=session_key)
     if recovered:
         recovered = sorted(
             recovered,
@@ -219,7 +250,7 @@ def _rate_limited_eligible(k: ApiKey, now: dt.datetime, recovery_seconds: int) -
     return (now - disabled_since).total_seconds() >= recovery_seconds
 
 
-def select_keys(
+async def select_keys(
     provider: Provider,
     pool: str = "",
     rate_limit_recovery_seconds: int = 0,
@@ -255,7 +286,9 @@ def select_keys(
         active = [k for k in active if (k.pool or "") == pool]
         recovered = [k for k in recovered if (k.pool or "") == pool]
 
-    return _ordered_candidates(provider, active, recovered, pool=pool, session_key=session_key)
+    return await _ordered_candidates(
+        provider, active, recovered, pool=pool, session_key=session_key
+    )
 
 
 # Process HTTP(S) proxy env vars consulted (in order) when proxy switching is

@@ -20,6 +20,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "asyncpg>=0.31.0",
     "alembic>=1.14",
+    "redis>=6.4",
 ]
 
 [project.scripts]

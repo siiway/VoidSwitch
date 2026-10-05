@@ -712,19 +712,19 @@ _STREAM_BATCH = 100
 _STREAM_HEARTBEAT_SECONDS = 15.0
 
 
-async def _acquire_stream_slot(user_sub: str, max_streams: int) -> None:
+async def _acquire_stream_slot(user_sub: str, max_streams: int) -> str:
     """Reserve one live-stream slot for ``user_sub``, raising 429 when the
     per-user cap is reached. Must be paired with a matching ``_release_stream``
     (the stream generator's ``finally``)."""
     from voidswitch.core import sse
 
-    await sse.acquire(user_sub, max_streams)
+    return await sse.acquire(user_sub, max_streams)
 
 
-async def _release_stream_slot(user_sub: str) -> None:
+async def _release_stream_slot(user_sub: str, lease_id: str | None = None) -> None:
     from voidswitch.core import sse
 
-    await sse.release(user_sub)
+    await sse.release(user_sub, lease_id)
 
 
 @router.get("/requests/stream")
@@ -767,7 +767,7 @@ async def request_log_stream(
     (default 2); exceeding it returns ``429``.
     """
     max_streams = settings_store.get_int("sse_max_connections_per_user", 2)
-    await _acquire_stream_slot(user.sub, max_streams)
+    lease_id = await _acquire_stream_slot(user.sub, max_streams)
     try:
         visible_subs = (
             await _visible_user_subs_for(session, user)
@@ -794,12 +794,12 @@ async def request_log_stream(
         if after_id == 0:
             after_id = (await session.execute(select(func.max(RequestLog.id)))).scalar_one() or 0
     except Exception:
-        await _release_stream_slot(user.sub)
+        await _release_stream_slot(user.sub, lease_id)
         raise
 
     async def _stream() -> AsyncIterator[str]:
         async for event in _stream_request_log_events(
-            get_database(), filters, user.sub, after_id=after_id
+            get_database(), filters, user.sub, after_id=after_id, lease_id=lease_id
         ):
             yield event
 
@@ -821,6 +821,7 @@ async def _stream_request_log_events(
     *,
     after_id: int = 0,
     poll_seconds: float = _STREAM_POLL_SECONDS,
+    lease_id: str | None = None,
 ) -> AsyncGenerator[str]:
     """Yield SSE events (``data: …`` rows / keep-alive pings) for a live stream.
 
@@ -901,7 +902,7 @@ async def _stream_request_log_events(
                 last_sent = time.monotonic()
             await asyncio.sleep(poll_seconds)
     finally:
-        await _release_stream_slot(user_sub)
+        await _release_stream_slot(user_sub, lease_id)
 
 
 def _redact_key_preview(preview: str | None) -> str | None:

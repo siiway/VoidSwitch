@@ -23,6 +23,18 @@
 # To pin a specific image tag (default: latest) set VS_IMAGE_TAG in .env, e.g.
 # VS_IMAGE_TAG=v1.2.3
 services:
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - vs-network
+
   voidswitch:
     container_name: voidswitch
     image: ghcr.io/siiway/voidswitch:${VS_IMAGE_TAG:-latest}
@@ -55,12 +67,18 @@ services:
       # it's visible/overridable). The Python backend uses a SQLAlchemy URL, so keep
       # the sqlite+aiosqlite:// prefix. Point at Postgres etc. to externalise it.
       VOIDSWITCH_DATABASE__URL: "${VOIDSWITCH_DATABASE_URL:-sqlite+aiosqlite:////data/voidswitch.db}"
+      # Shared cache/coordination backend. Redis is required by the Python gateway.
+      VOIDSWITCH_REDIS__URL: "${VOIDSWITCH_REDIS_URL:-redis://redis:6379/0}"
+      VOIDSWITCH_REDIS__KEY_PREFIX: "${VOIDSWITCH_REDIS_KEY_PREFIX:-voidswitch}"
       # Prism team whose owners/admins are recognised as VoidSwitch staff (the
       # main-team mapping). Override per deployment via VOIDSWITCH_MAIN_TEAM_ID.
       VOIDSWITCH_ADMIN__MAIN_TEAM_ID: "${VOIDSWITCH_MAIN_TEAM_ID:-63d4761c78c2dec09a002233e1b7c06c}"
     volumes:
       # Persists the SQLite DB across container recreation.
       - ${DATA_DIR:-voidswitch-data}:/data
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       # Runtime image is python-slim (no curl/wget); use the Python stdlib instead.
       test:

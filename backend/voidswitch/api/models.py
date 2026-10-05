@@ -373,7 +373,7 @@ async def _health_snapshot(
             (u.provider_id, u.upstream_model, u.key_pool) for u in route.upstreams if u.provider_id
         }
         cooldowns = await upstream_health.load_cooldowns(session, keys)
-        ranked, _ = upstream_health.rank(route, cooldowns)
+        ranked, _ = await upstream_health.rank(route, cooldowns)
         details = []
         for row in ranked:
             cooldown = row.cooldown
@@ -467,7 +467,7 @@ async def _health_snapshot(
             )
             key = upstream_health.key_for(provider.id, upstream_model, pool)
             cooldowns = await upstream_health.load_cooldowns(session, {key})
-            ranked, _ = upstream_health.rank(route, cooldowns)
+            ranked, _ = await upstream_health.rank(route, cooldowns)
             best = ranked[0] if ranked else None
             recent = await _recent_health(session, public_id)
             enough = recent["recent_request_count"] >= settings_store.get_int(

@@ -121,7 +121,7 @@ async def health_stream(
 ) -> StreamingResponse:
     if tab == "nodes" and not is_staff(user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Node health is staff-only.")
-    await sse.acquire(user.sub)
+    lease_id = await sse.acquire(user.sub)
     queue = upstream_health.subscribe()
 
     async def events() -> AsyncIterator[str]:
@@ -134,7 +134,7 @@ async def health_stream(
                     await asyncio.wait_for(queue.get(), timeout=5.0)
         finally:
             upstream_health.unsubscribe(queue)
-            await sse.release(user.sub)
+            await sse.release(user.sub, lease_id)
 
     return StreamingResponse(
         events(),

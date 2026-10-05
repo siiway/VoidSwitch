@@ -69,3 +69,27 @@ replace these SQLAlchemy pool settings. The theoretical connection ceiling is
 SQLite does not use these queue-pool capacity settings. It keeps the driver's
 default pool behavior; reduce concurrent writes and lock waits rather than adding
 connections.
+
+## Redis
+
+The Python gateway requires Redis. Redis holds short-lived cache and coordination
+state shared across workers: sliding-window limits, settings snapshot notifications,
+provider OAuth login state and refresh locks, SSE/background-task leases, key and
+upstream session pins, and dynamic upstream health statistics. Users, credentials,
+routes, logs, and cooldowns remain authoritative in the database.
+
+Docker Compose starts an internal `redis` service and defaults to
+`redis://redis:6379/0`. Set `VOIDSWITCH_REDIS_URL` for managed Redis, and give each
+deployment a distinct `VOIDSWITCH_REDIS_KEY_PREFIX` when sharing an instance. Use
+`rediss://` across untrusted networks, never publish the Redis port, and do not expose
+credential-bearing URLs in logs or screenshots.
+
+Redis stores ephemeral state only, so Compose disables RDB/AOF by default. A Redis
+restart resets rate-limit windows, leases, pins, and dynamic health observations but
+does not lose business data. The application refuses to start when Redis is
+unreachable; at runtime limits, OAuth coordination, and leases fail safely, while
+routing health falls back to neutral ordering.
+
+`redis.max_connections` is a per-worker limit, so the approximate total is
+`workers × max_connections`. Multi-worker deployments should also use PostgreSQL;
+SQLite is not suitable for horizontal scaling.

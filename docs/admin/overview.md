@@ -67,3 +67,21 @@ SQLAlchemy pool 参数。理论连接上限为 `worker 数 × (pool_size + max_o
 
 SQLite 不使用这些队列池容量参数；它保持当前驱动的默认池行为，重点应放在减少
 并发写入和锁等待，而不是增加连接数。
+
+## Redis
+
+Python 网关必须连接 Redis。Redis 保存跨 worker 的短期缓存和协调状态：滑动窗口限流、
+设置快照通知、供应商 OAuth 登录状态和刷新锁、SSE/后台任务租约、密钥与上游会话固定，
+以及动态上游健康统计。用户、密钥、路由、日志和冷却状态仍以数据库为准。
+
+Docker Compose 会启动内部 `redis` 服务，默认连接为 `redis://redis:6379/0`。使用托管
+Redis 时设置 `VOIDSWITCH_REDIS_URL`；多个部署共用实例时，为每个部署设置不同的
+`VOIDSWITCH_REDIS_KEY_PREFIX`。跨不可信网络时使用 `rediss://`，不要公开 Redis 端口，
+也不要在日志或截图中暴露含密码的 URL。
+
+Redis 只存临时状态，因此 Compose 默认关闭 RDB/AOF。Redis 重启会重置限流窗口、租约、
+会话固定和动态健康统计，但不会丢失业务数据。Redis 无法连接时应用拒绝启动；运行中限流、
+OAuth 协调和租约操作采用安全失败，路由健康数据则回退到中性排序。
+
+`redis.max_connections` 是每个 worker 的上限，总连接上限约为
+`worker 数 × max_connections`。多 worker 部署还应使用 PostgreSQL；SQLite 不适合横向扩展。

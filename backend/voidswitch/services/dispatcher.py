@@ -556,7 +556,7 @@ async def _do_dispatch(
         (u.provider_id, u.upstream_model, u.key_pool) for u in route.upstreams if u.provider_id
     }
     cooldowns = await upstream_health.load_cooldowns(session, health_keys)
-    ranked_upstreams, _cooldown_ignored = upstream_health.rank(
+    ranked_upstreams, _cooldown_ignored = await upstream_health.rank(
         route, cooldowns, session_key=session_key
     )
     entries = [row.upstream for row in ranked_upstreams]
@@ -596,12 +596,14 @@ async def _do_dispatch(
         upstream_model = entry.upstream_model or req.model
         key_pool = entry.key_pool or ""
 
-        keys = select_keys(
-            provider,
-            key_pool,
-            rate_limit_recovery_seconds=rate_limit_recovery,
-            session_key=session_key,
-            ignore_cooldown=_cooldown_ignored and entry.id in cooled_fallback_ids,
+        keys = (
+            await select_keys(
+                provider,
+                key_pool,
+                rate_limit_recovery_seconds=rate_limit_recovery,
+                session_key=session_key,
+                ignore_cooldown=_cooldown_ignored and entry.id in cooled_fallback_ids,
+            )
         )[
             : max(
                 1,
@@ -748,7 +750,7 @@ async def _do_dispatch(
                     # executor. A local pool/deadline failure is attributed to
                     # the provider layer without corrupting node health.
                     if not outcome.blame_proxy:
-                        upstream_health.record(health_key, success=False)
+                        await upstream_health.record(health_key, success=False)
                         cooled = await upstream_health.trip(
                             session,
                             health_key,
@@ -790,7 +792,7 @@ async def _do_dispatch(
                     last_error = f"{policy.final_classification}: HTTP {outcome.status_code}"
                     last_http_error = last_error
                     last_status = outcome.status_code
-                    upstream_health.record(health_key, success=False)
+                    await upstream_health.record(health_key, success=False)
                     if (
                         provider.protected_error_retry_enabled
                         and not protected_repeat_used
@@ -826,7 +828,7 @@ async def _do_dispatch(
                         last_error = "upstream returned 200 OK with 0 tokens"
                         last_status = 200
                         key.failed_count += 1
-                        upstream_health.record(health_key, success=False)
+                        await upstream_health.record(health_key, success=False)
                         await session.commit()
                         break  # next key/provider
                     key.total_requests += 1
@@ -835,7 +837,7 @@ async def _do_dispatch(
                         key.failed_count = 0
                     _reward_key(key)
                     if not req.stream:
-                        upstream_health.record(health_key, success=True)
+                        await upstream_health.record(health_key, success=True)
                     await upstream_health.reward(session, health_key)
                     return await _finalise_success(
                         session=session,
@@ -893,7 +895,7 @@ async def _do_dispatch(
                     break  # next key
 
                 if err_class is ErrorClass.RATE_LIMITED:
-                    upstream_health.record(health_key, success=False)
+                    await upstream_health.record(health_key, success=False)
                     await upstream_health.trip(
                         session,
                         health_key,
@@ -928,7 +930,7 @@ async def _do_dispatch(
                         f"provider '{provider.name}'"
                     )
                     last_status = 404
-                    upstream_health.record(health_key, success=False)
+                    await upstream_health.record(health_key, success=False)
                     abandon_upstream = True
                     await session.commit()
                     break  # next key (then next entry)
@@ -936,7 +938,7 @@ async def _do_dispatch(
                 if err_class in (ErrorClass.SERVER_ERROR, ErrorClass.UPSTREAM_OVERLOADED):
                     if err_class is ErrorClass.SERVER_ERROR:
                         key.failed_count += 1
-                    upstream_health.record(health_key, success=False)
+                    await upstream_health.record(health_key, success=False)
                     await upstream_health.trip(
                         session,
                         health_key,
@@ -2008,9 +2010,9 @@ async def _stream_cleanup(
         )
     if health_key is not None:
         if req_status == "completed":
-            upstream_health.record(health_key, success=True, ttft_ms=first_token_ms)
+            await upstream_health.record(health_key, success=True, ttft_ms=first_token_ms)
         elif req_status in {"error", "terminated"}:
-            upstream_health.record(health_key, success=False)
+            await upstream_health.record(health_key, success=False)
 
 
 async def _build_stream(

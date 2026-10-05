@@ -35,6 +35,16 @@ database:
   url: "sqlite+aiosqlite:///./voidswitch.db"
   echo: false
 
+redis:
+  # Required shared cache and coordination service. Use rediss:// for TLS.
+  url: "redis://localhost:6379/0"
+  # Give each deployment a distinct namespace when Redis is shared.
+  key_prefix: "voidswitch"
+  # Connection limit per backend worker/process.
+  max_connections: 50
+  connect_timeout: 2.0
+  socket_timeout: 2.0
+
 prism:
   # Your Prism instance. Endpoints are derived from this issuer.
   issuer: "https://prism.siiway.org"

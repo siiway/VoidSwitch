@@ -20,11 +20,13 @@ pytestmark = pytest.mark.asyncio
 
 
 def _jwt(account_id: str = "acct-1") -> str:
-    payload = base64.urlsafe_b64encode(
-        json.dumps(
-            {"https://api.openai.com/auth": {"chatgpt_account_id": account_id}}
-        ).encode()
-    ).decode().rstrip("=")
+    payload = (
+        base64.urlsafe_b64encode(
+            json.dumps({"https://api.openai.com/auth": {"chatgpt_account_id": account_id}}).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
     return f"header.{payload}.signature"
 
 
@@ -44,7 +46,7 @@ async def test_codex_adapter_uses_subscription_backend_and_models():
 
 
 async def test_browser_login_builds_codex_authorize_url():
-    url, state = codex_oauth.begin_login(7)
+    url, state = await codex_oauth.begin_login(7)
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
     assert f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == codex_oauth.AUTHORIZE_URL
@@ -52,11 +54,11 @@ async def test_browser_login_builds_codex_authorize_url():
     assert query["redirect_uri"] == [codex_oauth.REDIRECT_URI]
     assert query["code_challenge_method"] == ["S256"]
     assert query["state"] == [state]
-    codex_oauth._pending.pop(state, None)
+    await codex_oauth._pending.discard(state)
 
 
 async def test_browser_login_exchanges_pasted_callback():
-    _, state = codex_oauth.begin_login(3)
+    _, state = await codex_oauth.begin_login(3)
     with respx.mock(assert_all_called=True) as mock:
         route = mock.post(codex_oauth.TOKEN_URL).mock(
             return_value=httpx.Response(
@@ -134,9 +136,7 @@ async def test_device_login_start_pending_then_complete():
                 json={"access_token": _jwt("acct-2"), "refresh_token": "refresh-2"},
             )
         )
-        assert (
-            await codex_oauth.complete_device_login("device", "ABCD-EFGH") is None
-        )
+        assert await codex_oauth.complete_device_login("device", "ABCD-EFGH") is None
         bundle = await codex_oauth.complete_device_login("device", "ABCD-EFGH")
     assert poll.call_count == 2
     assert bundle is not None

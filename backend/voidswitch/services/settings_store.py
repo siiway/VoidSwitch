@@ -8,17 +8,23 @@ process and invalidated on write.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voidswitch.constants import DEFAULT_SETTINGS
+from voidswitch.core.logging import get_logger
+from voidswitch.core.redis import get_redis
 from voidswitch.models.db import Setting
 
 _cache: dict[str, Any] = {}
 _cache_loaded = False
 _lock = asyncio.Lock()
+_listener_task: asyncio.Task[None] | None = None
+log = get_logger("settings_store")
 
 
 # Settings keys that were renamed. Maps old → new so a stored value survives the
@@ -87,6 +93,75 @@ async def load_all(session: AsyncSession) -> dict[str, Any]:
     return merged
 
 
+async def publish(values: dict[str, Any]) -> None:
+    """Publish a committed settings snapshot to every worker."""
+    redis = get_redis()
+    payload = json.dumps(values, separators=(",", ":"))
+    async with redis.client.pipeline(transaction=True) as pipe:
+        pipe.set(redis.key("settings", "snapshot"), payload)
+        pipe.incr(redis.key("settings", "version"))
+        await pipe.execute()
+    await redis.client.publish(redis.key("settings", "changed"), "reload")
+    await apply_snapshot(values)
+
+
+async def apply_snapshot(values: dict[str, Any]) -> None:
+    global _cache_loaded
+    merged = {**DEFAULT_SETTINGS, **values}
+    async with _lock:
+        _cache.clear()
+        _cache.update(merged)
+        _cache_loaded = True
+
+
+async def sync_from_redis() -> None:
+    raw = await get_redis().client.get(get_redis().key("settings", "snapshot"))
+    if raw:
+        values = json.loads(raw)
+        if isinstance(values, dict):
+            await apply_snapshot(values)
+
+
+async def start_listener() -> None:
+    global _listener_task
+    if _listener_task is not None:
+        return
+
+    async def listen() -> None:
+        redis = get_redis()
+        while True:
+            try:
+                async with redis.client.pubsub() as pubsub:
+                    await pubsub.subscribe(redis.key("settings", "changed"))
+                    await sync_from_redis()
+                    while True:
+                        message = await pubsub.get_message(
+                            ignore_subscribe_messages=True, timeout=30
+                        )
+                        if message is not None:
+                            await sync_from_redis()
+                        else:
+                            # Pub/Sub is lossy; reconcile the durable snapshot
+                            # periodically even when no notification arrives.
+                            await sync_from_redis()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("settings_redis_sync_failed", error=str(exc))
+                await asyncio.sleep(1)
+
+    _listener_task = asyncio.create_task(listen(), name="redis:settings-listener")
+
+
+async def stop_listener() -> None:
+    global _listener_task
+    if _listener_task is not None:
+        _listener_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _listener_task
+        _listener_task = None
+
+
 async def get_all(session: AsyncSession) -> dict[str, Any]:
     if not _cache_loaded:
         return await load_all(session)
@@ -138,7 +213,7 @@ def get_list(key: str, default: list[Any] | None = None) -> list[Any]:
 
 
 async def update(session: AsyncSession, values: dict[str, Any]) -> dict[str, Any]:
-    """Upsert provided settings and refresh the cache."""
+    """Commit provided settings, then publish the committed snapshot."""
     for key, value in values.items():
         existing = await session.get(Setting, key)
         if existing is None:
@@ -146,4 +221,8 @@ async def update(session: AsyncSession, values: dict[str, Any]) -> dict[str, Any
         else:
             existing.value = value
     await session.flush()
-    return await load_all(session)
+    rows = (await session.execute(select(Setting))).scalars().all()
+    snapshot = {**DEFAULT_SETTINGS, **{row.key: row.value for row in rows}}
+    await session.commit()
+    await publish(snapshot)
+    return snapshot

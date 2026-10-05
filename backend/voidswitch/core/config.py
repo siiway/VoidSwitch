@@ -73,6 +73,14 @@ class DatabaseSettings(BaseSettings):
     pool_pre_ping: bool = True
 
 
+class RedisSettings(BaseSettings):
+    url: str = "redis://localhost:6379/0"
+    key_prefix: str = "voidswitch"
+    max_connections: int = Field(default=50, ge=1)
+    connect_timeout: float = Field(default=2.0, gt=0)
+    socket_timeout: float = Field(default=2.0, gt=0)
+
+
 class PrismSettings(BaseSettings):
     issuer: str = "https://prism.siiway.org"
     client_id: str = ""
@@ -128,6 +136,7 @@ class Settings(BaseSettings):
 
     server: ServerSettings = Field(default_factory=ServerSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    redis: RedisSettings = Field(default_factory=RedisSettings)
     prism: PrismSettings = Field(default_factory=PrismSettings)
     admin: AdminSettings = Field(default_factory=AdminSettings)
 

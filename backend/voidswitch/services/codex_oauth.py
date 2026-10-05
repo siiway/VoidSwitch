@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import contextlib
 import datetime as dt
@@ -10,7 +9,6 @@ import hashlib
 import json
 import secrets
 import time
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -26,6 +24,7 @@ from voidswitch.services.network import (
     execute_request,
     read_response_body,
 )
+from voidswitch.services.oauth_coordination import LoginStateStore, refresh_lease
 
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 AUTH_BASE_URL = "https://auth.openai.com"
@@ -53,15 +52,7 @@ class NotRefreshable(Exception):
     """The stored credential has no usable refresh token."""
 
 
-@dataclass(slots=True)
-class _PendingLogin:
-    verifier: str
-    provider_id: int
-    created: float
-
-
-_pending: dict[str, _PendingLogin] = {}
-_locks: dict[int, asyncio.Lock] = {}
+_pending = LoginStateStore("codex", LOGIN_STATE_TTL_SECONDS)
 
 
 def _b64url(raw: bytes) -> str:
@@ -73,18 +64,11 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
 
 
-def _gc() -> None:
-    cutoff = time.time() - LOGIN_STATE_TTL_SECONDS
-    for state in [key for key, value in _pending.items() if value.created < cutoff]:
-        _pending.pop(state, None)
-
-
-def begin_login(provider_id: int) -> tuple[str, str]:
+async def begin_login(provider_id: int) -> tuple[str, str]:
     """Begin Codex's loopback browser flow; the redirected URL is pasted back."""
-    _gc()
     verifier, challenge = _pkce_pair()
     state = _b64url(secrets.token_bytes(32))
-    _pending[state] = _PendingLogin(verifier, provider_id, time.time())
+    await _pending.put(state, verifier, provider_id)
     params = {
         "response_type": "code",
         "client_id": CLIENT_ID,
@@ -234,25 +218,28 @@ async def complete_login(
     provider_id: int,
     session: AsyncSession | None = None,
 ) -> dict[str, Any]:
-    _gc()
-    pending = _pending.get(state)
+    async with _pending.claim(state) as pending:
+        return await _complete_claimed_login(code_input, state, provider_id, session, pending)
+
+
+async def _complete_claimed_login(code_input, state, provider_id, session, pending):
     if pending is None:
         raise LoginError("Unknown or expired login. Start sign-in again.")
     if pending.provider_id != provider_id:
-        _pending.pop(state, None)
+        await _pending.discard(state)
         raise LoginError("This login was started for a different provider.")
     code, embedded_state = extract_code(code_input)
     if embedded_state is not None and embedded_state != state:
-        _pending.pop(state, None)
+        await _pending.discard(state)
         raise LoginError("State mismatch — the pasted URL does not match this login.")
     try:
         bundle = await _exchange(code, pending.verifier, session)
     except LoginUpstreamError:
         raise  # preserve state so a transient route failure can be retried
     except Exception:
-        _pending.pop(state, None)
+        await _pending.discard(state)
         raise
-    _pending.pop(state, None)
+    await _pending.discard(state)
     return bundle
 
 
@@ -333,12 +320,24 @@ async def resolve_access_token(
     if access and not force_refresh and not _near_expiry(bundle):
         return str(access)
 
-    lock = _locks.setdefault(key.id, asyncio.Lock())
-    async with lock, get_database().session() as refresh_session:
+    observed_ciphertext = key.key_ciphertext
+    async with refresh_lease("codex", key.id), get_database().session() as refresh_session:
         fresh_key = await refresh_session.get(ApiKey, key.id)
         if fresh_key is None:
             raise NotRefreshable("key no longer exists")
-        fresh = parse_bundle(decrypt_secret(fresh_key.key_ciphertext, secret=secret_key)) or bundle
+        plaintext = decrypt_secret(fresh_key.key_ciphertext, secret=secret_key)
+        fresh = parse_bundle(plaintext)
+        if fresh is None:
+            if force_refresh and fresh_key.key_ciphertext == observed_ciphertext:
+                raise NotRefreshable("static token cannot be refreshed")
+            return plaintext
+        if fresh_key.key_ciphertext != observed_ciphertext and fresh.get("access_token"):
+            return str(fresh["access_token"])
+        fresh_refresh = fresh.get("refresh_token")
+        if not fresh_refresh:
+            if force_refresh or not fresh.get("access_token"):
+                raise NotRefreshable("credential bundle has no refresh token")
+            return str(fresh["access_token"])
         if fresh.get("access_token") and not force_refresh and not _near_expiry(fresh):
             return str(fresh["access_token"])
         data = await _post(
@@ -347,11 +346,11 @@ async def resolve_access_token(
             form={
                 "grant_type": "refresh_token",
                 "client_id": CLIENT_ID,
-                "refresh_token": str(fresh.get("refresh_token") or refresh_token),
+                "refresh_token": str(fresh_refresh),
             },
         )
         assert data is not None
-        rotated = _make_bundle(data, str(fresh.get("refresh_token") or refresh_token))
+        rotated = _make_bundle(data, str(fresh_refresh))
         fresh_key.key_ciphertext = encrypt_secret(json.dumps(rotated), secret=secret_key)
         fresh_key.last_checked_at = dt.datetime.now(dt.UTC)
         return str(rotated["access_token"])
