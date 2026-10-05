@@ -98,19 +98,24 @@ class Database:
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
         """Transactional scope: commit on success, rollback on error."""
-        async with self.session_factory() as session:
-            try:
-                yield session
-                await session.commit()
-            except asyncio.CancelledError:
-                # Cancellation is a BaseException — the except-Exception branch
-                # below misses it. Roll back before letting it propagate so the
-                # transaction is not left dirty.
-                await _safe_rollback(session)
-                raise
-            except Exception:
-                await session.rollback()
-                raise
+        session = self.session_factory()
+        try:
+            yield session
+            await session.commit()
+        except asyncio.CancelledError:
+            # Cancellation is a BaseException — the except-Exception branch
+            # below misses it. Roll back before letting it propagate so the
+            # transaction is not left dirty.
+            await _safe_rollback(session)
+            raise
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            # SQLAlchemy's context-manager __aexit__ awaits close() directly.
+            # Under AnyIO level cancellation that await is cancelled too, so
+            # explicitly use the same shielded close as request sessions.
+            await _safe_close(session)
 
     async def dispose(self) -> None:
         await self.engine.dispose()

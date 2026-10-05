@@ -30,6 +30,7 @@ from email.utils import parsedate_to_datetime
 from types import SimpleNamespace
 from typing import Any, cast
 
+import anyio
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2119,30 +2120,31 @@ async def _build_stream(
         # even when the client disconnects mid-stream (CancelledError). Without
         # the shield, the cancellation propagates into these awaits and the
         # upstream connection leaks / usage is lost.
-        try:
-            cleanup = asyncio.create_task(
-                _stream_cleanup(
-                    response,
-                    log_id,
-                    token_id,
-                    usage,
-                    req_status=req_status,
-                    first_token_ms=first_token["ms"],
-                    finished_at=finished_at,
-                    error=stream_error,
-                    health_key=health_key,
-                    resp_body=(
-                        captured.decode("utf-8", errors="replace") if capture_body else None
-                    ),
+        with anyio.CancelScope(shield=True):
+            try:
+                cleanup = asyncio.create_task(
+                    _stream_cleanup(
+                        response,
+                        log_id,
+                        token_id,
+                        usage,
+                        req_status=req_status,
+                        first_token_ms=first_token["ms"],
+                        finished_at=finished_at,
+                        error=stream_error,
+                        health_key=health_key,
+                        resp_body=(
+                            captured.decode("utf-8", errors="replace") if capture_body else None
+                        ),
+                    )
                 )
-            )
-            await asyncio.shield(cleanup)
-        except asyncio.CancelledError:
-            # shield() alone detaches the task when cancelled. Wait for the DB
-            # session to close before the request finishes.
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await cleanup
-            log.debug("stream_cancelled", log_id=log_id)
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                # shield() alone detaches the task when cancelled. Wait for the DB
+                # session to close before the request finishes.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await cleanup
+                log.debug("stream_cancelled", log_id=log_id)
 
 
 async def _capture_usage(

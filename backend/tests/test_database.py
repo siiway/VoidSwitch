@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -23,7 +24,39 @@ async def test_session_close_survives_anyio_level_cancellation():
 
     with anyio.CancelScope() as scope:
         scope.cancel()
-        await database_module._safe_close(Session())  # ty: ignore[invalid-argument-type]
+        await database_module._safe_close(cast(Any, Session()))
+
+    assert closed
+
+
+async def test_transactional_session_close_survives_anyio_level_cancellation():
+    closed = False
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            await self.close()
+
+        def in_transaction(self):
+            return False
+
+        async def commit(self):
+            raise AssertionError("commit should not run after cancellation")
+
+        async def close(self):
+            nonlocal closed
+            await asyncio.sleep(0)
+            closed = True
+
+    db = object.__new__(database_module.Database)
+    db.session_factory = cast(Any, Session)
+
+    with anyio.CancelScope() as scope:
+        async with db.session():
+            scope.cancel()
+            await asyncio.sleep(0)
 
     assert closed
 

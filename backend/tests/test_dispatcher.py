@@ -6,6 +6,7 @@ import asyncio
 import json
 from typing import cast
 
+import anyio
 import httpx
 import pytest
 import respx
@@ -1621,6 +1622,61 @@ async def test_cancelled_stream_finishes_cleanup_before_returning(db, seeded):
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+    assert response.closed
+    async with db.session() as session:
+        row = await session.get(RequestLog, log_id)
+        assert row.req_status == "cancelled"
+        assert row.finished_at is not None
+
+
+async def test_anyio_cancelled_stream_finishes_cleanup_before_returning(db, seeded):
+    """Starlette's AnyIO cancellation must not interrupt log finalization."""
+    from voidswitch.models.db import RequestLog, VoidToken
+    from voidswitch.services.dispatcher import _build_stream
+
+    async with db.session() as session:
+        token = VoidToken(user_id=seeded["user_id"], name="t", token_hash="anyio-tokhash")
+        session.add(token)
+        await session.flush()
+        row = RequestLog(
+            token_id=token.id, user_sub=seeded["user_sub"], stream=True, req_status="pending"
+        )
+        session.add(row)
+        await session.flush()
+        log_id = row.id
+
+    entered = anyio.Event()
+
+    class FakeResponse:
+        closed = False
+
+        async def aiter_bytes(self):
+            entered.set()
+            await anyio.sleep_forever()
+            yield b"data: [DONE]\n\n"
+
+        async def aclose(self):
+            await asyncio.sleep(0)
+            self.closed = True
+
+    response = FakeResponse()
+    stream = _build_stream(
+        response=cast(httpx.Response, response),
+        inbound=ApiStyle.OPENAI,
+        upstream=ApiStyle.OPENAI,
+        model="deepseek-chat",
+        log_id=log_id,
+        token_id=token.id,
+    )
+
+    async def consume():
+        await stream.__anext__()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(consume)
+        await entered.wait()
+        task_group.cancel_scope.cancel()
 
     assert response.closed
     async with db.session() as session:
