@@ -57,7 +57,7 @@ VoidSwitch 管理员），其他团队也从不会授予层级（它们仍然可
 ## 数据库连接池
 
 PostgreSQL 部署可通过环境变量调整每个 worker 的连接池：
-`VOIDSWITCH_DATABASE__POOL_SIZE`（默认 5）、
+`VOIDSWITCH_DATABASE__POOL_SIZE`（默认 15）、
 `VOIDSWITCH_DATABASE__MAX_OVERFLOW`（默认 5）、
 `VOIDSWITCH_DATABASE__POOL_TIMEOUT`（默认 15 秒）、
 `VOIDSWITCH_DATABASE__POOL_RECYCLE`（默认 1800 秒）和

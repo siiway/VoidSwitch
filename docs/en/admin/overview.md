@@ -57,7 +57,7 @@ VoidSwitch admin), and other teams never grant tiers (they can still grant [role
 ## Database connection pool
 
 PostgreSQL deployments can tune each worker's pool with
-`VOIDSWITCH_DATABASE__POOL_SIZE` (default 5),
+`VOIDSWITCH_DATABASE__POOL_SIZE` (default 15),
 `VOIDSWITCH_DATABASE__MAX_OVERFLOW` (default 5),
 `VOIDSWITCH_DATABASE__POOL_TIMEOUT` (default 15 seconds),
 `VOIDSWITCH_DATABASE__POOL_RECYCLE` (default 1800 seconds), and

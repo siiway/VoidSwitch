@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+import anyio
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -52,7 +53,7 @@ class Database:
         url: str,
         *,
         echo: bool = False,
-        pool_size: int = 5,
+        pool_size: int = 15,
         max_overflow: int = 5,
         pool_timeout: float = 15,
         pool_recycle: int = 1800,
@@ -316,7 +317,7 @@ def init_database(
     url: str,
     *,
     echo: bool = False,
-    pool_size: int = 5,
+    pool_size: int = 15,
     max_overflow: int = 5,
     pool_timeout: float = 15,
     pool_recycle: int = 1800,
@@ -451,11 +452,16 @@ async def _safe_close(session: AsyncSession) -> None:
 
 async def _finish_session_operation(operation: Awaitable[None]) -> None:
     """Keep rollback/close alive and awaited after caller cancellation."""
-    task = asyncio.ensure_future(operation)
-    try:
-        await asyncio.shield(task)
-    except asyncio.CancelledError:
-        with suppress(asyncio.CancelledError, Exception):
-            await task
-    except Exception:
-        pass
+    # AnyIO cancel scopes use level cancellation: every await remains cancelled
+    # until the scope exits. asyncio.shield() alone therefore cannot protect an
+    # asyncpg close. The AnyIO shield handles that case; the task + second await
+    # handles edge-triggered asyncio task cancellation.
+    with anyio.CancelScope(shield=True):
+        task = asyncio.ensure_future(operation)
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+        except Exception:
+            pass

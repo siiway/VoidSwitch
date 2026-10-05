@@ -4,11 +4,28 @@ from __future__ import annotations
 
 import asyncio
 
+import anyio
 import pytest
 from voidswitch.core import database as database_module
 from voidswitch.core.database import RequestSessionMiddleware
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_session_close_survives_anyio_level_cancellation():
+    closed = False
+
+    class Session:
+        async def close(self):
+            nonlocal closed
+            await asyncio.sleep(0)
+            closed = True
+
+    with anyio.CancelScope() as scope:
+        scope.cancel()
+        await database_module._safe_close(Session())  # ty: ignore[invalid-argument-type]
+
+    assert closed
 
 
 async def test_cancelled_request_waits_for_session_close(monkeypatch):
