@@ -257,6 +257,7 @@ const en = {
     targetGroups: "Target role groups",
     targetGroupsHint: "Only members of the selected groups will see this announcement. Leave empty for everyone.",
     targetGroupsSearch: "Search role groups…",
+    dontShowAgain: "Don't show again",
   },
   providers: {
     title: "Providers",

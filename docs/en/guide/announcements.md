@@ -4,8 +4,7 @@ Announcements are short platform-wide notices — maintenance windows, new model
 
 ## As a reader (everyone)
 
-- **Sign-in popup** — when you sign in, the **latest** announcement pops up so you don't miss it. Dismissing the popup applies only to the current session;
-  it will appear again the next time you sign in.
+- **Sign-in popup** — when you sign in, the **latest** announcement pops up so you don't miss it. You can dismiss it for the current session via "Close", or choose "Don't show again"; once dismissed, the popup will not be forced on future logins as long as the announcement content remains unchanged.
 - **Dashboard panel** — the most recent announcements (3 by default) are listed on the dashboard. The number shown inline can be configured by the owner
   ([Settings](/en/admin/settings) → *Announcements*). If there are more, use **View all** to read the rest.
 

@@ -505,10 +505,60 @@ export function AnnouncementsPanel() {
 }
 
 export const ANNOUNCE_POPUP_FLAG = "voidswitch.announce.pending";
+export const ANNOUNCE_DISMISSED_KEY = "voidswitch.announce.dismissed";
+
+interface DismissedAnnouncementRecord {
+  updated_at?: string;
+  title?: string;
+  body?: string;
+}
+
+function getDismissedMap(userId: string | number): Record<string, DismissedAnnouncementRecord> {
+  try {
+    const raw = localStorage.getItem(`${ANNOUNCE_DISMISSED_KEY}.${userId}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function setDismissedRecord(
+  userId: string | number,
+  announcementId: number,
+  record: DismissedAnnouncementRecord,
+): void {
+  try {
+    const map = getDismissedMap(userId);
+    map[String(announcementId)] = record;
+    localStorage.setItem(`${ANNOUNCE_DISMISSED_KEY}.${userId}`, JSON.stringify(map));
+  } catch {
+    /* storage quota / disabled */
+  }
+}
+
+function isAnnouncementDismissed(
+  userId: string | number,
+  a: Announcement,
+): boolean {
+  const map = getDismissedMap(userId);
+  const rec = map[String(a.id)];
+  if (!rec) return false;
+  // If updated_at is identical, content has not changed
+  if (rec.updated_at && a.updated_at && rec.updated_at === a.updated_at) {
+    return true;
+  }
+  // Fallback to title and body match
+  if (rec.title === a.title && rec.body === a.body) {
+    return true;
+  }
+  return false;
+}
 
 export function AnnouncementsPopup() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const [items, setItems] = useState<Announcement[] | null>(null);
+  const [activeItem, setActiveItem] = useState<Announcement | null>(null);
 
   useEffect(() => {
     if (sessionStorage.getItem(ANNOUNCE_POPUP_FLAG) !== "1") return;
@@ -516,10 +566,29 @@ export function AnnouncementsPopup() {
     api
       .get<Announcement[]>("/api/announcements", { limit: 1 })
       .then((list) => {
-        if (list.length > 0) setItems(list);
+        if (list.length > 0) {
+          const latest = list[0];
+          const userKey = user?.id ?? user?.sub ?? "anonymous";
+          if (!isAnnouncementDismissed(userKey, latest)) {
+            setItems(list);
+            setActiveItem(latest);
+          }
+        }
       })
       .catch(() => {});
-  }, []);
+  }, [user]);
+
+  function handleDismissPermanently() {
+    if (activeItem) {
+      const userKey = user?.id ?? user?.sub ?? "anonymous";
+      setDismissedRecord(userKey, activeItem.id, {
+        updated_at: activeItem.updated_at,
+        title: activeItem.title,
+        body: activeItem.body,
+      });
+    }
+    setItems(null);
+  }
 
   const open = items !== null && items.length > 0;
   return (
@@ -547,6 +616,9 @@ export function AnnouncementsPopup() {
             ))}
           </DialogContent>
           <DialogActions>
+            <Button appearance="secondary" onClick={handleDismissPermanently}>
+              {t("announcements.dontShowAgain" as TK)}
+            </Button>
             <Button appearance="primary" onClick={() => setItems(null)}>
               {t("common.close" as TK)}
             </Button>

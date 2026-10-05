@@ -258,6 +258,7 @@ const zh: Translations = {
     targetGroups: "目标身份组",
     targetGroupsHint: "仅所选身份组的成员会收到此公告。不选择则所有人可见。",
     targetGroupsSearch: "搜索身份组…",
+    dontShowAgain: "不再提示",
   },
   providers: {
     title: "提供商",
