@@ -7,10 +7,28 @@ from typing import Any, cast
 
 import anyio
 import pytest
+from sqlalchemy import BigInteger
 from voidswitch.core import database as database_module
 from voidswitch.core.database import RequestSessionMiddleware
+from voidswitch.models.db import ApiKey, RequestLog, SessionSpan, UsageDaily, VoidToken
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_cumulative_usage_counters_use_bigints():
+    columns = (
+        VoidToken.__table__.c.total_requests,
+        VoidToken.__table__.c.total_tokens,
+        ApiKey.__table__.c.total_requests,
+        RequestLog.__table__.c.prompt_tokens,
+        RequestLog.__table__.c.completion_tokens,
+        RequestLog.__table__.c.total_tokens,
+        UsageDaily.__table__.c.tokens,
+        UsageDaily.__table__.c.requests,
+        SessionSpan.__table__.c.requests,
+    )
+
+    assert all(isinstance(column.type, BigInteger) for column in columns)
 
 
 async def test_session_close_survives_anyio_level_cancellation():

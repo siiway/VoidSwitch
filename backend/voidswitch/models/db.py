@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -128,8 +129,8 @@ class VoidToken(Base, TimestampMixin):
     allowed_models: Mapped[list[str]] = mapped_column(JSON, default=list)
     rpm_limit: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unlimited
     daily_quota: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unlimited (requests/day)
-    total_requests: Mapped[int] = mapped_column(Integer, default=0)
-    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_requests: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # When enabled, all requests using this token record full request/response
@@ -462,7 +463,7 @@ class ApiKey(Base, TimestampMixin):
     rate_limit_until: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
-    total_requests: Mapped[int] = mapped_column(Integer, default=0)
+    total_requests: Mapped[int] = mapped_column(BigInteger, default=0)
     last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_checked_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
@@ -869,9 +870,9 @@ class RequestLog(Base):
     status_code: Mapped[int | None] = mapped_column(Integer, default=None)
     success: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, default=None)
-    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    prompt_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    completion_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     stream: Mapped[bool] = mapped_column(Boolean, default=False)
     attempts: Mapped[int] = mapped_column(Integer, default=1)
     provider_attempts: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
@@ -921,8 +922,8 @@ class UsageDaily(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_sub: Mapped[str] = mapped_column(String(255), default="", index=True)
     day: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD (UTC)
-    tokens: Mapped[int] = mapped_column(Integer, default=0)
-    requests: Mapped[int] = mapped_column(Integer, default=0)
+    tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    requests: Mapped[int] = mapped_column(BigInteger, default=0)
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
@@ -947,7 +948,7 @@ class SessionSpan(Base):
     last_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )
-    requests: Mapped[int] = mapped_column(Integer, default=0)
+    requests: Mapped[int] = mapped_column(BigInteger, default=0)
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )

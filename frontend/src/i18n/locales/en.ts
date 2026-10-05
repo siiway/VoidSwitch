@@ -861,6 +861,7 @@ const en = {
     emptyDesc: "Mint a Void-Token to give a client, app, or device access to the gateway.",
     mint: "Mint token",
     id: "ID",
+    requestId: "Request ID",
     name: "Name",
     fingerprint: "Fingerprint",
     user: "User",
