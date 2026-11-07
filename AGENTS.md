@@ -2,11 +2,14 @@
 
 ## Versioning
 
-When no release is being cut, the version number in the following three files MUST be updated to the dev format on every change:
+When no release is being cut, the version number MUST be updated to the dev
+format on every change in:
 
-- ``backend/voidswitch/__init__.py`` (``__version__``)
-- ``backend/pyproject.toml`` (``version``)
+- ``backend/internal/handlers/version.go`` (``Version``)
 - ``frontend/package.json`` (``version``)
+
+(On the ``legacy`` branch, also ``backend/voidswitch/__init__.py`` and
+``backend/pyproject.toml``.)
 
 **Dev format**: ``v{base}-{date}.{n}`` where:
 - ``{base}`` = the last released version (e.g. ``0.2.2``)
@@ -16,10 +19,10 @@ When no release is being cut, the version number in the following three files MU
 Example: ``v0.2.2-2026.8.28.1``
 
 The commit hash (first 7 chars) is resolved *dynamically*, not stored in these
-files: the backend's ``core/version.py:commit_id()`` reads ``VOIDSWITCH_COMMIT``
-(docker build arg) or runs ``git rev-parse --short=7 HEAD``, and surfaces it
-separately as the ``commit`` field of ``/api/auth/config`` and the system-info
-endpoint. A direct run without git simply omits the hash.
+files: ``backend/internal/handlers/version.go:CommitID()`` reads
+``VOIDSWITCH_COMMIT`` (docker build arg) or runs ``git rev-parse --short=7 HEAD``,
+and surfaces it separately as the ``commit`` field of ``/api/auth/config`` and
+the system-info endpoint. A direct run without git simply omits the hash.
 
 ``pyproject.toml`` uses ``+`` instead of ``-`` after the base (PEP 440 local
 version): ``0.2.2+2026.8.28.1``. The ``__init__.py`` and ``package.json`` use the
@@ -54,26 +57,39 @@ The release job runs **only** on version-tag pushes; snapshot builds never creat
 
 ## Database migrations
 
-**Alembic owns the schema.** The app runs `alembic upgrade head` automatically at startup (`core/database.py:run_migrations`), so deploys need no manual migration step — the first revision (`0001_baseline`) creates a fresh schema and heals pre-Alembic databases in one idempotent pass.
+**goose owns the schema (Go backend).** The gateway runs migrations at startup
+(`internal/database/db.go:Migrate`). The single baseline revision
+`backend/internal/database/migrations/00001_schema_baseline.sql` was generated
+from the Python Alembic tree; it either creates a fresh schema or **adopts** an
+existing PostgreSQL database in place (validates tables/columns/unique
+constraints, then records the baseline without replaying). It never drops or
+truncates.
 
-When you change a model, you MUST ship a migration with it:
+When you change a model (`internal/database/models.go`), you MUST ship a new
+forward-only goose revision:
 
 ```bash
-# 1. edit the SQLAlchemy model (backend/voidswitch/models/db.py)
-# 2. generate a candidate migration, then REVIEW it (autogenerate is a draft)
-uv run alembic revision --autogenerate -m "describe the change"
-# 3. confirm the model and the DB are in sync (CI-friendly check)
-uv run alembic check
+# 1. edit the model
+# 2. add backend/internal/database/migrations/00002_<desc>.sql with
+#    -- +goose Up / -- +goose Down blocks (PostgreSQL SQL)
+# 3. run against the disposable dev DB (scripts/dev-services.sh)
 # 4. commit the model + migration together
 ```
 
 Rules:
 
-- **Never extend `_ADDED_COLUMNS` / `_ADDED_INDEXES` in `core/database.py`** — they are FROZEN and consumed only by the baseline to heal pre-Alembic databases. New columns/indexes go in an Alembic revision (or declared on the model, e.g. composite indexes in `__table_args__`).
-- The URL comes from the app's own settings (`VOIDSWITCH_DATABASE__URL` / `config.yaml`); nothing is hardcoded in `alembic.ini`. Dev/tests run SQLite, prod runs PostgreSQL — the same tree serves both (SQLite ALTERs go through batch mode).
-- Postgres nit: boolean defaults must be `DEFAULT false`, **not** `DEFAULT 0` (Postgres rejects `0` as an integer default for a boolean column).
-- Alembic runs inside the app's event loop at startup; use `alembic check` before pushing to catch a model/migration drift.
+- **Never edit `00001_schema_baseline.sql`** — it is the frozen baseline. New
+  columns/indexes go in a new revision.
+- Production runs PostgreSQL. Boolean defaults must be `DEFAULT false` (not `0`).
+- **Do not use GORM AutoMigrate** in the production path; goose is the only
+  schema writer. The schema-faithful models must match the migration DDL.
+- Dev/tests: `scripts/dev-services.sh` starts a disposable PostgreSQL on
+  `127.0.0.1:55432` + Redis on `:56379`.
 
+The **Python** backend (preserved on the `legacy` branch) still uses Alembic;
+that branch's migrations are independent of the Go tree.
+
+## Documentation
 ## Documentation
 
 There is a public, bilingual VitePress **usage** site in `docs/`, deployed to

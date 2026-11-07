@@ -3,25 +3,26 @@
 #
 #   docker compose -f compose.yaml -f compose-build.override.yaml up -d --build
 #
-# The build context is the repo root so the OpenCode plugin source is bundled
-# and the /install endpoint works. See the Dockerfile header for details.
+# The gateway build context is the repo root so the OpenCode plugin source is
+# bundled and the /install endpoint works (see backend/Dockerfile).
 services:
   voidswitch:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: backend/Dockerfile
       args:
-        # Proxy for build-time downloads (uv/pip). Set these in .env or the shell;
-        # blank = direct. They are Docker's predefined proxy args, so RUN steps
-        # pick them up automatically and are never baked into the image.
+        # Proxy for build-time downloads (go mod download). Set these in .env or
+        # the shell; blank = direct. Docker's predefined proxy args are picked up
+        # by RUN steps and never baked into the image.
         # NOTE: pulling the FROM base images is done by the daemon, not the build
-        # — configure that separately (systemd drop-in / daemon proxy).
+        # — configure that separately (daemon proxy).
         HTTP_PROXY: "${HTTP_PROXY:-}"
         HTTPS_PROXY: "${HTTPS_PROXY:-}"
         NO_PROXY: "${NO_PROXY:-}"
         http_proxy: "${http_proxy:-}"
         https_proxy: "${https_proxy:-}"
         no_proxy: "${no_proxy:-}"
+        GOPROXY: "${GOPROXY:-}"
 
   dashboard:
     build:

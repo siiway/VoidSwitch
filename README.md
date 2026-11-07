@@ -18,14 +18,17 @@ routing, failover, and quotas.
                              key+node rotation          (Anthropic / Claude)
 ```
 
-| Path               | Stack                                    | What it is                  |
-| ------------------ | ---------------------------------------- | --------------------------- |
-| `backend/`         | Python 3.13 · uv · FastAPI · SQLAlchemy  | The gateway + admin API     |
-| `frontend/`        | Bun · React 19 · Fluent UI v9            | Decoupled admin dashboard   |
-| `agent/`           | Go · static binary                       | Outbound relay agent        |
-| `opencode-plugin/` | Bun · TypeScript · `@opencode-ai/plugin` | OpenCode provider plugin    |
+| Path               | Stack                                          | What it is                  |
+| ------------------ | ---------------------------------------------- | --------------------------- |
+| `backend/`         | Go 1.25 · Gin · GORM · PostgreSQL · Redis      | The gateway + admin API     |
+| `frontend/`        | Bun · React 19 · Fluent UI v9                  | Decoupled admin dashboard   |
+| `agent/`           | Go · static binary                             | Outbound relay agent        |
+| `opencode-plugin/` | Bun · TypeScript · `@opencode-ai/plugin`       | OpenCode provider plugin    |
 
-Each has its own README with full details.
+The Go backend is the actively maintained gateway. The previous Python
+implementation is preserved on the `legacy` branch (and can still be run from
+there). See `docs/migration/` for the cutover runbook and existing-deployment
+migration notes.
 
 ## Feature summary
 
@@ -35,8 +38,11 @@ Each has its own README with full details.
   Together, Fireworks, Perplexity, Cerebras, DeepInfra, Gemini, Novita, SambaNova,
   Hyperbolic, Nebius, GitHub Models, Zhipu/GLM, Qwen, Volcengine/Doubao, MiniMax,
   and a generic OpenAI-compatible catch-all. Add more by subclassing `BaseProvider`.
-- **Bidirectional translation** — OpenAI ⇄ Anthropic for requests, responses, and
-  **streaming SSE**, including tool/function calls and token usage.
+- **Bidirectional translation** — OpenAI Chat, OpenAI Responses, Anthropic, and
+  Gemini via [RelayKit](https://github.com/QuantumNous/new-api/tree/main/relaykit)
+  (requests, responses, and **streaming SSE**, including tool calls, reasoning,
+  multimodal, and usage). Note: RelayKit is AGPL-3.0; the gateway is therefore
+  distributed under AGPL-3.0.
 - **Resilient dispatcher** — auth/balance errors rotate the *key*; network/timeout
   errors rotate the *node* (disabling it past a dynamic threshold); rate-limit and
   5xx errors retry on the next key/provider. Streaming-safe.
@@ -62,14 +68,29 @@ Each has its own README with full details.
 - **OpenCode plugin** — registers VoidSwitch as a first-class OpenCode provider and
   reproduces the full Claude Code request surface. See `opencode-plugin/`.
 
+## Build & run
+
+```bash
+# From source (gateway + dashboard + Postgres + Redis):
+docker compose -f compose.yaml -f compose-build.override.yaml up -d --build
+
+# Or pull published images:
+docker compose up -d
+```
+
+Configuration is via `VOIDSWITCH_*` env vars — copy `.env.example` to `.env`.
+
 ## Quality gates
 
 ```bash
+# Go backend
 cd backend
-uv run ruff check .     # lint        → clean
-uvx ty check            # type-check  → zero errors
-uv run pytest           # async tests → all green
+go build ./...
+go vet ./...
+go test ./... && go test -race ./...
 
+# Frontend
 cd ../frontend
-bun run build           # tsc + vite production build
+bun run lint            # tsc --noEmit
+bun run build           # vite production build
 ```

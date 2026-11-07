@@ -1,4 +1,13 @@
 # this file is for SiiWay deploy, feel free to remove it.
+#
+# Joins the shared external networks so the gateway can reach other stacks
+# (ai-network: upstream / proxy pool) and an external database (db-network).
+#
+# This deployment uses an EXTERNAL Postgres and Redis, so it does not need the
+# bundled `postgres`/`redis` services. Start the stack with only the gateway and
+# dashboard (see docs/migration/prod-compose.md):
+#
+#   docker compose -f compose.yaml -f compose.override.yaml up -d voidswitch dashboard
 
 networks:
   ai-network:
@@ -11,5 +20,6 @@ networks:
 services:
   voidswitch:
     networks:
+      - vs-network
       - ai-network
       - db-network

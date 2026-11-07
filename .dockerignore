@@ -1,22 +1,20 @@
-# Build context is the repo root. Keep it to backend/ + opencode-plugin/src.
+# Build context is the repo root (needed for the Go gateway image, which bundles
+# backend/ + opencode-plugin/src). See backend/Dockerfile.
 
 # --- not part of the backend image ---
 frontend/
 opencode-plugin/node_modules/
 opencode-plugin/bun.lock
-# docs/ IS part of the context (built into the image for the /docs/ site), but
-# its install/build artifacts are rebuilt inside the image, so exclude them.
-docs/node_modules/
-docs/.vitepress/dist/
-docs/.vitepress/cache/
+opencode-plugin/package.json
+opencode-plugin/README.md
+opencode-plugin/tsconfig.json
+docs/
+agent/
 
-# --- Python build artifacts / caches ---
-**/.venv/
-**/__pycache__/
-**/*.py[cod]
-**/*.egg-info/
-**/.ruff_cache/
-**/.pytest_cache/
+# --- Go build artifacts ---
+**/*.test
+backend/voidswitch/
+backend/coverage.out
 
 # --- local runtime state — must never be baked into the image ---
 **/.secret_key
@@ -28,13 +26,10 @@ backend/smoke.*
 # --- local config with real credentials (supply via env or a mount) ---
 backend/config.yaml
 
-# --- VCS / tooling / docs ---
+# --- VCS / tooling ---
 .git/
 .gitignore
 **/.gitignore
-Dockerfile
 .dockerignore
-backend/tests/
-
-# NOTE: backend/README.md is intentionally NOT ignored — pyproject.toml declares
-# `readme = "README.md"`, so hatchling needs it to build the project.
+Dockerfile
+backend/Dockerfile

@@ -44,11 +44,14 @@ jobs:
             echo "value=sha-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
           fi
 
+      # The Go gateway image is built from backend/ (its own Dockerfile). The
+      # build context is the repo root so the image can also bundle
+      # opencode-plugin/src for the /install endpoint (see backend/Dockerfile).
       - name: Build & push gateway image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: backend/Dockerfile
           push: true
           tags: |
             ghcr.io/siiway/voidswitch:latest
@@ -59,8 +62,9 @@ jobs:
             HTTP_PROXY=${{ secrets.HTTP_PROXY }}
             HTTPS_PROXY=${{ secrets.HTTPS_PROXY }}
             NO_PROXY=${{ secrets.NO_PROXY }}
-            UV_INDEX_URL=${{ secrets.UV_INDEX_URL }}
+            GOPROXY=${{ secrets.GOPROXY }}
             VOIDSWITCH_COMMIT=${{ github.sha }}
+            VERSION=${{ steps.version.outputs.value }}
 
       - name: Build & push dashboard image
         uses: docker/build-push-action@v6
