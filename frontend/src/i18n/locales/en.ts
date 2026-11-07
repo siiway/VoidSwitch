@@ -746,6 +746,14 @@ const en = {
     brandHint: "Icon shown beside the model. Leave empty to auto-detect.",
     brandAuto: "Auto-detect",
     modelsDevAutoFill: "Fill in name, description and limits from this model",
+    selectModeBest: "Best (healthiest upstream first)",
+    selectModeBalanced: "Balanced (spread across healthy upstreams)",
+    selectModePinnedBest: "Pinned best (stable choice, best-ranked)",
+    selectModePinnedBalanced: "Pinned balanced (stable choice, balanced)",
+    rankWeighted: "Weighted (priority + weight)",
+    rankTiered: "Tiered (strict priority tiers)",
+    cooledBehaviorFailFast: "Fail fast (return an error)",
+    cooledBehaviorIgnoreCooldown: "Ignore cooldown (try anyway)",
   },
   roleGroups: {
     title: "Role Groups",
@@ -1195,6 +1203,7 @@ const en = {
     finishedAt: "Finished at",
     attemptsSummary: "Attempts",
     attemptNum: "#{num}",
+    requestId: "Request ID",
   },
   stats: {
     title: "Statistics",

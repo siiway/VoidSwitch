@@ -29,6 +29,7 @@ import {
 } from "../components/ui";
 import { useOverTimeMode, useLiveLogCap, type OverTimeMode } from "../lib/prefs";
 import { shortcutHint } from "../lib/useShortcuts";
+import { routingEnumLabel } from "../lib/routingLabels";
 
 type TK = keyof Translations;
 
@@ -420,7 +421,7 @@ export function Settings() {
           >
             {ROUTING_SETTING_OPTIONS[key].map((option) => (
               <Option key={option} value={option}>
-                {option}
+                {routingEnumLabel(key, option, t)}
               </Option>
             ))}
           </Dropdown>

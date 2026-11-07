@@ -39,6 +39,8 @@ import type { BadgeProps } from "@fluentui/react-components";
 import { makeStyles } from "@fluentui/react-components";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
+import { formatGrouped } from "../lib/formatNumber";
 import { useSearchParams } from "react-router-dom";
 import { api, getToken, API_BASE } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -1468,7 +1470,7 @@ function RequestLogs({
               >
                 {formatDuration(requestDurationMs(r, durationNow, liveEnabled))}
               </TableCell>
-              <TableCell>{r.total_tokens}</TableCell>
+              <TableCell>{formatGrouped(r.total_tokens, i18n.language || "en")}</TableCell>
               <TableCell>{r.attempts}</TableCell>
               <TableCell>
                 <div style={{ display: "flex", gap: 4 }}>
@@ -1582,7 +1584,7 @@ function RequestLogs({
                     <DetailRow label={tr("logs.route" as TK)} value={`${detailLog.inbound_style ?? "?"}→${detailLog.upstream_style ?? "?"}`} />
                     <DetailRow label={tr("logs.stream" as TK)} value={detailLog.stream ? "yes" : "no"} />
                     <DetailRow label={tr("logs.tries" as TK)} value={String(detailLog.attempts)} />
-                    <DetailRow label={tr("logs.tokens" as TK)} value={`${detailLog.prompt_tokens}+${detailLog.completion_tokens}=${detailLog.total_tokens}`} />
+                    <DetailRow label={tr("logs.tokens" as TK)} value={`${formatGrouped(detailLog.prompt_tokens, i18n.language || "en")}+${formatGrouped(detailLog.completion_tokens, i18n.language || "en")}=${formatGrouped(detailLog.total_tokens, i18n.language || "en")}`} />
                     {detailLog.latency_ms != null && <DetailRow label={tr("logs.latency" as TK)} value={`${Math.round(detailLog.latency_ms)}ms`} />}
                     {detailLog.upstream_url && <DetailRow label={tr("logs.upstreamUrl" as TK)} value={detailLog.upstream_url} />}
                     <DetailRow label={tr("logs.userAgent" as TK)} value={detailLog.user_agent ?? "—"} />

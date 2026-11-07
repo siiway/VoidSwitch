@@ -34,6 +34,7 @@ import {
 } from "@fluentui/react-icons";
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useFormatNumber } from "../lib/formatNumber";
 import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -54,6 +55,7 @@ import { KeyRevealDialog } from "../components/KeyRevealDialog";
 
 export function Tokens() {
   const { t: tr } = useTranslation();
+  const fmt = useFormatNumber();
   type TK = keyof Translations;
   const notify = useNotify();
   const confirm = useConfirm();
@@ -307,8 +309,8 @@ export function Tokens() {
                     nickname={t.user_nickname}
                   />
                 </TableCell>
-                <TableCell>{t.total_requests}</TableCell>
-                <TableCell>{t.total_tokens}</TableCell>
+                <TableCell>{fmt(t.total_requests)}</TableCell>
+                <TableCell>{fmt(t.total_tokens)}</TableCell>
                 <TableCell>
                   <Badge
                     color={t.enabled ? "success" : "subtle"}

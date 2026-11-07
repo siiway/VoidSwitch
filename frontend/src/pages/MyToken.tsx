@@ -35,6 +35,7 @@ import { useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
 import { api, API_BASE } from "../api/client";
+import { useFormatNumber } from "../lib/formatNumber";
 import type { ModelEntry, VoidToken, VoidTokenWithSecret } from "../api/types";
 import {
   ErrorText,
@@ -118,6 +119,7 @@ export function MyToken() {
   const notify = useNotify();
   const confirm = useConfirm();
   const { t, i18n } = useTranslation();
+  const fmt = useFormatNumber();
   type TK = keyof Translations;
   // Public docs site (English lives under /en/); track the dashboard language.
   const docsBase =
@@ -494,7 +496,7 @@ export function MyToken() {
               Total requests
             </Text>
             <Text size={700} weight="bold">
-              {usage.data.requests}
+              {fmt(usage.data.requests)}
             </Text>
           </div>
           <div style={{ padding: 14, flex: 1, border: "1px solid var(--colorNeutralStroke2)", borderRadius: "10px" }}>
@@ -506,7 +508,7 @@ export function MyToken() {
               Total tokens
             </Text>
             <Text size={700} weight="bold">
-              {usage.data.tokens}
+              {fmt(usage.data.tokens)}
             </Text>
           </div>
         </div>
@@ -552,8 +554,8 @@ export function MyToken() {
                 <TableCell style={{ fontFamily: "monospace" }}>
                   {token.token_prefix}
                 </TableCell>
-                <TableCell>{token.total_requests}</TableCell>
-                <TableCell>{token.total_tokens}</TableCell>
+                <TableCell>{fmt(token.total_requests)}</TableCell>
+                <TableCell>{fmt(token.total_tokens)}</TableCell>
                 <TableCell>
                   {token.enabled ? t("common.enabled" as TK) : t("common.disabled" as TK)}
                 </TableCell>

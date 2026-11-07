@@ -67,19 +67,19 @@ func (a *App) meTokens(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// meUsage returns a minimal usage summary for the caller (Phase 1 stub shape).
+// meUsage returns the caller's {requests, tokens, token_count} summary. Zeros
+// are returned (never null) so the dashboard renders 0 placeholders.
 func (a *App) meUsage(c *gin.Context) {
 	uv := core.GetUser(c)
-	var total int64
-	_ = a.GDB.Model(&database.RequestLog{}).Where("user_sub = ?", uv.User.Sub).Count(&total).Error
+	var requests, tokens int64
+	a.GDB.Model(&database.RequestLog{}).Where("user_sub = ?", uv.User.Sub).
+		Select("COALESCE(COUNT(*),0)").Scan(&requests)
+	a.GDB.Model(&database.RequestLog{}).Where("user_sub = ?", uv.User.Sub).
+		Select("COALESCE(SUM(total_tokens),0)").Scan(&tokens)
+	var tokenCount int64
+	a.GDB.Model(&database.VoidToken{}).Where("user_id = ? AND deleted = ?", uv.User.ID, false).Count(&tokenCount)
 	c.JSON(http.StatusOK, gin.H{
-		"totals": gin.H{
-			"requests": total, "success": 0, "failures": 0,
-			"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-		},
-		"daily": []any{}, "weekly": []any{}, "monthly": []any{}, "yearly": []any{},
-		"by_user": []any{}, "by_token": []any{}, "by_model": []any{},
-		"scope": "self",
+		"requests": requests, "tokens": tokens, "token_count": tokenCount,
 	})
 }
 

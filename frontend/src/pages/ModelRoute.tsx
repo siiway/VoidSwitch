@@ -105,6 +105,21 @@ export function ModelRoute() {
   const [groups, setGroups] = useState<DraftGroup[] | null>(null);
   const [selectMode, setSelectMode] = useState<UpstreamSelectMode>("");
   const [rankAlgorithm, setRankAlgorithm] = useState<UpstreamRankAlgorithm>("");
+
+  const SELECT_MODE_LABEL: Record<"best" | "balanced" | "pinned_best" | "pinned_balanced", string> = {
+    best: t("models.selectModeBest" as TK),
+    balanced: t("models.selectModeBalanced" as TK),
+    pinned_best: t("models.selectModePinnedBest" as TK),
+    pinned_balanced: t("models.selectModePinnedBalanced" as TK),
+  };
+  const RANK_LABEL: Record<"weighted" | "tiered", string> = {
+    weighted: t("models.rankWeighted" as TK),
+    tiered: t("models.rankTiered" as TK),
+  };
+  const COOLED_LABEL: Record<"fail_fast" | "ignore_cooldown", string> = {
+    fail_fast: t("models.cooledBehaviorFailFast" as TK),
+    ignore_cooldown: t("models.cooledBehaviorIgnoreCooldown" as TK),
+  };
   const [maxAttempts, setMaxAttempts] = useState(3);
   const [allCooled, setAllCooled] = useState<UpstreamAllCooledBehavior>("");
   const [saving, setSaving] = useState(false);
@@ -226,20 +241,20 @@ export function ModelRoute() {
         <Field label={t("models.upstreamSelectMode" as TK)}>
           <Dropdown selectedOptions={[selectMode]} value={selectMode || t("common.default" as TK)} onOptionSelect={(_, d) => setSelectMode((d.optionValue as UpstreamSelectMode) ?? "")}>
             <Option value="">{t("common.default" as TK)}</Option>
-            {(["best", "balanced", "pinned_best", "pinned_balanced"] as const).map((mode) => <Option key={mode} value={mode}>{mode}</Option>)}
+            {(["best", "balanced", "pinned_best", "pinned_balanced"] as const).map((mode) => <Option key={mode} value={mode}>{SELECT_MODE_LABEL[mode]}</Option>)}
           </Dropdown>
         </Field>
         <Field label={t("models.upstreamRankAlgorithm" as TK)}>
           <Dropdown selectedOptions={[rankAlgorithm]} value={rankAlgorithm || t("common.default" as TK)} onOptionSelect={(_, d) => setRankAlgorithm((d.optionValue as UpstreamRankAlgorithm) ?? "")}>
             <Option value="">{t("common.default" as TK)}</Option>
-            {(["weighted", "tiered"] as const).map((algorithm) => <Option key={algorithm} value={algorithm}>{algorithm}</Option>)}
+            {(["weighted", "tiered"] as const).map((algorithm) => <Option key={algorithm} value={algorithm}>{RANK_LABEL[algorithm]}</Option>)}
           </Dropdown>
         </Field>
         <Field label={t("models.maxUpstreamAttempts" as TK)}><Input type="number" min={0} value={String(maxAttempts)} onChange={(_, d) => setMaxAttempts(Math.max(0, Number(d.value) || 0))} /></Field>
         <Field label={t("models.allCooledBehavior" as TK)}>
           <Dropdown selectedOptions={[allCooled]} value={allCooled || t("common.default" as TK)} onOptionSelect={(_, d) => setAllCooled((d.optionValue as UpstreamAllCooledBehavior) ?? "")}>
             <Option value="">{t("common.default" as TK)}</Option>
-            {(["fail_fast", "ignore_cooldown"] as const).map((behavior) => <Option key={behavior} value={behavior}>{behavior}</Option>)}
+            {(["fail_fast", "ignore_cooldown"] as const).map((behavior) => <Option key={behavior} value={behavior}>{COOLED_LABEL[behavior]}</Option>)}
           </Dropdown>
         </Field>
       </div>

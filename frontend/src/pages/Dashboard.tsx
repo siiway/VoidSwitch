@@ -11,6 +11,7 @@ import {
 } from "@fluentui/react-icons";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useFormatNumber } from "../lib/formatNumber";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { HeatmapBundle, Stats, SystemInfo } from "../api/types";
@@ -138,6 +139,7 @@ const useTaskStyles = makeStyles({
 
 function MemberDashboard() {
   const { t } = useTranslation();
+  const fmt = useFormatNumber();
   const usage = useAsync<MyUsage>(() => api.get("/api/me/usage"));
 
   return (
@@ -156,12 +158,12 @@ function MemberDashboard() {
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
           <Stat
             label={t("dashboard.myRequests" as TK)}
-            value={usage.data.requests}
+            value={fmt(usage.data.requests)}
             icon={<ChartMultipleRegular />}
           />
           <Stat
             label={t("dashboard.myTokens" as TK)}
-            value={usage.data.tokens}
+            value={fmt(usage.data.tokens)}
             icon={<DataUsageRegular />}
             accent={tokens.colorPaletteGreenForeground1}
           />
@@ -179,6 +181,7 @@ function MemberDashboard() {
 
 function StaffDashboard() {
   const { t } = useTranslation();
+  const fmt = useFormatNumber();
   const stats = useAsync<Stats>(() => api.get("/api/admin/stats"));
   const system = useAsync<SystemInfo>(() => api.get("/api/admin/system"));
   const taskStyles = useTaskStyles();
@@ -227,7 +230,7 @@ function StaffDashboard() {
               />
               <Stat
                 label={t("dashboard.voidTokens" as TK)}
-                value={stats.data.tokens}
+                value={fmt(stats.data.tokens)}
                 icon={<KeyRegular />}
               />
             </div>
@@ -247,7 +250,7 @@ function StaffDashboard() {
               />
               <Stat
                 label={t("dashboard.tokens24h" as TK)}
-                value={stats.data.tokens_24h}
+                value={fmt(stats.data.tokens_24h)}
                 icon={<DataUsageRegular />}
               />
               <Stat

@@ -43,6 +43,7 @@ import {
 } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useFormatNumber } from "../lib/formatNumber";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -94,6 +95,7 @@ export function ProviderKeys() {
   const { user: me, isStaff, isOwner } = useAuth();
   const canManage = (k: ApiKey) => isStaff || k.added_by === me?.id;
   const { t } = useTranslation();
+  const fmt = useFormatNumber();
   type TK = keyof Translations;
   const provider = useAsync<Provider[]>(() => api.get("/api/admin/providers"));
   const keys = useAsync<ApiKey[]>(
@@ -1437,7 +1439,7 @@ export function ProviderKeys() {
                   </TableCell>
                 )}
                 <TableCell>{k.failed_count}</TableCell>
-                <TableCell>{k.total_requests}</TableCell>
+                <TableCell>{fmt(k.total_requests)}</TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {formatDate(k.last_used_at)}
                 </TableCell>

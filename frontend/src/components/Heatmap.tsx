@@ -2,13 +2,15 @@ import { Text, tokens } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import type { Translations } from "../i18n/locales/en";
 import type { Heatmap as HeatmapData } from "../api/types";
+import i18n from "../i18n";
+import { formatGrouped } from "../lib/formatNumber";
 
 type TK = keyof Translations;
 
 // Full number, grouped by locale — deliberately NOT abbreviated to 万/亿 or K/M,
 // per the requirement that the heatmap shows exact token counts.
 function fullNumber(n: number): string {
-  return n.toLocaleString();
+  return formatGrouped(n, i18n.language || "en");
 }
 
 // GitHub-style five-step green scale. Level 0 (no activity) uses a neutral tile so

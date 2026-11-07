@@ -31,6 +31,8 @@ import {
 } from "@fluentui/react-icons";
 import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
+import { formatGrouped } from "../lib/formatNumber";
 import { useNavigate } from "react-router-dom";
 import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
@@ -210,7 +212,7 @@ const PIE_COLORS = [
 ];
 
 function nf(n: number): string {
-  return n.toLocaleString();
+  return formatGrouped(n, i18n.language || "en");
 }
 
 function fmtMs(v?: number | null): string {

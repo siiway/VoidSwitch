@@ -727,6 +727,14 @@ const zh: Translations = {
     brandHint: "模型旁显示的图标。留空则自动识别。",
     brandAuto: "自动识别",
     modelsDevAutoFill: "从此模型填入名称、描述和限制",
+    selectModeBest: "最优（优先选择最健康的上游）",
+    selectModeBalanced: "均衡（在健康上游间分散）",
+    selectModePinnedBest: "固定最优（会话内稳定，取排名最高）",
+    selectModePinnedBalanced: "固定均衡（会话内稳定，均衡分配）",
+    rankWeighted: "加权（优先级 + 权重）",
+    rankTiered: "分层（严格按优先级分层）",
+    cooledBehaviorFailFast: "快速失败（直接返回错误）",
+    cooledBehaviorIgnoreCooldown: "忽略冷却（仍尝试请求）",
   },
   roleGroups: {
     title: "身份组",
@@ -1157,6 +1165,7 @@ const zh: Translations = {
     finishedAt: "结束时间",
     attemptsSummary: "尝试记录",
     attemptNum: "#{num}",
+    requestId: "请求 ID",
   },
   stats: {
     title: "统计",
