@@ -1,28 +1,29 @@
-# VoidSwitch — gateway + dashboard on one origin (Python backend).
+# VoidSwitch — Go gateway + dashboard on one origin.
 #
-#   docker compose up -d        # pull images from GHCR + start
-#   docker compose logs -f      # follow logs
+#   docker compose up -d          # build + start (Postgres + Redis + gateway + dashboard)
+#   docker compose logs -f        # follow logs
 #
-# Images are pulled from the GHCR registry. To build them from source instead,
-# merge the self-build override and rebuild:
-#
-#   docker compose -f compose.yaml -f compose-build.override.yaml up -d --build
-#
-# This file runs the **Python** gateway (the root Dockerfile). For the Go rewrite
-# use `docker compose -f compose-go.yaml up -d` instead.
-#
-# The `dashboard` (nginx) is the single front door: it serves the SPA and reverse-
-# proxies the API to the `voidswitch` backend, which stays internal. Point your
-# Cloudflare Tunnel / reverse proxy at the published dashboard port.
-#
-# Configuration is supplied via environment. Copy .env.example to .env and fill
-# in the Prism OAuth credentials (and your public base URL when deployed behind a
-# domain). The gateway reads VOIDSWITCH_* vars natively; see backend/config.example.yaml
-# for the full set.
-#
-# To pin a specific image tag (default: latest) set VS_IMAGE_TAG in .env, e.g.
-# VS_IMAGE_TAG=v1.2.3
+# Configuration comes from the same VOIDSWITCH_* env vars; copy .env.example to
+# .env. The dashboard (nginx) is the single front door and reverse-proxies /api
+# to the `voidswitch` service (keep that service name — nginx expects it).
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-voidswitch}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-voidswitch}"
+      POSTGRES_DB: "${POSTGRES_DB:-voidswitch}"
+    volumes:
+      - voidswitch-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-voidswitch}"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks:
+      - vs-network
+
   redis:
     image: redis:8-alpine
     restart: unless-stopped
@@ -37,55 +38,32 @@ services:
 
   voidswitch:
     container_name: voidswitch
-    image: ghcr.io/siiway/voidswitch:${VS_IMAGE_TAG:-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: voidswitch-go:latest
     restart: unless-stopped
-    # Internal only — the dashboard service is the front door and proxies to this
-    # over the compose network. Add a `ports:` mapping here only for debugging.
     expose:
       - "8080"
     environment:
-      # Public URL of this gateway — used to build the OAuth redirect_uri. Set to
-      # your real https origin (e.g. https://voidswitch.siiway.org).
+      VOIDSWITCH_ENV: "${VOIDSWITCH_ENV:-production}"
       VOIDSWITCH_SERVER__BASE_URL: "${VOIDSWITCH_BASE_URL:-http://localhost:8080}"
-      # Where to send the browser after OAuth login (it serves the SPA's
-      # /login/callback). On a single origin this is the same as BASE_URL, so it
-      # defaults to that — otherwise the backend would fall back to the dev URL
-      # (localhost:5173). Override only if the dashboard lives elsewhere.
       VOIDSWITCH_SERVER__FRONTEND_URL: "${VOIDSWITCH_FRONTEND_URL:-${VOIDSWITCH_BASE_URL:-http://localhost:8080}}"
-      # Trust the dashboard/nginx X-Forwarded-* headers so request URLs resolve to
-      # the public https origin (correct OAuth redirect + /install gateway URL).
-      # Safe here because only the nginx container can reach this port.
-      FORWARDED_ALLOW_IPS: "*"
-      # Stable secret so dashboard sessions survive container recreation. Generate
-      # one with: openssl rand -base64 48
       VOIDSWITCH_SERVER__SECRET_KEY: "${VOIDSWITCH_SECRET_KEY:-}"
-      # Prism OAuth app credentials (required for dashboard login).
       VOIDSWITCH_PRISM__ISSUER: "${VOIDSWITCH_PRISM_ISSUER:-https://prism.siiway.org}"
       VOIDSWITCH_PRISM__CLIENT_ID: "${VOIDSWITCH_PRISM_CLIENT_ID:-}"
       VOIDSWITCH_PRISM__CLIENT_SECRET: "${VOIDSWITCH_PRISM_CLIENT_SECRET:-}"
-      # The SQLite DB lives on the named volume (set by the image; repeated here so
-      # it's visible/overridable). The Python backend uses a SQLAlchemy URL, so keep
-      # the sqlite+aiosqlite:// prefix. Point at Postgres etc. to externalise it.
-      VOIDSWITCH_DATABASE__URL: "${VOIDSWITCH_DATABASE_URL:-sqlite+aiosqlite:////data/voidswitch.db}"
-      # Shared cache/coordination backend. Redis is required by the Python gateway.
+      VOIDSWITCH_DATABASE__URL: "${VOIDSWITCH_DATABASE_URL:-postgres://${POSTGRES_USER:-voidswitch}:${POSTGRES_PASSWORD:-voidswitch}@postgres:5432/${POSTGRES_DB:-voidswitch}?sslmode=disable}"
       VOIDSWITCH_REDIS__URL: "${VOIDSWITCH_REDIS_URL:-redis://redis:6379/0}"
       VOIDSWITCH_REDIS__KEY_PREFIX: "${VOIDSWITCH_REDIS_KEY_PREFIX:-voidswitch}"
-      # Prism team whose owners/admins are recognised as VoidSwitch staff (the
-      # main-team mapping). Override per deployment via VOIDSWITCH_MAIN_TEAM_ID.
       VOIDSWITCH_ADMIN__MAIN_TEAM_ID: "${VOIDSWITCH_MAIN_TEAM_ID:-63d4761c78c2dec09a002233e1b7c06c}"
-    volumes:
-      # Persists the SQLite DB across container recreation.
-      - ${DATA_DIR:-voidswitch-data}:/data
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      # Runtime image is python-slim (no curl/wget); use the Python stdlib instead.
-      test:
-        - "CMD"
-        - "python"
-        - "-c"
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -93,14 +71,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      # - ai-network
       - vs-network
 
   dashboard:
-    image: ghcr.io/siiway/voidswitch-dashboard:${VS_IMAGE_TAG:-latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: voidswitch-dashboard:latest
     restart: unless-stopped
-    # The single public origin: serves the SPA and proxies the API to voidswitch.
-    # Point Cloudflare Tunnel / your reverse proxy here.
     ports:
       - "${VOIDSWITCH_PORT:-7292}:80"
     depends_on:
@@ -110,14 +88,7 @@ services:
       - vs-network
 
 volumes:
-  voidswitch-data:
+  voidswitch-pgdata:
 
 networks:
-  # Internal network shared by the gateway + dashboard.
   vs-network:
-  # Shared external network so the gateway can reach other stacks (e.g. a proxy
-  # pool / sub2api service). Create it once with `docker network create ai-network`.
-  # Enable it or not, depending on your need.
-#   ai-network:
-#     name: ai-network
-#     external: true
