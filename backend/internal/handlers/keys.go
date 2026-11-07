@@ -14,6 +14,7 @@ import (
 	"github.com/siiway/voidswitch/internal/core"
 	"github.com/siiway/voidswitch/internal/cryptoutil"
 	"github.com/siiway/voidswitch/internal/database"
+	"github.com/siiway/voidswitch/internal/services"
 )
 
 type apiKeyView struct {
@@ -333,19 +334,108 @@ func (a *App) keysReorder(c *gin.Context) {
 func (a *App) keysRefreshBalance(c *gin.Context) {
 	pid, _ := strconv.Atoi(c.Param("id"))
 	kid, _ := strconv.Atoi(c.Param("kid"))
-	if kid > 0 {
-		a.GDB.Model(&database.ApiKey{}).Where("id = ? AND provider_id = ?", kid, pid).
-			Update("last_checked_at", time.Now().UTC())
-		c.JSON(http.StatusOK, gin.H{"ok": true})
+	var provider database.Provider
+	if err := a.GDB.First(&provider, pid).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Provider not found.")
 		return
 	}
-	a.GDB.Model(&database.ApiKey{}).Where("provider_id = ?", pid).
-		Update("last_checked_at", time.Now().UTC())
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	autoDisable := services.GetBool("auto_disable_zero_balance", true)
+	poolFilter := c.Query("pool")
+	hasPool := c.Request.URL.Query().Has("pool")
+
+	q := a.GDB.Where("provider_id = ?", pid)
+	if kid > 0 {
+		q = q.Where("id = ?", kid)
+	}
+	if hasPool {
+		q = q.Where("pool = ?", poolFilter)
+	}
+	var keys []database.ApiKey
+	q.Find(&keys)
+	for i := range keys {
+		services.RefreshKeyBalance(a.GDB, &keys[i], &provider, a.Cfg.Server.SecretKey, autoDisable)
+	}
+	c.JSON(http.StatusOK, gin.H{"checked": len(keys)})
 }
 
 func (a *App) keysRefreshToken(c *gin.Context) {
-	a.fail(c, http.StatusNotImplemented, "OAuth token refresh is not available in this build.")
+	pid, _ := strconv.Atoi(c.Param("id"))
+	kid, _ := strconv.Atoi(c.Param("kid"))
+	var k database.ApiKey
+	if err := a.GDB.Where("id = ? AND provider_id = ?", kid, pid).First(&k).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Key not found.")
+		return
+	}
+	if err := services.RefreshKeyToken(a.GDB, &k, a.Cfg.Server.SecretKey); err != nil {
+		a.fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	a.GDB.Model(&k).Updates(map[string]any{
+		"status": string(constants.KeyStatusActive), "failed_count": 0,
+		"disabled_reason": nil, "last_checked_at": time.Now().UTC(),
+	})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// keysOAuthStart begins an interactive OAuth login for a key.
+func (a *App) keysOAuthStart(c *gin.Context) {
+	pid, _ := strconv.Atoi(c.Param("id"))
+	url, state := services.BeginOAuthLogin(pid)
+	c.JSON(http.StatusOK, gin.H{"authorize_url": url, "state": state})
+}
+
+// keysOAuthComplete finishes the interactive login and adds the key.
+func (a *App) keysOAuthComplete(c *gin.Context) {
+	uv := core.GetUser(c)
+	pid, _ := strconv.Atoi(c.Param("id"))
+	var in struct {
+		Code  string  `json:"code"`
+		State string  `json:"state"`
+		Note  *string `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
+		return
+	}
+	bundle, err := services.CompleteOAuthLogin(in.Code, in.State, pid, a.GDB)
+	if err != nil {
+		a.fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	raw, _ := json.Marshal(bundle)
+	ct, err := cryptoutil.EncryptSecret(string(raw), a.Cfg.Server.SecretKey)
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
+	preview := "oauth·" + keyPreview(string(raw))
+	if len(preview) > 48 {
+		preview = preview[:48]
+	}
+	var maxOrder *int
+	a.GDB.Model(&database.ApiKey{}).Where("provider_id = ?", pid).Select("MAX(sort_order)").Scan(&maxOrder)
+	next := 1
+	if maxOrder != nil {
+		next = *maxOrder + 1
+	}
+	k := database.ApiKey{
+		ProviderID: pid, KeyCiphertext: ct, KeyHash: core.HashToken(string(raw)), KeyPreview: preview,
+		SortOrder: next, Status: string(constants.KeyStatusActive), Weight: 1, Note: in.Note,
+		AddedBy: &uv.User.ID, Balance: database.JSONOf(map[string]any{}),
+	}
+	if err := a.GDB.Create(&k).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, toApiKeyView(&k))
+}
+
+// keysOAuthDeviceStart / Complete report device flow as unsupported here.
+func (a *App) keysOAuthDeviceStart(c *gin.Context) {
+	a.fail(c, http.StatusNotImplemented, "device flow is not supported for this provider")
+}
+func (a *App) keysOAuthDeviceComplete(c *gin.Context) {
+	a.fail(c, http.StatusNotImplemented, "device flow is not supported for this provider")
 }
 
 func (a *App) keysCleanup(c *gin.Context) {
@@ -418,6 +508,10 @@ func RegisterKeyRoutes(g *gin.RouterGroup, a *App) {
 	g.POST("/providers/:id/keys/:kid/reveal", a.keysReveal)
 	g.POST("/providers/:id/keys/:kid/refresh-balance", a.keysRefreshBalance)
 	g.POST("/providers/:id/keys/:kid/refresh-token", a.keysRefreshToken)
+	g.POST("/providers/:id/keys/oauth/start", a.keysOAuthStart)
+	g.POST("/providers/:id/keys/oauth/complete", a.keysOAuthComplete)
+	g.POST("/providers/:id/keys/oauth/device/start", a.keysOAuthDeviceStart)
+	g.POST("/providers/:id/keys/oauth/device/complete", a.keysOAuthDeviceComplete)
 }
 
 func servicesName(uv *core.UserView) *string {
@@ -495,4 +589,56 @@ func (a *App) importKeysDirect(c *gin.Context, pid int, lines []string, pool str
 		"by_platform": map[string]int{}, "by_source": map[string]int{},
 		"skipped": []any{}, "keys": views,
 	})
+}
+
+// addKeysForProvider adds raw key lines to a provider (deduped) and returns the
+// created key views. Used by the provider-key-management API.
+func (a *App) addKeysForProvider(pid int, lines []string, pool string, note *string) []apiKeyView {
+	var existing []string
+	a.GDB.Model(&database.ApiKey{}).Where("provider_id = ?", pid).Pluck("key_hash", &existing)
+	seen := map[string]bool{}
+	for _, h := range existing {
+		seen[h] = true
+	}
+	var maxOrder *int
+	a.GDB.Model(&database.ApiKey{}).Where("provider_id = ?", pid).Select("MAX(sort_order)").Scan(&maxOrder)
+	next := 1
+	if maxOrder != nil {
+		next = *maxOrder + 1
+	}
+	var created []database.ApiKey
+	for _, line := range lines {
+		raw, comment := parseKeyLine(line)
+		if raw == "" {
+			continue
+		}
+		hash := core.HashToken(raw)
+		if seen[hash] {
+			continue
+		}
+		seen[hash] = true
+		ct, err := cryptoutil.EncryptSecret(raw, a.Cfg.Server.SecretKey)
+		if err != nil {
+			continue
+		}
+		n := comment
+		if n == nil {
+			n = note
+		}
+		k := database.ApiKey{
+			ProviderID: pid, KeyCiphertext: ct, KeyHash: hash, KeyPreview: keyPreview(raw),
+			Pool: pool, SortOrder: next, Status: string(constants.KeyStatusActive), Weight: 1,
+			Note: n, Balance: database.JSONOf(map[string]any{}),
+		}
+		next++
+		created = append(created, k)
+	}
+	if len(created) > 0 {
+		a.GDB.Create(&created)
+	}
+	out := make([]apiKeyView, 0, len(created))
+	for i := range created {
+		out = append(out, toApiKeyView(&created[i]))
+	}
+	return out
 }

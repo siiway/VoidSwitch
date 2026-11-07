@@ -193,3 +193,30 @@ func effectiveTeamRole(teams []map[string]any, teamID string) string {
 	}
 	return bestRole
 }
+
+// SyncAutoAdminships reconciles a user's automatic adminship rows.
+func SyncAutoAdminships(db *gorm.DB, userID int, autoGroupIDs []int) error {
+	desired := make(map[int]bool)
+	for _, gid := range autoGroupIDs {
+		desired[gid] = true
+	}
+	var rows []database.RoleGroupAdminship
+	if err := db.Where("user_id = ?", userID).Find(&rows).Error; err != nil {
+		return err
+	}
+	existing := map[int]database.RoleGroupAdminship{}
+	for _, r := range rows {
+		existing[r.RoleGroupID] = r
+	}
+	for gid, row := range existing {
+		if row.Source == "auto" && !desired[gid] {
+			db.Delete(&row)
+		}
+	}
+	for gid := range desired {
+		if _, ok := existing[gid]; !ok {
+			db.Create(&database.RoleGroupAdminship{UserID: userID, RoleGroupID: gid, Source: "auto"})
+		}
+	}
+	return nil
+}

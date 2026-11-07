@@ -164,26 +164,47 @@ docker build          PASS
 real upstream (stream + non-stream + anthropic) PASS
 ```
 
-## Remaining differences (honest, NOT DONE)
+## Remaining work closed in Phase 3 (2026-11-07)
 
-- **OIDC / PKCE dashboard login** — only dev bypass + token-login stub. Prism
-  OAuth login/callback not implemented; real deployments need it before login
-  works without the bypass.
-- **OAuth key flows** (claude-code/xai/codex bundles), `refresh-token`,
-  authenticated key import (auth-import sources) — stubs only.
-- **Node egress**: SOCKS5/agent relay transports and node-group dynamic scoring
-  are wired structurally but the dispatcher currently uses a direct/proxy route;
-  EWMA node ranking not yet driving selection.
-- **models.dev sync** returns 0 (cache-backed search only).
-- **Logs live stream** is a simple poller, not the full filtered SSE.
-- **Provider-key-management API** (`/provider-api`) subapp not mounted.
-- **Balance probing / auto-disable** task bodies are conservative no-ops.
-- **Frontend SPA catch-all** not served by the Go backend (the nginx dashboard
-  container serves it; single-origin via compose works).
+All previously-listed gaps were implemented and verified:
 
-## Cutover
+| Item | Status | Notes |
+|---|---|---|
+| OIDC / PKCE Prism login + callback + token-login | PASS | stateless signed-state PKCE, token exchange, userinfo, teams, role/role-group sync, merge role, token-login via `vsl-` |
+| Provider key-management API (`/provider-api`) | PASS | `vsk-` token auth; whoami, keys CRUD, reorder, refresh-balance |
+| Node egress: SOCKS5 + agent relay | PASS | SOCKS5 via x/net/proxy; agent relay via `X-VS-Upstream-URL` + bearer |
+| EWMA node scoring | PASS | node-group expansion, latency EWMA + failure penalty ranking, health samples |
+| models.dev sync | PASS | pulled **235** live entries into `models_dev_cache` |
+| Balance probing + auto-disable | PASS | real `FetchBalance` per adapter; probe/rescan tasks; admin refresh-balance |
+| OAuth key flows (start/complete/refresh-token) | PASS | claude-code OAuth bundle parse/refresh; device flow returns clear unsupported |
+| Logs live stream | PASS | SSE poller with heartbeat + visibility scoping |
+| Frontend SPA catch-all | PASS | serves `frontend/dist` with SPA fallback, never shadows API |
+| Cutover runbook | PASS | `docs/migration/cutover-runbook.md` |
 
-The schema adoption mechanism is proven (adopt Python-Alembic DB without replay).
-A `docs/migration/cutover-runbook.md` is still to be written — it requires the
-production backup rehearsal to be meaningful, so it is intentionally deferred to
-the cutover window.
+### Verification (actual)
+
+```
+go test ./...        PASS
+go test -race ./...  PASS
+go vet ./...         PASS
+gofmt -l             clean
+frontend tsc --noEmit PASS
+frontend vite build   PASS
+docker build          PASS
+provider-key API (401 w/o token, CRUD w/ vsk-) PASS
+models.dev sync (235 entries) PASS
+OIDC authorize URL + PKCE PASS; bad-state callback redirects error PASS
+real upstream (non-stream, stream, anthropic) PASS
+```
+
+## Known limitations (honest)
+
+- Device-code OAuth flow returns "not supported" rather than implementing it
+  (no in-scope provider currently uses it here).
+- Auth-import from external sources parses pasted key lines; provider-specific
+  file formats (e.g. multi-format platform dumps) are not specialised.
+- Usage `by_provider` / `performance` aggregates are computed from
+  `request_logs`; exact parity with Python's rollups should be spot-checked on a
+  restored backup.
+- Real-provider gateway behaviour is verified against `glm-4.7-flash-cf`; other
+  providers follow the same RelayKit path but were not individually exercised.

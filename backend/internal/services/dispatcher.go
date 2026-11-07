@@ -87,8 +87,9 @@ type DispatchResult struct {
 
 // Dispatcher resolves a route and failovers across upstreams/keys.
 type Dispatcher struct {
-	req *DispatchRequest
-	seq []Candidate
+	req          *DispatchRequest
+	seq          []Candidate
+	egressNodeID int
 }
 
 func NewDispatcher(req *DispatchRequest) *Dispatcher {
@@ -210,26 +211,43 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 	}
 	raw, _ := json.Marshal(upstreamBody)
 
-	route := NewRoute(nil, nil)
-	client, err := d.req.Pool.Get(route, 15*time.Second, 300*time.Second)
-	if err != nil {
-		return nil, err
-	}
+	egress := ResolveEgress(d.req.DB, cand.Provider, d.req.Cfg.Server.SecretKey)
+	d.egressNodeID = egress.NodeID
 
-	httpReq, err := http.NewRequestWithContext(d.req.Ctx, http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range headers {
-		httpReq.Header.Set(k, v)
-	}
-	if d.req.Stream {
-		httpReq.Header.Set("Accept", "text/event-stream")
-	}
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, err
+	var resp *http.Response
+	if egress.NodeKind == "agent" {
+		h := headers
+		if d.req.Stream {
+			h["Accept"] = "text/event-stream"
+		}
+		resp, err = SendThroughAgent(d.req.Ctx, egress, http.MethodPost, url, h, raw, 300*time.Second)
+		if err != nil {
+			d.recordNodeHealth(egress.NodeID, false, 0)
+			return nil, err
+		}
+	} else {
+		route := NewRoute(egress.ProxyURL, egress.LocalAddress)
+		client, cerr := d.req.Pool.Get(route, 15*time.Second, 300*time.Second)
+		if cerr != nil {
+			return nil, cerr
+		}
+		httpReq, berr := http.NewRequestWithContext(d.req.Ctx, http.MethodPost, url, bytes.NewReader(raw))
+		if berr != nil {
+			return nil, berr
+		}
+		for k, v := range headers {
+			httpReq.Header.Set(k, v)
+		}
+		if d.req.Stream {
+			httpReq.Header.Set("Accept", "text/event-stream")
+		}
+		start := time.Now()
+		resp, err = client.Do(httpReq)
+		if err != nil {
+			d.recordNodeHealth(egress.NodeID, false, 0)
+			return nil, err
+		}
+		d.recordNodeHealth(egress.NodeID, true, float64(time.Since(start).Milliseconds()))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
@@ -533,4 +551,50 @@ func (s *sseReader) Next() (data, event string, ok bool) {
 			return "", "", false
 		}
 	}
+}
+
+// recordNodeHealth updates a node's EWMA latency + failure count and appends a
+// health sample (used by the health-history view).
+func (d *Dispatcher) recordNodeHealth(nodeID int, success bool, latencyMs float64) {
+	if nodeID == 0 {
+		return
+	}
+	db := d.req.DB
+	now := time.Now().UTC()
+
+	if success {
+		halfLife := GetFloat("node_rank_ewma_half_life_seconds", 300)
+		alpha := 0.3
+		if halfLife > 0 {
+			alpha = 1 - 0.5*(1/(halfLife/60)) // coarse convergence; bounded below
+			if alpha < 0.2 {
+				alpha = 0.2
+			}
+			if alpha > 0.8 {
+				alpha = 0.8
+			}
+		}
+		var node database.Node
+		if err := db.First(&node, nodeID).Error; err == nil {
+			newEWMA := latencyMs
+			if node.LatencyEWMA != nil {
+				newEWMA = alpha*latencyMs + (1-alpha)*(*node.LatencyEWMA)
+			}
+			db.Model(&node).Updates(map[string]any{
+				"latency_ewma": newEWMA, "latency_ms": latencyMs, "failed_count": 0,
+				"last_checked_at": now, "status": string(constants.NodeStatusActive),
+			})
+		}
+	} else {
+		db.Model(&database.Node{}).Where("id = ?", nodeID).
+			Updates(map[string]any{"last_checked_at": now, "failed_count": gorm.Expr("failed_count + 1")})
+	}
+
+	sample := database.NodeHealthSample{
+		NodeID: nodeID, TS: now, Source: "request", Success: success,
+	}
+	if latencyMs > 0 {
+		sample.LatencyMs = &latencyMs
+	}
+	db.Create(&sample)
 }

@@ -13,20 +13,26 @@ import (
 // RegisterDefaults registers the standard background tasks. Phase 1 bodies are
 // conservative (they run and report status); Phase 2 adds full balance probing,
 // node resurrection and pending-log reconciliation.
-func RegisterDefaults(m *Manager, db *gorm.DB) {
+func RegisterDefaults(m *Manager, db *gorm.DB, secretKey string) {
 	m.Register(&Task{
 		Name:        "balance_probe",
 		IntervalKey: "balance_probe_interval_seconds",
 		EnabledKey:  "balance_probe_enabled",
 		MinInterval: 30,
-		Tick:        func(ctx context.Context) error { return nil },
+		Tick: func(ctx context.Context) error {
+			services.RunBalanceProbe(ctx, db, secretKey)
+			return nil
+		},
 	})
 	m.Register(&Task{
 		Name:        "balance_rescan",
 		IntervalKey: "balance_rescan_interval_seconds",
 		EnabledKey:  "balance_rescan_enabled",
 		MinInterval: 60,
-		Tick:        func(ctx context.Context) error { return nil },
+		Tick: func(ctx context.Context) error {
+			services.RunBalanceRescan(ctx, db, secretKey)
+			return nil
+		},
 	})
 	m.Register(&Task{
 		Name:        "node_resurrector",

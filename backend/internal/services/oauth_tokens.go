@@ -525,3 +525,27 @@ func shortReason(body []byte) string {
 		return "rejected"
 	}
 }
+
+// RefreshKeyToken force-refreshes an OAuth key's credential bundle and
+// re-enables the key. Returns an error when the key is not refreshable.
+func RefreshKeyToken(db *gorm.DB, key *database.ApiKey, secretKey string) error {
+	_, err := resolveOAuthAccessToken(db, key, secretKey, true)
+	return err
+}
+
+// BeginOAuthLogin starts an interactive OAuth login for a provider type and
+// returns the authorize URL + state.
+func BeginOAuthLogin(providerID int) (string, string) {
+	return BeginLogin(providerID)
+}
+
+// CompleteOAuthLogin finishes an interactive OAuth login and returns the bundle.
+func CompleteOAuthLogin(codeInput, state string, providerID int, db *gorm.DB) (map[string]any, error) {
+	return CompleteLogin(codeInput, state, providerID, db)
+}
+
+// DeviceOAuthStart is a placeholder for the device-code flow; providers that do
+// not support it return a clear error.
+func DeviceOAuthStart(providerID int) (string, string, error) {
+	return "", "", &NotRefreshableError{Message: "device flow is not supported for this provider"}
+}

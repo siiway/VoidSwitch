@@ -87,7 +87,7 @@ func main() {
 
 	// Background tasks.
 	taskMgr := tasks.New(db.Gorm)
-	tasks.RegisterDefaults(taskMgr, db.Gorm)
+	tasks.RegisterDefaults(taskMgr, db.Gorm, cfg.Server.SecretKey)
 	taskMgr.Start()
 	defer taskMgr.Stop()
 
@@ -142,6 +142,8 @@ func buildRouter(app *handlers.App, cfg *config.Settings) *gin.Engine {
 	// Public gateway + installer.
 	handlers.RegisterGatewayRoutes(r.Group("/v1"), app)
 	handlers.RegisterInstallRoutes(r, app)
+	handlers.RegisterProviderAPIRoutes(r, app)
+	handlers.RegisterSPA(r, app)
 
 	api := r.Group("/api")
 	handlers.RegisterAuthRoutes(api.Group("/auth"), app, core.SessionAuth(app.GDB, cfg))

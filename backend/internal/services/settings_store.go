@@ -254,3 +254,18 @@ func StopSettingsListener() {
 		settingsCancel()
 	}
 }
+
+// GetFloat returns a numeric setting as float64.
+func GetFloat(key string, def float64) float64 {
+	switch v := GetSetting(key).(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case json.Number:
+		if f, err := v.Float64(); err == nil {
+			return f
+		}
+	}
+	return def
+}

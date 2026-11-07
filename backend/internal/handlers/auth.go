@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -82,10 +86,103 @@ func (a *App) logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// tokenLogin signs in with a long-lived login token (vsl-…). Phase 1 verifies
-// only the deterministic dev identity; Prism OAuth token-login is Phase 2.
+// tokenLogin signs in with a long-lived login token (vsl-…).
 func (a *App) tokenLogin(c *gin.Context) {
-	a.fail(c, http.StatusNotImplemented, "Token login is not available in this build.")
+	var in struct {
+		Token string `json:"token"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil || strings.TrimSpace(in.Token) == "" {
+		a.fail(c, http.StatusUnauthorized, "Invalid login token.")
+		return
+	}
+	hash := core.HashToken(strings.TrimSpace(in.Token))
+	var user database.User
+	if err := a.GDB.Where("login_token_hash = ?", hash).First(&user).Error; err != nil {
+		a.fail(c, http.StatusUnauthorized, "Invalid login token.")
+		return
+	}
+	if !user.Enabled || !core.IsStaff(user.Role) {
+		a.fail(c, http.StatusUnauthorized, "Invalid login token.")
+		return
+	}
+	now := time.Now().UTC()
+	a.GDB.Model(&user).Update("last_login_at", now)
+	a.issueSession(c, &user)
+}
+
+// issueSession mints a session JWT, sets the cookie, and returns SessionOut.
+func (a *App) issueSession(c *gin.Context, user *database.User) {
+	token, expires, err := core.MintSession(a.Cfg, user, a.Cfg.Server.SessionTTLMinutes)
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
+	c.SetCookie("vs_session", token, expires, "/", "", false, true)
+	c.JSON(http.StatusOK, gin.H{
+		"access_token": token,
+		"token_type":   "bearer",
+		"expires_in":   expires,
+		"user":         services.BuildUserView(user),
+	})
+}
+
+// login starts the Prism OAuth flow (or returns the authorize URL + state).
+func (a *App) login(c *gin.Context) {
+	if a.Cfg.Prism.ClientID == "" {
+		a.fail(c, http.StatusNotImplemented, "OAuth is not configured.")
+		return
+	}
+	authorizeURL, state, err := services.BuildAuthorizeURL(a.Cfg)
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
+	if c.Query("redirect") == "1" || c.Query("redirect") == "true" {
+		c.Redirect(http.StatusFound, authorizeURL)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"authorize_url": authorizeURL, "state": state})
+}
+
+// callback completes the Prism OAuth flow and redirects to the SPA.
+func (a *App) callback(c *gin.Context) {
+	frontend := strings.TrimRight(a.Cfg.Server.FrontendURL, "/")
+	target := frontend + "/login/callback"
+	code := c.Query("code")
+	state := c.Query("state")
+	if errParam := c.Query("error"); errParam != "" || code == "" || state == "" {
+		e := errParam
+		if e == "" {
+			e = "missing_code"
+		}
+		c.Redirect(http.StatusFound, target+"#"+url.Values{"error": {e}}.Encode())
+		return
+	}
+	ident, err := services.ExchangeCode(c.Request.Context(), a.Cfg, code, state)
+	if err != nil {
+		slog.Warn("oauth callback failed", "err", err)
+		c.Redirect(http.StatusFound, target+"#"+url.Values{"error": {"login_failed"}}.Encode())
+		return
+	}
+	user, err := services.UpsertUser(a.GDB, a.Cfg, ident)
+	if err == services.ErrLoginDenied {
+		c.Redirect(http.StatusFound, target+"#"+url.Values{"error": {"access_denied"}}.Encode())
+		return
+	}
+	if err != nil {
+		slog.Warn("oauth upsert failed", "err", err)
+		c.Redirect(http.StatusFound, target+"#"+url.Values{"error": {"login_failed"}}.Encode())
+		return
+	}
+	token, expires, err := core.MintSession(a.Cfg, user, a.Cfg.Server.SessionTTLMinutes)
+	if err != nil {
+		c.Redirect(http.StatusFound, target+"#"+url.Values{"error": {"login_failed"}}.Encode())
+		return
+	}
+	c.Redirect(http.StatusFound, target+"#"+url.Values{
+		"access_token": {token},
+		"expires_in":   {strconv.Itoa(expires)},
+	}.Encode())
 }
 
 func (a *App) groupNames(ids []int) []string {
@@ -104,11 +201,6 @@ func RegisterAuthRoutes(r *gin.RouterGroup, a *App, sessionMW gin.HandlerFunc) {
 	r.POST("/dev-login", a.devLogin)
 	r.POST("/logout", a.logout)
 	r.POST("/token-login", a.tokenLogin)
-	r.GET("/login", func(c *gin.Context) {
-		// Real OAuth redirect is Phase 2; report not configured.
-		a.fail(c, http.StatusNotImplemented, "OAuth login is not available in this build.")
-	})
-	r.GET("/callback", func(c *gin.Context) {
-		a.fail(c, http.StatusNotImplemented, "OAuth callback is not available in this build.")
-	})
+	r.GET("/login", a.login)
+	r.GET("/callback", a.callback)
 }

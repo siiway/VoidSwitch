@@ -29,6 +29,7 @@ type ServerSettings struct {
 	Debug             bool     `yaml:"debug"`
 	DevMode           bool     `yaml:"dev_mode"`
 	DocsDir           string   `yaml:"docs_dir"`
+	WebDistDir        string   `yaml:"web_dist_dir"`
 }
 
 type DatabaseSettings struct {
@@ -186,6 +187,9 @@ func mergeYAML(target, src *Settings) {
 	if src.Server.DocsDir != "" {
 		target.Server.DocsDir = src.Server.DocsDir
 	}
+	if src.Server.WebDistDir != "" {
+		target.Server.WebDistDir = src.Server.WebDistDir
+	}
 	if src.Database.URL != "" {
 		target.Database.URL = src.Database.URL
 	}
@@ -258,6 +262,8 @@ func applyEnv(s *Settings) {
 			s.Server.DevMode = atob(v)
 		case "VOIDSWITCH_SERVER__DOCS_DIR":
 			s.Server.DocsDir = v
+		case "VOIDSWITCH_SERVER__WEB_DIST_DIR":
+			s.Server.WebDistDir = v
 		case "VOIDSWITCH_DATABASE__URL":
 			s.Database.URL = v
 		case "VOIDSWITCH_DATABASE__ECHO":

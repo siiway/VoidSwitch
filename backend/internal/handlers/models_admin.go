@@ -524,7 +524,12 @@ func (a *App) modelsDevSearch(c *gin.Context) {
 }
 
 func (a *App) modelsDevSync(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"synced": 0})
+	n, err := services.SyncModelsDev(c.Request.Context(), a.GDB)
+	if err != nil {
+		a.fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"synced": n})
 }
 
 // RegisterModelAdminRoutes wires the models write surface under /api/models.
