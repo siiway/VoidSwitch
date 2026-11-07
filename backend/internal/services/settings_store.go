@@ -32,11 +32,11 @@ var removedKeys = map[string]bool{
 }
 
 var (
-	settingsCache   = map[string]any{}
-	settingsMu      sync.RWMutex
-	settingsLoaded  bool
-	settingsRedis   *redisx.Service
-	settingsCancel  context.CancelFunc
+	settingsCache  = map[string]any{}
+	settingsMu     sync.RWMutex
+	settingsLoaded bool
+	settingsRedis  *redisx.Service
+	settingsCancel context.CancelFunc
 )
 
 // SetSettingsRedis wires the Redis service used for settings propagation.

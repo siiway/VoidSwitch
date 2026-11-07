@@ -17,12 +17,12 @@ const ModeratorGroupSlug = "moderator"
 
 // TeamRoleRank ranks a Prism *team* role for mapping evaluation.
 var TeamRoleRank = map[string]int{
-	"owner":     4,
-	"co-owner":  3,
-	"co_owner":  3,
-	"coowner":   3,
-	"admin":     2,
-	"member":    1,
+	"owner":    4,
+	"co-owner": 3,
+	"co_owner": 3,
+	"coowner":  3,
+	"admin":    2,
+	"member":   1,
 }
 
 // KeyStatus is an upstream key's lifecycle state.
@@ -95,10 +95,10 @@ const (
 
 // Client hint headers.
 const (
-	ClientHintHeader      = "x-voidswitch-client"
-	OpenCodeClientHint    = "opencode-plugin"
-	SessionHeader         = "x-voidswitch-session"
-	UpstreamUnavailable   = 543
+	ClientHintHeader    = "x-voidswitch-client"
+	OpenCodeClientHint  = "opencode-plugin"
+	SessionHeader       = "x-voidswitch-session"
+	UpstreamUnavailable = 543
 )
 
 // Fixed (non-configurable) rate limits.

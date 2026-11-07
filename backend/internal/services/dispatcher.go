@@ -44,25 +44,25 @@ func UpstreamFormat(style constants.ApiStyle) types.RelayFormat {
 
 // Candidate is one viable (upstream, key) pair for a request.
 type Candidate struct {
-	Provider     *database.Provider
-	Upstream     *database.RouteUpstream
-	Key          *database.ApiKey
+	Provider      *database.Provider
+	Upstream      *database.RouteUpstream
+	Key           *database.ApiKey
 	UpstreamModel string
 }
 
 // DispatchRequest is the input to the gateway dispatcher.
 type DispatchRequest struct {
-	Ctx           context.Context
-	DB            *gorm.DB
-	Cfg           *config.Settings
-	Pool          *ClientPool
-	ExposedModel  string
-	InboundStyle  constants.ApiStyle
-	Stream        bool
-	Body          map[string]any
-	Kind          RelayKind
-	TokenID       *int
-	UserSub       *string
+	Ctx          context.Context
+	DB           *gorm.DB
+	Cfg          *config.Settings
+	Pool         *ClientPool
+	ExposedModel string
+	InboundStyle constants.ApiStyle
+	Stream       bool
+	Body         map[string]any
+	Kind         RelayKind
+	TokenID      *int
+	UserSub      *string
 }
 
 // RelayKind is a coarse endpoint kind used for protocol conversion.
@@ -87,8 +87,8 @@ type DispatchResult struct {
 
 // Dispatcher resolves a route and failovers across upstreams/keys.
 type Dispatcher struct {
-	req  *DispatchRequest
-	seq  []Candidate
+	req *DispatchRequest
+	seq []Candidate
 }
 
 func NewDispatcher(req *DispatchRequest) *Dispatcher {
@@ -267,8 +267,8 @@ func (d *Dispatcher) buildUpstreamBody(cand Candidate, upstreamStyle constants.A
 	inbound := parseRequestDTO(d.req.Body, d.req.InboundStyle)
 	target := UpstreamFormat(upstreamStyle)
 	meta := &convmeta.Values{
-		OriginModelName:   d.req.ExposedModel,
-		UpstreamModelName: cand.UpstreamModel,
+		OriginModelName:     d.req.ExposedModel,
+		UpstreamModelName:   cand.UpstreamModel,
 		ChannelMetaAttached: true,
 	}
 	res, err := relayconvert.ConvertRequest(d.req.Ctx, meta, target, inbound)

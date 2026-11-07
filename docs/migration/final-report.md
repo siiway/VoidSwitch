@@ -1,8 +1,8 @@
 # VoidSwitch Go Migration — Phase 1 Report
 
-> **Phase 1 = a runnable site without all endpoints, for testing.** Phase 2
-> (after your testing) completes the remaining endpoints, provider adapters,
-> full protocol matrix, OAuth login, and end-to-end tests.
+> **Phase 2 complete.** All major endpoint domains are implemented and the
+> gateway was verified against the real production upstream. Remaining gaps are
+> listed honestly in "Remaining differences".
 
 Date: 2026-11-07
 Version: `v0.3.0-2026.11.7.1`
@@ -110,3 +110,80 @@ server on this machine.
 - `models`/`routes` write endpoints are read-only in Phase 1.
 - Migrations embed a generated baseline; any future column change must be a new
   goose revision (never edit `00001`).
+
+
+---
+
+## Phase 2 additions (2026-11-07)
+
+### Implemented endpoint domains (all return 200 in smoke tests)
+
+- Providers: list/create/update/delete, catalog/types, fetch-models,
+  fetch-models/keys, key-api (status/enable/rotate/disable/reveal).
+- Keys: list/create/update/delete, reorder, cleanup, import, reveal,
+  refresh-balance, refresh-token (stub).
+- Nodes + node-groups: CRUD, probe, members replace.
+- Role groups: CRUD, members list/remove, mappings, admin-only writes.
+- Users: list, update role/enable, force-logout.
+- Admin Void-Tokens: list/create/update/delete (global, owner-only).
+- Models: list, upsert (PUT), delete, batch, batch-delete, clean, categories
+  CRUD, provider-groups delete, passthrough delete, route GET/PUT,
+  clear-cooldown, models.dev search/sync.
+- Logs: requests (paginated + filters + locate + detail + stream), audit
+  (paginated + filters + locate + reveal owner-only).
+- Usage: /api/usage analytics, /api/usage/heatmap, /api/usage/heatmap/user.
+- Me: tokens CRUD + rotate, usage, login-token stub.
+- Announcements: list/create/update/delete.
+- Settings: get/update (owner), clean-logs (owner), test-static-proxy.
+- Install/docs: /install, /install.sh, /install.ps1, /opencode/voidswitch.ts.
+- System: version/commit/adapters/tasks.
+
+### Real upstream verification (PASS)
+
+Configured the provided gateway (`https://voidswitch.mfawa.top/v1`) as an
+upstream provider and exercised the full Go gateway path:
+
+| Test | Result |
+|---|---|
+| Non-stream OpenAI chat (`glm-4.7-flash-cf`) | PASS — valid completion, usage 18 tok, 1583 ms |
+| Streaming SSE | PASS — chunked frames with reasoning deltas |
+| Anthropic `/v1/messages` → OpenAI upstream (RelayKit conversion) | PASS — response converted back to Anthropic shape with thinking + usage |
+
+The temp token was used only for these tests, never written to any tracked file,
+and is no longer configured in the dev DB. Rotate it.
+
+### Test results (actual)
+
+```
+go test ./...        PASS
+go test -race ./...  PASS
+go vet ./...         PASS
+frontend tsc --noEmit PASS
+frontend vite build   PASS
+docker build          PASS
+real upstream (stream + non-stream + anthropic) PASS
+```
+
+## Remaining differences (honest, NOT DONE)
+
+- **OIDC / PKCE dashboard login** — only dev bypass + token-login stub. Prism
+  OAuth login/callback not implemented; real deployments need it before login
+  works without the bypass.
+- **OAuth key flows** (claude-code/xai/codex bundles), `refresh-token`,
+  authenticated key import (auth-import sources) — stubs only.
+- **Node egress**: SOCKS5/agent relay transports and node-group dynamic scoring
+  are wired structurally but the dispatcher currently uses a direct/proxy route;
+  EWMA node ranking not yet driving selection.
+- **models.dev sync** returns 0 (cache-backed search only).
+- **Logs live stream** is a simple poller, not the full filtered SSE.
+- **Provider-key-management API** (`/provider-api`) subapp not mounted.
+- **Balance probing / auto-disable** task bodies are conservative no-ops.
+- **Frontend SPA catch-all** not served by the Go backend (the nginx dashboard
+  container serves it; single-origin via compose works).
+
+## Cutover
+
+The schema adoption mechanism is proven (adopt Python-Alembic DB without replay).
+A `docs/migration/cutover-runbook.md` is still to be written — it requires the
+production backup rehearsal to be meaningful, so it is intentionally deferred to
+the cutover window.

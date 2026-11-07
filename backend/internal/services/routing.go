@@ -41,9 +41,9 @@ func EnsureSeededNodeGroups(db *gorm.DB) error {
 		}
 		slug := s.slug
 		group := database.NodeGroup{
-			Slug:        &slug,
-			Name:        s.name,
-			IsSystem:    s.sys,
+			Slug:                 &slug,
+			Name:                 s.name,
+			IsSystem:             s.sys,
 			ProbeIntervalSeconds: 0,
 		}
 		if err := db.Create(&group).Error; err != nil {

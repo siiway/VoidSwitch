@@ -72,20 +72,20 @@ func NewClaudeCodeProvider(record *database.Provider) *ClaudeCodeProvider {
 
 func (p *ClaudeCodeProvider) Headers(apiKey string, extra map[string]string) map[string]string {
 	base := map[string]string{
-		"Authorization":                "Bearer " + apiKey,
-		"anthropic-version":            p.AnthropicVersion,
-		"content-type":                 "application/json",
-		"accept":                       "application/json",
-		"user-agent":                   "claude-cli/" + CLAUDE_CODE_VERSION + " (external, cli)",
-		"x-app":                        "cli",
-		"x-claude-code-session-id":     p.sessionID(),
-		"x-stainless-lang":             "js",
-		"x-stainless-package-version":  ANTHROPIC_SDK_VERSION,
-		"x-stainless-os":               stainlessOS(),
-		"x-stainless-arch":             stainlessArch(),
-		"x-stainless-runtime":          "node",
-		"x-stainless-runtime-version":  "v24.0.0",
-		"x-stainless-retry-count":      "0",
+		"Authorization":               "Bearer " + apiKey,
+		"anthropic-version":           p.AnthropicVersion,
+		"content-type":                "application/json",
+		"accept":                      "application/json",
+		"user-agent":                  "claude-cli/" + CLAUDE_CODE_VERSION + " (external, cli)",
+		"x-app":                       "cli",
+		"x-claude-code-session-id":    p.sessionID(),
+		"x-stainless-lang":            "js",
+		"x-stainless-package-version": ANTHROPIC_SDK_VERSION,
+		"x-stainless-os":              stainlessOS(),
+		"x-stainless-arch":            stainlessArch(),
+		"x-stainless-runtime":         "node",
+		"x-stainless-runtime-version": "v24.0.0",
+		"x-stainless-retry-count":     "0",
 	}
 
 	merged := make(map[string]string)

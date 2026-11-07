@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -91,6 +92,11 @@ func RegisterMeRoutes(r *gin.RouterGroup, a *App) {
 	m.GET("/login-token", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"enabled": false, "prefix": nil})
 	})
+	m.POST("/tokens", a.meTokenCreate)
+	m.PATCH("/tokens/:id", a.meTokenUpdate)
+	m.DELETE("/tokens/:id", a.meTokenDelete)
+	m.POST("/tokens/:id/rotate", a.meTokenRotate)
+	m.GET("/tokens/usage", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{}) })
 }
 
 // announcementsList returns announcements visible to the caller.
@@ -128,4 +134,232 @@ func (a *App) announcementsList(c *gin.Context) {
 func RegisterAnnouncementRoutes(r *gin.RouterGroup, a *App) {
 	g := r.Group("/announcements", core.RequireUser())
 	g.GET("", a.announcementsList)
+	g.POST("", a.announcementCreate)
+	g.PATCH("/:id", a.announcementUpdate)
+	g.DELETE("/:id", a.announcementDelete)
+}
+
+// meTokenCreate creates a new Void-Token for the caller (secret shown once).
+func (a *App) meTokenCreate(c *gin.Context) {
+	uv := core.GetUser(c)
+	var in struct {
+		Name          string   `json:"name"`
+		AllowedModels []string `json:"allowed_models"`
+		RPMLimit      int      `json:"rpm_limit"`
+		DailyQuota    int      `json:"daily_quota"`
+	}
+	_ = c.ShouldBindJSON(&in)
+	if in.Name == "" {
+		in.Name = "default"
+	}
+	raw, err := core.GenerateVoidToken()
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
+	if in.AllowedModels == nil {
+		in.AllowedModels = []string{}
+	}
+	t := database.VoidToken{
+		UserID: uv.User.ID, Name: in.Name, TokenHash: core.HashToken(raw),
+		TokenPrefix: raw[:8], Enabled: true, AllowedModels: database.JSONOf(in.AllowedModels),
+		RPMLimit: in.RPMLimit, DailyQuota: in.DailyQuota, DebugEnabled: false,
+	}
+	if err := a.GDB.Create(&t).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	view := toTokenView(&t, uv.User.Username, nil)
+	c.JSON(http.StatusCreated, gin.H{
+		"id": view.ID, "user_id": view.UserID, "username": view.Username,
+		"name": view.Name, "token_prefix": view.TokenPrefix, "enabled": view.Enabled,
+		"allowed_models": view.AllowedModels, "rpm_limit": view.RPMLimit,
+		"daily_quota": view.DailyQuota, "total_requests": 0, "total_tokens": 0,
+		"created_at": view.CreatedAt, "token": raw,
+	})
+}
+
+func (a *App) meTokenUpdate(c *gin.Context) {
+	uv := core.GetUser(c)
+	id, _ := strconv.Atoi(c.Param("id"))
+	var t database.VoidToken
+	if err := a.GDB.Where("id = ? AND user_id = ?", id, uv.User.ID).First(&t).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Token not found.")
+		return
+	}
+	var in struct {
+		Name          *string   `json:"name"`
+		Enabled       *bool     `json:"enabled"`
+		DebugEnabled  *bool     `json:"debug_enabled"`
+		AllowedModels *[]string `json:"allowed_models"`
+		RPMLimit      *int      `json:"rpm_limit"`
+		DailyQuota    *int      `json:"daily_quota"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
+		return
+	}
+	if in.Name != nil {
+		t.Name = *in.Name
+	}
+	if in.Enabled != nil {
+		t.Enabled = *in.Enabled
+	}
+	if in.DebugEnabled != nil {
+		t.DebugEnabled = *in.DebugEnabled
+	}
+	if in.AllowedModels != nil {
+		t.AllowedModels = database.JSONOf(*in.AllowedModels)
+	}
+	if in.RPMLimit != nil {
+		t.RPMLimit = *in.RPMLimit
+	}
+	if in.DailyQuota != nil {
+		t.DailyQuota = *in.DailyQuota
+	}
+	if err := a.GDB.Save(&t).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, toTokenView(&t, uv.User.Username, nil))
+}
+
+func (a *App) meTokenDelete(c *gin.Context) {
+	uv := core.GetUser(c)
+	id, _ := strconv.Atoi(c.Param("id"))
+	now := time.Now().UTC()
+	res := a.GDB.Model(&database.VoidToken{}).
+		Where("id = ? AND user_id = ?", id, uv.User.ID).
+		Updates(map[string]any{"deleted": true, "deleted_at": now, "enabled": false})
+	if res.Error != nil {
+		a.internal(c, res.Error)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (a *App) meTokenRotate(c *gin.Context) {
+	uv := core.GetUser(c)
+	id, _ := strconv.Atoi(c.Param("id"))
+	var t database.VoidToken
+	if err := a.GDB.Where("id = ? AND user_id = ?", id, uv.User.ID).First(&t).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Token not found.")
+		return
+	}
+	raw, err := core.GenerateVoidToken()
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
+	t.TokenHash = core.HashToken(raw)
+	t.TokenPrefix = raw[:8]
+	if err := a.GDB.Save(&t).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id": t.ID, "user_id": t.UserID, "username": uv.User.Username, "name": t.Name,
+		"token_prefix": t.TokenPrefix, "enabled": t.Enabled,
+		"allowed_models": []string{}, "rpm_limit": t.RPMLimit, "daily_quota": t.DailyQuota,
+		"created_at": t.CreatedAt, "token": raw,
+	})
+}
+
+// ---- announcement write --------------------------------------------------
+
+type announcementIn struct {
+	Title              *string `json:"title"`
+	Body               *string `json:"body"`
+	TargetRoleGroupIDs *[]int  `json:"target_role_group_ids"`
+}
+
+func (a *App) announcementCreate(c *gin.Context) {
+	uv := core.GetUser(c)
+	if !uv.IsStaff() {
+		a.fail(c, http.StatusForbidden, "Staff privileges required.")
+		return
+	}
+	var in announcementIn
+	if err := c.ShouldBindJSON(&in); err != nil || in.Title == nil || *in.Title == "" {
+		a.fail(c, http.StatusUnprocessableEntity, "title is required.")
+		return
+	}
+	body := ""
+	if in.Body != nil {
+		body = *in.Body
+	}
+	targets := []int{}
+	if in.TargetRoleGroupIDs != nil {
+		targets = *in.TargetRoleGroupIDs
+	}
+	row := database.Announcement{
+		Title: *in.Title, Body: body, CreatedBy: &uv.User.ID,
+		CreatedByName: uv.User.Username, CreatedByRole: uv.Role,
+		TargetRoleGroupIDs: database.JSONOf(targets),
+	}
+	if err := a.GDB.Create(&row).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, services.AnnouncementView{
+		ID: row.ID, Title: row.Title, Body: row.Body, CreatedBy: row.CreatedBy,
+		CreatedByName: row.CreatedByName, CreatedByRole: row.CreatedByRole,
+		TargetRoleGroupIDs: targets, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, CanManage: true,
+	})
+}
+
+func (a *App) announcementUpdate(c *gin.Context) {
+	uv := core.GetUser(c)
+	id, _ := strconv.Atoi(c.Param("id"))
+	var row database.Announcement
+	if err := a.GDB.First(&row, id).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Announcement not found.")
+		return
+	}
+	if !uv.IsStaff() {
+		a.fail(c, http.StatusForbidden, "Staff privileges required.")
+		return
+	}
+	var in announcementIn
+	if err := c.ShouldBindJSON(&in); err != nil {
+		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
+		return
+	}
+	if in.Title != nil {
+		row.Title = *in.Title
+	}
+	if in.Body != nil {
+		row.Body = *in.Body
+	}
+	if in.TargetRoleGroupIDs != nil {
+		row.TargetRoleGroupIDs = database.JSONOf(*in.TargetRoleGroupIDs)
+	}
+	row.Edited = true
+	if err := a.GDB.Save(&row).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	var targets []int
+	database.DecodeJSON(row.TargetRoleGroupIDs, &targets)
+	c.JSON(http.StatusOK, services.AnnouncementView{
+		ID: row.ID, Title: row.Title, Body: row.Body, CreatedBy: row.CreatedBy,
+		CreatedByName: row.CreatedByName, CreatedByRole: row.CreatedByRole, Edited: row.Edited,
+		TargetRoleGroupIDs: targets, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, CanManage: true,
+	})
+}
+
+func (a *App) announcementDelete(c *gin.Context) {
+	uv := core.GetUser(c)
+	id, _ := strconv.Atoi(c.Param("id"))
+	var row database.Announcement
+	if err := a.GDB.First(&row, id).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Announcement not found.")
+		return
+	}
+	if !uv.IsStaff() {
+		a.fail(c, http.StatusForbidden, "Staff privileges required.")
+		return
+	}
+	a.GDB.Delete(&row)
+	c.Status(http.StatusNoContent)
 }

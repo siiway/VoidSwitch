@@ -40,10 +40,10 @@ type Task struct {
 
 // Manager owns all registered tasks and their scheduler loop.
 type Manager struct {
-	db    *gorm.DB
-	tasks []*Task
+	db     *gorm.DB
+	tasks  []*Task
 	cancel context.CancelFunc
-	wg    sync.WaitGroup
+	wg     sync.WaitGroup
 }
 
 func New(db *gorm.DB) *Manager { return &Manager{db: db} }

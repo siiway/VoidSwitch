@@ -20,10 +20,10 @@ const (
 
 // UserView is the authenticated user loaded per request.
 type UserView struct {
-	User            *database.User
-	Role            string
-	GroupIDs        []int
-	AdminGroupIDs   []int
+	User          *database.User
+	Role          string
+	GroupIDs      []int
+	AdminGroupIDs []int
 }
 
 func (u *UserView) IsStaff() bool { return IsStaff(u.Role) }
@@ -131,14 +131,14 @@ func devUserView(db *gorm.DB) (*UserView, error) {
 		email := "dev@voidswitch.local"
 		name := "Developer (dev mode)"
 		user = database.User{
-			Sub:                    constants.DevUserSub,
-			Username:               &username,
-			Email:                  &email,
-			Name:                   &name,
-			Role:                   string(constants.RoleOwner),
-			Enabled:                true,
-			TeamIDs:                database.JSONOf([]string{}),
-			LastLoginAt:            &now,
+			Sub:         constants.DevUserSub,
+			Username:    &username,
+			Email:       &email,
+			Name:        &name,
+			Role:        string(constants.RoleOwner),
+			Enabled:     true,
+			TeamIDs:     database.JSONOf([]string{}),
+			LastLoginAt: &now,
 		}
 		if err := db.Create(&user).Error; err != nil {
 			return nil, err

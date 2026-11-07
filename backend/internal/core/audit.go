@@ -20,17 +20,17 @@ const (
 
 // AuditInput describes one audit row.
 type AuditInput struct {
-	Action        string
-	ActorSub      *string
-	ActorName     *string
-	Scope         AuditScope
-	TargetType    *string
-	TargetID      *string
-	Detail        map[string]any
-	IP            *string
-	UserAgent     *string
-	Sensitive     map[string]any // encrypted at rest when non-nil
-	SecretKey     string
+	Action     string
+	ActorSub   *string
+	ActorName  *string
+	Scope      AuditScope
+	TargetType *string
+	TargetID   *string
+	Detail     map[string]any
+	IP         *string
+	UserAgent  *string
+	Sensitive  map[string]any // encrypted at rest when non-nil
+	SecretKey  string
 }
 
 // RecordAudit writes an audit_logs row. Sensitive detail (if provided) is

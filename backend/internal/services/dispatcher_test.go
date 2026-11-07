@@ -2,8 +2,8 @@ package services
 
 import (
 	"context"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,13 +45,13 @@ func seedDispatch(t *testing.T, db *gorm.DB, upstreamURL, secret string) {
 		BaseURL: upstreamURL, Enabled: true, Priority: 100, Weight: 1,
 		Models: database.JSONOf([]string{}), ModelMap: database.JSONOf(map[string]any{}),
 		ModelRoutes: database.JSONOf([]any{}), ExtraHeaders: database.JSONOf(map[string]any{}),
-		KeySelectMode: "round_robin",
-		PassthroughModels: database.JSONOf([]string{}),
-		UpstreamCooldownStatusCodes: database.JSONOf([]int{}),
-		UpstreamRetryAfterHeaders: database.JSONOf([]string{}),
-		SelectiveIgnoreRules: database.JSONOf([]any{}),
+		KeySelectMode:                  "round_robin",
+		PassthroughModels:              database.JSONOf([]string{}),
+		UpstreamCooldownStatusCodes:    database.JSONOf([]int{}),
+		UpstreamRetryAfterHeaders:      database.JSONOf([]string{}),
+		SelectiveIgnoreRules:           database.JSONOf([]any{}),
 		NormalizeDeveloperRoleToSystem: true,
-		NewAPIMode: "auto",
+		NewAPIMode:                     "auto",
 	}
 	if err := db.Create(&p).Error; err != nil {
 		t.Fatal(err)
@@ -69,10 +69,10 @@ func seedDispatch(t *testing.T, db *gorm.DB, upstreamURL, secret string) {
 
 	m := database.ExposedModel{
 		ModelID: "test-model", Enabled: true,
-		OpenCodeConfig: database.JSONOf(map[string]any{}),
+		OpenCodeConfig:      database.JSONOf(map[string]any{}),
 		AllowedRoleGroupIDs: database.JSONOf([]int{}),
-		Capabilities: database.JSONOf(map[string]any{}),
-		Modalities: database.JSONOf(map[string]any{}),
+		Capabilities:        database.JSONOf(map[string]any{}),
+		Modalities:          database.JSONOf(map[string]any{}),
 	}
 	db.Create(&m)
 	route := database.Route{ExposedModelID: m.ID, UpstreamSelectMode: "best", UpstreamRankAlgorithm: "weighted"}
@@ -164,10 +164,10 @@ func TestDispatchFailsOverOnCooldown(t *testing.T) {
 		Enabled: true, KeySelectMode: "round_robin",
 		Models: database.JSONOf([]string{}), ModelMap: database.JSONOf(map[string]any{}),
 		ModelRoutes: database.JSONOf([]any{}), ExtraHeaders: database.JSONOf(map[string]any{}),
-		PassthroughModels: database.JSONOf([]string{}),
+		PassthroughModels:           database.JSONOf([]string{}),
 		UpstreamCooldownStatusCodes: database.JSONOf([]int{}),
-		UpstreamRetryAfterHeaders: database.JSONOf([]string{}),
-		SelectiveIgnoreRules: database.JSONOf([]any{}),
+		UpstreamRetryAfterHeaders:   database.JSONOf([]string{}),
+		SelectiveIgnoreRules:        database.JSONOf([]any{}),
 	}
 	db.Create(&p2)
 	ct, _ := cryptoutil.EncryptSecret("sk-good", secret)

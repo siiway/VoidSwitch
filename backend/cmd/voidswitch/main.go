@@ -139,8 +139,9 @@ func buildRouter(app *handlers.App, cfg *config.Settings) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"name": "VoidSwitch", "version": handlers.Version})
 	})
 
-	// Public gateway.
+	// Public gateway + installer.
 	handlers.RegisterGatewayRoutes(r.Group("/v1"), app)
+	handlers.RegisterInstallRoutes(r, app)
 
 	api := r.Group("/api")
 	handlers.RegisterAuthRoutes(api.Group("/auth"), app, core.SessionAuth(app.GDB, cfg))
@@ -151,12 +152,20 @@ func buildRouter(app *handlers.App, cfg *config.Settings) *gin.Engine {
 		handlers.RegisterMeRoutes(authed, app)
 		handlers.RegisterModelRoutes(authed, app)
 		handlers.RegisterAnnouncementRoutes(authed, app)
+		handlers.RegisterUsageRoutes(authed, app)
 
 		admin := authed.Group("/admin")
 		admin.Use(core.RequireStaff())
 		{
 			handlers.RegisterStatsRoutes(admin, app)
 			handlers.RegisterSettingsRoutes(admin, app)
+			handlers.RegisterProviderRoutes(admin, app)
+			handlers.RegisterKeyRoutes(admin, app)
+			handlers.RegisterNodeRoutes(admin, app)
+			handlers.RegisterRoleGroupRoutes(admin, app)
+			handlers.RegisterUserRoutes(admin, app)
+			handlers.RegisterAdminTokenRoutes(admin, app)
+			handlers.RegisterLogRoutes(admin, app)
 		}
 	}
 	return r

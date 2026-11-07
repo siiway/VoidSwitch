@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 ARG VOIDSWITCH_COMMIT=""
 ARG VERSION=""
-RUN VERSION="${VERSION:-v0.3.0-2026.11.7.1}" && \
+RUN VERSION="${VERSION:-0.3.0-2026.11.7.1}" && \
     go build -trimpath -ldflags="-s -w" -o /voidswitch ./cmd/voidswitch
 
 FROM alpine:3.21

@@ -89,21 +89,21 @@ type Timestamped struct {
 
 type User struct {
 	Timestamped
-	ID                    int        `gorm:"column:id;primaryKey;autoIncrement"`
-	Sub                   string     `gorm:"column:sub;type:varchar(255);uniqueIndex;not null"`
-	Username              *string    `gorm:"column:username;type:varchar(255)"`
-	Email                 *string    `gorm:"column:email;type:varchar(320);index"`
-	Name                  *string    `gorm:"column:name;type:varchar(255)"`
-	Picture               *string    `gorm:"column:picture;type:text"`
-	Role                  string     `gorm:"column:role;type:varchar(32);not null"`
-	PrismRole             *string    `gorm:"column:prism_role;type:varchar(32)"`
-	TeamIDs               JSON       `gorm:"column:team_ids;type:json;not null"`
-	Enabled               bool       `gorm:"column:enabled;not null"`
-	LastLoginAt           *time.Time `gorm:"column:last_login_at;type:timestamptz"`
-	SessionEpoch          int        `gorm:"column:session_epoch;not null"`
-	LoginTokenHash        *string    `gorm:"column:login_token_hash;type:varchar(64);uniqueIndex"`
-	LoginTokenPrefix      *string    `gorm:"column:login_token_prefix;type:varchar(32)"`
-	VoidTokensAdminDisabled bool     `gorm:"column:void_tokens_admin_disabled;not null"`
+	ID                      int        `gorm:"column:id;primaryKey;autoIncrement"`
+	Sub                     string     `gorm:"column:sub;type:varchar(255);uniqueIndex;not null"`
+	Username                *string    `gorm:"column:username;type:varchar(255)"`
+	Email                   *string    `gorm:"column:email;type:varchar(320);index"`
+	Name                    *string    `gorm:"column:name;type:varchar(255)"`
+	Picture                 *string    `gorm:"column:picture;type:text"`
+	Role                    string     `gorm:"column:role;type:varchar(32);not null"`
+	PrismRole               *string    `gorm:"column:prism_role;type:varchar(32)"`
+	TeamIDs                 JSON       `gorm:"column:team_ids;type:json;not null"`
+	Enabled                 bool       `gorm:"column:enabled;not null"`
+	LastLoginAt             *time.Time `gorm:"column:last_login_at;type:timestamptz"`
+	SessionEpoch            int        `gorm:"column:session_epoch;not null"`
+	LoginTokenHash          *string    `gorm:"column:login_token_hash;type:varchar(64);uniqueIndex"`
+	LoginTokenPrefix        *string    `gorm:"column:login_token_prefix;type:varchar(32)"`
+	VoidTokensAdminDisabled bool       `gorm:"column:void_tokens_admin_disabled;not null"`
 
 	// Not persisted; eagerly loaded where needed.
 	GroupMemberships []RoleGroupMembership `gorm:"foreignKey:UserID"`
@@ -185,11 +185,11 @@ func (ExposedModel) TableName() string { return "exposed_models" }
 
 type Route struct {
 	Timestamped
-	ID                       int    `gorm:"column:id;primaryKey;autoIncrement"`
-	ExposedModelID           int    `gorm:"column:exposed_model_id;uniqueIndex;not null"`
-	UpstreamSelectMode       string `gorm:"column:upstream_select_mode;type:varchar(32);not null"`
-	UpstreamRankAlgorithm    string `gorm:"column:upstream_rank_algorithm;type:varchar(32);not null"`
-	MaxUpstreamAttempts      int    `gorm:"column:max_upstream_attempts;not null"`
+	ID                        int    `gorm:"column:id;primaryKey;autoIncrement"`
+	ExposedModelID            int    `gorm:"column:exposed_model_id;uniqueIndex;not null"`
+	UpstreamSelectMode        string `gorm:"column:upstream_select_mode;type:varchar(32);not null"`
+	UpstreamRankAlgorithm     string `gorm:"column:upstream_rank_algorithm;type:varchar(32);not null"`
+	MaxUpstreamAttempts       int    `gorm:"column:max_upstream_attempts;not null"`
 	UpstreamAllCooledBehavior string `gorm:"column:upstream_all_cooled_behavior;type:varchar(32);not null"`
 
 	ExposedModel *ExposedModel   `gorm:"foreignKey:ExposedModelID"`
@@ -222,17 +222,17 @@ func (RouteUpstream) TableName() string { return "route_upstreams" }
 
 type UpstreamCooldown struct {
 	Timestamped
-	ID                int        `gorm:"column:id;primaryKey;autoIncrement"`
-	ProviderID        int        `gorm:"column:provider_id;index;not null"`
-	UpstreamModel     string     `gorm:"column:upstream_model;type:varchar(255);not null"`
-	KeyPool           string     `gorm:"column:key_pool;type:varchar(64);not null"`
-	Until             time.Time  `gorm:"column:until;type:timestamptz;index;not null"`
-	Reason            *string    `gorm:"column:reason;type:varchar(255)"`
-	TriggerStatus     int        `gorm:"column:trigger_status;not null"`
-	TriggerSource     string     `gorm:"column:trigger_source;type:varchar(32);not null"`
-	TriggeredAt       time.Time  `gorm:"column:triggered_at;type:timestamptz;not null"`
-	ConsecutiveTrips  int        `gorm:"column:consecutive_trips;not null"`
-	LastSuccessAt     *time.Time `gorm:"column:last_success_at;type:timestamptz"`
+	ID               int        `gorm:"column:id;primaryKey;autoIncrement"`
+	ProviderID       int        `gorm:"column:provider_id;index;not null"`
+	UpstreamModel    string     `gorm:"column:upstream_model;type:varchar(255);not null"`
+	KeyPool          string     `gorm:"column:key_pool;type:varchar(64);not null"`
+	Until            time.Time  `gorm:"column:until;type:timestamptz;index;not null"`
+	Reason           *string    `gorm:"column:reason;type:varchar(255)"`
+	TriggerStatus    int        `gorm:"column:trigger_status;not null"`
+	TriggerSource    string     `gorm:"column:trigger_source;type:varchar(32);not null"`
+	TriggeredAt      time.Time  `gorm:"column:triggered_at;type:timestamptz;not null"`
+	ConsecutiveTrips int        `gorm:"column:consecutive_trips;not null"`
+	LastSuccessAt    *time.Time `gorm:"column:last_success_at;type:timestamptz"`
 }
 
 func (UpstreamCooldown) TableName() string { return "upstream_cooldowns" }
@@ -241,42 +241,42 @@ func (UpstreamCooldown) TableName() string { return "upstream_cooldowns" }
 
 type Provider struct {
 	Timestamped
-	ID                            int        `gorm:"column:id;primaryKey;autoIncrement"`
-	UUID                          string     `gorm:"column:uuid;type:varchar(36);uniqueIndex;not null"`
-	Name                          string     `gorm:"column:name;type:varchar(120);uniqueIndex;not null"`
-	Slug                          string     `gorm:"column:slug;type:varchar(120);uniqueIndex;not null"`
-	NodeGroupID                   *int       `gorm:"column:node_group_id;index"`
-	Type                          string     `gorm:"column:type;type:varchar(64);not null"`
-	BaseURL                       string     `gorm:"column:base_url;type:varchar(512);not null"`
-	Enabled                       bool       `gorm:"column:enabled;not null"`
-	Priority                      int        `gorm:"column:priority;not null"`
-	Weight                        int        `gorm:"column:weight;not null"`
-	Models                        JSON       `gorm:"column:models;type:json;not null"`
-	ModelMap                      JSON       `gorm:"column:model_map;type:json;not null"`
-	ModelRoutes                   JSON       `gorm:"column:model_routes;type:json;not null"`
-	BalanceURL                    *string    `gorm:"column:balance_url;type:varchar(512)"`
-	ExtraHeaders                  JSON       `gorm:"column:extra_headers;type:json;not null"`
-	TimeoutSeconds                int        `gorm:"column:timeout_seconds;not null"`
-	RetryOnZeroToken              bool       `gorm:"column:retry_on_zero_token;not null"`
-	DropOpenCodeIdentityBlock     bool       `gorm:"column:drop_opencode_identity_block;not null"`
-	NormalizeDeveloperRoleToSystem bool      `gorm:"column:normalize_developer_role_to_system;not null"`
-	KeySelectMode                 string     `gorm:"column:key_select_mode;type:varchar(32);not null"`
-	RateLimitCooldownSeconds      int        `gorm:"column:rate_limit_cooldown_seconds;not null"`
-	AddedBy                       *int       `gorm:"column:added_by;index"`
-	AddedByName                   *string    `gorm:"column:added_by_name;type:varchar(255)"`
-	KeyAPIEnabled                 bool       `gorm:"column:key_api_enabled;not null"`
-	KeyAPITokenHash               *string    `gorm:"column:key_api_token_hash;type:varchar(64);uniqueIndex"`
-	KeyAPITokenCiphertext         *string    `gorm:"column:key_api_token_ciphertext;type:text"`
-	KeyAPITokenPreview            *string    `gorm:"column:key_api_token_preview;type:varchar(48)"`
-	PassthroughEnabled            bool       `gorm:"column:passthrough_enabled;not null"`
-	PassthroughModels             JSON       `gorm:"column:passthrough_models;type:json;not null"`
-	UpstreamCooldownSeconds       int        `gorm:"column:upstream_cooldown_seconds;not null"`
-	UpstreamCooldownStatusCodes   JSON       `gorm:"column:upstream_cooldown_status_codes;type:json;not null"`
-	UpstreamRetryAfterHeaders     JSON       `gorm:"column:upstream_retry_after_headers;type:json;not null"`
-	UpstreamMaxKeysPerAttempt     int        `gorm:"column:upstream_max_keys_per_attempt;not null"`
-	NewAPIMode                    string     `gorm:"column:new_api_mode;type:varchar(16);not null"`
-	ProtectedErrorRetryEnabled    bool       `gorm:"column:protected_error_retry_enabled;not null"`
-	SelectiveIgnoreRules          JSON       `gorm:"column:selective_ignore_rules;type:json;not null"`
+	ID                             int     `gorm:"column:id;primaryKey;autoIncrement"`
+	UUID                           string  `gorm:"column:uuid;type:varchar(36);uniqueIndex;not null"`
+	Name                           string  `gorm:"column:name;type:varchar(120);uniqueIndex;not null"`
+	Slug                           string  `gorm:"column:slug;type:varchar(120);uniqueIndex;not null"`
+	NodeGroupID                    *int    `gorm:"column:node_group_id;index"`
+	Type                           string  `gorm:"column:type;type:varchar(64);not null"`
+	BaseURL                        string  `gorm:"column:base_url;type:varchar(512);not null"`
+	Enabled                        bool    `gorm:"column:enabled;not null"`
+	Priority                       int     `gorm:"column:priority;not null"`
+	Weight                         int     `gorm:"column:weight;not null"`
+	Models                         JSON    `gorm:"column:models;type:json;not null"`
+	ModelMap                       JSON    `gorm:"column:model_map;type:json;not null"`
+	ModelRoutes                    JSON    `gorm:"column:model_routes;type:json;not null"`
+	BalanceURL                     *string `gorm:"column:balance_url;type:varchar(512)"`
+	ExtraHeaders                   JSON    `gorm:"column:extra_headers;type:json;not null"`
+	TimeoutSeconds                 int     `gorm:"column:timeout_seconds;not null"`
+	RetryOnZeroToken               bool    `gorm:"column:retry_on_zero_token;not null"`
+	DropOpenCodeIdentityBlock      bool    `gorm:"column:drop_opencode_identity_block;not null"`
+	NormalizeDeveloperRoleToSystem bool    `gorm:"column:normalize_developer_role_to_system;not null"`
+	KeySelectMode                  string  `gorm:"column:key_select_mode;type:varchar(32);not null"`
+	RateLimitCooldownSeconds       int     `gorm:"column:rate_limit_cooldown_seconds;not null"`
+	AddedBy                        *int    `gorm:"column:added_by;index"`
+	AddedByName                    *string `gorm:"column:added_by_name;type:varchar(255)"`
+	KeyAPIEnabled                  bool    `gorm:"column:key_api_enabled;not null"`
+	KeyAPITokenHash                *string `gorm:"column:key_api_token_hash;type:varchar(64);uniqueIndex"`
+	KeyAPITokenCiphertext          *string `gorm:"column:key_api_token_ciphertext;type:text"`
+	KeyAPITokenPreview             *string `gorm:"column:key_api_token_preview;type:varchar(48)"`
+	PassthroughEnabled             bool    `gorm:"column:passthrough_enabled;not null"`
+	PassthroughModels              JSON    `gorm:"column:passthrough_models;type:json;not null"`
+	UpstreamCooldownSeconds        int     `gorm:"column:upstream_cooldown_seconds;not null"`
+	UpstreamCooldownStatusCodes    JSON    `gorm:"column:upstream_cooldown_status_codes;type:json;not null"`
+	UpstreamRetryAfterHeaders      JSON    `gorm:"column:upstream_retry_after_headers;type:json;not null"`
+	UpstreamMaxKeysPerAttempt      int     `gorm:"column:upstream_max_keys_per_attempt;not null"`
+	NewAPIMode                     string  `gorm:"column:new_api_mode;type:varchar(16);not null"`
+	ProtectedErrorRetryEnabled     bool    `gorm:"column:protected_error_retry_enabled;not null"`
+	SelectiveIgnoreRules           JSON    `gorm:"column:selective_ignore_rules;type:json;not null"`
 
 	Keys []ApiKey `gorm:"foreignKey:ProviderID"`
 }
@@ -337,14 +337,14 @@ func (Node) TableName() string { return "nodes" }
 // ---- node_health_samples --------------------------------------------------
 
 type NodeHealthSample struct {
-	ID         int        `gorm:"column:id;primaryKey;autoIncrement"`
-	NodeID     int        `gorm:"column:node_id;index;not null"`
-	TS         time.Time  `gorm:"column:ts;type:timestamptz;index;not null"`
-	Source     string     `gorm:"column:source;type:varchar(16);not null"`
-	Success    bool       `gorm:"column:success;not null"`
-	LatencyMs  *float64   `gorm:"column:latency_ms"`
-	StatusCode *int       `gorm:"column:status_code"`
-	Error      *string    `gorm:"column:error;type:varchar(255)"`
+	ID         int       `gorm:"column:id;primaryKey;autoIncrement"`
+	NodeID     int       `gorm:"column:node_id;index;not null"`
+	TS         time.Time `gorm:"column:ts;type:timestamptz;index;not null"`
+	Source     string    `gorm:"column:source;type:varchar(16);not null"`
+	Success    bool      `gorm:"column:success;not null"`
+	LatencyMs  *float64  `gorm:"column:latency_ms"`
+	StatusCode *int      `gorm:"column:status_code"`
+	Error      *string   `gorm:"column:error;type:varchar(255)"`
 }
 
 func (NodeHealthSample) TableName() string { return "node_health_samples" }
@@ -353,7 +353,7 @@ func (NodeHealthSample) TableName() string { return "node_health_samples" }
 
 type NodeGroup struct {
 	Timestamped
-	ID                   int    `gorm:"column:id;primaryKey;autoIncrement"`
+	ID                   int     `gorm:"column:id;primaryKey;autoIncrement"`
 	Slug                 *string `gorm:"column:slug;type:varchar(64);uniqueIndex"`
 	Name                 string  `gorm:"column:name;type:varchar(120);uniqueIndex;not null"`
 	Description          *string `gorm:"column:description;type:text"`
@@ -406,7 +406,7 @@ func (ModelsDevCache) TableName() string { return "models_dev_cache" }
 
 type RoleGroup struct {
 	Timestamped
-	ID                         int    `gorm:"column:id;primaryKey;autoIncrement"`
+	ID                         int     `gorm:"column:id;primaryKey;autoIncrement"`
 	Slug                       *string `gorm:"column:slug;type:varchar(64);uniqueIndex"`
 	Name                       string  `gorm:"column:name;type:varchar(120);uniqueIndex;not null"`
 	Description                *string `gorm:"column:description;type:text"`
@@ -414,9 +414,9 @@ type RoleGroup struct {
 	CallRateLimitWindowSeconds int     `gorm:"column:call_rate_limit_window_seconds;not null"`
 	CallRateLimitMaxRequests   int     `gorm:"column:call_rate_limit_max_requests;not null"`
 
-	Mappings     []RoleGroupMapping    `gorm:"foreignKey:RoleGroupID"`
-	Memberships  []RoleGroupMembership `gorm:"foreignKey:RoleGroupID"`
-	Adminships   []RoleGroupAdminship  `gorm:"foreignKey:RoleGroupID"`
+	Mappings    []RoleGroupMapping    `gorm:"foreignKey:RoleGroupID"`
+	Memberships []RoleGroupMembership `gorm:"foreignKey:RoleGroupID"`
+	Adminships  []RoleGroupAdminship  `gorm:"foreignKey:RoleGroupID"`
 }
 
 func (RoleGroup) TableName() string { return "role_groups" }
@@ -466,14 +466,14 @@ func (RoleGroupAdminship) TableName() string { return "role_group_adminships" }
 
 type Announcement struct {
 	Timestamped
-	ID                 int    `gorm:"column:id;primaryKey;autoIncrement"`
-	Title              string `gorm:"column:title;type:varchar(255);not null"`
-	Body               string `gorm:"column:body;type:text;not null"`
-	CreatedBy          *int   `gorm:"column:created_by;index"`
+	ID                 int     `gorm:"column:id;primaryKey;autoIncrement"`
+	Title              string  `gorm:"column:title;type:varchar(255);not null"`
+	Body               string  `gorm:"column:body;type:text;not null"`
+	CreatedBy          *int    `gorm:"column:created_by;index"`
 	CreatedByName      *string `gorm:"column:created_by_name;type:varchar(255)"`
-	CreatedByRole      string `gorm:"column:created_by_role;type:varchar(32);not null"`
-	Edited             bool   `gorm:"column:edited;not null"`
-	TargetRoleGroupIDs JSON   `gorm:"column:target_role_group_ids;type:json;not null"`
+	CreatedByRole      string  `gorm:"column:created_by_role;type:varchar(32);not null"`
+	Edited             bool    `gorm:"column:edited;not null"`
+	TargetRoleGroupIDs JSON    `gorm:"column:target_role_group_ids;type:json;not null"`
 }
 
 func (Announcement) TableName() string { return "announcements" }

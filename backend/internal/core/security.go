@@ -33,9 +33,9 @@ func GenerateToken(prefix string) (string, error) {
 	return prefix + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func GenerateVoidToken() (string, error) { return GenerateToken(VoidTokenPrefix) }
+func GenerateVoidToken() (string, error)        { return GenerateToken(VoidTokenPrefix) }
 func GenerateProviderAPIToken() (string, error) { return GenerateToken(ProviderKeyAPIPrefix) }
-func GenerateLoginToken() (string, error) { return GenerateToken(LoginTokenPrefix) }
+func GenerateLoginToken() (string, error)       { return GenerateToken(LoginTokenPrefix) }
 
 // HashToken is a deterministic SHA-256 hex hash for constant-time DB lookup.
 func HashToken(token string) string {

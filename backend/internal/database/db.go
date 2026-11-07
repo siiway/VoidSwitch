@@ -109,9 +109,9 @@ func maskDSN(raw string) string {
 
 // MigrateResult describes what Migrate did.
 type MigrateResult struct {
-	Adopted bool   // an existing DB was adopted without replaying the baseline
-	Applied int    // number of goose migrations applied
-	Version int64  // final goose version
+	Adopted bool  // an existing DB was adopted without replaying the baseline
+	Applied int   // number of goose migrations applied
+	Version int64 // final goose version
 }
 
 // Migrate runs goose migrations, adopting a pre-existing (Python-created) schema
@@ -191,4 +191,6 @@ func tableExists(ctx context.Context, db *sql.DB, name string) (bool, error) {
 type gooseLogger struct{}
 
 func (gooseLogger) Fatalf(format string, v ...any) { slog.Error(fmt.Sprintf(format, v...)) }
-func (gooseLogger) Printf(format string, v ...any) { slog.Info(strings.TrimSpace(fmt.Sprintf(format, v...))) }
+func (gooseLogger) Printf(format string, v ...any) {
+	slog.Info(strings.TrimSpace(fmt.Sprintf(format, v...)))
+}

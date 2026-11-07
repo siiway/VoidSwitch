@@ -36,6 +36,9 @@ type BaseProvider struct {
 	ModelsSuffix     string
 	BalanceSuffix    string
 	AnthropicVersion string
+	SupportsImport   bool
+	SupportsRefresh  bool
+	SupportsOAuth    bool
 	Record           *database.Provider
 }
 
@@ -162,3 +165,12 @@ func TryJSON(data []byte) any {
 	}
 	return v
 }
+
+// SupportsImport reports whether this adapter can import keys from a source.
+func (p *BaseProvider) CanImport() bool { return p.SupportsImport }
+
+// CanRefresh reports whether this adapter supports OAuth token refresh.
+func (p *BaseProvider) CanRefresh() bool { return p.SupportsRefresh }
+
+// CanOAuth reports whether this adapter supports an interactive OAuth login.
+func (p *BaseProvider) CanOAuth() bool { return p.SupportsOAuth }

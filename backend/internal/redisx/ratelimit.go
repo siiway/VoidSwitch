@@ -96,4 +96,3 @@ func (r *RateLimiter) ReserveAny(ctx context.Context, candidates []LimitCandidat
 	}
 	return n == 1, nil
 }
-

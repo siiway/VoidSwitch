@@ -97,8 +97,7 @@ func modelAllowed(m *database.ExposedModel, groupSet map[int]bool, isMod bool) b
 	return false
 }
 
-// RegisterModelRoutes wires /api/models/*.
+// RegisterModelRoutes wires all /api/models/* routes (read + write).
 func RegisterModelRoutes(r *gin.RouterGroup, a *App) {
-	g := r.Group("/models", core.RequireUser())
-	g.GET("", a.modelsList)
+	registerModelRoutesImpl(r, a)
 }

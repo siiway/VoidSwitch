@@ -21,6 +21,9 @@ type ProviderInterface interface {
 	GetType() string
 	GetStyle() constants.ApiStyle
 	GetRecord() *database.Provider
+	CanImport() bool
+	CanRefresh() bool
+	CanOAuth() bool
 }
 
 type constructorFunc func(record *database.Provider) ProviderInterface
@@ -81,13 +84,13 @@ func AdapterCatalog() []map[string]any {
 	for _, t := range types {
 		p := constructors[t](&database.Provider{Type: t})
 		entry := map[string]any{
-			"type":              p.GetType(),
-			"style":             string(p.GetStyle()),
-			"default_base_url":  p.BaseURL(),
-			"default_models":    []string{},
-			"supports_balance":  p.GetBalanceURL() != "",
-			"supports_import":   false,
-			"supports_oauth":    false,
+			"type":             p.GetType(),
+			"style":            string(p.GetStyle()),
+			"default_base_url": p.BaseURL(),
+			"default_models":   []string{},
+			"supports_balance": p.GetBalanceURL() != "",
+			"supports_import":  p.CanImport(),
+			"supports_oauth":   p.CanOAuth(),
 		}
 		catalog = append(catalog, entry)
 	}

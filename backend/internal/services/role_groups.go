@@ -43,9 +43,9 @@ func EnsureModeratorGroup(db *gorm.DB) (*database.RoleGroup, error) {
 		desc := "Owner / co-owner / admin. Always allowed to call every model. Built-in — cannot be deleted or restricted."
 		slug := constants.ModeratorGroupSlug
 		group = database.RoleGroup{
-			Slug:        &slug,
-			Name:        "Moderator",
-			Description: &desc,
+			Slug:                       &slug,
+			Name:                       "Moderator",
+			Description:                &desc,
 			Builtin:                    true,
 			CallRateLimitWindowSeconds: constants.CallRateLimitWindowSeconds,
 			CallRateLimitMaxRequests:   constants.ModeratorCallRateLimitMax,
