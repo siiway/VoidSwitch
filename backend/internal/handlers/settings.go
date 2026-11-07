@@ -7,6 +7,7 @@ import (
 
 	"github.com/siiway/voidswitch/internal/core"
 	"github.com/siiway/voidswitch/internal/services"
+	"github.com/siiway/voidswitch/internal/services/providers"
 )
 
 type settingsUpdateIn struct {
@@ -49,11 +50,22 @@ func strPtr(s string) *string { return &s }
 
 // systemInfo returns version/commit/runtime info.
 func (a *App) systemInfo(c *gin.Context) {
+	var taskStatus []any
+	if a.Tasks != nil {
+		for _, s := range a.Tasks.Status() {
+			taskStatus = append(taskStatus, s)
+		}
+	}
+	if taskStatus == nil {
+		taskStatus = []any{}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"version":     Version,
 		"commit":      CommitID(),
 		"environment": a.Cfg.Environment,
 		"dev_mode":    a.Cfg.DevAuthBypassActive() || a.Cfg.Server.DevMode,
+		"adapters":    providers.AdapterCatalog(),
+		"tasks":       taskStatus,
 	})
 }
 

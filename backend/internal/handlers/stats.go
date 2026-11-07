@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"math"
 	"net/http"
 	"time"
 
@@ -31,7 +32,7 @@ func (a *App) statsSummary(c *gin.Context) {
 
 	successRate := 0.0
 	if reqs > 0 {
-		successRate = float64(succ) / float64(reqs)
+		successRate = math.Round(float64(succ)/float64(reqs)*1000) / 10
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"providers": providers, "active_keys": activeKeys, "total_keys": totalKeys,
@@ -39,15 +40,15 @@ func (a *App) statsSummary(c *gin.Context) {
 		"users": users, "tokens": tokens,
 		"requests_24h": reqs, "success_24h": succ, "failures_24h": reqs - succ,
 		"tokens_24h": tokens24, "success_rate_24h": successRate,
-		"avg_tokens_per_request_24h": avgPerReq(tokens24, reqs),
+		"avg_tokens_per_request_24h": avgTokensPerReq(tokens24, reqs),
 	})
 }
 
-func avgPerReq(total, n int64) int64 {
+func avgTokensPerReq(total, n int64) float64 {
 	if n == 0 {
 		return 0
 	}
-	return total / n
+	return math.Round(float64(total)/float64(n)*10) / 10
 }
 
 // settingsGet returns all settings (staff).

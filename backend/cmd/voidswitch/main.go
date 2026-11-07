@@ -19,6 +19,7 @@ import (
 	"github.com/siiway/voidswitch/internal/handlers"
 	"github.com/siiway/voidswitch/internal/redisx"
 	"github.com/siiway/voidswitch/internal/services"
+	"github.com/siiway/voidswitch/internal/tasks"
 )
 
 func main() {
@@ -84,7 +85,13 @@ func main() {
 		slog.Warn("DEV AUTH BYPASS ACTIVE — login is disabled; a synthetic owner identity is used. NEVER run this in production.")
 	}
 
-	app := &handlers.App{DB: db, GDB: db.Gorm, Cfg: cfg, RDB: rdb}
+	// Background tasks.
+	taskMgr := tasks.New(db.Gorm)
+	tasks.RegisterDefaults(taskMgr, db.Gorm)
+	taskMgr.Start()
+	defer taskMgr.Stop()
+
+	app := &handlers.App{DB: db, GDB: db.Gorm, Cfg: cfg, RDB: rdb, Tasks: taskMgr}
 	router := buildRouter(app, cfg)
 
 	addr := cfg.Server.Host + ":" + itoa(cfg.Server.Port)

@@ -12,14 +12,16 @@ import (
 	"github.com/siiway/voidswitch/internal/config"
 	"github.com/siiway/voidswitch/internal/database"
 	"github.com/siiway/voidswitch/internal/redisx"
+	"github.com/siiway/voidswitch/internal/tasks"
 )
 
 // App holds shared dependencies for every handler.
 type App struct {
-	DB  *database.DB
-	GDB *gorm.DB
-	Cfg *config.Settings
-	RDB *redisx.Service
+	DB    *database.DB
+	GDB   *gorm.DB
+	Cfg   *config.Settings
+	RDB   *redisx.Service
+	Tasks *tasks.Manager
 }
 
 func (a *App) fail(c *gin.Context, status int, msg string) {

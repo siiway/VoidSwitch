@@ -48,7 +48,7 @@ echo "==> building backend"
 (cd "$REPO/backend" && go build -o "$LOG/voidswitch" ./cmd/voidswitch)
 
 echo "==> starting backend on 127.0.0.1:$BACKEND_PORT (dev auth bypass ON)"
-nohup "$LOG/voidswitch" >"$LOG/backend.log" 2>&1 &
+setsid bash -c "'$LOG/voidswitch'" >"$LOG/backend.log" 2>&1 < /dev/null &
 echo $! > "$LOG/backend.pid"
 
 # Wait for health.
@@ -67,11 +67,9 @@ fi
 echo "==> starting frontend on 127.0.0.1:$FRONTEND_PORT"
 cd "$REPO/frontend"
 if command -v bun >/dev/null 2>&1; then
-  VITE_PORT="$FRONTEND_PORT" VITE_API_PROXY="http://127.0.0.1:$BACKEND_PORT" \
-    nohup bun run dev --host 127.0.0.1 --port "$FRONTEND_PORT" >"$LOG/frontend.log" 2>&1 &
+  setsid bash -c "VITE_PORT=$FRONTEND_PORT VITE_API_PROXY=http://127.0.0.1:$BACKEND_PORT exec bun run dev --host 127.0.0.1 --port $FRONTEND_PORT" >"$LOG/frontend.log" 2>&1 < /dev/null &
 else
-  VITE_PORT="$FRONTEND_PORT" VITE_API_PROXY="http://127.0.0.1:$BACKEND_PORT" \
-    nohup npx vite --host 127.0.0.1 --port "$FRONTEND_PORT" >"$LOG/frontend.log" 2>&1 &
+  setsid bash -c "VITE_PORT=$FRONTEND_PORT VITE_API_PROXY=http://127.0.0.1:$BACKEND_PORT exec npx vite --host 127.0.0.1 --port $FRONTEND_PORT" >"$LOG/frontend.log" 2>&1 < /dev/null &
 fi
 echo $! > "$LOG/frontend.pid"
 

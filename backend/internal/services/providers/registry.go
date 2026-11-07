@@ -86,6 +86,8 @@ func AdapterCatalog() []map[string]any {
 			"default_base_url":  p.BaseURL(),
 			"default_models":    []string{},
 			"supports_balance":  p.GetBalanceURL() != "",
+			"supports_import":   false,
+			"supports_oauth":    false,
 		}
 		catalog = append(catalog, entry)
 	}
