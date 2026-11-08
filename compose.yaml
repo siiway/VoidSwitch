@@ -12,8 +12,10 @@
 #
 # Point your Cloudflare Tunnel / reverse proxy at the published dashboard port.
 #
-# To pin a specific image tag (default: latest) set VS_IMAGE_TAG in .env, e.g.
-# VS_IMAGE_TAG=1.2.3
+# Images: set VS_IMAGE to switch the registry/mirror (default ghcr.io/siiway),
+# e.g. VS_IMAGE=hp.siiway.dpdns.org/ghcr.io/siiway — the gateway and dashboard
+# are then pulled from <VS_IMAGE>/voidswitch and <VS_IMAGE>/voidswitch-dashboard.
+# Pin a tag with VS_IMAGE_TAG (default: latest), e.g. VS_IMAGE_TAG=1.2.3.
 services:
   postgres:
     image: postgres:17-alpine
@@ -46,7 +48,7 @@ services:
 
   voidswitch:
     container_name: voidswitch
-    image: ghcr.io/siiway/voidswitch:${VS_IMAGE_TAG:-latest}
+    image: ${VS_IMAGE:-ghcr.io/siiway}/voidswitch:${VS_IMAGE_TAG:-latest}
     # Build-from-source happens via compose-build.override.yaml (which adds a
     # `build:` block pointing at the repo root + backend/Dockerfile).
     restart: unless-stopped
@@ -93,7 +95,7 @@ services:
       - vs-network
 
   dashboard:
-    image: ghcr.io/siiway/voidswitch-dashboard:${VS_IMAGE_TAG:-latest}
+    image: ${VS_IMAGE:-ghcr.io/siiway}/voidswitch-dashboard:${VS_IMAGE_TAG:-latest}
     restart: unless-stopped
     # The single public origin: serves the SPA and proxies the API to voidswitch.
     # Point Cloudflare Tunnel / your reverse proxy here.

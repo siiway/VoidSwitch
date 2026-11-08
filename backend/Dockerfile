@@ -6,7 +6,7 @@
 #   docker build -f backend/Dockerfile -t voidswitch .
 #
 # (docker compose sets `context: .` + `dockerfile: backend/Dockerfile`.)
-FROM golang:1.25.1-alpine AS builder
+FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache ca-certificates git
 WORKDIR /src/backend
 ENV CGO_ENABLED=0 GOOS=linux
@@ -15,7 +15,7 @@ RUN go mod download
 COPY backend/ ./
 ARG VOIDSWITCH_COMMIT=""
 ARG VERSION=""
-RUN VERSION="${VERSION:-0.3.0-2026.11.8.1}" && \
+RUN VERSION="${VERSION:-0.3.0-2026.11.8.2}" && \
     go build -trimpath -ldflags="-s -w" -o /voidswitch ./cmd/voidswitch
 
 FROM alpine:3.21

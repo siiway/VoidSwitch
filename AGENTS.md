@@ -31,17 +31,18 @@ display form with hyphens.
 ## Lint & Typecheck
 
 ```bash
-# Backend
-ruff check backend/
-ty check
+# Backend (Go) — requires Go >= 1.26 (see backend/go.mod)
+cd backend && go build ./... && go vet ./... && go test ./... && gofmt -l .
 
 # Frontend
-cd frontend && npm run lint
+cd frontend && bun run lint
 ```
 
-All `ty check` unresolved-import diagnostics are pre-existing (no venv at system level) — only new type errors from changed code should be fixed.
+Frontend `bun run lint` is `tsc --noEmit`; also run `bun run build` for anything
+non-trivial.
 
-Frontend `npm run lint` is `tsc --noEmit`; also run `npm run build` for anything non-trivial. Backend: `uv run pytest` from `backend/`.
+The **Python** backend (on the `legacy` branch) uses `ruff check` / `ty check` /
+`uv run pytest`; those tooling configs are not present on `main`.
 
 Use `bun` / `bunx` for frontend package and script operations where possible. Do not run commands that regenerate `package-lock.json`; this repo uses `bun.lock`, and mixing npm and Bun lockfiles creates noisy conflicts.
 
