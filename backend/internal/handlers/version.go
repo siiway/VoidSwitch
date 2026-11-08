@@ -8,7 +8,7 @@ import (
 
 // Version is the build version (dev format, e.g. v0.3.0-2026.11.7.1). It is set
 // via -ldflags at build time; a sensible default keeps dev runs informative.
-var Version = "0.3.0-2026.11.8.2"
+var Version = "0.3.0-2026.11.8.3"
 
 // CommitID resolves the short git hash (VOIDSWITCH_COMMIT or git rev-parse).
 func CommitID() string {

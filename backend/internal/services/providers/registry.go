@@ -59,6 +59,9 @@ var constructors = map[string]constructorFunc{
 	"volcengine":    func(r *database.Provider) ProviderInterface { return NewVolcengineProvider(r) },
 	"minimax":       func(r *database.Provider) ProviderInterface { return NewMiniMaxProvider(r) },
 	"generic":       func(r *database.Provider) ProviderInterface { return NewGenericOpenAIProvider(r) },
+	"codex":         func(r *database.Provider) ProviderInterface { return NewCodexProvider(r) },
+	"grok":          func(r *database.Provider) ProviderInterface { return NewGrokProvider(r) },
+	"grok-build":    func(r *database.Provider) ProviderInterface { return NewGrokBuildProvider(r) },
 }
 
 func AdapterTypes() []string {

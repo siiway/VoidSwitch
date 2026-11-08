@@ -19,7 +19,6 @@ import (
 
 	"github.com/siiway/voidswitch/internal/config"
 	"github.com/siiway/voidswitch/internal/constants"
-	"github.com/siiway/voidswitch/internal/cryptoutil"
 	"github.com/siiway/voidswitch/internal/database"
 )
 
@@ -196,9 +195,9 @@ func (d *Dispatcher) Do() (*DispatchResult, error) {
 }
 
 func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
-	plainKey, err := cryptoutil.DecryptSecret(cand.Key.KeyCiphertext, d.req.Cfg.Server.SecretKey)
+	plainKey, err := ResolveCredential(d.req.DB, cand.Provider, cand.Key, d.req.Cfg.Server.SecretKey)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt key: %w", err)
+		return nil, fmt.Errorf("resolve credential: %w", err)
 	}
 
 	adapter := ResolveAdapter(cand.Provider)

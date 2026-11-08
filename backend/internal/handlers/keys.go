@@ -366,8 +366,19 @@ func (a *App) keysRefreshToken(c *gin.Context) {
 		a.fail(c, http.StatusNotFound, "Key not found.")
 		return
 	}
-	if err := services.RefreshKeyToken(a.GDB, &k, a.Cfg.Server.SecretKey); err != nil {
-		a.fail(c, http.StatusBadRequest, err.Error())
+	var p database.Provider
+	_ = a.GDB.First(&p, pid).Error
+	var rerr error
+	switch p.Type {
+	case "codex":
+		_, rerr = services.CodexResolveAccessToken(a.GDB, &k, a.Cfg.Server.SecretKey, true)
+	case "xai", "grok-build":
+		_, rerr = services.XAIResolveAccessToken(a.GDB, &k, a.Cfg.Server.SecretKey, true)
+	default:
+		rerr = services.RefreshKeyToken(a.GDB, &k, a.Cfg.Server.SecretKey)
+	}
+	if rerr != nil {
+		a.fail(c, http.StatusBadRequest, rerr.Error())
 		return
 	}
 	a.GDB.Model(&k).Updates(map[string]any{
@@ -378,16 +389,60 @@ func (a *App) keysRefreshToken(c *gin.Context) {
 }
 
 // keysOAuthStart begins an interactive OAuth login for a key.
+// oauthModule maps a provider type to its interactive OAuth implementation.
+// Returns one of: "claude-code", "codex", "grok-build", or "" (unsupported).
+func oauthModuleType(providerType string) string {
+	switch providerType {
+	case "claude-code":
+		return "claude-code"
+	case "codex":
+		return "codex"
+	case "grok-build":
+		return "grok-build"
+	default:
+		return ""
+	}
+}
+
+// providerForID loads a provider or writes 404.
+func (a *App) providerForID(c *gin.Context, pid int) (*database.Provider, bool) {
+	var p database.Provider
+	if err := a.GDB.First(&p, pid).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Provider not found.")
+		return nil, false
+	}
+	return &p, true
+}
+
 func (a *App) keysOAuthStart(c *gin.Context) {
 	pid, _ := strconv.Atoi(c.Param("id"))
-	url, state := services.BeginOAuthLogin(pid)
-	c.JSON(http.StatusOK, gin.H{"authorize_url": url, "state": state})
+	p, ok := a.providerForID(c, pid)
+	if !ok {
+		return
+	}
+	switch oauthModuleType(p.Type) {
+	case "claude-code":
+		url, state := services.BeginOAuthLogin(pid)
+		c.JSON(http.StatusOK, gin.H{"authorize_url": url, "state": state})
+	case "codex":
+		url, state := services.CodexBeginLogin(pid)
+		c.JSON(http.StatusOK, gin.H{"authorize_url": url, "state": state})
+	case "grok-build":
+		url, state := services.XAIBeginLogin(pid)
+		c.JSON(http.StatusOK, gin.H{"authorize_url": url, "state": state})
+	default:
+		a.fail(c, http.StatusBadRequest, "This provider does not support OAuth login.")
+	}
 }
 
 // keysOAuthComplete finishes the interactive login and adds the key.
 func (a *App) keysOAuthComplete(c *gin.Context) {
 	uv := core.GetUser(c)
 	pid, _ := strconv.Atoi(c.Param("id"))
+	p, ok := a.providerForID(c, pid)
+	if !ok {
+		return
+	}
 	var in struct {
 		Code  string  `json:"code"`
 		State string  `json:"state"`
@@ -397,11 +452,29 @@ func (a *App) keysOAuthComplete(c *gin.Context) {
 		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
 		return
 	}
-	bundle, err := services.CompleteOAuthLogin(in.Code, in.State, pid, a.GDB)
+	ctx := c.Request.Context()
+	var bundle map[string]any
+	var err error
+	switch oauthModuleType(p.Type) {
+	case "claude-code":
+		bundle, err = services.CompleteOAuthLogin(in.Code, in.State, pid, a.GDB)
+	case "codex":
+		bundle, err = services.CodexCompleteLogin(ctx, in.Code, in.State, pid)
+	case "grok-build":
+		bundle, err = services.XAICompleteLogin(ctx, in.Code, in.State, pid)
+	default:
+		a.fail(c, http.StatusBadRequest, "This provider does not support OAuth login.")
+		return
+	}
 	if err != nil {
 		a.fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	a.storeOAuthBundle(c, uv, pid, bundle, in.Note)
+}
+
+// storeOAuthBundle encrypts + persists a completed OAuth bundle as a key.
+func (a *App) storeOAuthBundle(c *gin.Context, uv *core.UserView, pid int, bundle map[string]any, note *string) {
 	raw, _ := json.Marshal(bundle)
 	ct, err := cryptoutil.EncryptSecret(string(raw), a.Cfg.Server.SecretKey)
 	if err != nil {
@@ -420,7 +493,7 @@ func (a *App) keysOAuthComplete(c *gin.Context) {
 	}
 	k := database.ApiKey{
 		ProviderID: pid, KeyCiphertext: ct, KeyHash: core.HashToken(string(raw)), KeyPreview: preview,
-		SortOrder: next, Status: string(constants.KeyStatusActive), Weight: 1, Note: in.Note,
+		SortOrder: next, Status: string(constants.KeyStatusActive), Weight: 1, Note: note,
 		AddedBy: &uv.User.ID, Balance: database.JSONOf(map[string]any{}),
 	}
 	if err := a.GDB.Create(&k).Error; err != nil {
@@ -430,12 +503,56 @@ func (a *App) keysOAuthComplete(c *gin.Context) {
 	c.JSON(http.StatusCreated, toApiKeyView(&k))
 }
 
-// keysOAuthDeviceStart / Complete report device flow as unsupported here.
+// keysOAuthDeviceStart begins the Codex device flow.
 func (a *App) keysOAuthDeviceStart(c *gin.Context) {
-	a.fail(c, http.StatusNotImplemented, "device flow is not supported for this provider")
+	pid, _ := strconv.Atoi(c.Param("id"))
+	p, ok := a.providerForID(c, pid)
+	if !ok {
+		return
+	}
+	if p.Type != "codex" {
+		a.fail(c, http.StatusBadRequest, "Device flow is only supported for the codex provider.")
+		return
+	}
+	res, err := services.CodexDeviceStart(c.Request.Context())
+	if err != nil {
+		a.fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }
+
+// keysOAuthDeviceComplete polls the Codex device grant once.
 func (a *App) keysOAuthDeviceComplete(c *gin.Context) {
-	a.fail(c, http.StatusNotImplemented, "device flow is not supported for this provider")
+	uv := core.GetUser(c)
+	pid, _ := strconv.Atoi(c.Param("id"))
+	p, ok := a.providerForID(c, pid)
+	if !ok {
+		return
+	}
+	if p.Type != "codex" {
+		a.fail(c, http.StatusBadRequest, "Device flow is only supported for the codex provider.")
+		return
+	}
+	var in struct {
+		DeviceAuthID string  `json:"device_auth_id"`
+		UserCode     string  `json:"user_code"`
+		Note         *string `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
+		return
+	}
+	bundle, err := services.CodexDeviceComplete(c.Request.Context(), in.DeviceAuthID, in.UserCode)
+	if err != nil {
+		a.fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	if bundle == nil {
+		c.JSON(http.StatusAccepted, gin.H{"status": "pending"})
+		return
+	}
+	a.storeOAuthBundle(c, uv, pid, bundle, in.Note)
 }
 
 func (a *App) keysCleanup(c *gin.Context) {
