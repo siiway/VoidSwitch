@@ -208,3 +208,29 @@ real upstream (non-stream, stream, anthropic) PASS
   restored backup.
 - Real-provider gateway behaviour is verified against `glm-4.7-flash-cf`; other
   providers follow the same RelayKit path but were not individually exercised.
+
+
+---
+
+## Post-migration fixes (2026-11-08)
+
+Closed the gaps found after going live:
+
+- **Usage accounting was not being written** by the Go gateway (request_logs /
+  usage_daily / token counters / session_spans) — now written per request on
+  both the streaming and non-streaming paths.
+- **Gateway access gates** added (Python had them; Go did not): token
+  `allowed_models`, RPM, daily quota, model resolution (exposed/passthrough),
+  role-group model access, per-role-group call rate limit, `X-API-Key`, expiry.
+- **Member log visibility**: request logs (own / role-group / staff scopes) and
+  audit logs (actor / target / own-token / role-group scopes) per CONTEXT.md.
+- **Missing endpoints** wired: `/api/health`(+`/stream`), `/api/admin/reveal/key`,
+  `/v1/models/sync`, `/api/me/login-token`(+`/rotate`).
+- **Provider fidelity**: OpenAI developer→system role remap; retry-on-zero-token
+  failover; per-upstream health detail in the health snapshot.
+- **Config cleanup**: dropped the built-in `system` node group (system requests
+  go direct / HTTP(S)_PROXY) and the redundant `proxy_health_check_enabled`
+  setting (subsumed by `proxy_switching_enabled`).
+
+All verified against mock upstreams end-to-end (non-stream, stream, failover,
+gates, rollups, health).

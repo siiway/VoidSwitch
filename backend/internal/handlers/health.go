@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -122,11 +123,14 @@ func (a *App) modelHealth() []gin.H {
 			avg := ttftSum / float64(ttftN)
 			ttft = &avg
 		}
-		// Count active cooldowns for this model's route upstreams.
-		var cooled int64
-		a.GDB.Model(&database.UpstreamCooldown{}).
-			Where("until > ? AND upstream_model IN (SELECT ru.upstream_model FROM route_upstreams ru JOIN routes ro ON ro.id = ru.route_id JOIN exposed_models em ON em.id = ro.exposed_model_id WHERE em.model_id = ?)",
-				time.Now().UTC(), m.ModelID).Count(&cooled)
+		// Per-upstream health detail (route candidates + recent log stats + cooldowns).
+		upstreams := a.modelUpstreamHealth(m.ModelID, since, recentCount)
+		cooled := 0
+		for _, u := range upstreams {
+			if u["cooled_until"] != nil {
+				cooled++
+			}
+		}
 		if status == "healthy" && cooled > 0 {
 			status = "degraded"
 		}
@@ -139,7 +143,7 @@ func (a *App) modelHealth() []gin.H {
 			"sufficient_data":      total >= services.GetInt("upstream_min_samples", 10),
 			"best_success_rate":    rate,
 			"best_ttft_ms":         ttft,
-			"upstreams":            []any{},
+			"upstreams":            upstreams,
 		})
 	}
 	return out
@@ -225,4 +229,110 @@ func RegisterHealthRoutes(authed *gin.RouterGroup, a *App) {
 	g := authed.Group("/health", core.RequireUser())
 	g.GET("", a.healthSnapshot)
 	g.GET("/stream", a.healthStream)
+}
+
+// modelUpstreamHealth builds the per-upstream health detail for one exposed
+// model: each route candidate with its recent success rate, TTFT, sample count
+// and any active cooldown.
+func (a *App) modelUpstreamHealth(modelID string, since time.Time, recentCount int) []gin.H {
+	var m database.ExposedModel
+	if err := a.GDB.Where("model_id = ?", modelID).First(&m).Error; err != nil {
+		return []gin.H{}
+	}
+	var route database.Route
+	if err := a.GDB.Where("exposed_model_id = ?", m.ID).First(&route).Error; err != nil {
+		return []gin.H{}
+	}
+	var ups []database.RouteUpstream
+	a.GDB.Where("route_id = ?", route.ID).Order("group_position, position").Find(&ups)
+
+	var providers []database.Provider
+	a.GDB.Find(&providers)
+	pname := map[int]*database.Provider{}
+	for i := range providers {
+		pname[providers[i].ID] = &providers[i]
+	}
+	var cools []database.UpstreamCooldown
+	a.GDB.Where("until > ?", time.Now().UTC()).Find(&cools)
+	coolKey := map[string]time.Time{}
+	for _, c := range cools {
+		coolKey[cooldownKey(c.ProviderID, c.UpstreamModel, c.KeyPool)] = c.Until
+	}
+
+	out := make([]gin.H, 0, len(ups))
+	for i := range ups {
+		u := &ups[i]
+		var provName, provSlug *string
+		if u.ProviderID != nil {
+			if p, ok := pname[*u.ProviderID]; ok {
+				provName, provSlug = &p.Name, &p.Slug
+			}
+		}
+		var rows []database.RequestLog
+		q := a.GDB.Where("model = ? AND ts >= ?", modelID, since)
+		if u.ProviderID != nil {
+			q = q.Where("provider_name = ?", deref(provName))
+		}
+		q = q.Where("upstream_model = ?", u.UpstreamModel).Order("id DESC").Limit(recentCount).Find(&rows)
+		var total, success int
+		var ttftSum float64
+		var ttftN int
+		for j := range rows {
+			total++
+			if rows[j].Success {
+				success++
+			}
+			if rows[j].FirstTokenMs != nil {
+				ttftSum += *rows[j].FirstTokenMs
+				ttftN++
+			}
+		}
+		var rate *float64
+		if total > 0 {
+			r := float64(success) / float64(total)
+			rate = &r
+		}
+		var ttft *float64
+		if ttftN > 0 {
+			avg := ttftSum / float64(ttftN)
+			ttft = &avg
+		}
+		st := "learning"
+		if total > 0 {
+			switch {
+			case *rate >= 0.9:
+				st = "healthy"
+			case *rate >= 0.5:
+				st = "degraded"
+			default:
+				st = "unavailable"
+			}
+		}
+		var cooledUntil *time.Time
+		if u.ProviderID != nil {
+			if t, ok := coolKey[cooldownKey(*u.ProviderID, u.UpstreamModel, u.KeyPool)]; ok {
+				cooledUntil = &t
+				st = "degraded"
+			}
+		}
+		out = append(out, gin.H{
+			"upstream_id":          u.ID,
+			"provider_id":          u.ProviderID,
+			"provider_name":        provName,
+			"provider_slug":        provSlug,
+			"upstream_model":       u.UpstreamModel,
+			"status":               st,
+			"success_rate":         rate,
+			"ttft_ms":              ttft,
+			"samples":              total,
+			"requests":             total,
+			"consecutive_failures": 0,
+			"cooled_until":         cooledUntil,
+		})
+	}
+	return out
+}
+
+func cooldownKey(providerID int, upstreamModel, pool string) string {
+	return strconv.Itoa(providerID) + "|" + upstreamModel + "|" + pool
 }

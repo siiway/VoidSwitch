@@ -202,6 +202,15 @@ func (d *Dispatcher) Do() (*DispatchResult, error) {
 			lastErr = err
 			continue
 		}
+		// "200 OK + 0 tokens" auto-retry: when the provider opts in, a non-stream
+		// success that produced no tokens is a degenerate upstream result — count
+		// it as a failure and try the next candidate rather than delivering an
+		// empty reply.
+		if cand.Provider.RetryOnZeroToken && !d.req.Stream && res.Usage.TotalTokens == 0 {
+			d.noteFailure(cand, 200)
+			lastErr = fmt.Errorf("upstream %s returned 200 OK with 0 tokens", cand.Provider.Name)
+			continue
+		}
 		res.Attempts = i + 1
 		return res, nil
 	}
