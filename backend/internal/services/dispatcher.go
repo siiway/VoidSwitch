@@ -323,6 +323,11 @@ func (d *Dispatcher) buildUpstreamBody(cand Candidate, upstreamStyle constants.A
 	}
 	// Ensure model is the upstream model.
 	out["model"] = cand.UpstreamModel
+	// OpenAI-style upstreams: optionally remap role "developer" -> "system"
+	// (per-provider toggle, default on) so older upstreams don't reject it.
+	if upstreamStyle == constants.ApiStyleOpenAI && cand.Provider.NormalizeDeveloperRoleToSystem {
+		normalizeDeveloperRoles(out)
+	}
 	if adapter := ResolveAdapter(cand.Provider); adapter != nil {
 		out = adapter.PrepareBody(out)
 	}
@@ -617,4 +622,19 @@ func (d *Dispatcher) recordNodeHealth(nodeID int, success bool, latencyMs float6
 		sample.LatencyMs = &latencyMs
 	}
 	db.Create(&sample)
+}
+
+// normalizeDeveloperRoles rewrites OpenAI "developer" role messages to "system".
+func normalizeDeveloperRoles(body map[string]any) {
+	msgs, ok := body["messages"].([]any)
+	if !ok {
+		return
+	}
+	for _, m := range msgs {
+		if mm, ok := m.(map[string]any); ok {
+			if r, _ := mm["role"].(string); r == "developer" {
+				mm["role"] = "system"
+			}
+		}
+	}
 }

@@ -89,9 +89,8 @@ func RegisterMeRoutes(r *gin.RouterGroup, a *App) {
 	m.GET("", a.authMe)
 	m.GET("/tokens", a.meTokens)
 	m.GET("/usage", a.meUsage)
-	m.GET("/login-token", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"enabled": false, "prefix": nil})
-	})
+	m.GET("/login-token", a.meLoginTokenStatus)
+	m.POST("/login-token/rotate", a.meLoginTokenRotate)
 	m.POST("/tokens", a.meTokenCreate)
 	m.PATCH("/tokens/:id", a.meTokenUpdate)
 	m.DELETE("/tokens/:id", a.meTokenDelete)
@@ -362,4 +361,47 @@ func (a *App) announcementDelete(c *gin.Context) {
 	}
 	a.GDB.Delete(&row)
 	c.Status(http.StatusNoContent)
+}
+
+// meLoginTokenStatus reports whether the caller (staff) has an emergency login
+// token configured.
+func (a *App) meLoginTokenStatus(c *gin.Context) {
+	uv := core.GetUser(c)
+	if !uv.IsStaff() {
+		a.fail(c, http.StatusForbidden, "Login tokens are only available to staff.")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"enabled": uv.User.LoginTokenHash != nil,
+		"prefix":  uv.User.LoginTokenPrefix,
+	})
+}
+
+// meLoginTokenRotate mints a new emergency login token (shown once).
+func (a *App) meLoginTokenRotate(c *gin.Context) {
+	uv := core.GetUser(c)
+	if !uv.IsStaff() {
+		a.fail(c, http.StatusForbidden, "Login tokens are only available to staff.")
+		return
+	}
+	secret, err := core.GenerateLoginToken()
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
+	hash := core.HashToken(secret)
+	prefix := core.TokenFingerprint(secret)
+	if err := a.GDB.Model(&database.User{}).Where("id = ?", uv.User.ID).
+		Updates(map[string]any{"login_token_hash": hash, "login_token_prefix": prefix}).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	sub := uv.User.Sub
+	tid := strconv.Itoa(uv.User.ID)
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "me.login_token.rotate", ActorSub: &sub, ActorName: uv.User.Username,
+		Scope: core.AuditScopeSelf, TargetType: strPtr("user"), TargetID: &tid,
+		Detail: map[string]any{"prefix": prefix}, IP: strPtr(clientIP(c)),
+	})
+	c.JSON(http.StatusOK, gin.H{"enabled": true, "prefix": prefix, "token": secret})
 }

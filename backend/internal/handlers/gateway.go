@@ -18,25 +18,30 @@ import (
 // gatewayAuth resolves the caller's Void-Token from the Authorization bearer and
 // loads the owning user. Returns false (having written a 401) on failure.
 func (a *App) gatewayAuth(c *gin.Context) (*database.VoidToken, *database.User, bool) {
-	auth := c.GetHeader("Authorization")
-	if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		a.fail(c, http.StatusUnauthorized, "Missing bearer token.")
+	raw := ""
+	if auth := c.GetHeader("Authorization"); strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		raw = strings.TrimSpace(auth[len("bearer "):])
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(c.GetHeader("X-API-Key"))
+	}
+	if raw == "" {
+		a.fail(c, http.StatusUnauthorized, "Missing API key.")
 		return nil, nil, false
 	}
-	raw := strings.TrimSpace(auth[len("bearer "):])
 	hash := core.HashToken(raw)
 	var token database.VoidToken
-	if err := a.GDB.Where("token_hash = ? AND deleted = ?", hash, false).First(&token).Error; err != nil {
-		a.fail(c, http.StatusUnauthorized, "Invalid token.")
+	if err := a.GDB.Where("token_hash = ? AND deleted = ?", hash, false).First(&token).Error; err != nil || !token.Enabled {
+		a.fail(c, http.StatusUnauthorized, "Invalid API key.")
 		return nil, nil, false
 	}
-	if !token.Enabled {
-		a.fail(c, http.StatusForbidden, "Token disabled.")
+	if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now().UTC()) {
+		a.fail(c, http.StatusUnauthorized, "API key expired.")
 		return nil, nil, false
 	}
 	var user database.User
 	if err := a.GDB.Where("id = ?", token.UserID).First(&user).Error; err != nil || !user.Enabled {
-		a.fail(c, http.StatusForbidden, "User disabled.")
+		a.fail(c, http.StatusUnauthorized, "Token owner disabled.")
 		return nil, nil, false
 	}
 	return &token, &user, true
@@ -94,8 +99,19 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 		a.fail(c, http.StatusBadRequest, "Missing model.")
 		return
 	}
+	// Gateway access gates: token allow-list, RPM, daily quota, model resolution,
+	// role-group access, per-role-group call rate limit.
+	uv := a.gatewayUserView(user)
+	if aerr, _ := a.checkGatewayAccess(c, uv, token, modelID); aerr != nil {
+		a.fail(c, aerr.Status, aerr.Msg)
+		return
+	}
+
 	stream, _ := body["stream"].(bool)
 	start := time.Now()
+	sessionID := c.GetHeader(constants.SessionHeader)
+	sessionKey := services.SessionKey(token.ID, sessionID, body)
+	clientType := c.GetHeader(constants.ClientHintHeader)
 
 	subPtr := user.Sub
 	req := &services.DispatchRequest{
@@ -108,8 +124,11 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 	if err != nil {
 		msg := err.Error()
 		status := constants.UpstreamUnavailable
-		a.logRequest(c, token.ID, user.Sub, modelID, string(inbound), string(inbound),
-			stream, start, nil, "", 0, status, false, 0, &msg, services.Usage{})
+		a.logRequest(c, requestLogInfo{
+			TokenID: token.ID, UserSub: user.Sub, Model: modelID, Upstream: modelID,
+			Inbound: string(inbound), Stream: stream, Start: start, StatusCode: status,
+			Success: false, Attempts: 0, Err: &msg, SessionKey: sessionKey, ClientType: clientType,
+		})
 		a.fail(c, status, msg)
 		return
 	}
@@ -142,16 +161,31 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 			case <-time.After(2 * time.Second):
 			}
 		}
-		a.logRequest(c, token.ID, user.Sub, modelID, string(inbound), string(inbound),
-			true, start, res.Usage.FirstTokenMs, providerName(res), keyID(res),
-			res.StatusCode, true, res.Attempts, nil, res.Usage)
+		a.logRequest(c, requestLogInfo{
+			TokenID: token.ID, UserSub: user.Sub, Model: modelID, Upstream: upstream(res),
+			Inbound: string(inbound), Stream: true, Start: start,
+			FirstToken: res.Usage.FirstTokenMs, Provider: providerName(res), KeyID: keyID(res),
+			StatusCode: res.StatusCode, Success: true, Attempts: res.Attempts, Usage: res.Usage,
+			SessionKey: sessionKey, ClientType: clientType,
+		})
 		return
 	}
 
 	c.Data(res.StatusCode, "application/json", res.Body)
-	a.logRequest(c, token.ID, user.Sub, modelID, string(inbound), string(inbound),
-		false, start, nil, providerName(res), keyID(res),
-		res.StatusCode, true, res.Attempts, nil, res.Usage)
+	a.logRequest(c, requestLogInfo{
+		TokenID: token.ID, UserSub: user.Sub, Model: modelID, Upstream: upstream(res),
+		Inbound: string(inbound), Stream: false, Start: start,
+		Provider: providerName(res), KeyID: keyID(res),
+		StatusCode: res.StatusCode, Success: true, Attempts: res.Attempts, Usage: res.Usage,
+		SessionKey: sessionKey, ClientType: clientType,
+	})
+}
+
+func upstream(res *services.DispatchResult) string {
+	if res.Upstream != "" {
+		return res.Upstream
+	}
+	return ""
 }
 
 func providerName(res *services.DispatchResult) string {
@@ -174,4 +208,34 @@ func RegisterGatewayRoutes(r *gin.RouterGroup, a *App) {
 	r.POST("/chat/completions", a.chatCompletions)
 	r.POST("/messages", a.messages)
 	r.POST("/responses", a.responses)
+	r.POST("/models/sync", a.modelsSync)
+}
+
+// modelsSync returns the models the presenting Void-Token may call (OpenCode
+// /sync-models), applying role-group access + the token allow-list.
+func (a *App) modelsSync(c *gin.Context) {
+	token, user, ok := a.gatewayAuth(c)
+	if !ok {
+		return
+	}
+	uv := a.gatewayUserView(user)
+	var models []database.ExposedModel
+	a.GDB.Where("enabled = ?", true).Order("model_id").Find(&models)
+	count := 0
+	for i := range models {
+		m := &models[i]
+		if !modelAllowedForToken(token, m.ModelID) {
+			continue
+		}
+		if !uv.IsStaff() && !services.ModelAllowedForGroups(m, uv.GroupIDs, false) {
+			continue
+		}
+		count++
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"added":                  0,
+		"total":                  count,
+		"opencode_default_model": services.GetString("opencode_default_model", "claude-opus-4-8"),
+		"opencode_small_model":   services.GetString("opencode_small_model", ""),
+	})
 }

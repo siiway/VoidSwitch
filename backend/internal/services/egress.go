@@ -51,7 +51,7 @@ func ResolveEgress(db *gorm.DB, provider *database.Provider, secretKey string) E
 		groupID = &id
 	}
 
-	nodes := expandGroupNodes(db, *groupID)
+	nodes := ExpandGroupNodes(db, *groupID)
 	if len(nodes) == 0 {
 		return Egress{NodeKind: "direct"}
 	}
@@ -123,7 +123,7 @@ func nodeScore(n *database.Node) float64 {
 
 // expandGroupNodes resolves a node group's members to concrete nodes, including
 // inherited groups (flattened), skipping disabled nodes.
-func expandGroupNodes(db *gorm.DB, groupID int) []database.Node {
+func ExpandGroupNodes(db *gorm.DB, groupID int) []database.Node {
 	seenGroups := map[int]bool{}
 	var out []database.Node
 	var walk func(gid int)

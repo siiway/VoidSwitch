@@ -11,12 +11,35 @@ import (
 	"github.com/siiway/voidswitch/internal/services"
 )
 
+// requestLogInfo carries the context for one request-log write.
+type requestLogInfo struct {
+	TokenID    int
+	UserSub    string
+	Model      string
+	Upstream   string
+	Inbound    string
+	Stream     bool
+	Start      time.Time
+	FirstToken *float64
+	Provider   string
+	KeyID      int
+	StatusCode int
+	Success    bool
+	Attempts   int
+	Err        *string
+	Usage      services.Usage
+	SessionKey string
+	ClientType string
+}
+
 // logRequest persists a request_log row and updates the token counters plus the
-// usage_daily / session_spans rollups. It is safe to call once per request.
-func (a *App) logRequest(c *gin.Context, tokenID int, userSub string, model string,
-	inbound, upstream string, stream bool, start time.Time, firstTokenMs *float64,
-	providerName string, keyID int, statusCode int, success bool, attempts int,
-	errMsg *string, usage services.Usage) {
+// usage_daily / session_spans rollups. Safe to call exactly once per request.
+func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
+	userSub, model, upstream, inbound := info.UserSub, info.Model, info.Upstream, info.Inbound
+	stream, start, firstTokenMs := info.Stream, info.Start, info.FirstToken
+	providerName, keyID, statusCode, success := info.Provider, info.KeyID, info.StatusCode, info.Success
+	attempts, errMsg, usage := info.Attempts, info.Err, info.Usage
+	tokenID := info.TokenID
 
 	end := time.Now().UTC()
 	latency := float64(end.Sub(start).Milliseconds())
@@ -53,6 +76,13 @@ func (a *App) logRequest(c *gin.Context, tokenID int, userSub string, model stri
 		UserAgent:        strPtr(ua),
 		IsOpenCode:       isOC,
 		Debug:            false,
+		ReqMethod:        strPtr("POST"),
+	}
+	if info.SessionKey != "" {
+		row.SessionID = strPtr(info.SessionKey)
+	}
+	if info.ClientType != "" {
+		row.ClientType = strPtr(info.ClientType)
 	}
 	if err := a.GDB.Create(&row).Error; err != nil {
 		return
@@ -60,6 +90,7 @@ func (a *App) logRequest(c *gin.Context, tokenID int, userSub string, model stri
 	a.bumpTokenUsage(tokenID, usage.TotalTokens)
 	if success {
 		a.rollupUsage(userSub, usage.TotalTokens)
+		a.rollupSession(userSub, info.SessionKey, start)
 	}
 }
 
@@ -99,4 +130,29 @@ func statusWord(success bool) string {
 		return "completed"
 	}
 	return "error"
+}
+
+// rollupSession upserts the session_spans row for a conversation: started_at is
+// pinned to the first request, last_at advances, requests accumulate.
+func (a *App) rollupSession(userSub, sessionKey string, start time.Time) {
+	if sessionKey == "" {
+		return
+	}
+	now := time.Now().UTC()
+	var span database.SessionSpan
+	err := a.GDB.Where("session_key = ?", sessionKey).First(&span).Error
+	if err == gorm.ErrRecordNotFound {
+		a.GDB.Create(&database.SessionSpan{
+			SessionKey: sessionKey, UserSub: userSub, StartedAt: start.UTC(),
+			LastAt: now, Requests: 1, UpdatedAt: now,
+		})
+		return
+	} else if err != nil {
+		return
+	}
+	a.GDB.Model(&span).Updates(map[string]any{
+		"last_at":    now,
+		"requests":   gorm.Expr("requests + 1"),
+		"updated_at": now,
+	})
 }

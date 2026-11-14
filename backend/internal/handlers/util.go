@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 )
 
@@ -19,3 +20,5 @@ func deref(s *string) string {
 	}
 	return *s
 }
+
+func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
