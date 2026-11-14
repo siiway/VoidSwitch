@@ -155,6 +155,10 @@ func buildRouter(app *handlers.App, cfg *config.Settings) *gin.Engine {
 		handlers.RegisterModelRoutes(authed, app)
 		handlers.RegisterAnnouncementRoutes(authed, app)
 		handlers.RegisterUsageRoutes(authed, app)
+		// Logs live under /api/admin/logs but are NOT staff-gated: request logs are
+		// member-visible (own traffic), audit logs are staff-or-role-group-admin.
+		// The handlers enforce the row-level scope. See docs/architecture.md.
+		handlers.RegisterLogRoutes(authed.Group("/admin"), app)
 
 		admin := authed.Group("/admin")
 		admin.Use(core.RequireStaff())
@@ -167,7 +171,6 @@ func buildRouter(app *handlers.App, cfg *config.Settings) *gin.Engine {
 			handlers.RegisterRoleGroupRoutes(admin, app)
 			handlers.RegisterUserRoutes(admin, app)
 			handlers.RegisterAdminTokenRoutes(admin, app)
-			handlers.RegisterLogRoutes(admin, app)
 		}
 	}
 	return r

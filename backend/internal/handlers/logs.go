@@ -158,10 +158,8 @@ func applyStatusFilter(q *gorm.DB, raw string) *gorm.DB {
 func mustAtoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
 func (a *App) requestLogsQuery(c *gin.Context, uv *core.UserView) *gorm.DB {
-	q := a.GDB.Model(&database.RequestLog{})
-	if !uv.IsStaff() {
-		q = q.Where("user_sub = ?", uv.User.Sub)
-	} else if sub := c.Query("user_sub"); sub != "" {
+	q := a.requestLogScope(a.GDB.Model(&database.RequestLog{}), uv)
+	if sub := c.Query("user_sub"); sub != "" {
 		q = q.Where("user_sub = ?", sub)
 	}
 	if m := c.Query("model"); m != "" {
@@ -316,7 +314,7 @@ func (a *App) logsRequestDetail(c *gin.Context) {
 		a.fail(c, http.StatusNotFound, "Request log not found.")
 		return
 	}
-	if !uv.IsStaff() && (r.UserSub == nil || *r.UserSub != uv.User.Sub) {
+	if !a.requestLogVisible(uv, r.UserSub) {
 		a.fail(c, http.StatusNotFound, "Request log not found.")
 		return
 	}
@@ -351,10 +349,7 @@ func (a *App) logsRequestDetail(c *gin.Context) {
 
 func (a *App) logsRequestFilters(c *gin.Context) {
 	uv := core.GetUser(c)
-	base := a.GDB.Model(&database.RequestLog{})
-	if !uv.IsStaff() {
-		base = base.Where("user_sub = ?", uv.User.Sub)
-	}
+	base := a.requestLogScope(a.GDB.Model(&database.RequestLog{}), uv)
 
 	var models []string
 	base.Session(&gorm.Session{}).Where("model IS NOT NULL AND model <> ''").
@@ -460,10 +455,8 @@ func (a *App) logsRequestStream(c *gin.Context) {
 			}
 		case <-ticker.C:
 			var rows []database.RequestLog
-			q := a.GDB.Model(&database.RequestLog{}).Where("id > ?", lastID)
-			if !uv.IsStaff() {
-				q = q.Where("user_sub = ?", uv.User.Sub)
-			} else if sub := c.Query("user_sub"); sub != "" {
+			q := a.requestLogScope(a.GDB.Model(&database.RequestLog{}).Where("id > ?", lastID), uv)
+			if sub := c.Query("user_sub"); sub != "" {
 				q = q.Where("user_sub = ?", sub)
 			}
 			if err := q.Order("id ASC").Limit(200).Find(&rows).Error; err != nil {
@@ -502,7 +495,31 @@ func (a *App) logsRequestStream(c *gin.Context) {
 func (a *App) auditLogsQuery(c *gin.Context, uv *core.UserView) *gorm.DB {
 	q := a.GDB.Model(&database.AuditLog{})
 	if !uv.IsStaff() {
-		q = q.Where("actor_sub = ?", uv.User.Sub)
+		// Role-group admin: entries targeting their managed groups or a user who
+		// is a member of one of them. (Not actor_sub — see the Python model: a
+		// group admin isn't entitled to see what an unrelated staff actor did to
+		// unrelated resources.)
+		userIDs := a.visibleUserIDs(uv.AdminGroupIDs)
+		targetIDs := make([]string, 0, len(userIDs))
+		for _, id := range userIDs {
+			targetIDs = append(targetIDs, strconv.Itoa(id))
+		}
+		groupIDs := make([]string, 0, len(uv.AdminGroupIDs))
+		for _, id := range uv.AdminGroupIDs {
+			groupIDs = append(groupIDs, strconv.Itoa(id))
+		}
+		switch {
+		case len(targetIDs) > 0 && len(groupIDs) > 0:
+			q = q.Where("(target_type = ? AND target_id IN ?) OR (target_type = ? AND target_id IN ?)",
+				"user", targetIDs, "role_group", groupIDs)
+		case len(targetIDs) > 0:
+			q = q.Where("target_type = ? AND target_id IN ?", "user", targetIDs)
+		case len(groupIDs) > 0:
+			q = q.Where("target_type = ? AND target_id IN ?", "role_group", groupIDs)
+		default:
+			// No visible scope -> unmatchable.
+			q = q.Where("1 = 0")
+		}
 	} else if sub := c.Query("actor_sub"); sub != "" {
 		q = q.Where("actor_sub = ?", sub)
 	}
@@ -572,38 +589,24 @@ func (a *App) logsAuditList(c *gin.Context) {
 func (a *App) logsAuditFilters(c *gin.Context) {
 	uv := core.GetUser(c)
 	var actions []string
-	q := a.GDB.Model(&database.AuditLog{})
-	if !uv.IsStaff() {
-		q = q.Where("actor_sub = ?", uv.User.Sub)
-	}
-	q.Distinct().Order("action").Pluck("action", &actions)
+	a.auditLogsQuery(c, uv).Distinct().Order("action").Pluck("action", &actions)
 	if actions == nil {
 		actions = []string{}
 	}
 
 	var scopes []string
-	sq := a.GDB.Model(&database.AuditLog{})
-	if !uv.IsStaff() {
-		sq = sq.Where("actor_sub = ?", uv.User.Sub)
-	}
-	sq.Distinct().Order("scope").Pluck("scope", &scopes)
+	a.auditLogsQuery(c, uv).Distinct().Order("scope").Pluck("scope", &scopes)
 	if scopes == nil {
 		scopes = []string{}
 	}
 
 	var subs []string
-	aq := a.GDB.Model(&database.AuditLog{})
-	if !uv.IsStaff() {
-		aq = aq.Where("actor_sub = ?", uv.User.Sub)
-	}
-	aq.Where("actor_sub IS NOT NULL AND actor_sub <> ''").Distinct().Pluck("actor_sub", &subs)
+	a.auditLogsQuery(c, uv).Where("actor_sub IS NOT NULL AND actor_sub <> ''").
+		Distinct().Pluck("actor_sub", &subs)
 
 	var targetTypes []string
-	tq := a.GDB.Model(&database.AuditLog{})
-	if !uv.IsStaff() {
-		tq = tq.Where("actor_sub = ?", uv.User.Sub)
-	}
-	tq.Where("target_type IS NOT NULL AND target_type <> ''").Distinct().Order("target_type").Pluck("target_type", &targetTypes)
+	a.auditLogsQuery(c, uv).Where("target_type IS NOT NULL AND target_type <> ''").
+		Distinct().Order("target_type").Pluck("target_type", &targetTypes)
 	if targetTypes == nil {
 		targetTypes = []string{}
 	}
@@ -689,14 +692,86 @@ func (a *App) settingInt(key string) (int, bool) {
 	return n, true
 }
 
-func RegisterLogRoutes(g *gin.RouterGroup, a *App) {
-	g.GET("/logs/requests", a.logsRequestsList)
-	g.GET("/logs/requests/filters", a.logsRequestFilters)
-	g.GET("/logs/requests/locate", a.logsRequestLocate)
-	g.GET("/logs/requests/stream", a.logsRequestStream)
-	g.GET("/logs/requests/:id", a.logsRequestDetail)
-	g.GET("/logs/audit", a.logsAuditList)
-	g.GET("/logs/audit/filters", a.logsAuditFilters)
-	g.GET("/logs/audit/locate", a.logsAuditLocate)
-	g.POST("/logs/audit/:id/reveal", core.RequireOwner(), a.logsAuditReveal)
+// RegisterLogRoutes wires the log surface on the authenticated (member) group.
+//
+// Permission model (mirrors the Python backend):
+//   - request logs  : any authenticated member, scoped to their own traffic;
+//     role-group admins additionally see their groups' members;
+//     staff see everything. The handlers enforce the WHERE scope.
+//   - audit logs    : staff OR role-group admin (role-group admins see only
+//     entries targeting their groups / members).
+//   - audit reveal  : owner only.
+func RegisterLogRoutes(authed *gin.RouterGroup, a *App) {
+	// Request logs — members + everyone above.
+	r := authed.Group("/logs/requests", core.RequireUser())
+	r.GET("", a.logsRequestsList)
+	r.GET("/filters", a.logsRequestFilters)
+	r.GET("/locate", a.logsRequestLocate)
+	r.GET("/stream", a.logsRequestStream)
+	r.GET("/:id", a.logsRequestDetail)
+
+	// Audit logs — staff or role-group admin.
+	au := authed.Group("/logs/audit", core.RequireStaffOrRoleGroupAdmin())
+	au.GET("", a.logsAuditList)
+	au.GET("/filters", a.logsAuditFilters)
+	au.GET("/locate", a.logsAuditLocate)
+	au.POST("/:id/reveal", core.RequireOwner(), a.logsAuditReveal)
+}
+
+// visibleUserIDs returns the user ids that are members of any of the given
+// role groups (the audience a role-group admin may observe).
+func (a *App) visibleUserIDs(groupIDs []int) []int {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	var ids []int
+	a.GDB.Model(&database.RoleGroupMembership{}).
+		Where("role_group_id IN ?", groupIDs).
+		Distinct().Pluck("user_id", &ids)
+	return ids
+}
+
+// visibleUserSubs returns the Prism subs of members of the given role groups.
+func (a *App) visibleUserSubs(groupIDs []int) []string {
+	ids := a.visibleUserIDs(groupIDs)
+	if len(ids) == 0 {
+		return nil
+	}
+	var subs []string
+	a.GDB.Model(&database.User{}).Where("id IN ?", ids).Pluck("sub", &subs)
+	return subs
+}
+
+// requestLogScope applies the member / role-group-admin / staff visibility rule:
+// staff see everything; role-group admins see their own traffic plus that of
+// members of their managed groups; everyone else sees only their own.
+func (a *App) requestLogScope(q *gorm.DB, uv *core.UserView) *gorm.DB {
+	if uv.IsStaff() {
+		return q
+	}
+	subs := a.visibleUserSubs(uv.AdminGroupIDs)
+	if len(subs) > 0 {
+		own := append([]string{uv.User.Sub}, subs...)
+		return q.Where("user_sub IN ?", own)
+	}
+	return q.Where("user_sub = ?", uv.User.Sub)
+}
+
+// requestLogVisible reports whether the caller may see a single request row.
+func (a *App) requestLogVisible(uv *core.UserView, userSub *string) bool {
+	if uv.IsStaff() {
+		return true
+	}
+	if userSub == nil {
+		return false
+	}
+	if *userSub == uv.User.Sub {
+		return true
+	}
+	for _, s := range a.visibleUserSubs(uv.AdminGroupIDs) {
+		if s == *userSub {
+			return true
+		}
+	}
+	return false
 }

@@ -29,6 +29,10 @@ type UserView struct {
 func (u *UserView) IsStaff() bool { return IsStaff(u.Role) }
 func (u *UserView) IsOwner() bool { return IsOwner(u.Role) }
 
+// IsRoleGroupAdmin reports whether the user is a read-only observer admin of at
+// least one custom role group (independent of their platform role).
+func (u *UserView) IsRoleGroupAdmin() bool { return len(u.AdminGroupIDs) > 0 }
+
 // GetUser returns the authenticated user from the gin context.
 func GetUser(c *gin.Context) *UserView {
 	v, _ := c.Get(CtxUser)
@@ -191,6 +195,23 @@ func RequireOwner() gin.HandlerFunc {
 		}
 		if !uv.IsOwner() {
 			c.AbortWithStatusJSON(403, gin.H{"detail": "Owner privileges required."})
+			return
+		}
+		c.Next()
+	}
+}
+
+// RequireStaffOrRoleGroupAdmin admits staff and role-group admins (the audit-log
+// viewer tier). Members without an adminship are rejected.
+func RequireStaffOrRoleGroupAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		uv := GetUser(c)
+		if uv == nil {
+			c.AbortWithStatusJSON(401, gin.H{"detail": "Not authenticated."})
+			return
+		}
+		if !uv.IsStaff() && !uv.IsRoleGroupAdmin() {
+			c.AbortWithStatusJSON(403, gin.H{"detail": "Staff or role-group-admin privileges required."})
 			return
 		}
 		c.Next()
