@@ -82,6 +82,19 @@ type DispatchResult struct {
 	Provider   *database.Provider
 	Key        *database.ApiKey
 	Upstream   string
+	Usage      Usage
+	Attempts   int
+	// UsageReady is closed when a streaming response has fully drained and Usage
+	// is final (non-stream results set it before returning).
+	UsageReady chan struct{}
+}
+
+// Usage holds token accounting for one request.
+type Usage struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+	FirstTokenMs     *float64
 }
 
 // Dispatcher resolves a route and failovers across upstreams/keys.
@@ -183,12 +196,13 @@ func (d *Dispatcher) Do() (*DispatchResult, error) {
 		return nil, err
 	}
 	var lastErr error
-	for _, cand := range d.seq {
+	for i, cand := range d.seq {
 		res, err := d.attempt(cand)
 		if err != nil {
 			lastErr = err
 			continue
 		}
+		res.Attempts = i + 1
 		return res, nil
 	}
 	return nil, fmt.Errorf("all upstreams failed: %v", lastErr)
@@ -262,10 +276,15 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 
 	if d.req.Stream {
 		stream := d.convertStream(resp.Body, upstreamFormat, inboundFormat, cand.UpstreamModel)
-		return &DispatchResult{
+		ready := make(chan struct{})
+		res := &DispatchResult{
 			StatusCode: http.StatusOK, Stream: stream, Headers: resp.Header,
 			Provider: cand.Provider, Key: cand.Key, Upstream: cand.UpstreamModel,
-		}, nil
+			UsageReady: ready,
+		}
+		// Tee the converted downstream SSE to accumulate usage + first-token time.
+		res.Stream = newUsageTee(stream, res, ready)
+		return res, nil
 	}
 
 	defer resp.Body.Close()
@@ -274,9 +293,11 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	usage := extractUsage(bodyBytes)
 	return &DispatchResult{
 		StatusCode: http.StatusOK, Body: outBody, Headers: resp.Header,
 		Provider: cand.Provider, Key: cand.Key, Upstream: cand.UpstreamModel,
+		Usage: usage,
 	}, nil
 }
 

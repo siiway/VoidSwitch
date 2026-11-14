@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -94,6 +95,7 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 		return
 	}
 	stream, _ := body["stream"].(bool)
+	start := time.Now()
 
 	subPtr := user.Sub
 	req := &services.DispatchRequest{
@@ -104,7 +106,11 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 	disp := services.NewDispatcher(req)
 	res, err := disp.Do()
 	if err != nil {
-		a.fail(c, constants.UpstreamUnavailable, err.Error())
+		msg := err.Error()
+		status := constants.UpstreamUnavailable
+		a.logRequest(c, token.ID, user.Sub, modelID, string(inbound), string(inbound),
+			stream, start, nil, "", 0, status, false, 0, &msg, services.Usage{})
+		a.fail(c, status, msg)
 		return
 	}
 
@@ -114,11 +120,52 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
 		c.Status(http.StatusOK)
-		_, _ = io.Copy(c.Writer, res.Stream)
+
+		flusher, _ := c.Writer.(http.Flusher)
+		buf := make([]byte, 32*1024)
+		for {
+			n, rerr := res.Stream.Read(buf)
+			if n > 0 {
+				_, _ = c.Writer.Write(buf[:n])
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if rerr != nil {
+				break
+			}
+		}
+		// Wait for the usage tee to finalise, then persist the log.
+		if res.UsageReady != nil {
+			select {
+			case <-res.UsageReady:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		a.logRequest(c, token.ID, user.Sub, modelID, string(inbound), string(inbound),
+			true, start, res.Usage.FirstTokenMs, providerName(res), keyID(res),
+			res.StatusCode, true, res.Attempts, nil, res.Usage)
 		return
 	}
 
 	c.Data(res.StatusCode, "application/json", res.Body)
+	a.logRequest(c, token.ID, user.Sub, modelID, string(inbound), string(inbound),
+		false, start, nil, providerName(res), keyID(res),
+		res.StatusCode, true, res.Attempts, nil, res.Usage)
+}
+
+func providerName(res *services.DispatchResult) string {
+	if res.Provider != nil {
+		return res.Provider.Name
+	}
+	return ""
+}
+
+func keyID(res *services.DispatchResult) int {
+	if res.Key != nil {
+		return res.Key.ID
+	}
+	return 0
 }
 
 // RegisterGatewayRoutes wires the public /v1 gateway.
