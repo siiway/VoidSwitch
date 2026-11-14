@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -116,7 +117,9 @@ func (a *App) modelsUpsert(c *gin.Context) {
 
 func (a *App) modelsOut(c *gin.Context, m *database.ExposedModel, status int) {
 	_, refs, _ := a.loadModelsWithUpstreams()
-	c.JSON(status, services.BuildModelEntryView(m, refs[m.ID]))
+	v := services.BuildModelEntryView(m, refs[m.ID])
+	applyCategory(&v, a.categoryLookup())
+	c.JSON(status, v)
 }
 
 func (a *App) modelDelete(c *gin.Context) {
@@ -238,13 +241,34 @@ func (a *App) modelsClean(c *gin.Context) {
 
 // ---- categories -----------------------------------------------------------
 
+// modelCategoryView is the JSON shape the frontend expects (snake_case ids).
+type modelCategoryView struct {
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	Position  int       `json:"position"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func toCategoryView(c *database.ModelCategory) modelCategoryView {
+	return modelCategoryView{
+		ID: c.ID, Name: c.Name, Slug: c.Slug, Position: c.Position,
+		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+	}
+}
+
 func (a *App) categoriesList(c *gin.Context) {
 	var cats []database.ModelCategory
 	if err := a.GDB.Order("position, id").Find(&cats).Error; err != nil {
 		a.internal(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, cats)
+	out := make([]modelCategoryView, 0, len(cats))
+	for i := range cats {
+		out = append(out, toCategoryView(&cats[i]))
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (a *App) categoriesCreate(c *gin.Context) {
@@ -261,7 +285,7 @@ func (a *App) categoriesCreate(c *gin.Context) {
 		a.fail(c, http.StatusConflict, "Category name or slug already exists.")
 		return
 	}
-	c.JSON(http.StatusCreated, cat)
+	c.JSON(http.StatusCreated, toCategoryView(&cat))
 }
 
 func (a *App) categoriesUpdate(c *gin.Context) {
@@ -290,7 +314,7 @@ func (a *App) categoriesUpdate(c *gin.Context) {
 		a.internal(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, cat)
+	c.JSON(http.StatusOK, toCategoryView(&cat))
 }
 
 func (a *App) categoriesDelete(c *gin.Context) {
