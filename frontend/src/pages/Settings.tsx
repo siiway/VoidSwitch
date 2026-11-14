@@ -53,7 +53,6 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
       "static_proxy_url",
       "max_proxy_failures",
       "proxy_probe_interval_seconds",
-      "proxy_health_check_enabled",
       "node_default_probe_url",
       "node_probe_interval_seconds",
       "node_rank_alpha",
@@ -145,7 +144,6 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
 const PROXY_SWITCHING_ONLY = new Set([
   "max_proxy_failures",
   "proxy_probe_interval_seconds",
-  "proxy_health_check_enabled",
 ]);
 
 // The single static upstream proxy URL only applies when switching is OFF; with
@@ -332,7 +330,6 @@ export function Settings() {
       auto_disable_zero_balance: t("settings.autoDisableZeroBalance" as TK),
       balance_probe_enabled: t("settings.balanceProbeEnabled" as TK),
       balance_rescan_enabled: t("settings.balanceRescanEnabled" as TK),
-      proxy_health_check_enabled: t("settings.proxyHealthCheckEnabled" as TK),
       opencode_default_model: t("settings.opencodeDefaultModel" as TK),
       opencode_small_model: t("settings.opencodeSmallModel" as TK),
       chat_preset_questions: t("settings.chatPresetQuestions" as TK),

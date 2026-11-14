@@ -37,10 +37,11 @@ func RegisterDefaults(m *Manager, db *gorm.DB, secretKey string) {
 	m.Register(&Task{
 		Name:        "node_resurrector",
 		IntervalKey: "node_probe_interval_seconds",
-		EnabledKey:  "proxy_health_check_enabled",
+		// Health management is part of proxy switching; there is no separate
+		// toggle. When switching is off, external egress handles the pool.
+		EnabledKey:  "proxy_switching_enabled",
 		MinInterval: 15,
 		Tick: func(ctx context.Context) error {
-			// Gate on proxy switching being enabled.
 			if !services.GetBool("proxy_switching_enabled", true) {
 				return nil
 			}

@@ -19,36 +19,29 @@ func ActiveProxies(db *gorm.DB) ([]database.Node, error) {
 	return nodes, err
 }
 
-// EnsureSeededNodeGroups makes sure the special "default" and "system" node
-// groups exist, matching Python's routing.ensure_seeded_groups.
+// EnsureSeededNodeGroups makes sure the "default" node group exists. There is
+// no built-in "system" group any more: system-origin requests (OAuth, models.dev
+// pulls) always go direct and only use the process HTTP(S)_PROXY env vars if
+// configured — they are never routed through the node pool. Any legacy "system"
+// group is removed on boot.
 func EnsureSeededNodeGroups(db *gorm.DB) error {
-	seeds := []struct {
-		slug string
-		name string
-		sys  bool
-	}{
-		{"default", "Default", false},
-		{"system", "System", true},
-	}
-	for _, s := range seeds {
-		var existing database.NodeGroup
-		err := db.Where("slug = ?", s.slug).First(&existing).Error
-		if err == nil {
-			continue
-		}
-		if err != gorm.ErrRecordNotFound {
-			return err
-		}
-		slug := s.slug
-		group := database.NodeGroup{
-			Slug:                 &slug,
-			Name:                 s.name,
-			IsSystem:             s.sys,
-			ProbeIntervalSeconds: 0,
-		}
+	var existing database.NodeGroup
+	err := db.Where("slug = ?", "default").First(&existing).Error
+	if err == gorm.ErrRecordNotFound {
+		slug := "default"
+		group := database.NodeGroup{Slug: &slug, Name: "Default", ProbeIntervalSeconds: 0}
 		if err := db.Create(&group).Error; err != nil {
 			return err
 		}
+	} else if err != nil {
+		return err
+	}
+
+	// Drop the obsolete "system" group (and its members) if it exists.
+	var legacySystem database.NodeGroup
+	if err := db.Where("slug = ? OR is_system = ?", "system", true).First(&legacySystem).Error; err == nil {
+		db.Where("group_id = ?", legacySystem.ID).Delete(&database.NodeGroupMember{})
+		db.Delete(&legacySystem)
 	}
 	return nil
 }

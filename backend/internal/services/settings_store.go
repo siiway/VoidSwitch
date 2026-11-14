@@ -18,12 +18,12 @@ import (
 
 // Renamed/removed setting keys, carried forward on boot (mirrors Python).
 var renamedKeys = map[string]string{
-	"proxy_resurrector_enabled":  "proxy_health_check_enabled",
 	"log_stream_max_connections": "sse_max_connections_per_user",
 	"max_retries":                "max_provider_attempts",
 }
 
 var removedKeys = map[string]bool{
+	"proxy_health_check_enabled":          true,
 	"proxy_probe_url":                     true,
 	"operation_rate_limit_window_seconds": true,
 	"operation_rate_limit_max_requests":   true,

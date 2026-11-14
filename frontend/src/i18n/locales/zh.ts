@@ -942,8 +942,6 @@ const zh: Translations = {
     autoDisableZeroBalance: "自动禁用零余额密钥",
     balanceProbeEnabled: "启用余额检测",
     balanceRescanEnabled: "启用余额重新扫描（重新启用恢复的密钥）",
-    proxyHealthCheckEnabled:
-      "启用代理健康检测（关闭后不探测、不自动禁用、不自动启用 — 适用于外部管理代理连通性）",
     opencodeDefaultModel: "OpenCode 默认模型",
     opencodeSmallModel: "OpenCode 小模型（用于后台任务）",
     chatPresetQuestions: "聊天预设问题",

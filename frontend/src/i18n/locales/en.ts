@@ -971,8 +971,6 @@ const en = {
     autoDisableZeroBalance: "Auto-disable keys with zero balance",
     balanceProbeEnabled: "Balance probe enabled",
     balanceRescanEnabled: "Balance rescan enabled (re-enable recovered keys)",
-    proxyHealthCheckEnabled:
-      "Enable proxy health check (off: no probing, no auto-disable, no auto-enable — for external connectivity managers)",
     opencodeDefaultModel: "OpenCode default model",
     opencodeSmallModel: "OpenCode small model (for background tasks)",
     chatPresetQuestions: "Chat preset questions",

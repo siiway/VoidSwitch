@@ -494,34 +494,66 @@ func (a *App) logsRequestStream(c *gin.Context) {
 
 func (a *App) auditLogsQuery(c *gin.Context, uv *core.UserView) *gorm.DB {
 	q := a.GDB.Model(&database.AuditLog{})
-	if !uv.IsStaff() {
-		// Role-group admin: entries targeting their managed groups or a user who
-		// is a member of one of them. (Not actor_sub — see the Python model: a
-		// group admin isn't entitled to see what an unrelated staff actor did to
-		// unrelated resources.)
-		userIDs := a.visibleUserIDs(uv.AdminGroupIDs)
-		targetIDs := make([]string, 0, len(userIDs))
-		for _, id := range userIDs {
-			targetIDs = append(targetIDs, strconv.Itoa(id))
+	if uv.IsStaff() {
+		if sub := c.Query("actor_sub"); sub != "" {
+			q = q.Where("actor_sub = ?", sub)
 		}
-		groupIDs := make([]string, 0, len(uv.AdminGroupIDs))
-		for _, id := range uv.AdminGroupIDs {
-			groupIDs = append(groupIDs, strconv.Itoa(id))
+	} else {
+		// A member always sees audit rows that concern them directly: rows they
+		// acted in (actor_sub = me), rows targeting their user (target_type=user,
+		// target_id=my id), and rows targeting their own resources (their
+		// Void-Tokens: target_type=void_token, target_id=one of their token ids).
+		// A role-group admin additionally sees rows targeting their managed
+		// groups / those groups' members.
+		myUserID := strconv.Itoa(uv.User.ID)
+		tokenIDs := a.visibleTokenIDs(uv.User.ID)
+		ownClauses := []string{"actor_sub = ?"}
+		ownArgs := []any{uv.User.Sub}
+		ownClauses = append(ownClauses, "(target_type = ? AND target_id = ?)")
+		ownArgs = append(ownArgs, "user", myUserID)
+		if len(tokenIDs) > 0 {
+			ph := strings.TrimRight(strings.Repeat("?,", len(tokenIDs)), ",")
+			ownClauses = append(ownClauses, "(target_type = ? AND target_id IN ("+ph+"))")
+			ownArgs = append(ownArgs, "void_token")
+			for _, id := range tokenIDs {
+				ownArgs = append(ownArgs, strconv.Itoa(id))
+			}
 		}
-		switch {
-		case len(targetIDs) > 0 && len(groupIDs) > 0:
-			q = q.Where("(target_type = ? AND target_id IN ?) OR (target_type = ? AND target_id IN ?)",
-				"user", targetIDs, "role_group", groupIDs)
-		case len(targetIDs) > 0:
-			q = q.Where("target_type = ? AND target_id IN ?", "user", targetIDs)
-		case len(groupIDs) > 0:
-			q = q.Where("target_type = ? AND target_id IN ?", "role_group", groupIDs)
-		default:
-			// No visible scope -> unmatchable.
-			q = q.Where("1 = 0")
+		own := "(" + strings.Join(ownClauses, " OR ") + ")"
+		q = q.Where(own, ownArgs...)
+
+		if uv.IsRoleGroupAdmin() {
+			userIDs := a.visibleUserIDs(uv.AdminGroupIDs)
+			var extra []string
+			var extraArgs []any
+			if len(userIDs) > 0 {
+				ids := make([]string, 0, len(userIDs))
+				for _, id := range userIDs {
+					ids = append(ids, strconv.Itoa(id))
+				}
+				ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+				extra = append(extra, "(target_type = ? AND target_id IN ("+ph+"))")
+				extraArgs = append(extraArgs, "user")
+				for _, id := range ids {
+					extraArgs = append(extraArgs, id)
+				}
+			}
+			groupIDs := make([]string, 0, len(uv.AdminGroupIDs))
+			for _, id := range uv.AdminGroupIDs {
+				groupIDs = append(groupIDs, strconv.Itoa(id))
+			}
+			if len(groupIDs) > 0 {
+				ph := strings.TrimRight(strings.Repeat("?,", len(groupIDs)), ",")
+				extra = append(extra, "(target_type = ? AND target_id IN ("+ph+"))")
+				extraArgs = append(extraArgs, "role_group")
+				for _, id := range groupIDs {
+					extraArgs = append(extraArgs, id)
+				}
+			}
+			if len(extra) > 0 {
+				q = q.Where("("+strings.Join(extra, " OR ")+")", extraArgs...)
+			}
 		}
-	} else if sub := c.Query("actor_sub"); sub != "" {
-		q = q.Where("actor_sub = ?", sub)
 	}
 	if act := c.Query("action"); act != "" {
 		q = q.Where("action = ?", act)
@@ -710,8 +742,10 @@ func RegisterLogRoutes(authed *gin.RouterGroup, a *App) {
 	r.GET("/stream", a.logsRequestStream)
 	r.GET("/:id", a.logsRequestDetail)
 
-	// Audit logs — staff or role-group admin.
-	au := authed.Group("/logs/audit", core.RequireStaffOrRoleGroupAdmin())
+	// Audit logs — any authenticated user, scoped by tier (member: own actor/target;
+	// role-group admin: their groups' members/groups; staff: all). The handlers
+	// apply the WHERE scope. Reveal stays owner-only.
+	au := authed.Group("/logs/audit", core.RequireUser())
 	au.GET("", a.logsAuditList)
 	au.GET("/filters", a.logsAuditFilters)
 	au.GET("/locate", a.logsAuditLocate)
@@ -774,4 +808,14 @@ func (a *App) requestLogVisible(uv *core.UserView, userSub *string) bool {
 		}
 	}
 	return false
+}
+
+// visibleTokenIDs returns the ids of a user's (non-deleted) Void-Tokens, used to
+// scope a member's audit view to actions on their own tokens.
+func (a *App) visibleTokenIDs(userID int) []int {
+	var ids []int
+	a.GDB.Model(&database.VoidToken{}).
+		Where("user_id = ? AND deleted = ?", userID, false).
+		Pluck("id", &ids)
+	return ids
 }

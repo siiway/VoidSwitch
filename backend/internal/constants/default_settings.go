@@ -39,7 +39,6 @@ var DefaultSettingsJSON = map[string]json.RawMessage{
 	"node_rank_gamma":                    json.RawMessage("1000.0"),
 	"opencode_default_model":             json.RawMessage("\"claude-opus-4-8\""),
 	"opencode_small_model":               json.RawMessage("\"claude-haiku-4-5-20251001\""),
-	"proxy_health_check_enabled":         json.RawMessage("true"),
 	"proxy_probe_interval_seconds":       json.RawMessage("120"),
 	"proxy_switching_enabled":            json.RawMessage("true"),
 	"rate_limit_max_cooldown_seconds":    json.RawMessage("3600"),
