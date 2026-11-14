@@ -30,6 +30,9 @@ type ServerSettings struct {
 	DevMode           bool     `yaml:"dev_mode"`
 	DocsDir           string   `yaml:"docs_dir"`
 	WebDistDir        string   `yaml:"web_dist_dir"`
+	// ClientIPHeader names the inbound header carrying the real client IP when
+	// behind a reverse proxy. Empty = the default X-Forwarded-For (first entry).
+	ClientIPHeader string `yaml:"client_ip_header"`
 }
 
 type DatabaseSettings struct {
@@ -190,6 +193,9 @@ func mergeYAML(target, src *Settings) {
 	if src.Server.WebDistDir != "" {
 		target.Server.WebDistDir = src.Server.WebDistDir
 	}
+	if src.Server.ClientIPHeader != "" {
+		target.Server.ClientIPHeader = src.Server.ClientIPHeader
+	}
 	if src.Database.URL != "" {
 		target.Database.URL = src.Database.URL
 	}
@@ -297,6 +303,10 @@ func applyEnv(s *Settings) {
 		case "VOIDSWITCH_ENV":
 			s.Environment = v
 		}
+	}
+	// Top-level (non-nested) override: VOIDSWITCH_CLIENT_IP_HEADER.
+	if v := envOr("VOIDSWITCH_CLIENT_IP_HEADER", ""); v != "" {
+		s.Server.ClientIPHeader = v
 	}
 }
 

@@ -5,6 +5,7 @@ package handlers
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -33,10 +34,29 @@ func (a *App) internal(c *gin.Context, err error) {
 	c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"detail": "Internal Server Error"})
 }
 
-// clientIP returns the best-effort client IP honouring X-Forwarded-For.
+// clientIPHeader is the inbound header trusted for the real client IP. Defaults
+// to X-Forwarded-For; overridable via VOIDSWITCH_CLIENT_IP_HEADER.
+var clientIPHeader = "X-Forwarded-For"
+
+// SetClientIPHeader configures which header carries the client IP (call once at
+// startup). An empty value keeps the X-Forwarded-For default.
+func SetClientIPHeader(header string) {
+	if header != "" {
+		clientIPHeader = header
+	}
+}
+
+// clientIP returns the client IP, taking the FIRST entry of the configured header
+// (the real client when behind a reverse proxy that appends hops) — matching the
+// Python backend, which used only the first X-Forwarded-For value.
 func clientIP(c *gin.Context) string {
-	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
-		return xff
+	if h := c.GetHeader(clientIPHeader); h != "" {
+		if i := strings.IndexByte(h, ','); i >= 0 {
+			h = h[:i]
+		}
+		if ip := strings.TrimSpace(h); ip != "" {
+			return ip
+		}
 	}
 	return c.ClientIP()
 }

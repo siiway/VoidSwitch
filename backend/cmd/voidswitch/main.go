@@ -91,6 +91,7 @@ func main() {
 	taskMgr.Start()
 	defer taskMgr.Stop()
 
+	handlers.SetClientIPHeader(cfg.Server.ClientIPHeader)
 	app := &handlers.App{DB: db, GDB: db.Gorm, Cfg: cfg, RDB: rdb, Tasks: taskMgr}
 	router := buildRouter(app, cfg)
 
