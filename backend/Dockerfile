@@ -23,10 +23,12 @@ RUN apk add --no-cache ca-certificates wget && \
     adduser -D -u 10001 voidswitch
 WORKDIR /app
 COPY --from=builder /voidswitch /usr/local/bin/voidswitch
-# OpenCode plugin source, served verbatim by GET /opencode/voidswitch.ts and the
-# /install scripts. The Go handler looks for ../opencode-plugin/src/index.ts
-# relative to the working dir, so place it at /opencode-plugin from /app.
+# OpenCode plugin sources, served by GET /opencode/voidswitch.ts (V2) and
+# /opencode/voidswitch-v1.ts (V1), plus the /install scripts. The handlers walk
+# up from the working dir looking for opencode-plugin{,-v1}/src/index.ts, so
+# placing both trees beside /app is enough.
 COPY opencode-plugin/src /app/opencode-plugin/src
+COPY opencode-plugin-v1/src /app/opencode-plugin-v1/src
 USER voidswitch
 EXPOSE 8080
 # Configure via VOIDSWITCH_* env vars (see .env.example).

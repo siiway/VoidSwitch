@@ -540,16 +540,20 @@ type RequestLog struct {
 	UserAgent        *string    `gorm:"column:user_agent;type:varchar(512)"`
 	ClientType       *string    `gorm:"column:client_type;type:varchar(64)"`
 	IsOpenCode       bool       `gorm:"column:is_opencode;not null"`
-	Debug            bool       `gorm:"column:debug;index;not null"`
-	ReqMethod        *string    `gorm:"column:req_method;type:varchar(16)"`
-	ReqHeaders       JSON       `gorm:"column:req_headers;type:json"`
-	ReqBody          JSON       `gorm:"column:req_body;type:json"`
-	RespHeaders      JSON       `gorm:"column:resp_headers;type:json"`
-	RespBody         JSON       `gorm:"column:resp_body;type:json"`
-	DebugAttempts    JSON       `gorm:"column:debug_attempts;type:json"`
-	AttemptsSummary  JSON       `gorm:"column:attempts_summary;type:json"`
-	UpstreamURL      *string    `gorm:"column:upstream_url;type:varchar(1024)"`
-	ProxyURL         *string    `gorm:"column:proxy_url;type:varchar(512)"`
+	// OpenCodePlugin is the plugin generation that served the request: "v1",
+	// "v2", or "" when it did not come through the plugin. Supersedes the
+	// boolean IsOpenCode, which is still written for older readers.
+	OpenCodePlugin  *string `gorm:"column:opencode_plugin;type:varchar(8)"`
+	Debug           bool    `gorm:"column:debug;index;not null"`
+	ReqMethod       *string `gorm:"column:req_method;type:varchar(16)"`
+	ReqHeaders      JSON    `gorm:"column:req_headers;type:json"`
+	ReqBody         JSON    `gorm:"column:req_body;type:json"`
+	RespHeaders     JSON    `gorm:"column:resp_headers;type:json"`
+	RespBody        JSON    `gorm:"column:resp_body;type:json"`
+	DebugAttempts   JSON    `gorm:"column:debug_attempts;type:json"`
+	AttemptsSummary JSON    `gorm:"column:attempts_summary;type:json"`
+	UpstreamURL     *string `gorm:"column:upstream_url;type:varchar(1024)"`
+	ProxyURL        *string `gorm:"column:proxy_url;type:varchar(512)"`
 }
 
 func (RequestLog) TableName() string { return "request_logs" }

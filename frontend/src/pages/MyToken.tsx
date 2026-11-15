@@ -63,6 +63,18 @@ export OPENAI_API_KEY=vs-...`;
 const CLAUDE_SNIPPET = `export ANTHROPIC_BASE_URL=${API_BASE}
 export ANTHROPIC_AUTH_TOKEN=vs-...`;
 
+/**
+ * Install snippets for the two plugin generations. V2 is auto-discovered from
+ * OpenCode's plugins directory; V1 has to be referenced from `opencode.json`.
+ */
+function installSnippets(version: "v2" | "v1") {
+  const query = version === "v2" ? "" : "?v=1";
+  return {
+    sh: `curl -fsSL "${API_BASE}/install.sh${query}" | sh`,
+    ps: `irm "${API_BASE}/install.ps1${query}" | iex`,
+  };
+}
+
 /** A monospace code block with a one-click copy button. */
 function CodeBlock({ code }: { code: string }) {
   const { t } = useTranslation();
@@ -131,6 +143,7 @@ export function MyToken() {
   const [name, setName] = useState("default");
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [client, setClient] = useState("openai");
+  const [pluginVersion, setPluginVersion] = useState<"v2" | "v1">("v2");
   const [editing, setEditing] = useState<VoidToken | null>(null);
   const [editName, setEditName] = useState("");
 
@@ -337,6 +350,30 @@ export function MyToken() {
                 components={{ code: <code /> }}
               />
             </Text>
+
+            <TabList
+              selectedValue={pluginVersion}
+              onTabSelect={(_, d) => setPluginVersion(d.value as "v2" | "v1")}
+            >
+              <Tab value="v2">{t("myToken.pluginV2" as TK)}</Tab>
+              <Tab value="v1">{t("myToken.pluginV1" as TK)}</Tab>
+            </TabList>
+
+            <Text
+              size={200}
+              block
+              style={{ color: tokens.colorNeutralForeground3 }}
+            >
+              <Trans
+                i18nKey={
+                  pluginVersion === "v2"
+                    ? "myToken.pluginV2Desc"
+                    : "myToken.pluginV1Desc"
+                }
+                components={{ code: <code />, strong: <strong /> }}
+              />
+            </Text>
+
             <div>
               <Text
                 size={200}
@@ -346,7 +383,7 @@ export function MyToken() {
               >
                 {t("myToken.macosLinux" as TK)}
               </Text>
-              <CodeBlock code={`curl -fsSL ${API_BASE}/install | bash`} />
+              <CodeBlock code={installSnippets(pluginVersion).sh} />
             </div>
             <div>
               <Text
@@ -357,8 +394,28 @@ export function MyToken() {
               >
                 {t("myToken.windowsPs" as TK)}
               </Text>
-              <CodeBlock code={`irm ${API_BASE}/install | iex`} />
+              <CodeBlock code={installSnippets(pluginVersion).ps} />
             </div>
+
+            {pluginVersion === "v1" ? (
+              <div>
+                <Text
+                  size={200}
+                  weight="semibold"
+                  block
+                  style={{ marginBottom: 4 }}
+                >
+                  {t("myToken.pluginV1Config" as TK)}
+                </Text>
+                <CodeBlock
+                  code={`// ~/.config/opencode/opencode.json
+{
+  "plugin": ["$HOME/.config/opencode/plugins/voidswitch.plugin.ts"]
+}`}
+                />
+              </div>
+            ) : null}
+
             <Text
               size={200}
               block

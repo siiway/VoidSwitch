@@ -47,7 +47,9 @@ type requestLogView struct {
 	UserAgent        *string    `json:"user_agent"`
 	ClientType       *string    `json:"client_type"`
 	IsOpenCode       bool       `json:"is_opencode"`
-	Debug            bool       `json:"debug"`
+	// OpenCodePlugin is "v1", "v2", or null when the plugin was not used.
+	OpenCodePlugin *string `json:"opencode_plugin"`
+	Debug          bool    `json:"debug"`
 }
 
 type requestLogDetailView struct {
@@ -253,7 +255,7 @@ func toRequestLogView(r *database.RequestLog) requestLogView {
 		CompletionTokens: r.CompletionTokens, TotalTokens: r.TotalTokens,
 		Stream: r.Stream, Attempts: r.Attempts, ProviderAttempts: r.ProviderAttempts,
 		NetworkAttempts: r.NetworkAttempts, Error: r.Error, UserAgent: r.UserAgent,
-		ClientType: r.ClientType, IsOpenCode: r.IsOpenCode, Debug: r.Debug,
+		ClientType: r.ClientType, IsOpenCode: r.IsOpenCode, OpenCodePlugin: r.OpenCodePlugin, Debug: r.Debug,
 	}
 }
 

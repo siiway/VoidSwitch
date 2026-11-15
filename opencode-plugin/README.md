@@ -1,23 +1,28 @@
 # opencode-voidswitch
 
-Deep [VoidSwitch](../) integration for [OpenCode](https://opencode.ai). Registers
-VoidSwitch as a first-class provider and reproduces the **full Claude Code request
-surface** end-to-end — so OpenCode driving a VoidSwitch `claude-code` upstream
-behaves like the real CLI, **efforts and all**.
+Deep [VoidSwitch](../../) integration for [OpenCode](https://opencode.ai) **2.x**.
+Registers VoidSwitch as a first-class provider and reproduces the **full Claude Code
+request surface** end-to-end — so OpenCode driving a VoidSwitch `claude-code`
+upstream behaves like the real CLI, **efforts and all**.
 
-| Capability              | How it reaches the wire                                                                                                          |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **Auth**                | Paste a `vs-…` token (stored by OpenCode, sent as `x-api-key`)                                                                   |
-| **Models**              | Pulled live from `GET <gateway>/v1/models`                                                                                       |
-| **Effort**              | `output_config.effort` ∈ `low · medium · high · xhigh · max`                                                                     |
-| **ultracode**           | Picker variant → `xhigh` effort                                                                                                  |
-| **Fast mode** (`/fast`) | Top-level `speed: "fast"`                                                                                                        |
-| **Adaptive thinking**   | `thinking: { type: "adaptive" }` on 4.6+ models                                                                                  |
-| **Surfaced thinking**   | `thinking.display: "summarized"` on Opus 4.7/4.8                                                                                 |
-| **Task budgets**        | `output_config.task_budget` — cumulative agentic loop budget                                                                     |
-| **Context management**  | `context_management` — server-side long-session editing                                                                          |
-| **1M context**          | `context-1m-2025-08-07` — auto-enabled on large prompts                                                                          |
-| **Betas**               | `effort-`, `fast-mode-`, `interleaved-thinking-`, `task-budgets-`, `context-management-`, `context-1m-` unioned onto the request |
+> **OpenCode 1.x?** Use [`opencode-plugin-v1`](../opencode-plugin-v1/) instead. That
+> generation targets `@opencode-ai/plugin` and the V1 `server()` entrypoint. This
+> package targets `@opencode/plugin` and the V2 `setup(ctx)` entrypoint, and the two
+> are not interchangeable.
+
+| Capability              | How it reaches the wire                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------ |
+| **Auth**                | Paste a `vs-…` token through the integration key method (`/connect`)                             |
+| **Models**              | Pulled live from `GET <gateway>/v1/models`                                                       |
+| **Effort**              | `output_config.effort` ∈ `low · medium · high · xhigh · max`                                     |
+| **ultracode**           | Picker variant → `xhigh` effort                                                                  |
+| **Fast mode** (`/fast`) | Top-level `speed: "fast"`                                                                        |
+| **Adaptive thinking**   | `thinking: { type: "adaptive" }` on 4.6+ models                                                  |
+| **Surfaced thinking**   | `thinking.display: "summarized"` on Opus 4.7/4.8                                                 |
+| **Task budgets**        | `output_config.task_budget` — cumulative agentic loop budget                                     |
+| **Context management**  | `context_management` — server-side long-session editing                                          |
+| **1M context**          | `context-1m-2025-08-07` — auto-enabled on large prompts                                          |
+| **Betas**               | `effort-`, `interleaved-thinking-`, `task-budgets-`, `context-management-`, `context-1m-` unioned |
 
 Every wire detail (the `output_config.effort` enum, the top-level `speed` field,
 the beta tokens, the per-model effort gating) is taken verbatim from the Claude
@@ -26,48 +31,81 @@ Claude Code identity.
 
 ## How it works
 
-OpenCode is configured to speak the **Anthropic** dialect to VoidSwitch
-(`@ai-sdk/anthropic` → `<gateway>/v1/messages`). `effort` / `speed` are native
-`/v1/messages` fields the AI SDK never emits, so the plugin injects them in the
-auth `loader`'s custom `fetch` — the one place that sees the fully serialized
-request body. The per-turn selection from the **model-variant picker** is carried
-to that fetch via private `x-voidswitch-*` headers (set in `chat.headers`,
-stripped before the request leaves the machine).
+OpenCode speaks the **Anthropic** dialect to VoidSwitch
+(`@opencode/ai/providers/anthropic` → `<gateway>/v1/messages`).
+
+V2 changed where a plugin can reach the request, and this plugin uses the narrowest
+layer that works for each feature:
+
+| Layer                  | Used for                                                                  |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `context` hook         | `effort`, `speed`, `thinking`, `temperature` — semantic request options    |
+| `model.request` hook   | The `x-voidswitch-client` / `-session` headers                             |
+| `http.request` hook    | The remaining Claude Code-only fields (`task_budget`, `1M`, extras betas) |
+
+V2's Anthropic route already lowers `output_config.effort`, `speed` and `thinking`
+from semantic options and adds the beta each one needs, so — unlike the V1 plugin —
+there is no auth-`loader` fetch rewriting a serialized body. Only the fields with no
+V2 semantic option need a body edit, and that happens in `http.request`; success
+responses pass through untouched, so streaming is unaffected.
+
+The per-turn selection from the model-variant picker reaches the request as
+`event.model.variant`. V2 variants carry their own `body`, so the picker itself
+declares the wire field:
 
 ```
 OpenCode picker (variant)
-   └─ chat.headers  → x-voidswitch-effort / -speed / -thinking
-        └─ auth.loader fetch  → rewrites body: output_config.effort, speed, thinking
-                              → unions anthropic-beta
+   └─ context hook  → options.effort / options.speed / options.thinking
+        └─ http.request  → adds task_budget / 1M + their betas
              └─ VoidSwitch /v1/messages  → Anthropic (as Claude Code)
 ```
 
 ## Install
 
 The plugin is self-contained — it registers its own provider, so you only need to
-add the plugin and point it at your gateway.
+make OpenCode load it and point it at your gateway.
 
-`opencode.json` (or `~/.config/opencode/opencode.json`):
+### One-line installer
+
+```bash
+curl -fsSL "https://your-voidswitch-host/install.sh" | sh
+```
+
+This drops the plugin into `~/.config/opencode/plugins/`, where OpenCode discovers
+it automatically. Then run `/connect` → **VoidSwitch** and paste a `vs-…` token.
+
+### Manual
+
+Copy `src/index.ts` to `~/.config/opencode/plugins/voidswitch.ts` (or any directory
+you then reference from `plugins`):
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    ["opencode-voidswitch", { "url": "https://your-voidswitch-host", "effort": "high" }]
+  "plugins": [
+    // V2 path: a directory. Point at your gateway.
+    { "package": "/home/you/.config/opencode/plugins/voidswitch", "options": { "url": "https://your-voidswitch-host" } }
   ]
 }
 ```
 
-For local development against a checkout, point at the directory instead:
+> V2 local plugin paths must name a **directory**, not a file. A configured
+> `./plugin/local.ts` is skipped with a warning.
 
-```jsonc
-{ "plugin": [["./opencode-plugin", { "url": "http://localhost:8080" }]] }
+Then authenticate once:
+
 ```
+/connect       # pick "VoidSwitch" → paste your vs-… token
+```
+
+The gateway URL may also come from `$VOIDSWITCH_URL` (default
+`http://localhost:8080`), or from `providers.voidswitch.settings.baseURL` in
+`opencode.json`.
 
 ### Nix Flakes
 
-The repository provides a `opencode-voidswitch` package via its flake. Add it as
-an input in your flake and reference the store path:
+The repository provides an `opencode-voidswitch` package via its flake. Add it as
+an input and reference the store path:
 
 ```nix
 {
@@ -77,43 +115,21 @@ an input in your flake and reference the store path:
   };
 
   outputs = { self, nixpkgs, voidswitch, ... }: {
-    # Refer to the plugin directory:
-    #   voidswitch.packages.${system}.opencode-voidswitch
+    # voidswitch.packages.${system}.opencode-voidswitch
   };
 }
 ```
 
-In `opencode.json`, point to the Nix store path:
-
 ```jsonc
 {
-  "plugin": [
-    ["/nix/store/...-opencode-voidswitch-0.1.0", { "url": "https://your-voidswitch-host" }]
-  ]
-}
-```
-
-Or resolve the path dynamically at build time:
-
-```jsonc
-{
-  "plugin": [
-    ["${voidswitch.packages.${system}.opencode-voidswitch}", { "url": "https://your-voidswitch-host" }]
+  "plugins": [
+    { "package": "/nix/store/...-opencode-voidswitch-0.2.0", "options": { "url": "https://your-voidswitch-host" } }
   ]
 }
 ```
 
 > The package ships only TypeScript source — no build step.
-> `@opencode-ai/plugin` is a peer dependency resolved by OpenCode at runtime.
-
-Then authenticate once:
-
-```
-opencode auth login        # pick "VoidSwitch" → paste your vs-… token
-```
-
-The gateway URL may also come from `$VOIDSWITCH_URL` (default
-`http://localhost:8080`).
+> `@opencode/plugin` is a peer dependency resolved by OpenCode at runtime.
 
 ## Plugin options
 
@@ -150,62 +166,36 @@ Unsupported levels are **clamped exactly as Claude Code does** — e.g. selectin
 
 ## DeepSeek & other OpenAI-dialect reasoners
 
-Claude (and MiMo) speak the **Anthropic** dialect, so they ride the provider's
-`@ai-sdk/anthropic` path. DeepSeek, however, is served by VoidSwitch in the
-**OpenAI** dialect, and its chain-of-thought round-trips as the `reasoning_content`
-field. OpenCode only re-attaches that field (its `interleaved` mechanism) on the
-`@ai-sdk/openai-compatible` SDK — on the Anthropic SDK it is silently dropped, and
-the upstream then rejects the next tool-call turn with:
+Claude (and MiMo) speak the **Anthropic** dialect. DeepSeek, however, is served by
+VoidSwitch in the **OpenAI** dialect, and its chain-of-thought round-trips as the
+`reasoning_content` field. On the Anthropic runtime that field is silently dropped,
+and the upstream then rejects the next tool-call turn with:
 
 > `The reasoning_content in the thinking mode must be passed back to the API.`
 
-To handle this, just **list the DeepSeek model id** under the `voidswitch` provider.
-The plugin auto-wires it: it forces a per-model `@ai-sdk/openai-compatible` override
-(routing it to the gateway's OpenAI `/chat/completions` endpoint) and enables the
-`reasoning_content` interleaved field — all while reusing the **same** VoidSwitch
-token and auth as your Claude models.
-
-```jsonc
-{
-  "provider": {
-    "voidswitch": {
-      "models": {
-        // Claude / MiMo need nothing — they use the Anthropic dialect.
-        // DeepSeek: id is enough; the plugin sets the openai-compatible override
-        // + reasoning_content passback automatically.
-        "deepseek-v4-flash-lkd": { "name": "DeepSeek V4 Flash" },
-        "deepseek-v4-pro-lkd":   { "name": "DeepSeek V4 Pro" }
-      }
-    }
-  }
-}
-```
-
-Any model id matching `deepseek` is auto-wired this way; everything else stays on
-the Anthropic dialect. (Effort/fast/thinking variants are Claude-only and are not
+Any model id matching `deepseek` is therefore auto-wired: the plugin swaps in the
+`@opencode/ai/providers/openai-compatible` runtime and sets
+`compatibility.reasoningField = "reasoning_content"` — while reusing the **same**
+VoidSwitch token and auth as your Claude models. Everything else stays on the
+Anthropic dialect. (Effort/fast/thinking variants are Claude-only and are not
 applied to DeepSeek.)
 
 ## Slash commands
 
-The plugin also registers Claude Code-style slash commands that set the effort/mode
-for the rest of the session:
+The plugin registers Claude Code-style slash commands that set the effort/mode for
+the rest of the session:
 
-| Command                                                        | Effect                                                                                      |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `/effort high` (or `low\|medium\|xhigh\|max\|ultracode\|auto`) | Sets the session effort                                                                     |
-| `/effort xhigh <prompt>`                                       | Sets effort **and** runs the prompt in one shot                                             |
-| `/effort auto`                                                 | Clears the override (model decides)                                                         |
-| `/fast` · `/fast off`                                          | Turns fast mode on / off for the session                                                    |
-| `/ultracode`                                                   | xhigh effort for the session                                                                |
-| `/sync-models`                                                 | Refresh the platform's available-model list from the gateway (then reopen the model picker) |
+| Command                                                        | Effect                                                    |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `/effort high` (or `low\|medium\|xhigh\|max\|ultracode\|auto`) | Sets the session effort                                   |
+| `/effort xhigh <prompt>`                                       | Sets effort **and** runs the prompt in one shot            |
+| `/effort auto`                                                 | Clears the override (model decides)                        |
+| `/fast` · `/fast off`                                          | Turns fast mode on / off for the session                   |
+| `/ultracode`                                                   | xhigh effort for the session                               |
+| `/sync-models`                                                 | Refresh the available-model list from the gateway          |
 
 Precedence: a per-turn model-variant pick (e.g. `…:low`) overrides the session
 command, which overrides the `effort` plugin option.
-
-> Note: OpenCode has no "client-only" command — every command runs one model turn.
-> So a bare `/effort high` costs one cheap confirmation turn; `/effort high <prompt>`
-> spends that turn on real work. For a truly zero-cost switch, use the model-variant
-> picker (`/models`) instead.
 
 ## Claude Code feature parity
 
@@ -215,22 +205,21 @@ command, which overrides the `effort` plugin option.
 - Fast mode `/fast` (→ top-level `speed`)
 - Adaptive extended thinking on 4.6+ (→ `thinking`), with summarized thinking surfaced on 4.7/4.8
 - Task budgets — cumulative agentic loop budget (→ `output_config.task_budget`)
-- Context management — server-side editing of old thinking blocks for long sessions (→ `context_management`)
+- Context management — server-side editing of old thinking blocks for long sessions
 - 1M context — auto-enabled on large prompts (→ `context-1m` beta)
 - The matching `anthropic-beta` tokens, unioned onto whatever the SDK already sends
 - `temperature` forced to `1` when thinking is on (Anthropic requirement)
 
-**Client/harness-only (no `/v1/messages` representation, so not reproducible from
-a provider plugin):**
+**Client/harness-only (no `/v1/messages` representation):**
 
 - **ultracode's dynamic-workflow orchestration** — the effort half (`xhigh`) is
   reproduced; the standing workflow orchestration is a CLI-side behaviour.
-- **`ultrathink`** — a magic keyword Claude Code detects in your *prompt text* and
-  expands into an injected "think harder" reminder. It is not a request field.
+- **`ultrathink`** — a magic keyword Claude Code detects in your *prompt text*. It
+  is not a request field.
 
 ## Development
 
 ```
-bun install
-bun run typecheck
+npm install
+npm run typecheck
 ```

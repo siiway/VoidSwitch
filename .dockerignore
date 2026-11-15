@@ -1,5 +1,5 @@
 # Build context is the repo root (needed for the Go gateway image, which bundles
-# backend/ + opencode-plugin/src). See backend/Dockerfile.
+# backend/ + opencode-plugin{,-v1}/src). See backend/Dockerfile.
 
 # --- not part of the backend image ---
 frontend/
@@ -8,6 +8,13 @@ opencode-plugin/bun.lock
 opencode-plugin/package.json
 opencode-plugin/README.md
 opencode-plugin/tsconfig.json
+opencode-plugin-v1/node_modules/
+opencode-plugin-v1/bun.lock
+opencode-plugin-v1/package.json
+opencode-plugin-v1/package-lock.json
+opencode-plugin-v1/README.md
+opencode-plugin-v1/README.zh.md
+opencode-plugin-v1/tsconfig.json
 docs/
 agent/
 

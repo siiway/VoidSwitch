@@ -18,11 +18,22 @@ func extractUsage(raw []byte) Usage {
 	}
 	u := body.Usage
 	u = flattenUsage(u)
-	return Usage{
+	return finalizeUsage(Usage{
 		PromptTokens:     intOf(u["prompt_tokens"], u["input_tokens"]),
 		CompletionTokens: intOf(u["completion_tokens"], u["output_tokens"]),
 		TotalTokens:      intOf(u["total_tokens"]),
+	})
+}
+
+// finalizeUsage fills in a missing total from the parts. The Anthropic dialect
+// reports `input_tokens` / `output_tokens` and has no `total_tokens` field at
+// all, so without this the total — and every rollup derived from it — stayed 0
+// while the prompt/completion counts were correct.
+func finalizeUsage(u Usage) Usage {
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + u.CompletionTokens
 	}
+	return u
 }
 
 func flattenUsage(u map[string]any) map[string]any {
@@ -92,6 +103,10 @@ func (t *usageTee) finish() {
 	t.once.Do(func() {
 		t.mu.Lock()
 		t.inspect()
+		// Anthropic streams report input/output tokens but never a total, so
+		// derive it here — otherwise the rollups record 0 total tokens for every
+		// successful Anthropic request.
+		t.usage = finalizeUsage(t.usage)
 		t.usage.FirstTokenMs = t.firstToken
 		t.res.Usage = t.usage
 		t.mu.Unlock()

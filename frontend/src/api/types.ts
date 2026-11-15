@@ -526,6 +526,7 @@ export interface RequestLog {
   user_agent?: string | null;
   client_type?: string | null;
   is_opencode?: boolean;
+  opencode_plugin?: string | null;
   debug?: boolean;
 }
 

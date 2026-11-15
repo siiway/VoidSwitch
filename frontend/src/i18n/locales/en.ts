@@ -1373,6 +1373,13 @@ const en = {
     copied: "Copied",
     status: "Status",
     opencodeDesc: "One line adds the VoidSwitch provider to your <code>opencode.json</code> automatically.",
+    pluginV2: "OpenCode 2.x (V2 plugin)",
+    pluginV1: "OpenCode 1.x (V1 plugin)",
+    pluginV2Desc:
+      "The <strong>recommended</strong> generation. It registers the VoidSwitch provider through OpenCode's native provider API — no <code>opencode.json</code> editing, and it enables reasoning <strong>effort</strong>, fast mode, adaptive thinking and 1M context.",
+    pluginV1Desc:
+      "Legacy generation for OpenCode 1.x. Pick this only if you have not upgraded yet — it needs an <code>opencode.json</code> entry, whereas the V2 plugin is discovered automatically.",
+    pluginV1Config: "Then reference the plugin from opencode.json",
     opencodeAfter: 'Then run <code>opencode</code> → <code>/connect</code> → <strong>VoidSwitch</strong> and paste a <code>vs-…</code> token. To embed the token instead, append <code>?token=vs-…</code> to the URL.',
     createFailed: "Create failed",
     rotateTitle: "Rotate token",

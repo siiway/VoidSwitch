@@ -1,24 +1,23 @@
 {
   "name": "opencode-voidswitch",
-  "version": "0.1.0",
-  "description": "Deep VoidSwitch integration for OpenCode — auth, dynamic models, and the full Claude Code request surface (effort, fast mode, adaptive thinking).",
+  "version": "0.2.0",
+  "description": "Deep VoidSwitch integration for OpenCode V2 — dynamic models, effort/fast/thinking variants, and the full Claude Code request surface.",
   "type": "module",
   "license": "MIT",
   "keywords": ["opencode", "opencode-plugin", "voidswitch", "claude-code", "anthropic"],
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./server": "./src/index.ts"
+    ".": "./src/index.ts"
   },
   "files": ["src"],
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.0.0"
+    "@opencode/plugin": ">=2.0.0"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "*",
+    "@opencode/plugin": "^2.3.0",
     "@types/node": "^25.9.1",
     "prettier": "^3.8.3",
     "typescript": "^5"

@@ -95,10 +95,21 @@ const (
 
 // Client hint headers.
 const (
-	ClientHintHeader    = "x-voidswitch-client"
-	OpenCodeClientHint  = "opencode-plugin"
-	SessionHeader       = "x-voidswitch-session"
-	UpstreamUnavailable = 543
+	ClientHintHeader   = "x-voidswitch-client"
+	OpenCodeClientHint = "opencode-plugin"
+	// OpenCodeClientVersionHeader optionally carries the plugin's major version
+	// ("v2" / "v1") so the log can tell the two plugin generations apart. When a
+	// client sends only OpenCodeClientHint it predates the header and is V1.
+	OpenCodeClientVersionHeader = "x-voidswitch-client-version"
+	SessionHeader               = "x-voidswitch-session"
+	UpstreamUnavailable         = 543
+)
+
+// OpenCode plugin generations, as recorded on a request log. An empty value
+// means the request did not come through the plugin at all.
+const (
+	OpenCodePluginV1 = "v1"
+	OpenCodePluginV2 = "v2"
 )
 
 // Fixed (non-configurable) rate limits.

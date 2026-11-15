@@ -4,28 +4,62 @@ VoidSwitch ships with a first-class [OpenCode](https://opencode.ai) provider plu
 It registers VoidSwitch as a provider and reproduces the full Claude Code request capabilities at the wire level
 (effort levels, fast mode, adaptive thinking, task budgets, 1M context).
 
-## One-line install
+The plugin comes in **two generations**, matching OpenCode's two plugin APIs:
 
-The gateway provides a self-contained installer. Run it against your VoidSwitch host —
-it merges the VoidSwitch provider into your `opencode.json`:
+| Plugin            | OpenCode | SDK                   | Entrypoint   |
+| ----------------- | -------- | --------------------- | ------------ |
+| **V2** (recommended) | 2.x      | `@opencode/plugin`    | `setup(ctx)` |
+| V1 (legacy)       | 1.x      | `@opencode-ai/plugin` | `server()`   |
+
+They are **not interchangeable**: a V1 plugin does not run in OpenCode 2, and vice versa. If you are unsure which you
+have, run `opencode --version` first.
+
+## One-line install (V2, recommended)
+
+The gateway provides a self-contained installer. Run it against your VoidSwitch host — it drops the plugin where
+OpenCode picks it up automatically:
 
 ::: code-group
 
 ```bash [macOS / Linux]
-curl -fsSL https://voidswitch.siiway.org/install | bash
+curl -fsSL https://voidswitch.siiway.org/install.sh | sh
 ```
 
 ```powershell [Windows]
-irm https://voidswitch.siiway.org/install | iex
+irm https://voidswitch.siiway.org/install.ps1 | iex
 ```
 
 :::
 
-You can embed your token so that no manual `/connect` step is needed:
+The V2 plugin is discovered automatically (it lives in `~/.config/opencode/plugins/`), so you do **not** need to edit
+`opencode.json`. Restart `opencode` afterwards.
 
-```bash
-curl -fsSL "https://voidswitch.siiway.org/install?token=vs-your-token" | bash
+## One-line install (V1, legacy)
+
+If you have not upgraded to OpenCode 2 yet, install the legacy plugin with `?v=1`:
+
+::: code-group
+
+```bash [macOS / Linux]
+curl -fsSL "https://voidswitch.siiway.org/install.sh?v=1" | sh
 ```
+
+```powershell [Windows]
+irm "https://voidswitch.siiway.org/install.ps1?v=1" | iex
+```
+
+:::
+
+The V1 plugin is **not** auto-discovered, so register it in `opencode.json` first:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["/home/you/.config/opencode/plugins/voidswitch.plugin.ts"]
+}
+```
+
+The installer prints the plugin's absolute path. Restart `opencode` once it is saved.
 
 ## Connecting a token
 
@@ -40,68 +74,81 @@ If you did not embed a token during install:
 When you cannot run the install script, expand **Manual setup** in the OpenCode connection guide on the
 [**My Tokens**](/en/guide/api-keys) page, which provides:
 
-1. A complete `opencode.json` (with the VoidSwitch provider registered and all available models listed) to paste directly into
-   `~/.config/opencode/opencode.json`.
-2. A **manually install the plugin** guide — this step gives manually configured users the full plugin capabilities as well
-   (effort, fast mode, adaptive thinking, 1M context). It does the same thing as the one-line script: it **fetches the plugin source in real time** from the gateway
-   (`/opencode/voidswitch.ts`, always in sync with the current server) and saves it to the OpenCode config directory:
+1. A complete `opencode.json` (with the VoidSwitch provider registered and all available models listed).
+2. A **manually install the plugin** guide — this step gives manually configured users the full plugin capabilities as
+   well (effort, fast mode, adaptive thinking, 1M context). It does the same thing as the one-line script: it **fetches
+   the plugin source in real time** from the gateway (always in sync with the current server) and saves it to the
+   OpenCode config directory.
 
-::: code-group
+### V2 plugin (recommended)
 
-```bash [macOS / Linux]
-mkdir -p ~/.config/opencode
-curl -fsSL https://voidswitch.siiway.org/opencode/voidswitch.ts -o ~/.config/opencode/voidswitch.plugin.ts
-echo "plugin: $HOME/.config/opencode/voidswitch.plugin.ts"
+A V2 local plugin path must name a **directory**; a path to a single file is skipped with a warning in the log. Minimal
+working config:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    { "package": "/home/you/.config/opencode/plugins/voidswitch", "options": { "url": "https://your-voidswitch-host" } }
+  ]
+}
 ```
 
-```powershell [Windows]
-New-Item -ItemType Directory -Force -Path "$HOME\.config\opencode" | Out-Null
-Invoke-WebRequest -UseBasicParsing -Uri "https://voidswitch.siiway.org/opencode/voidswitch.ts" -OutFile "$HOME\.config\opencode\voidswitch.plugin.ts"
-Write-Host "plugin: $HOME\.config\opencode\voidswitch.plugin.ts"
+### V1 plugin (legacy)
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["/home/you/.config/opencode/plugins/voidswitch.plugin.ts"]
+}
 ```
-
-:::
-
-The command prints the absolute path to the plugin. Add it to the `plugin` array at the top level of `opencode.json`, e.g.
-`"plugin": ["/home/you/.config/opencode/voidswitch.plugin.ts"]`, then restart `opencode` to load it.
-(The plugin file lives in the same directory as the config, `~/.config/opencode/`, which is exactly where the install script writes it.)
 
 ### Nix install
 
-If you manage your OpenCode config with Nix, you can declare the plugin file into your user config directory and then reference that path in `opencode.json`.
-The example below uses Home Manager to write to the same location as the install script:
+If you manage your OpenCode config with Nix, you can declare the plugin file into your user config directory and then
+reference that path. The example below uses Home Manager; V2 and V1 differ only in the config key (`plugins` / `plugin`):
 
 ```nix
 { config, pkgs, ... }:
 
 {
-  xdg.configFile."opencode/voidswitch.plugin.ts".source = pkgs.fetchurl {
+  xdg.configFile."opencode/plugins/voidswitch/index.ts".source = pkgs.fetchurl {
     url = "https://voidswitch.siiway.org/opencode/voidswitch.ts";
     sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
   };
 
   xdg.configFile."opencode/opencode.json".text = ''
     {
-      "plugin": ["${config.xdg.configHome}/opencode/voidswitch.plugin.ts"]
+      "plugins": [
+        { "package": "${config.xdg.configHome}/opencode/plugins/voidswitch" }
+      ]
     }
   '';
 }
 ```
 
-On the first write, build once with a placeholder hash and let Nix report the actual hash, then replace `sha256` with it. If you already have
-`opencode.json`, just merge the plugin path into the top-level `plugin` array.
+On the first write, build once with a placeholder hash and let Nix report the actual hash, then replace `sha256` with it.
 
 ## Refreshing the model list
 
-The plugin reads the platform model catalog. Running `/sync-models` (`POST /v1/models/sync`) makes the plugin align its model list
-with the models you **can currently call** — available to **all members**, no admin privileges required; it only returns models you have access to and that are
-not hidden, and it also syncs the recommended `model` / `small_model` top-level selectors.
+The plugin reads the platform model catalog. Running `/sync-models` (`POST /v1/models/sync`) makes the plugin align its
+model list with the models you **can currently call** — available to **all members**, no admin privileges required; it
+only returns models you have access to and that are not hidden, and it also syncs the recommended `model` /
+`small_model` top-level selectors.
 
-This is distinct from **Sync from providers**: the latter (a button on the **Models** page) reshapes the *shared* catalog, registering catalog rows for models
-newly served by providers, and is a **staff-only** action. A member's `/sync-models` does not touch the shared catalog.
+This is distinct from **Sync from providers**: the latter (a button on the **Models** page) reshapes the *shared*
+catalog, registering catalog rows for models newly served by providers, and is a **staff-only** action. A member's
+`/sync-models` does not touch the shared catalog.
+
+## Telling the plugin generations apart
+
+The **OpenCode VS Plugin** field in the log detail shows `v2`, `v1`, or `—`, meaning the request went through the V2
+plugin, the V1 plugin, or no plugin at all. This is handy during an upgrade to confirm which generation a client
+actually loaded.
 
 ## Where the installer comes from
 
-`/install` performs content negotiation based on your shell (PowerShell → `.ps1`, otherwise bash).
-Force a specific one via `/install.sh` or `/install.ps1`. The plugin source itself is served from `/opencode/voidswitch.ts`,
-so a self-hosted gateway is fully self-contained.
+`/install.sh` picks the plugin generation from the `?v` parameter (or the `VOIDSWITCH_PLUGIN_V` environment variable),
+defaulting to V2. The plugin source itself is served from `/opencode/voidswitch.ts` (V2) and
+`/opencode/voidswitch-v1.ts` (V1), so a self-hosted gateway is fully self-contained and always hands out the source
+matching its own release.

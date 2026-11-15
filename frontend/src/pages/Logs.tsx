@@ -1588,7 +1588,7 @@ function RequestLogs({
                     {detailLog.latency_ms != null && <DetailRow label={tr("logs.latency" as TK)} value={`${Math.round(detailLog.latency_ms)}ms`} />}
                     {detailLog.upstream_url && <DetailRow label={tr("logs.upstreamUrl" as TK)} value={detailLog.upstream_url} />}
                     <DetailRow label={tr("logs.userAgent" as TK)} value={detailLog.user_agent ?? "—"} />
-                    <DetailRow label={tr("logs.opencodePlugin" as TK)} value={detailLog.is_opencode ? "yes" : "no"} />
+                    <DetailRow label={tr("logs.opencodePlugin" as TK)} value={detailLog.opencode_plugin ?? "—"} />
                   </div>
 
                   {detailLog.error && (

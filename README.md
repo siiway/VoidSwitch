@@ -18,12 +18,13 @@ routing, failover, and quotas.
                              key+node rotation          (Anthropic / Claude)
 ```
 
-| Path               | Stack                                          | What it is                  |
-| ------------------ | ---------------------------------------------- | --------------------------- |
-| `backend/`         | Go 1.25 · Gin · GORM · PostgreSQL · Redis      | The gateway + admin API     |
-| `frontend/`        | Bun · React 19 · Fluent UI v9                  | Decoupled admin dashboard   |
-| `agent/`           | Go · static binary                             | Outbound relay agent        |
-| `opencode-plugin/` | Bun · TypeScript · `@opencode-ai/plugin`       | OpenCode provider plugin    |
+| Path                  | Stack                                          | What it is                          |
+| --------------------- | ---------------------------------------------- | ----------------------------------- |
+| `backend/`            | Go 1.25 · Gin · GORM · PostgreSQL · Redis      | The gateway + admin API             |
+| `frontend/`           | Bun · React 19 · Fluent UI v9                  | Decoupled admin dashboard           |
+| `agent/`              | Go · static binary                             | Outbound relay agent                |
+| `opencode-plugin/`    | Bun · TypeScript · `@opencode/plugin`          | OpenCode **2.x** provider plugin    |
+| `opencode-plugin-v1/` | Bun · TypeScript · `@opencode-ai/plugin`       | OpenCode **1.x** provider plugin    |
 
 The Go backend is the actively maintained gateway. The previous Python
 implementation is preserved on the `legacy` branch (and can still be run from
@@ -66,7 +67,9 @@ migration notes.
 - **Observability** — request/usage/audit logs, live SSE stream, statistics,
   activity heatmap.
 - **OpenCode plugin** — registers VoidSwitch as a first-class OpenCode provider and
-  reproduces the full Claude Code request surface. See `opencode-plugin/`.
+  reproduces the full Claude Code request surface. Two generations ship:
+  `opencode-plugin/` for OpenCode 2.x (`@opencode/plugin`) and
+  `opencode-plugin-v1/` for OpenCode 1.x (`@opencode-ai/plugin`).
 
 ## Build & run
 

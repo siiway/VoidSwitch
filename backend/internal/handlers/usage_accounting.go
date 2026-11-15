@@ -6,7 +6,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/siiway/voidswitch/internal/constants"
 	"github.com/siiway/voidswitch/internal/database"
 	"github.com/siiway/voidswitch/internal/services"
 )
@@ -45,7 +44,8 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 	latency := float64(end.Sub(start).Milliseconds())
 	ip := clientIP(c)
 	ua := c.Request.UserAgent()
-	isOC := c.GetHeader(constants.ClientHintHeader) == constants.OpenCodeClientHint
+	// The version distinguishes the V1 and V2 plugins; "" means no plugin.
+	pluginVersion := opencodePluginVersion(c)
 
 	row := database.RequestLog{
 		TS:               start.UTC(),
@@ -74,7 +74,8 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 		NetworkAttempts:  1,
 		Error:            errMsg,
 		UserAgent:        strPtr(ua),
-		IsOpenCode:       isOC,
+		IsOpenCode:       pluginVersion != "",
+		OpenCodePlugin:   strPtr(pluginVersion),
 		Debug:            false,
 		ReqMethod:        strPtr("POST"),
 	}

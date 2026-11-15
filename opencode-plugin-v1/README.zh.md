@@ -1,4 +1,11 @@
-# opencode-voidswitch
+# opencode-voidswitch（V1 — 旧版）
+
+> **这是面向 OpenCode 1.x 的 V1 插件。** 它基于 `@opencode-ai/plugin` 与 V1 的
+> `server()` 入口。若使用 OpenCode 2.x，请改用
+> [`opencode-plugin`](../opencode-plugin/)——该版本基于 `@opencode/plugin` 与
+> `setup(ctx)`，两者不可互换。
+>
+> 保留此包只为让已有安装继续工作，不再新增功能。
 
 [VoidSwitch](../) 的 [OpenCode](https://opencode.ai) 深度集成插件。将 VoidSwitch
 注册为一等提供者，完整复刻 **Claude Code 的请求表面**，让 OpenCode 驱动 VoidSwitch

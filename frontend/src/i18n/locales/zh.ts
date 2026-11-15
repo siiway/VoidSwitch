@@ -1332,6 +1332,13 @@ const zh: Translations = {
     copied: "已复制",
     status: "状态",
     opencodeDesc: "一行命令即可自动将 VoidSwitch 提供商添加到你的 <code>opencode.json</code>。",
+    pluginV2: "OpenCode 2.x（V2 插件）",
+    pluginV1: "OpenCode 1.x（V1 插件）",
+    pluginV2Desc:
+      "<strong>推荐</strong>使用。通过 OpenCode 原生提供商 API 注册 VoidSwitch 提供商——无需编辑 <code>opencode.json</code>，并启用推理 <strong>effort</strong>、fast mode、自适应思考与 1M 上下文。",
+    pluginV1Desc:
+      "面向 OpenCode 1.x 的旧版插件。仅在尚未升级时选择——它需要在 <code>opencode.json</code> 中手动登记，而 V2 插件会被自动发现。",
+    pluginV1Config: "然后在 opencode.json 中引用该插件",
     opencodeAfter:
       "然后运行 <code>opencode</code> → <code>/connect</code> → <strong>VoidSwitch</strong> 并粘贴一个 <code>vs-…</code> 令牌。要直接嵌入令牌，在 URL 后追加 <code>?token=vs-…</code>。",
     createFailed: "创建失败",
