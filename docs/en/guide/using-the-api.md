@@ -21,6 +21,19 @@ curl https://voidswitch.siiway.org/v1/models \
 
 Only models you are allowed to call are returned. See [Models](/en/guide/models).
 
+Each entry carries the standard `id` / `object` / `created` / `owned_by` plus config a client can use directly:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The model ID to send as `model`. A passthrough model looks like `provider-slug/model-id` |
+| `opencode` | The merged OpenCode model config block (`name`, `limit`, `reasoning`, `capabilities`, `modalities`, custom config, …) |
+| `display_name` | Display name; omitted when unset |
+| `description` | Description; omitted when unset |
+
+`opencode` merges, highest precedence first: **structured fields** (display name, limits, reasoning,
+capabilities, modalities) → **custom OpenCode config** → **models.dev placeholder**. Plugin defaults are
+applied last on the client and are not part of this block. Upstream providers and keys never appear here.
+
 ## OpenAI style
 
 Base URL: `https://voidswitch.siiway.org/v1`

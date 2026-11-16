@@ -21,6 +21,19 @@ curl https://voidswitch.siiway.org/v1/models \
 
 仅返回你有权限调用的模型。参见[模型](/guide/models)。
 
+每个条目除标准的 `id` / `object` / `created` / `owned_by` 外，还带有下游可直接使用的配置：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 调用时填进 `model` 的模型 ID。passthrough 模型形如 `provider-slug/model-id` |
+| `opencode` | 已合并好的 OpenCode 模型配置块（`name`、`limit`、`reasoning`、`capabilities`、`modalities`、自定义配置等） |
+| `display_name` | 展示名；未设置时省略 |
+| `description` | 说明；未设置时省略 |
+
+`opencode` 的合并优先级（高 → 低）为：**结构化字段**（展示名、limit、reasoning、能力、模态）
+→ **自定义 OpenCode 配置** → **models.dev 占位信息**。插件侧默认值在客户端最后应用，不在此块内。
+上游供应商与密钥信息不会出现在这里。
+
 ## OpenAI 风格
 
 Base URL: `https://voidswitch.siiway.org/v1`

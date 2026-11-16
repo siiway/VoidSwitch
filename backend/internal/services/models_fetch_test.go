@@ -131,3 +131,98 @@ func TestFetchUpstreamModelsTruncatesBody(t *testing.T) {
 		t.Fatalf("a large body should be truncated:\n%.200s", err.Error())
 	}
 }
+
+// The path joins onto the base URL's directory, so the common "/v1" base URL
+// plus the default "/models" lands on "/v1/models", and "../models" climbs out.
+func TestResolveFetchEndpoint(t *testing.T) {
+	cases := []struct{ base, path, want string }{
+		{"https://api.example.com/v1", "/models", "https://api.example.com/v1/models"},
+		{"https://api.example.com/v1/", "models", "https://api.example.com/v1/models"},
+		{"https://api.example.com/v1", "", "https://api.example.com/v1/models"},
+		{"https://api.example.com/client/v4/accounts/x/ai", "../models", "https://api.example.com/client/v4/accounts/x/models"},
+		{"https://api.example.com", "/models", "https://api.example.com/models"},
+		{"https://api.example.com/v1", "https://other.example.com/models", "https://other.example.com/models"},
+	}
+	for _, c := range cases {
+		path := c.path
+		if path == "" {
+			path = "/models"
+		}
+		got, err := resolveFetchEndpoint(c.base, path)
+		if err != nil {
+			t.Fatalf("%s + %s: unexpected error %v", c.base, c.path, err)
+		}
+		if got != c.want {
+			t.Fatalf("%s + %q = %s, want %s", c.base, c.path, got, c.want)
+		}
+	}
+}
+
+func TestResolveFetchEndpointRejectsHostless(t *testing.T) {
+	if _, err := resolveFetchEndpoint("not-a-url", "/models"); err == nil {
+		t.Fatal("a hostless base URL must be rejected")
+	}
+	if _, err := resolveFetchEndpoint("https://api.example.com/v1", "https://"); err == nil {
+		t.Fatal("a hostless absolute URL must be rejected")
+	}
+}
+
+// Upstreams disagree on the envelope: data, models, result, or a bare array,
+// with entries that may be strings.
+func TestFetchUpstreamModelsPayloadShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"openai data", `{"data":[{"id":"a"},{"id":"b"}]}`, []string{"a", "b"}},
+		{"models with name", `{"models":[{"name":"c"}]}`, []string{"c"}},
+		{"result key", `{"result":[{"id":"d"}]}`, []string{"d"}},
+		{"bare array", `[{"id":"e"},"f"]`, []string{"e", "f"}},
+		{"dedupe", `{"data":[{"id":"g"},{"id":"g"}]}`, []string{"g"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(c.body))
+			}))
+			defer srv.Close()
+			got, err := FetchUpstreamModels(context.Background(), srv.URL, "", "", "", "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Fatalf("ids = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A JSON document without any known envelope explains itself rather than
+// reporting a parse failure.
+func TestFetchUpstreamModelsUnexpectedShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"error":"nope"}`))
+	}))
+	defer srv.Close()
+
+	_, err := FetchUpstreamModels(context.Background(), srv.URL, "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "no data/models/result") {
+		t.Fatalf("want an envelope diagnostic, got %v", err)
+	}
+}
+
+// A timed-out upstream answers 504 so the operator can tell it apart from a
+// transport failure.
+func TestModelsFetchErrorTimeoutStatus(t *testing.T) {
+	fe := &ModelsFetchError{Reason: "timed out", Err: timeoutError{}}
+	if got := fe.ErrorStatus(); got != http.StatusGatewayTimeout {
+		t.Fatalf("ErrorStatus = %d, want 504", got)
+	}
+}
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }

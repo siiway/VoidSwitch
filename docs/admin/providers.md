@@ -67,6 +67,48 @@ SSO Token 过期会被识别为密钥失效（401/403），匿名配额耗尽（
 并优先考虑官方 `xai` API Key。
 :::
 
+## 从 API 获取模型列表
+
+添加或编辑供应商时，**从 API 获取模型列表**会直接向该供应商的模型端点发起请求，把返回的
+模型 ID 列出来供你勾选，免去手工逐行填写。
+
+- **Method / Path** — 默认 `GET /models`。`Path` 可以是相对路径（按 URL 规则拼接到 Base URL
+  的**目录**上，因此 `../models` 会向上层跳转），也可以填完整 URL。个别上游的端点不在 `/models`
+  （例如 Cloudflare Workers AI 用 `../models`），按需调整。
+- **凭证** — 直接填入 token，或点**使用已有密钥**从该供应商已保存的[密钥](/admin/keys)中选择
+  （此时不会把明文发给浏览器，请求也会固定发往该密钥所属供应商的 Base URL）。
+- **占位符** — Base URL 里的 `{xxx}` 需要在获取前填好，否则请求会带上未替换的占位符。
+- 响应按 `{"data":[…]}`、`{"models":[…]}`、`{"result":[…]}` 或顶层数组解析，条目可以是
+  字符串，也可以是带 `id`/`name` 的对象；重复 ID 会去重。
+
+### 获取失败时
+
+失败不会被压缩成一句 `request failed`，而是给出可直接定位问题的诊断：
+
+```
+upstream returned 401
+request: GET https://api.example.com/v1/models
+status: 401 401 Unauthorized
+headers:
+  Content-Type: application/json
+  Www-Authenticate: Bearer realm=api
+body: {"error":{"message":"invalid api key"}}
+```
+
+管理员接口会**沿用上游的真实状态码**（仅当网关根本没拿到响应时才返回 `502`，超时则返回
+`504`），因此 `401` 就是凭证问题、`403` 是权限或地区限制、`429` 是限流，一目了然。
+
+诊断内容包含：
+
+- **请求** — 实际发出的方法与 URL（占位符已替换），用来确认路径拼接是否正确。
+- **状态** — 上游返回的状态码与状态行。
+- **响应 header** — 按名称排序后逐行列出。`Set-Cookie`、`Authorization`、
+  `Proxy-Authorization`、`X-Api-Key`、`Api-Key` 的值一律替换为 `<redacted>`。
+- **响应体** — 超过 2000 字符会被截断并标注 `…(truncated)`；网关本次发送的 token 若被上游
+  原样回显（有些上游会在错误文本里带上），会被替换为 `<redacted>`。
+- **原因** — 连不上下游、请求无法构造、URL 非法或缺少主机、响应不是 JSON、JSON 里没有
+  `data`/`models`/`result` 模型列表（常见于返回了 HTML 登录页）会分别说明。
+
 ## 关键设置
 
 - **优先级 / 权重** — 优先级越低越优先；权重在同等优先级的供应商之间分配负载。

@@ -296,7 +296,39 @@ func (a *App) providerFetchModels(c *gin.Context) {
 		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
 		return
 	}
-	models, err := services.FetchUpstreamModels(c.Request.Context(), in.BaseURL, in.Method, in.Path, in.Token, "")
+	baseURL, token := in.BaseURL, in.Token
+	if in.KeyID != nil {
+		// A saved key is decrypted server-side so the plaintext never travels to
+		// the browser. The request is pinned to the key's own provider base URL:
+		// letting the caller pair a decrypted credential with an arbitrary base
+		// URL would exfiltrate it.
+		var k database.ApiKey
+		if err := a.GDB.First(&k, *in.KeyID).Error; err != nil {
+			a.fail(c, http.StatusNotFound, "Key not found.")
+			return
+		}
+		var p database.Provider
+		if err := a.GDB.First(&p, k.ProviderID).Error; err != nil || strings.TrimSpace(p.BaseURL) == "" {
+			a.fail(c, http.StatusBadRequest, "The selected key must belong to a provider with a configured base URL.")
+			return
+		}
+		raw, err := cryptoutil.DecryptSecret(k.KeyCiphertext, a.Cfg.Server.SecretKey)
+		if err != nil {
+			a.fail(c, http.StatusBadRequest, "The stored credential could not be decrypted (has the secret key changed?).")
+			return
+		}
+		baseURL, token = p.BaseURL, raw
+	}
+	if token == "" {
+		a.fail(c, http.StatusBadRequest, "Either token or key_id is required.")
+		return
+	}
+	if in.Method != "" && !strings.EqualFold(in.Method, http.MethodGet) && !strings.EqualFold(in.Method, http.MethodPost) {
+		a.fail(c, http.StatusBadRequest, "method must be GET or POST")
+		return
+	}
+
+	models, err := services.FetchUpstreamModels(c.Request.Context(), baseURL, in.Method, in.Path, token, "")
 	if err != nil {
 		// Surface the upstream's own status (it is the actionable part) and the
 		// full diagnostic, rather than flattening everything into a bare 502.

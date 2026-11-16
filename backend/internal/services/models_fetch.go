@@ -3,8 +3,10 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -75,16 +77,58 @@ func (e *ModelsFetchError) Unwrap() error { return e.Err }
 func (e *ModelsFetchError) StatusCode() int { return e.Status }
 
 // ErrorStatus is the HTTP status the admin API should answer with: the upstream's
-// own code when there is one, otherwise 502 (the relay could not get an answer).
+// own code when there is one, 504 when the upstream timed out, otherwise 502
+// (the relay could not get an answer).
 func (e *ModelsFetchError) ErrorStatus() int {
 	if e.Status >= 400 {
 		return e.Status
+	}
+	var ne net.Error
+	if errors.As(e.Err, &ne) && ne.Timeout() {
+		return http.StatusGatewayTimeout
 	}
 	return http.StatusBadGateway
 }
 
 // maxFetchErrorBody bounds how much of an upstream body is echoed back.
 const maxFetchErrorBody = 2000
+
+// resolveFetchEndpoint joins a provider base URL and a models path the way the
+// Python backend did (urljoin on the base **directory**), so a relative path
+// such as "../models" climbs out of the base URL's last segment, and an
+// absolute http(s) path is used verbatim.
+func resolveFetchEndpoint(baseURL, path string) (string, error) {
+	rawPath := strings.TrimSpace(path)
+	if strings.HasPrefix(rawPath, "http://") || strings.HasPrefix(rawPath, "https://") {
+		u, err := url.Parse(rawPath)
+		if err != nil {
+			return rawPath, fmt.Errorf("invalid URL: %w", err)
+		}
+		if u.Host == "" {
+			return rawPath, fmt.Errorf("the URL has no host")
+		}
+		return u.String(), nil
+	}
+
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return "", fmt.Errorf("invalid base URL: %w", err)
+	}
+	if base.Host == "" {
+		return "", fmt.Errorf("the base URL has no host")
+	}
+	// Force a trailing slash so the path resolves against the base directory
+	// rather than replacing its last segment ("…/v1" + "models" must not become
+	// "…/models").
+	if !strings.HasSuffix(base.Path, "/") {
+		base.Path += "/"
+	}
+	ref, err := url.Parse(strings.TrimLeft(rawPath, "/"))
+	if err != nil {
+		return "", fmt.Errorf("invalid path: %w", err)
+	}
+	return base.ResolveReference(ref).String(), nil
+}
 
 // redactedHeaders copies response headers, masking credential-bearing values.
 func redactedHeaders(h http.Header) map[string]string {
@@ -109,17 +153,14 @@ func FetchUpstreamModels(ctx context.Context, baseURL, method, path, token, keyR
 	if path == "" {
 		path = "/models"
 	}
-	endpoint := path
-	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
-		endpoint = strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(path, "/")
-	}
-	if _, err := url.Parse(endpoint); err != nil {
-		return nil, &ModelsFetchError{
-			Endpoint: endpoint, Method: method, Reason: "invalid URL", Err: err,
-		}
-	}
 	if method == "" {
 		method = http.MethodGet
+	}
+	endpoint, err := resolveFetchEndpoint(baseURL, path)
+	if err != nil {
+		return nil, &ModelsFetchError{
+			Endpoint: endpoint, Method: method, Reason: err.Error(), Err: err,
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
 	if err != nil {
@@ -152,16 +193,8 @@ func FetchUpstreamModels(ctx context.Context, baseURL, method, path, token, keyR
 			Err:     readErr,
 		}
 	}
-	var parsed struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-		Models []struct {
-			Name string `json:"name"`
-			ID   string `json:"id"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
 		// The most common cause is an HTML error/login page served with 200.
 		return nil, &ModelsFetchError{
 			Endpoint: endpoint, Method: method,
@@ -172,25 +205,59 @@ func FetchUpstreamModels(ctx context.Context, baseURL, method, path, token, keyR
 			Err:     err,
 		}
 	}
-	seen := map[string]bool{}
-	var out []string
-	for _, d := range parsed.Data {
-		if d.ID != "" && !seen[d.ID] {
-			seen[d.ID] = true
-			out = append(out, d.ID)
+	items, ok := modelListItems(payload)
+	if !ok {
+		return nil, &ModelsFetchError{
+			Endpoint: endpoint, Method: method,
+			Status: resp.StatusCode, StatusText: resp.Status,
+			Headers: redactedHeaders(resp.Header),
+			Body:    truncateBody(bodyText),
+			Reason:  "the response has no data/models/result model list",
 		}
 	}
-	for _, m := range parsed.Models {
-		id := m.ID
-		if id == "" {
-			id = m.Name
-		}
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range items {
+		id := modelItemID(item)
 		if id != "" && !seen[id] {
 			seen[id] = true
 			out = append(out, id)
 		}
 	}
 	return out, nil
+}
+
+// modelListItems locates the model array in an upstream payload. Upstreams
+// disagree: OpenAI returns {"data":[…]}, some return {"models":[…]}, a few wrap
+// it in "result", and a handful return a bare array.
+func modelListItems(payload any) ([]any, bool) {
+	switch v := payload.(type) {
+	case []any:
+		return v, true
+	case map[string]any:
+		for _, key := range []string{"data", "models", "result"} {
+			if items, ok := v[key].([]any); ok {
+				return items, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// modelItemID reads an id (falling back to name) from one list entry, which may
+// be a bare string on some upstreams.
+func modelItemID(item any) string {
+	switch v := item.(type) {
+	case string:
+		return v
+	case map[string]any:
+		for _, key := range []string{"id", "name"} {
+			if s, ok := v[key].(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 // truncateBody caps a body echo so a huge error page cannot flood the response.

@@ -41,6 +41,52 @@ overwriting it). An expired SSO Token is recognized as an invalid key (401/403),
 exhaustion (429) triggers a rate-limit cooldown.
 :::
 
+## Fetch models from an API
+
+While adding or editing a provider, **Fetch models from API** calls the upstream's model endpoint
+directly and lists the returned model IDs for you to tick, so you do not have to type them by hand.
+
+- **Method / Path** — defaults to `GET /models`. `Path` may be relative (joined to the base URL's
+  **directory** per URL rules, so `../models` climbs a level) or a full URL. Some upstreams serve
+  models elsewhere (Cloudflare Workers AI uses `../models`); adjust as needed.
+- **Credential** — paste a token, or use **Use an existing key** to pick one of the provider's saved
+  [keys](/en/admin/keys) (the plaintext key is then never sent to the browser, and the request is
+  pinned to that key's provider base URL).
+- **Placeholders** — fill in every `{xxx}` in the base URL first; otherwise the request carries the
+  unreplaced placeholder.
+- Responses are parsed as `{"data":[…]}`, `{"models":[…]}`, `{"result":[…]}`, or a top-level array;
+  entries may be strings or objects with `id`/`name`, and duplicate IDs are dropped.
+
+### When fetching fails
+
+Failures are not flattened into a bare `request failed`; you get a diagnostic you can act on:
+
+```
+upstream returned 401
+request: GET https://api.example.com/v1/models
+status: 401 401 Unauthorized
+headers:
+  Content-Type: application/json
+  Www-Authenticate: Bearer realm=api
+body: {"error":{"message":"invalid api key"}}
+```
+
+The admin endpoint answers with the **upstream's own status code** (a `502` only when the gateway
+never received a response, `504` on a timeout), so `401` means credentials, `403` permissions or
+region, `429` rate limiting.
+
+The diagnostic contains:
+
+- **Request** — the method and URL actually sent (placeholders substituted), to verify path joining.
+- **Status** — the upstream status code and status line.
+- **Response headers** — listed one per line, sorted by name. The values of `Set-Cookie`,
+  `Authorization`, `Proxy-Authorization`, `X-Api-Key`, and `Api-Key` are replaced with `<redacted>`.
+- **Response body** — truncated past 2000 characters with a `…(truncated)` marker; if the upstream
+  echoes back the token the gateway sent (some do in error text), it is replaced with `<redacted>`.
+- **Reason** — unreachable upstream, request that cannot be built, invalid or hostless URL, a
+  non-JSON response, and a JSON document with no `data`/`models`/`result` list (typically an HTML
+  login page) are each named explicitly.
+
 ## Key settings
 
 - **Priority / weight** — lower priority takes precedence; weight distributes load among providers of
