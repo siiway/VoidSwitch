@@ -47,20 +47,29 @@ func (a *App) gatewayAuth(c *gin.Context) (*database.VoidToken, *database.User, 
 	return &token, &user, true
 }
 
-// visiblePassthroughIDs lists the passthrough model ids a caller may actually
+// passthroughModelRef is one visible passthrough id plus the model card that
+// carries its metadata and access control (nil when no card exists).
+type passthroughModelRef struct {
+	id  string
+	row *database.ExposedModel
+}
+
+// visiblePassthroughModels lists the passthrough models a caller may actually
 // call: enabled providers whose passthrough is on, ids permitted by the token's
 // allow-list, and ids the caller's role groups may reach. A passthrough id keeps
 // its access control on an exposed-model row of the same id (created when an
 // admin sets role groups on the model card); without one it is staff-only,
 // matching a regular model with no groups selected.
-func (a *App) visiblePassthroughIDs(token *database.VoidToken, uv *core.UserView) []string {
+//
+// An id that owns a route is an ordinary model: it is listed from the exposed
+// catalog instead, so it is excluded here to avoid advertising it twice.
+func (a *App) visiblePassthroughModels(token *database.VoidToken, uv *core.UserView) []passthroughModelRef {
 	var providers []database.Provider
 	a.GDB.Where("enabled = ? AND passthrough_enabled = ?", true, true).Order("slug").Find(&providers)
 	if len(providers) == 0 {
 		return nil
 	}
 
-	// One query for the access rows of every candidate id keeps this off N+1.
 	candidates := make([]string, 0, len(providers))
 	perProvider := make([][]string, len(providers))
 	for pi := range providers {
@@ -80,47 +89,134 @@ func (a *App) visiblePassthroughIDs(token *database.VoidToken, uv *core.UserView
 			candidates = append(candidates, id)
 		}
 	}
+	if len(candidates) == 0 {
+		return nil
+	}
 
-	groupsByID := make(map[string][]int, len(candidates))
-	rowIDByModel := make(map[string]int, len(candidates))
-	routedIDs := make(map[int]bool, len(candidates))
-	if len(candidates) > 0 {
+	// One query for every candidate's card keeps this off N+1.
+	rowsByID := make(map[string]*database.ExposedModel, len(candidates))
+	ids := make([]int, 0, len(candidates))
+	if candidates != nil {
 		var rows []database.ExposedModel
-		a.GDB.Select("id", "model_id", "allowed_role_group_ids").
-			Where("model_id IN ?", candidates).Find(&rows)
-		if len(rows) > 0 {
-			ids := make([]int, 0, len(rows))
-			for i := range rows {
-				var groups []int
-				database.DecodeJSON(rows[i].AllowedRoleGroupIDs, &groups)
-				groupsByID[rows[i].ModelID] = groups
-				rowIDByModel[rows[i].ModelID] = rows[i].ID
-				ids = append(ids, rows[i].ID)
-			}
-			// An id that owns a route is an ordinary model: it is already listed
-			// from the exposed catalog, so listing it here too would double it in
-			// /v1/models/sync's count.
-			var routeRows []database.Route
-			a.GDB.Select("exposed_model_id").Where("exposed_model_id IN ?", ids).Find(&routeRows)
-			for i := range routeRows {
-				routedIDs[routeRows[i].ExposedModelID] = true
-			}
+		a.GDB.Where("model_id IN ?", candidates).Find(&rows)
+		for i := range rows {
+			rowsByID[rows[i].ModelID] = &rows[i]
+			ids = append(ids, rows[i].ID)
+		}
+	}
+	routedIDs := make(map[int]bool, len(ids))
+	if len(ids) > 0 {
+		var routeRows []database.Route
+		a.GDB.Select("exposed_model_id").Where("exposed_model_id IN ?", ids).Find(&routeRows)
+		for i := range routeRows {
+			routedIDs[routeRows[i].ExposedModelID] = true
 		}
 	}
 
 	isStaff := uv.IsStaff()
-	out := []string{}
+	out := []passthroughModelRef{}
 	for pi := range perProvider {
 		for _, id := range perProvider[pi] {
-			if routedIDs[rowIDByModel[id]] {
+			row := rowsByID[id]
+			if row != nil {
+				if routedIDs[row.ID] {
+					continue
+				}
+				// Members must not see a hidden passthrough model.
+				if !isStaff && !row.Enabled {
+					continue
+				}
+			}
+			var groups []int
+			if row != nil {
+				database.DecodeJSON(row.AllowedRoleGroupIDs, &groups)
+			}
+			if !passthroughAllowedForGroups(groups, uv.GroupIDs, isStaff) {
 				continue
 			}
-			if passthroughAllowedForGroups(groupsByID[id], uv.GroupIDs, isStaff) {
-				out = append(out, id)
-			}
+			out = append(out, passthroughModelRef{id: id, row: row})
 		}
 	}
 	return out
+}
+
+// gatewayModelItem is one entry of the `/v1/models` payload (the PY contract):
+// identity plus the merged downstream config a client should apply.
+func gatewayModelItem(id string, created int64, m *database.ExposedModel, slot *database.ExposedModel, mdIndex map[string]any) gin.H {
+	item := gin.H{"id": id, "object": "model", "created": created, "owned_by": "voidswitch"}
+	// `slot` carries metadata for a passthrough id (its model card, when one
+	// exists); regular models are their own slot.
+	meta := m
+	if meta == nil {
+		meta = slot
+	}
+	if meta == nil {
+		return item
+	}
+	var devEntry any
+	if meta.ModelsDevID != nil && *meta.ModelsDevID != "" {
+		devEntry = mdIndex[*meta.ModelsDevID]
+	}
+	item["opencode"] = services.BuildOpencodeConfig(meta, devEntry)
+	if meta.DisplayName != nil && *meta.DisplayName != "" {
+		item["display_name"] = *meta.DisplayName
+	}
+	if meta.Description != nil && *meta.Description != "" {
+		item["description"] = *meta.Description
+	}
+	return item
+}
+
+// modelsDevIndex resolves every advertised model's models.dev entry in one pass,
+// so rendering the list does not query the registry per model.
+func (a *App) modelsDevIndex() map[string]any {
+	out := map[string]any{}
+	var rows []database.ModelsDevCache
+	a.GDB.Find(&rows)
+	byProvider := make(map[string]map[string]any, len(rows))
+	for i := range rows {
+		var data map[string]any
+		database.DecodeJSON(rows[i].Data, &data)
+		if data != nil {
+			byProvider[rows[i].ID] = data
+		}
+	}
+	// Registry ids are "provider/model"; resolve that pair out of the cached
+	// provider blobs.
+	var exposed []database.ExposedModel
+	a.GDB.Select("models_dev_id").Where("models_dev_id IS NOT NULL AND models_dev_id <> ''").Find(&exposed)
+	for i := range exposed {
+		id := *exposed[i].ModelsDevID
+		if _, done := out[id]; done {
+			continue
+		}
+		provider, mid, ok := splitModelsDevID(id)
+		if !ok {
+			continue
+		}
+		providerBlob, ok := byProvider[provider]
+		if !ok {
+			continue
+		}
+		models, ok := providerBlob["models"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if entry, ok := models[mid]; ok {
+			out[id] = entry
+		}
+	}
+	return out
+}
+
+// splitModelsDevID splits "provider/model" at the first slash.
+func splitModelsDevID(id string) (provider, model string, ok bool) {
+	for i := 0; i < len(id); i++ {
+		if id[i] == '/' {
+			return id[:i], id[i+1:], true
+		}
+	}
+	return "", "", false
 }
 
 // gatewayModels returns the OpenAI-compatible model list: every model the
@@ -135,22 +231,33 @@ func (a *App) gatewayModels(c *gin.Context) {
 	}
 	uv := a.gatewayUserView(user)
 
-	models, refs, err := a.loadModelsWithUpstreams()
+	data, err := a.advertisedModels(token, uv)
 	if err != nil {
 		a.internal(c, err)
 		return
 	}
+	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data})
+}
+
+// advertisedModels builds the `/v1/models` payload for one caller.
+func (a *App) advertisedModels(token *database.VoidToken, uv *core.UserView) ([]gin.H, error) {
+	models, refs, err := a.loadModelsWithUpstreams()
+	if err != nil {
+		return nil, err
+	}
+	mdIndex := a.modelsDevIndex()
+
 	data := make([]gin.H, 0, len(models))
 	seen := make(map[string]bool, len(models))
-	add := func(id string, created int64) {
+	push := func(item gin.H) {
+		id, _ := item["id"].(string)
 		if id == "" || seen[id] {
 			return
 		}
 		seen[id] = true
-		data = append(data, gin.H{
-			"id": id, "object": "model", "created": created, "owned_by": "voidswitch",
-		})
+		data = append(data, item)
 	}
+
 	for i := range models {
 		m := &models[i]
 		if !m.Enabled || len(refs[m.ID]) == 0 {
@@ -162,17 +269,16 @@ func (a *App) gatewayModels(c *gin.Context) {
 		if !uv.IsStaff() && !services.ModelAllowedForGroups(m, uv.GroupIDs, false) {
 			continue
 		}
-		add(m.ModelID, m.CreatedAt.Unix())
+		push(gatewayModelItem(m.ModelID, m.CreatedAt.Unix(), m, nil, mdIndex))
 	}
 
 	// Passthrough models are callable as "<provider-slug>/<exposed-id>" but have
-	// no exposed-model row of their own route, so they are enumerated from the
-	// providers and gated exactly like a regular model.
-	for _, id := range a.visiblePassthroughIDs(token, uv) {
-		add(id, 0)
+	// no route of their own, so they are enumerated from the providers and gated
+	// exactly like a regular model.
+	for _, pt := range a.visiblePassthroughModels(token, uv) {
+		push(gatewayModelItem(pt.id, 0, nil, pt.row, mdIndex))
 	}
-
-	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data})
+	return data, nil
 }
 
 func (a *App) chatCompletions(c *gin.Context) {
@@ -341,7 +447,7 @@ func (a *App) modelsSync(c *gin.Context) {
 	}
 	// Passthrough models are callable too, so the sync count must include them;
 	// otherwise the picker reports fewer models than /v1/models lists.
-	count += len(a.visiblePassthroughIDs(token, uv))
+	count += len(a.visiblePassthroughModels(token, uv))
 	c.JSON(http.StatusOK, gin.H{
 		"added":                  0,
 		"total":                  count,

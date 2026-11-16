@@ -247,6 +247,8 @@ export interface ModelEntry {
   category_slug?: string | null;
   // True when this is a virtual passthrough model entry (not a real ExposedModel).
   provider?: boolean;
+  provider_name?: string | null;
+  provider_slug?: string | null;
   // True when the model's route resolves to no enabled upstream.
   unserved?: boolean;
   health?: ModelHealth | null;

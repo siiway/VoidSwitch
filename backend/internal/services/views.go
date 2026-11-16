@@ -95,7 +95,12 @@ type ModelEntryView struct {
 	CategoryName        *string    `json:"category_name"`
 	CategorySlug        *string    `json:"category_slug"`
 	Provider            bool       `json:"provider"`
-	Unserved            bool       `json:"unserved"`
+	// ProviderName/ProviderSlug identify the passthrough provider owning this
+	// entry. They are separate from the category fields so a model can have both
+	// its own category and a passthrough provider.
+	ProviderName *string `json:"provider_name"`
+	ProviderSlug *string `json:"provider_slug"`
+	Unserved     bool    `json:"unserved"`
 }
 
 // BuildModelEntryView maps an exposed model + its reachable upstream refs.

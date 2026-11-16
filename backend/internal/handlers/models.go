@@ -93,7 +93,14 @@ func (a *App) modelsList(c *gin.Context) {
 }
 
 // mergePassthroughVirtuals folds enabled providers' passthrough whitelists into
-// the model catalog as virtual entries (provider=true).
+// the model catalog as provider-owned entries.
+//
+// A passthrough id takes over any matching exposed-model row: the row supplies
+// metadata (name, role groups, limits) while the entry is marked `provider=true`
+// so the UI treats it as passthrough (no route editor, no unserved/clean
+// accounting). That row exists precisely because an admin configured the
+// passthrough id from the dashboard, which is not the same thing as the id
+// owning a route of its own.
 func (a *App) mergePassthroughVirtuals(exposed []services.ModelEntryView, isStaff bool) []services.ModelEntryView {
 	byID := make(map[string]int, len(exposed))
 	for i := range exposed {
@@ -102,63 +109,92 @@ func (a *App) mergePassthroughVirtuals(exposed []services.ModelEntryView, isStaf
 	var providers []database.Provider
 	a.GDB.Where("enabled = ? AND passthrough_enabled = ?", true, true).Find(&providers)
 
+	// Which exposed rows own a route. Such a row is an ordinary model and must
+	// not be absorbed by a passthrough entry that happens to share its id.
+	routedExposedIDs := map[string]bool{}
+	if len(exposed) > 0 {
+		ids := make([]int, 0, len(exposed))
+		for i := range exposed {
+			if exposed[i].ID != nil {
+				ids = append(ids, *exposed[i].ID)
+			}
+		}
+		if len(ids) > 0 {
+			var routeRows []database.Route
+			a.GDB.Select("exposed_model_id").Where("exposed_model_id IN ?", ids).Find(&routeRows)
+			routed := make(map[int]bool, len(routeRows))
+			for i := range routeRows {
+				routed[routeRows[i].ExposedModelID] = true
+			}
+			for i := range exposed {
+				if exposed[i].ID != nil && routed[*exposed[i].ID] {
+					routedExposedIDs[exposed[i].ModelID] = true
+				}
+			}
+		}
+	}
+
 	virtualID := -1
+	taken := map[string]bool{}
 	var virtuals []services.ModelEntryView
 	for pi := range providers {
 		p := &providers[pi]
 		var list []string
 		database.DecodeJSON(p.PassthroughModels, &list)
-		seen := map[string]bool{}
 		for _, entry := range list {
 			exposedID := parsePassthroughExposed(entry)
 			modelID := p.Slug + "/" + exposedID
-			if seen[modelID] {
+			if taken[modelID] {
 				continue
 			}
-			seen[modelID] = true
+			// A row that owns a route is an ordinary model the admin created; it
+			// merely happens to look like a passthrough id. Leave it alone so it
+			// keeps its route editor and its own category.
+			if routedExposedIDs[modelID] {
+				continue
+			}
+			taken[modelID] = true
 
+			name, slug := p.Name, p.Slug
 			if idx, ok := byID[modelID]; ok {
 				v := exposed[idx]
 				if !isStaff && !v.Enabled {
 					continue
 				}
 				v.Provider = true
-				name, slug := p.Name, p.Slug
-				v.CategoryName = &name
-				v.CategorySlug = &slug
+				// The provider travels in its own fields; the model keeps the
+				// category it was given.
+				v.ProviderName = &name
+				v.ProviderSlug = &slug
 				if v.DisplayName == nil || *v.DisplayName == "" {
 					dn := exposedID
 					v.DisplayName = &dn
 				}
 				virtuals = append(virtuals, v)
-			} else {
-				id := virtualID
-				virtualID--
-				dn := exposedID
-				name, slug := p.Name, p.Slug
-				virtuals = append(virtuals, services.ModelEntryView{
-					ID: &id, ModelID: modelID, DisplayName: &dn, Enabled: true,
-					CategoryName: &name, CategorySlug: &slug, Provider: true,
-					OpenCodeConfig: map[string]any{}, Capabilities: map[string]any{},
-					Modalities: map[string]any{}, AllowedRoleGroupIDs: []int{}, Upstreams: []string{},
-				})
+				continue
 			}
+			id := virtualID
+			virtualID--
+			dn := exposedID
+			virtuals = append(virtuals, services.ModelEntryView{
+				ID: &id, ModelID: modelID, DisplayName: &dn, Enabled: true,
+				ProviderName: &name, ProviderSlug: &slug, Provider: true,
+				OpenCodeConfig: map[string]any{}, Capabilities: map[string]any{},
+				Modalities: map[string]any{}, AllowedRoleGroupIDs: []int{}, Upstreams: []string{},
+			})
 		}
 	}
 
-	// Exposed rows win over a colliding passthrough virtual: an admin who created
-	// a model whose id happens to look like "slug/model" keeps their row (and its
-	// route/editing), and the passthrough virtual is dropped instead.
+	// Exposed rows whose id is served as passthrough are replaced by the virtual
+	// above, so the same id never appears twice.
 	out := make([]services.ModelEntryView, 0, len(exposed)+len(virtuals))
-	keptVirtuals := virtuals[:0]
-	for i := range virtuals {
-		if _, collides := byID[virtuals[i].ModelID]; collides {
+	for i := range exposed {
+		if taken[exposed[i].ModelID] {
 			continue
 		}
-		keptVirtuals = append(keptVirtuals, virtuals[i])
+		out = append(out, exposed[i])
 	}
-	out = append(out, exposed...)
-	return append(out, keptVirtuals...)
+	return append(out, virtuals...)
 }
 
 // categoryLookup maps category id -> (name, slug).

@@ -261,10 +261,14 @@ export function displayNamePlaceholder(modelId: string): string {
 }
 
 function providerSlugOf(m: ModelEntry): string {
-  if (m.category_slug) return m.category_slug;
+  // The backend names the passthrough provider explicitly; a passthrough id is
+  // also "<provider-slug>/<exposed-id>". ``category_slug`` is the model's real
+  // category and must never be read as a provider slug.
+  if (m.provider_slug) return m.provider_slug;
   const id = m.model_id ?? "";
   const slash = id.indexOf("/");
   if (slash > 0) return id.slice(0, slash);
+  if (m.category_slug) return m.category_slug;
   const u = (m.upstreams ?? [])[0];
   if (u) {
     const s = u.indexOf("/");
@@ -274,9 +278,7 @@ function providerSlugOf(m: ModelEntry): string {
 }
 
 function providerNameOf(m: ModelEntry): string {
-  // Passthrough virtual entries carry the provider's display name in
-  // ``category_name`` (e.g. "Claude Code"), not the id/slug.
-  if (m.category_name) return m.category_name;
+  if (m.provider_name) return m.provider_name;
   return providerSlugOf(m);
 }
 

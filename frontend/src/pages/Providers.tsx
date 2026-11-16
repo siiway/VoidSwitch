@@ -1270,7 +1270,20 @@ export function Providers() {
                    <div style={{ display: fetching ? "flex" : "none", justifyContent: "center", padding: 8 }}>
                        <Spinner size="small" />
                    </div>
-                   <div style={{ display: fetchError ? "block" : "none", color: tokens.colorStatusDangerForeground1, fontSize: 13 }}>
+                   <div
+                     style={{
+                       display: fetchError ? "block" : "none",
+                       color: tokens.colorStatusDangerForeground1,
+                       fontSize: 13,
+                       // The diagnostic spans several lines (request, status,
+                       // headers, body); keep the line breaks legible.
+                       whiteSpace: "pre-wrap",
+                       wordBreak: "break-all",
+                       fontFamily: tokens.fontFamilyMonospace,
+                       maxHeight: 220,
+                       overflowY: "auto",
+                     }}
+                   >
                        {fetchError}
                    </div>
                    <div style={{ display: fetchedModels.length > 0 ? "contents" : "none" }}>

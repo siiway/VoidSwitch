@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -297,7 +298,14 @@ func (a *App) providerFetchModels(c *gin.Context) {
 	}
 	models, err := services.FetchUpstreamModels(c.Request.Context(), in.BaseURL, in.Method, in.Path, in.Token, "")
 	if err != nil {
-		a.fail(c, http.StatusBadGateway, err.Error())
+		// Surface the upstream's own status (it is the actionable part) and the
+		// full diagnostic, rather than flattening everything into a bare 502.
+		status := http.StatusBadGateway
+		var fe *services.ModelsFetchError
+		if errors.As(err, &fe) {
+			status = fe.ErrorStatus()
+		}
+		a.fail(c, status, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"models": models})
