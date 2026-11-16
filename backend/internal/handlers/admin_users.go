@@ -30,6 +30,7 @@ type roleGroupView struct {
 	Description                *string       `json:"description"`
 	Builtin                    bool          `json:"builtin"`
 	MemberCount                int           `json:"member_count"`
+	ModelCount                 int           `json:"model_count"`
 	Mappings                   []mappingView `json:"mappings"`
 	CallRateLimitWindowSeconds int           `json:"call_rate_limit_window_seconds"`
 	CallRateLimitMaxRequests   int           `json:"call_rate_limit_max_requests"`
@@ -62,11 +63,28 @@ func (a *App) roleGroupOut(g *database.RoleGroup) roleGroupView {
 	a.GDB.Model(&database.RoleGroupMembership{}).Where("role_group_id = ?", g.ID).Count(&members)
 	return roleGroupView{
 		ID: g.ID, Slug: g.Slug, Name: g.Name, Description: g.Description, Builtin: g.Builtin,
-		MemberCount: int(members), Mappings: views,
+		MemberCount: int(members), ModelCount: a.modelCountByGroup()[g.ID], Mappings: views,
 		CallRateLimitWindowSeconds: g.CallRateLimitWindowSeconds,
 		CallRateLimitMaxRequests:   g.CallRateLimitMaxRequests,
 		CreatedAt:                  g.CreatedAt, UpdatedAt: g.UpdatedAt,
 	}
+}
+
+// modelCountByGroup tallies, for every role group, how many exposed models list
+// it in allowed_role_group_ids. One query covers the whole list, so rendering
+// the group cards does not run a query per card.
+func (a *App) modelCountByGroup() map[int]int {
+	var rows []database.ExposedModel
+	a.GDB.Select("id", "allowed_role_group_ids").Find(&rows)
+	counts := make(map[int]int, len(rows))
+	for i := range rows {
+		var ids []int
+		database.DecodeJSON(rows[i].AllowedRoleGroupIDs, &ids)
+		for _, id := range ids {
+			counts[id]++
+		}
+	}
+	return counts
 }
 
 func roleGroupSlug(name string) string {
@@ -123,8 +141,11 @@ func (a *App) roleGroupsList(c *gin.Context) {
 		return
 	}
 	out := make([]roleGroupView, 0, len(rows))
+	counts := a.modelCountByGroup()
 	for i := range rows {
-		out = append(out, a.roleGroupOut(&rows[i]))
+		v := a.roleGroupOut(&rows[i])
+		v.ModelCount = counts[rows[i].ID]
+		out = append(out, v)
 	}
 	c.JSON(http.StatusOK, out)
 }

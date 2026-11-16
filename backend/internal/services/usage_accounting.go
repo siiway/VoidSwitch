@@ -201,7 +201,14 @@ func hasContent(frame map[string]any) bool {
 		}
 	}
 	if t, ok := frame["type"].(string); ok {
-		if t == "content_block_delta" {
+		switch t {
+		case "content_block_delta":
+			// Anthropic Messages stream.
+			return true
+		case "response.output_text.delta", "response.output_item.added",
+			"response.content_part.added", "response.reasoning_summary_text.delta",
+			"response.reasoning_text.delta":
+			// OpenAI Responses stream.
 			return true
 		}
 	}

@@ -30,6 +30,14 @@ func (a *App) statsSummary(c *gin.Context) {
 	a.GDB.Model(&database.RequestLog{}).Where("ts >= ? AND success = ?", since, true).Count(&succ)
 	a.GDB.Model(&database.RequestLog{}).Where("ts >= ?", since).Select("COALESCE(SUM(total_tokens),0)").Scan(&tokens24)
 
+	// Average time-to-first-token over the same 24h window. Only streaming
+	// requests record first_token_ms, and AVG ignores NULL, so a window with no
+	// streamed request leaves this nil for the dashboard to render as "—".
+	var avgTTFT *float64
+	a.GDB.Model(&database.RequestLog{}).
+		Where("ts >= ? AND first_token_ms IS NOT NULL", since).
+		Select("AVG(first_token_ms)").Scan(&avgTTFT)
+
 	successRate := 0.0
 	if reqs > 0 {
 		successRate = math.Round(float64(succ)/float64(reqs)*1000) / 10
@@ -40,6 +48,7 @@ func (a *App) statsSummary(c *gin.Context) {
 		"users": users, "tokens": tokens,
 		"requests_24h": reqs, "success_24h": succ, "failures_24h": reqs - succ,
 		"tokens_24h": tokens24, "success_rate_24h": successRate,
+		"avg_first_token_ms_24h":     avgTTFT,
 		"avg_tokens_per_request_24h": avgTokensPerReq(tokens24, reqs),
 	})
 }

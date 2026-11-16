@@ -27,6 +27,7 @@ import {
   ArrowEnterRegular,
   ArrowDownloadRegular,
   BugRegular,
+  CopyRegular,
   DismissRegular,
   EyeRegular,
   InfoRegular,
@@ -1092,22 +1093,46 @@ function RequestLogs({
 
   async function downloadDetail() {
     if (!detailLog) return;
-    const token = getToken();
-    const response = await fetch(
-      `${API_BASE}/api/admin/logs/requests/${detailLog.id}/download`,
-      { headers: token ? { Authorization: `Bearer ${token}` } : {}, cache: "no-store" },
-    );
-    if (!response.ok) {
-      notify(tr("logs.downloadFailed" as TK), `HTTP ${response.status}`, "error");
-      return;
-    }
-    const blob = await response.blob();
+    const payload = await fetchDetailExport(detailLog.id);
+    if (payload == null) return;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
     link.download = `voidswitch-request-${detailLog.id}.json`;
     link.click();
     URL.revokeObjectURL(url);
+  }
+
+  /**
+   * Fetch the server's redacted export for one request log. Copy and download
+   * share it so the clipboard never holds more than the file does.
+   */
+  async function fetchDetailExport(id: number): Promise<unknown | null> {
+    const token = getToken();
+    const response = await fetch(
+      `${API_BASE}/api/admin/logs/requests/${id}/download`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {}, cache: "no-store" },
+    );
+    if (!response.ok) {
+      notify(tr("logs.downloadFailed" as TK), `HTTP ${response.status}`, "error");
+      return null;
+    }
+    return response.json();
+  }
+
+  async function copyDetail() {
+    if (!detailLog) return;
+    const payload = await fetchDetailExport(detailLog.id);
+    if (payload == null) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      notify(tr("logs.copyDone" as TK), String(detailLog.id), "success");
+    } catch {
+      notify(tr("logs.copyFailed" as TK), tr("logs.copyUnavailable" as TK), "error");
+    }
   }
 
   if (logs.loading) return <Loading />;
@@ -1664,9 +1689,21 @@ function RequestLogs({
             </DialogContent>
             <DialogActions>
               {(isStaffView || isRoleGroupAdminView) && detailLog ? (
-                <Button appearance="subtle" icon={<ArrowDownloadRegular />} onClick={() => void downloadDetail()}>
-                  {tr("logs.downloadJson" as TK)}
-                </Button>
+                <>
+                  <Tooltip content={tr("logs.copyJsonHint" as TK)} relationship="description">
+                    <Button
+                      appearance="subtle"
+                      icon={<CopyRegular />}
+                      onClick={() => void copyDetail()}
+                      aria-label={tr("logs.copyJson" as TK)}
+                    >
+                      {tr("logs.copyJson" as TK)}
+                    </Button>
+                  </Tooltip>
+                  <Button appearance="subtle" icon={<ArrowDownloadRegular />} onClick={() => void downloadDetail()}>
+                    {tr("logs.downloadJson" as TK)}
+                  </Button>
+                </>
               ) : null}
               <Button appearance="primary" onClick={() => { detailReqRef.current = null; setDetailLog(null); }}>
                 {tr("common.close" as TK)}

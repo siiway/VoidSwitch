@@ -11,6 +11,11 @@ import {
   Dropdown,
   Field,
   Input,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   Option,
   Spinner,
   Switch,
@@ -159,6 +164,11 @@ interface CreateState {
 }
 
 type BatchEnabled = "unchanged" | "enabled" | "disabled";
+
+// The capability flags a model can declare. These drive the card badges and the
+// capability filter, so both stay in sync with the edit form.
+const MODEL_CAPABILITIES = ["text", "image", "audio", "tool"] as const;
+type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
 
 // Which field(s) the catalog search box matches against.
 type SearchField = "all" | "id" | "name" | "description";
@@ -359,7 +369,7 @@ export function Models() {
   const notify = useNotify();
   const confirm = useConfirm();
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
+  const { isStaff, isOwner } = useAuth();
   const catalog = useAsync<ModelEntry[]>(() => api.get("/api/models"));
   const roleGroups = useAsync<RoleGroup[]>(() =>
     isStaff ? api.get("/api/admin/role-groups") : Promise.resolve([]),
@@ -377,6 +387,9 @@ export function Models() {
   const [filterAvail, setFilterAvail] = useState("all");
   const [filterGroup, setFilterGroup] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
+  const [filterCapabilities, setFilterCapabilities] = useState<Set<ModelCapability>>(
+    new Set(),
+  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
   const [create, setCreate] = useState<CreateState | null>(null);
@@ -416,7 +429,43 @@ export function Models() {
     ids: Set<number>;
   } | null>(null);
   const [groupSearch, setGroupSearch] = useState("");
+  // Inline "create role group" form, so the access dialog does not dead-end
+  // when the group the user needs does not exist yet.
+  const [newGroup, setNewGroup] = useState<{ name: string; description: string } | null>(
+    null,
+  );
   const customGroups = (roleGroups.data ?? []).filter((g) => !g.builtin);
+
+  function openNewGroup() {
+    setNewGroup({ name: "", description: "" });
+  }
+
+  async function saveNewGroup() {
+    if (!newGroup) return;
+    const name = newGroup.name.trim();
+    if (!name) {
+      notify(t("common.saveFailed" as TK), t("roleGroups.nameRequired" as TK), "error");
+      return;
+    }
+    try {
+      const created = await api.post<RoleGroup>("/api/admin/role-groups", {
+        name,
+        description: newGroup.description.trim() || null,
+        mappings: [],
+      });
+      // Pre-select the group we just created for the model being edited.
+      if (groupEdit && created?.id != null) toggleGroup(created.id);
+      setNewGroup(null);
+      roleGroups.reload();
+      notify(t("roleGroups.saved" as TK), name, "success");
+    } catch (e) {
+      notify(
+        t("common.saveFailed" as TK),
+        e instanceof Error ? e.message : String(e),
+        "error",
+      );
+    }
+  }
 
   function openGroupEdit(m: ModelEntry) {
     setGroupSearch("");
@@ -518,6 +567,15 @@ export function Models() {
 
   const items = catalog.data ?? [];
 
+  function toggleCapabilityFilter(cap: ModelCapability) {
+    setFilterCapabilities((prev) => {
+      const next = new Set(prev);
+      if (next.has(cap)) next.delete(cap);
+      else next.add(cap);
+      return next;
+    });
+  }
+
   const filtered = items.filter((m) => {
     const q = search.trim().toLowerCase();
     let match = true;
@@ -553,6 +611,17 @@ export function Models() {
         match = !!m.provider && providerSlugOf(m) === slug;
       } else
         match = String(m.category_id ?? "") === filterCategory;
+    }
+    if (match && filterCapabilities.size > 0) {
+      const caps = (m.capabilities ?? {}) as Record<string, unknown>;
+      // Every selected capability must be present (AND), which narrows the
+      // catalog as the user adds filters.
+      for (const cap of filterCapabilities) {
+        if (!caps[cap]) {
+          match = false;
+          break;
+        }
+      }
     }
     return match;
   });
@@ -798,12 +867,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
     }
   }
 
-  const CAP_WORDS: Array<keyof EditState["capabilities"]> = [
-    "text",
-    "image",
-    "audio",
-    "tool",
-  ];
+  const CAP_WORDS = MODEL_CAPABILITIES;
 
   function openEdit(m: ModelEntry) {
     const caps = (m.capabilities ?? {}) as Record<string, unknown>;
@@ -1294,6 +1358,40 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
             ))}
           </Dropdown>
         )}
+        <Menu closeOnScroll={false} persistOnItemClick>
+          <MenuTrigger disableButtonEnhancement>
+            <Button
+              appearance={filterCapabilities.size > 0 ? "primary" : "secondary"}
+              icon={<ChevronDownRegular />}
+            >
+              {filterCapabilities.size > 0
+                ? t("models.filterCapabilitiesCount" as TK).replace(
+                    "{count}",
+                    String(filterCapabilities.size),
+                  )
+                : t("models.filterCapabilities" as TK)}
+            </Button>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              {MODEL_CAPABILITIES.map((cap) => (
+                <MenuItem key={cap} onClick={() => toggleCapabilityFilter(cap)}>
+                  <Checkbox
+                    checked={filterCapabilities.has(cap)}
+                    // The MenuItem already handles the click.
+                    onChange={() => undefined}
+                    label={t(`models.capability_${cap}` as TK)}
+                  />
+                </MenuItem>
+              ))}
+              {filterCapabilities.size > 0 ? (
+                <MenuItem onClick={() => setFilterCapabilities(new Set())}>
+                  {t("models.filterCapabilitiesClear" as TK)}
+                </MenuItem>
+              ) : null}
+            </MenuList>
+          </MenuPopover>
+        </Menu>
       </div>
 
       {catalog.loading ? (
@@ -1388,7 +1486,19 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                                 {t("models.reasoningBadge" as TK)}
                               </Badge>
                             )}
-                            {m.models_dev_id && (
+                            {MODEL_CAPABILITIES.filter((c) =>
+                              Boolean((m.capabilities as Record<string, unknown>)[c]),
+                            ).map((c) => (
+                              <Badge
+                                key={c}
+                                appearance="outline"
+                                color="informative"
+                                style={{ borderStyle: "dashed" }}
+                              >
+                                {t(`models.capability_${c}` as TK)}
+                              </Badge>
+                            ))}
+                            {isStaff && m.models_dev_id && (
                               <Tooltip content={m.models_dev_id} relationship="label">
                                 <Badge appearance="tint" color="brand">
                                   models.dev
@@ -2220,22 +2330,87 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                       );
                     })
                     .map((g) => (
-                      <Checkbox
+                      <div
                         key={g.id}
-                        checked={groupEdit?.ids.has(g.id) ?? false}
-                        onChange={() => toggleGroup(g.id)}
-                        label={g.name}
-                      />
+                        style={{ display: "flex", alignItems: "center", gap: 8 }}
+                      >
+                        <Checkbox
+                          checked={groupEdit?.ids.has(g.id) ?? false}
+                          onChange={() => toggleGroup(g.id)}
+                          label={g.name}
+                        />
+                        <Tooltip
+                          content={t("models.groupModelCountTooltip" as TK)}
+                          relationship="description"
+                        >
+                          <Badge appearance="tint" color="informative" size="small">
+                            {t("roleGroups.modelCount" as TK).replace(
+                              "{count}",
+                              String(g.model_count),
+                            )}
+                          </Badge>
+                        </Tooltip>
+                      </div>
                     ))
                 )}
               </div>
             </DialogContent>
             <DialogActions>
+              {isOwner ? (
+                <Button
+                  appearance="subtle"
+                  icon={<AddRegular />}
+                  onClick={openNewGroup}
+                >
+                  {t("models.createGroup" as TK)}
+                </Button>
+              ) : null}
               <Button appearance="secondary" onClick={() => setGroupEdit(null)}>
                 {t("common.cancel" as TK)}
               </Button>
               <Button appearance="primary" disabled={saving} onClick={saveGroups} data-shortcut="save">
                 {t("common.save" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={newGroup !== null} onOpenChange={(_, d) => !d.open && setNewGroup(null)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{t("models.createGroup" as TK)}</DialogTitle>
+            <DialogContent style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <Field label={t("roleGroups.name" as TK)}>
+                <Input
+                  value={newGroup?.name ?? ""}
+                  autoFocus
+                  onChange={(_, d) =>
+                    setNewGroup((g) => (g ? { ...g, name: d.value } : g))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveNewGroup();
+                  }}
+                />
+              </Field>
+              <Field label={t("roleGroups.description" as TK)}>
+                <Input
+                  value={newGroup?.description ?? ""}
+                  onChange={(_, d) =>
+                    setNewGroup((g) => (g ? { ...g, description: d.value } : g))
+                  }
+                />
+              </Field>
+              <Text size={200} className={styles.dim}>
+                {t("models.createGroupNote" as TK)}
+              </Text>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setNewGroup(null)}>
+                {t("common.cancel" as TK)}
+              </Button>
+              <Button appearance="primary" onClick={() => void saveNewGroup()}>
+                {t("common.create" as TK)}
               </Button>
             </DialogActions>
           </DialogBody>

@@ -381,6 +381,9 @@ export function RoleGroups() {
                 <Badge appearance="tint" color={g.builtin ? "brand" : "informative"}>
                   {t("roleGroups.members" as TK).replace("{count}", String(g.member_count))}
                 </Badge>
+                <Badge appearance="tint" color={g.builtin ? "brand" : "informative"}>
+                  {t("roleGroups.modelCount" as TK).replace("{count}", String(g.model_count))}
+                </Badge>
               </div>
 
               <Text size={200} className={styles.desc}>

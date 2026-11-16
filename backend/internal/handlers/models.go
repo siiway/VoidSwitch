@@ -103,7 +103,6 @@ func (a *App) mergePassthroughVirtuals(exposed []services.ModelEntryView, isStaf
 	a.GDB.Where("enabled = ? AND passthrough_enabled = ?", true, true).Find(&providers)
 
 	virtualID := -1
-	passthroughIDs := map[string]bool{}
 	var virtuals []services.ModelEntryView
 	for pi := range providers {
 		p := &providers[pi]
@@ -117,7 +116,6 @@ func (a *App) mergePassthroughVirtuals(exposed []services.ModelEntryView, isStaf
 				continue
 			}
 			seen[modelID] = true
-			passthroughIDs[modelID] = true
 
 			if idx, ok := byID[modelID]; ok {
 				v := exposed[idx]
@@ -148,16 +146,19 @@ func (a *App) mergePassthroughVirtuals(exposed []services.ModelEntryView, isStaf
 		}
 	}
 
-	// Drop exposed rows whose id is now served as a passthrough virtual, then
-	// append the virtuals.
+	// Exposed rows win over a colliding passthrough virtual: an admin who created
+	// a model whose id happens to look like "slug/model" keeps their row (and its
+	// route/editing), and the passthrough virtual is dropped instead.
 	out := make([]services.ModelEntryView, 0, len(exposed)+len(virtuals))
-	for i := range exposed {
-		if passthroughIDs[exposed[i].ModelID] {
+	keptVirtuals := virtuals[:0]
+	for i := range virtuals {
+		if _, collides := byID[virtuals[i].ModelID]; collides {
 			continue
 		}
-		out = append(out, exposed[i])
+		keptVirtuals = append(keptVirtuals, virtuals[i])
 	}
-	return append(out, virtuals...)
+	out = append(out, exposed...)
+	return append(out, keptVirtuals...)
 }
 
 // categoryLookup maps category id -> (name, slug).

@@ -75,7 +75,7 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 		Error:            errMsg,
 		UserAgent:        strPtr(ua),
 		IsOpenCode:       pluginVersion != "",
-		OpenCodePlugin:   strPtr(pluginVersion),
+		OpenCodePlugin:   nullableStr(pluginVersion),
 		Debug:            false,
 		ReqMethod:        strPtr("POST"),
 	}

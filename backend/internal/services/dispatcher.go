@@ -108,14 +108,126 @@ func NewDispatcher(req *DispatchRequest) *Dispatcher {
 	return &Dispatcher{req: req}
 }
 
+// ParsePassthroughEntry splits a passthrough whitelist entry into its parts.
+// The grammar is "exposed [=> upstream] [@ pool]": the exposed id is what
+// callers use, `upstream` overrides the id sent to the provider, and `pool`
+// selects a key pool. A bare entry uses the exposed id for both.
+func ParsePassthroughEntry(entry string) (exposed, upstream, pool string) {
+	e := strings.TrimSpace(entry)
+	exposed, upstream = e, e
+	if i := strings.Index(e, "=>"); i >= 0 {
+		exposed = strings.TrimSpace(e[:i])
+		rest := strings.TrimSpace(e[i+2:])
+		upstream = rest
+		if j := strings.Index(rest, "@"); j >= 0 {
+			upstream = strings.TrimSpace(rest[:j])
+			pool = strings.TrimSpace(rest[j+1:])
+		}
+	} else if j := strings.Index(e, "@"); j >= 0 {
+		exposed = strings.TrimSpace(e[:j])
+		upstream = exposed
+		pool = strings.TrimSpace(e[j+1:])
+	}
+	return exposed, upstream, pool
+}
+
+// resolvePassthrough matches a "provider-slug/exposed-model-id" request against
+// the providers' passthrough whitelists. Passthrough models bypass the exposed
+// model + route system and dispatch straight to one provider, so they get a
+// single synthetic candidate. Returns nil when the id is not a passthrough id.
+func (d *Dispatcher) resolvePassthrough(model string) (*Candidate, error) {
+	i := strings.Index(model, "/")
+	if i <= 0 {
+		return nil, nil
+	}
+	slug, exposedID := model[:i], model[i+1:]
+	var provider database.Provider
+	if err := d.req.DB.Where("slug = ?", slug).First(&provider).Error; err != nil {
+		return nil, nil
+	}
+	if !provider.PassthroughEnabled {
+		return nil, nil
+	}
+	var list []string
+	database.DecodeJSON(provider.PassthroughModels, &list)
+	for _, entry := range list {
+		exposed, upstream, pool := ParsePassthroughEntry(entry)
+		if exposed != exposedID {
+			continue
+		}
+		if !provider.Enabled {
+			return nil, fmt.Errorf("provider for %q is disabled", model)
+		}
+		if upstream == "" {
+			upstream = exposedID
+		}
+		return &Candidate{
+			Provider:      &provider,
+			Upstream:      passthroughUpstream(&provider, upstream, pool),
+			UpstreamModel: upstream,
+		}, nil
+	}
+	return nil, fmt.Errorf("model %q is not in this provider's passthrough list", model)
+}
+
+// passthroughUpstream builds the synthetic route-upstream a passthrough model
+// dispatches through, so the rest of the dispatch path (body rewriting, cooldown
+// bookkeeping) sees the same shape as a routed model.
+func passthroughUpstream(p *database.Provider, upstreamModel, pool string) *database.RouteUpstream {
+	id := p.ID
+	return &database.RouteUpstream{
+		ProviderID:    &id,
+		UpstreamModel: upstreamModel,
+		KeyPool:       pool,
+		Enabled:       true,
+		Weight:        1,
+	}
+}
+
 // resolve builds the ordered candidate list for the exposed model. Phase 1
 // honours group_position ordering, enabled flags, provider health ordering by
 // node-latency is deferred; cooldowns are checked against upstream_cooldowns.
 func (d *Dispatcher) resolve() error {
 	db := d.req.DB
+
+	// Resolution order matches resolvePublicModel in the handlers package: an
+	// exposed row *with a route* wins, so an admin's own model keeps its route;
+	// otherwise a passthrough whitelist match serves the request; otherwise the
+	// row (if any) is used and the missing route is reported.
 	var model database.ExposedModel
-	if err := db.Where("model_id = ? AND enabled = ?", d.req.ExposedModel, true).First(&model).Error; err != nil {
-		return fmt.Errorf("model not found: %w", err)
+	exposedErr := db.Where("model_id = ? AND enabled = ?", d.req.ExposedModel, true).First(&model).Error
+	routed := false
+	if exposedErr == nil {
+		var route database.Route
+		routed = db.Where("exposed_model_id = ?", model.ID).First(&route).Error == nil
+	}
+
+	if !routed {
+		// Passthrough ids (provider-slug/model) bypass the exposed-model + route
+		// system and dispatch to a single provider.
+		if cand, err := d.resolvePassthrough(d.req.ExposedModel); err != nil {
+			return err
+		} else if cand != nil {
+			now := time.Now().UTC()
+			keys, kerr := d.candidateKeys(cand.Provider, cand.Upstream.KeyPool, now)
+			if kerr != nil || len(keys) == 0 {
+				return fmt.Errorf("no usable key for model %q", d.req.ExposedModel)
+			}
+			d.seq = make([]Candidate, 0, len(keys))
+			for i := range keys {
+				d.seq = append(d.seq, Candidate{
+					Provider:      cand.Provider,
+					Upstream:      cand.Upstream,
+					Key:           &keys[i],
+					UpstreamModel: cand.UpstreamModel,
+				})
+			}
+			return nil
+		}
+	}
+
+	if exposedErr != nil {
+		return fmt.Errorf("model not found: %w", exposedErr)
 	}
 	var route database.Route
 	if err := db.Where("exposed_model_id = ?", model.ID).First(&route).Error; err != nil {

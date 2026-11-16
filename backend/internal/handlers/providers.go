@@ -151,6 +151,10 @@ func (a *App) providerCreate(c *gin.Context) {
 		SelectiveIgnoreRules:           database.JSONOf([]any{}),
 		NormalizeDeveloperRoleToSystem: true,
 		KeySelectMode:                  "round_robin", NewAPIMode: "auto",
+		// Record who created the provider: providerUpdate lets a non-staff
+		// editor in only when they own it, and the dashboard shows the name.
+		AddedBy:     &uv.User.ID,
+		AddedByName: services.BuildUserView(uv.User).Username,
 	}
 	// Adapter defaults.
 	adapter := providers.GetAdapter(&p)

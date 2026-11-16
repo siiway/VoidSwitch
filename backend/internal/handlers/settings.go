@@ -48,6 +48,15 @@ func keysOf(m map[string]any) []string {
 	return out
 }
 
+// nullableStr maps "" to a nil pointer, so an "absent" string column stores SQL
+// NULL rather than an empty string and the dashboard's `?? "—"` fallback fires.
+func nullableStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 func strPtr(s string) *string { return &s }
 
 // systemInfo returns version/commit/runtime info.

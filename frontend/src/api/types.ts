@@ -379,6 +379,8 @@ export interface RoleGroup {
   call_rate_limit_max_requests: number;
   mappings: RoleGroupMapping[];
   member_count: number;
+  // How many exposed models grant access through this group.
+  model_count: number;
   created_at: string;
   updated_at: string;
 }

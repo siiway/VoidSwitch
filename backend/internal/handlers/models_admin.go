@@ -363,15 +363,11 @@ func (a *App) passthroughDelete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// parsePassthroughExposed returns the caller-facing id of a passthrough entry,
+// delegating to the parser the dispatcher uses so both stay in agreement.
 func parsePassthroughExposed(entry string) string {
-	e := strings.TrimSpace(entry)
-	if i := strings.Index(e, "=>"); i >= 0 {
-		e = strings.TrimSpace(e[:i])
-	}
-	if i := strings.Index(e, "@"); i >= 0 {
-		e = strings.TrimSpace(e[:i])
-	}
-	return e
+	exposed, _, _ := services.ParsePassthroughEntry(entry)
+	return exposed
 }
 
 // ---- route ---------------------------------------------------------------
@@ -532,19 +528,11 @@ func (a *App) routeClearCooldown(c *gin.Context) {
 
 func (a *App) modelsDevSearch(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("q"))
-	var rows []database.ModelsDevCache
 	if q == "" {
 		c.JSON(http.StatusOK, gin.H{"results": []any{}})
 		return
 	}
-	a.GDB.Where("id ILIKE ?", "%"+q+"%").Limit(50).Find(&rows)
-	results := make([]gin.H, 0, len(rows))
-	for _, r := range rows {
-		var data map[string]any
-		database.DecodeJSON(r.Data, &data)
-		results = append(results, gin.H{"id": r.ID, "name": data["name"], "raw": data})
-	}
-	c.JSON(http.StatusOK, gin.H{"results": results})
+	c.JSON(http.StatusOK, gin.H{"results": services.SearchModelsDev(a.GDB, q, 100)})
 }
 
 func (a *App) modelsDevSync(c *gin.Context) {

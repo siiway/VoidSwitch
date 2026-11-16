@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -347,6 +348,88 @@ func (a *App) logsRequestDetail(c *gin.Context) {
 	v.DebugAttempts = jsonAny(r.DebugAttempts)
 	v.AttemptsSummary = jsonAny(r.AttemptsSummary)
 	c.JSON(http.StatusOK, v)
+}
+
+// logsRequestDownload serves one request log as a downloadable JSON document.
+// It reuses the detail view (and therefore the same visibility scope and
+// owner-only sensitive fields), then hands it to the browser as an attachment.
+func (a *App) logsRequestDownload(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var r database.RequestLog
+	if err := a.GDB.First(&r, id).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Request log not found.")
+		return
+	}
+	uv := core.GetUser(c)
+	if !a.requestLogVisible(uv, r.UserSub) {
+		a.fail(c, http.StatusNotFound, "Request log not found.")
+		return
+	}
+	userNames, tokenNames := a.enrichRequestLogs([]database.RequestLog{r})
+	v := requestLogDetailView{requestLogView: toRequestLogView(&r)}
+	if r.UserSub != nil {
+		if n, ok := userNames[*r.UserSub]; ok {
+			v.UserName = strPtr(n)
+		}
+	}
+	if r.TokenID != nil {
+		if n, ok := tokenNames[*r.TokenID]; ok {
+			v.TokenName = strPtr(n)
+		}
+	}
+	v.KeyID, v.ProxyID, v.ProxyURL = r.KeyID, r.ProxyID, r.ProxyURL
+	v.UpstreamURL, v.ReqMethod = r.UpstreamURL, r.ReqMethod
+	if uv.IsOwner() {
+		v.ReqHeaders, v.ReqBody = jsonAny(r.ReqHeaders), jsonAny(r.ReqBody)
+		v.RespHeaders, v.RespBody = jsonAny(r.RespHeaders), jsonAny(r.RespBody)
+	}
+	v.DebugAttempts = jsonAny(r.DebugAttempts)
+	v.AttemptsSummary = jsonAny(r.AttemptsSummary)
+
+	// The export must not leak credentials or egress addresses. Owners get the
+	// bodies; everyone else gets metadata only.
+	payload := downloadSafe(toPlainMap(v), uv.IsOwner(), a.exportSecrets(&r))
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="voidswitch-request-%d.json"`, r.ID))
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, payload)
+}
+
+// exportSecrets collects the values a request-log export must scrub anywhere
+// they appear: the proxy's credentials/address (including inside error text) and
+// the provider key placeholder.
+func (a *App) exportSecrets(r *database.RequestLog) map[string]string {
+	secrets := map[string]string{}
+	if r.ProxyURL != nil && *r.ProxyURL != "" {
+		secrets[*r.ProxyURL] = "<REDACTED:proxy>"
+		if parsed, err := url.Parse(*r.ProxyURL); err == nil && parsed.Host != "" {
+			secrets[parsed.Host] = "<REDACTED:proxy>"
+		}
+	}
+	if r.ProxyID != nil {
+		var node database.Node
+		if err := a.GDB.First(&node, *r.ProxyID).Error; err == nil && node.URL != "" {
+			secrets[node.URL] = "<REDACTED:local-address>"
+			if parsed, err := url.Parse(node.URL); err == nil && parsed.Host != "" {
+				secrets[parsed.Host] = "<REDACTED:local-address>"
+			}
+		}
+	}
+	return secrets
+}
+
+// toPlainMap round-trips the view through JSON so downloadSafe sees the same
+// generic shape the client will (plain maps/slices, no struct tags or pointers).
+func toPlainMap(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return map[string]any{}
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
 }
 
 func (a *App) logsRequestFilters(c *gin.Context) {
@@ -743,6 +826,7 @@ func RegisterLogRoutes(authed *gin.RouterGroup, a *App) {
 	r.GET("/locate", a.logsRequestLocate)
 	r.GET("/stream", a.logsRequestStream)
 	r.GET("/:id", a.logsRequestDetail)
+	r.GET("/:id/download", a.logsRequestDownload)
 
 	// Audit logs — any authenticated user, scoped by tier (member: own actor/target;
 	// role-group admin: their groups' members/groups; staff: all). The handlers

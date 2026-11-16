@@ -47,24 +47,131 @@ func (a *App) gatewayAuth(c *gin.Context) (*database.VoidToken, *database.User, 
 	return &token, &user, true
 }
 
-// gatewayModels returns the OpenAI-compatible model list.
+// visiblePassthroughIDs lists the passthrough model ids a caller may actually
+// call: enabled providers whose passthrough is on, ids permitted by the token's
+// allow-list, and ids the caller's role groups may reach. A passthrough id keeps
+// its access control on an exposed-model row of the same id (created when an
+// admin sets role groups on the model card); without one it is staff-only,
+// matching a regular model with no groups selected.
+func (a *App) visiblePassthroughIDs(token *database.VoidToken, uv *core.UserView) []string {
+	var providers []database.Provider
+	a.GDB.Where("enabled = ? AND passthrough_enabled = ?", true, true).Order("slug").Find(&providers)
+	if len(providers) == 0 {
+		return nil
+	}
+
+	// One query for the access rows of every candidate id keeps this off N+1.
+	candidates := make([]string, 0, len(providers))
+	perProvider := make([][]string, len(providers))
+	for pi := range providers {
+		p := &providers[pi]
+		var list []string
+		database.DecodeJSON(p.PassthroughModels, &list)
+		for _, entry := range list {
+			exposed, _, _ := services.ParsePassthroughEntry(entry)
+			if exposed == "" {
+				continue
+			}
+			id := p.Slug + "/" + exposed
+			if !modelAllowedForToken(token, id) {
+				continue
+			}
+			perProvider[pi] = append(perProvider[pi], id)
+			candidates = append(candidates, id)
+		}
+	}
+
+	groupsByID := make(map[string][]int, len(candidates))
+	rowIDByModel := make(map[string]int, len(candidates))
+	routedIDs := make(map[int]bool, len(candidates))
+	if len(candidates) > 0 {
+		var rows []database.ExposedModel
+		a.GDB.Select("id", "model_id", "allowed_role_group_ids").
+			Where("model_id IN ?", candidates).Find(&rows)
+		if len(rows) > 0 {
+			ids := make([]int, 0, len(rows))
+			for i := range rows {
+				var groups []int
+				database.DecodeJSON(rows[i].AllowedRoleGroupIDs, &groups)
+				groupsByID[rows[i].ModelID] = groups
+				rowIDByModel[rows[i].ModelID] = rows[i].ID
+				ids = append(ids, rows[i].ID)
+			}
+			// An id that owns a route is an ordinary model: it is already listed
+			// from the exposed catalog, so listing it here too would double it in
+			// /v1/models/sync's count.
+			var routeRows []database.Route
+			a.GDB.Select("exposed_model_id").Where("exposed_model_id IN ?", ids).Find(&routeRows)
+			for i := range routeRows {
+				routedIDs[routeRows[i].ExposedModelID] = true
+			}
+		}
+	}
+
+	isStaff := uv.IsStaff()
+	out := []string{}
+	for pi := range perProvider {
+		for _, id := range perProvider[pi] {
+			if routedIDs[rowIDByModel[id]] {
+				continue
+			}
+			if passthroughAllowedForGroups(groupsByID[id], uv.GroupIDs, isStaff) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+// gatewayModels returns the OpenAI-compatible model list: every model the
+// presenting token may actually call. That is the enabled exposed models plus
+// the enabled providers' passthrough whitelists, each filtered by the token
+// allow-list and (for non-staff) role-group access — the same gates a real call
+// passes, so the list never advertises an id that would be rejected.
 func (a *App) gatewayModels(c *gin.Context) {
+	token, user, ok := a.gatewayAuth(c)
+	if !ok {
+		return
+	}
+	uv := a.gatewayUserView(user)
+
 	models, refs, err := a.loadModelsWithUpstreams()
 	if err != nil {
 		a.internal(c, err)
 		return
 	}
 	data := make([]gin.H, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	add := func(id string, created int64) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		data = append(data, gin.H{
+			"id": id, "object": "model", "created": created, "owned_by": "voidswitch",
+		})
+	}
 	for i := range models {
 		m := &models[i]
 		if !m.Enabled || len(refs[m.ID]) == 0 {
 			continue
 		}
-		data = append(data, gin.H{
-			"id": m.ModelID, "object": "model", "created": m.CreatedAt.Unix(),
-			"owned_by": "voidswitch",
-		})
+		if !modelAllowedForToken(token, m.ModelID) {
+			continue
+		}
+		if !uv.IsStaff() && !services.ModelAllowedForGroups(m, uv.GroupIDs, false) {
+			continue
+		}
+		add(m.ModelID, m.CreatedAt.Unix())
 	}
+
+	// Passthrough models are callable as "<provider-slug>/<exposed-id>" but have
+	// no exposed-model row of their own route, so they are enumerated from the
+	// providers and gated exactly like a regular model.
+	for _, id := range a.visiblePassthroughIDs(token, uv) {
+		add(id, 0)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data})
 }
 
@@ -232,6 +339,9 @@ func (a *App) modelsSync(c *gin.Context) {
 		}
 		count++
 	}
+	// Passthrough models are callable too, so the sync count must include them;
+	// otherwise the picker reports fewer models than /v1/models lists.
+	count += len(a.visiblePassthroughIDs(token, uv))
 	c.JSON(http.StatusOK, gin.H{
 		"added":                  0,
 		"total":                  count,

@@ -49,7 +49,7 @@ func (a *App) checkGatewayAccess(c *gin.Context, uv *core.UserView, token *datab
 	}
 
 	// 4. resolve the public model to an exposed-model row (or a passthrough id).
-	entry, exposedID, err := a.resolvePublicModel(model)
+	entry, pt, exposedID, err := a.resolvePublicModel(model)
 	if err != nil {
 		return &gatewayAccessError{404, err.Error()}, ""
 	}
@@ -57,10 +57,17 @@ func (a *App) checkGatewayAccess(c *gin.Context, uv *core.UserView, token *datab
 		return &gatewayAccessError{404, fmt.Sprintf("Model '%s' is not available under this id.", model)}, ""
 	}
 
-	// 5. role-group model access (moderators always allowed).
+	// 5. role-group model access (moderators always allowed). Passthrough models
+	// carry their allow-list on the provider instead of an exposed-model row.
 	isMod := uv.IsStaff()
 	if !isMod {
-		if entry == nil || !services.ModelAllowedForGroups(entry, uv.GroupIDs, false) {
+		allowed := false
+		if entry != nil {
+			allowed = services.ModelAllowedForGroups(entry, uv.GroupIDs, false)
+		} else if pt != nil {
+			allowed = passthroughAllowedForGroups(pt.roleGroups, uv.GroupIDs, false)
+		}
+		if !allowed {
 			return &gatewayAccessError{403, fmt.Sprintf("Model '%s' is not available to your role group.", model)}, ""
 		}
 	}
@@ -118,30 +125,95 @@ func modelAllowedForToken(token *database.VoidToken, model string) bool {
 	return false
 }
 
+// passthroughModel describes a matched passthrough id: the provider whose
+// whitelist granted it, plus that provider's role-group allow-list.
+type passthroughModel struct {
+	provider   *database.Provider
+	roleGroups []int
+}
+
 // resolvePublicModel maps a public model id to its exposed-model row. Passthrough
 // ids ("slug/exposed") are validated against the provider's whitelist and return
-// (nil, id, nil) — routed separately. Returns an error for unknown/disabled ids.
-func (a *App) resolvePublicModel(model string) (*database.ExposedModel, string, error) {
-	if i := indexSlash(model); i >= 0 {
-		slug, exposed := model[:i], model[i+1:]
-		var p database.Provider
-		if err := a.GDB.Where("slug = ?", slug).First(&p).Error; err == nil &&
-			p.Enabled && p.PassthroughEnabled {
-			var list []string
-			database.DecodeJSON(p.PassthroughModels, &list)
-			for _, e := range list {
-				if parsePassthroughExposed(e) == exposed {
-					return nil, model, nil
-				}
-			}
-			return nil, "", fmt.Errorf("Model '%s' is not in this provider's passthrough list.", model)
+// (nil, passthrough, id, nil) — routed separately. Returns an error for
+// unknown/disabled ids.
+//
+// Resolution order matters. A model card can create an exposed row for any id,
+// including a "slug/model" one, and that row is where the model's role groups
+// live. But such a row may have no route (it is still served by a passthrough
+// whitelist), so a row alone does not mean "routed":
+//
+//  1. an exposed row *with a route* wins — an admin's own model keeps its route;
+//  2. otherwise a passthrough whitelist match wins, carrying the row's role
+//     groups when the row exists;
+//  3. otherwise the exposed row is returned and the dispatcher reports the
+//     missing route.
+func (a *App) resolvePublicModel(model string) (*database.ExposedModel, *passthroughModel, string, error) {
+	var row database.ExposedModel
+	rowErr := a.GDB.Where("model_id = ?", model).First(&row).Error
+	if rowErr == nil {
+		var route database.Route
+		if err := a.GDB.Where("exposed_model_id = ?", row.ID).First(&route).Error; err == nil {
+			return &row, nil, row.ModelID, nil
 		}
 	}
-	var m database.ExposedModel
-	if err := a.GDB.Where("model_id = ?", model).First(&m).Error; err != nil {
-		return nil, "", fmt.Errorf("Model '%s' is not available under this id.", model)
+
+	pt := a.matchPassthrough(model)
+	if pt != nil {
+		if rowErr == nil {
+			database.DecodeJSON(row.AllowedRoleGroupIDs, &pt.roleGroups)
+		}
+		return nil, pt, model, nil
 	}
-	return &m, m.ModelID, nil
+	if rowErr == nil {
+		return &row, nil, row.ModelID, nil
+	}
+	return nil, nil, "", fmt.Errorf("Model '%s' is not available under this id.", model)
+}
+
+// matchPassthrough returns the provider whose whitelist grants a "slug/model"
+// id, or nil when the id is not a passthrough id.
+func (a *App) matchPassthrough(model string) *passthroughModel {
+	i := indexSlash(model)
+	if i <= 0 {
+		return nil
+	}
+	slug, exposed := model[:i], model[i+1:]
+	var p database.Provider
+	if err := a.GDB.Where("slug = ?", slug).First(&p).Error; err != nil {
+		return nil
+	}
+	if !p.Enabled || !p.PassthroughEnabled {
+		return nil
+	}
+	var list []string
+	database.DecodeJSON(p.PassthroughModels, &list)
+	for _, e := range list {
+		if parsePassthroughExposed(e) == exposed {
+			return &passthroughModel{provider: &p}
+		}
+	}
+	return nil
+}
+
+// passthroughAllowedForGroups applies the same rule as a regular model: staff
+// always pass; a model with no role groups selected is staff-only.
+func passthroughAllowedForGroups(roleGroups []int, groupIDs []int, isStaff bool) bool {
+	if isStaff {
+		return true
+	}
+	if len(roleGroups) == 0 {
+		return false
+	}
+	member := make(map[int]bool, len(groupIDs))
+	for _, id := range groupIDs {
+		member[id] = true
+	}
+	for _, id := range roleGroups {
+		if member[id] {
+			return true
+		}
+	}
+	return false
 }
 
 func indexSlash(s string) int {
