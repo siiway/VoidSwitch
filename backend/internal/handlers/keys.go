@@ -274,6 +274,19 @@ func (a *App) keysReveal(c *gin.Context) {
 		a.fail(c, http.StatusBadRequest, "Stored credential could not be decrypted (secret key changed?).")
 		return
 	}
+	// Every plaintext reveal is recorded: docs/admin/keys.md promises it, and an
+	// unrecorded reveal defeats the point of storing the credential encrypted.
+	uv := core.GetUser(c)
+	sub := uv.User.Sub
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "key.reveal", ActorSub: &sub, ActorName: servicesName(uv),
+		Scope: core.AuditScopeAdmin, TargetType: strPtr("provider"),
+		TargetID: strPtr(strconv.Itoa(pid)),
+		Detail: map[string]any{
+			"key_id": kid, "key_preview": k.KeyPreview, "key_pool": k.Pool,
+		},
+		IP: strPtr(clientIP(c)),
+	})
 	c.JSON(http.StatusOK, gin.H{"preview": k.KeyPreview, "key": raw})
 }
 

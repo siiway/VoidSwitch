@@ -160,6 +160,10 @@ func buildRouter(app *handlers.App, cfg *config.Settings) *gin.Engine {
 		// member-visible (own traffic), audit logs are staff-or-role-group-admin.
 		// The handlers enforce the row-level scope. See docs/architecture.md.
 		handlers.RegisterLogRoutes(authed.Group("/admin"), app)
+		// Same reasoning: the role-group-admin tier needs its scoped dashboard,
+		// group member list and narrowed user list, which the staff gate below
+		// would reject before the handler's own scope check could run.
+		handlers.RegisterRoleGroupScopedRoutes(authed.Group("/admin"), app)
 		handlers.RegisterHealthRoutes(authed, app)
 
 		admin := authed.Group("/admin")

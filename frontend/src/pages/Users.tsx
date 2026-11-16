@@ -30,6 +30,7 @@ import {
   DataTable,
   ErrorText,
   Loading,
+  MultiSelectFilter,
   PageHeader,
   UserHandle,
   formatDate,
@@ -41,10 +42,6 @@ const ASSIGNABLE_ROLES: Role[] = ["admin", "member"];
 // Owner tier reused from the shared role constants (see src/auth/constants.ts).
 const OWNER_TIER = OWNER_ROLES;
 const ROLE_RANK: Record<Role, number> = { member: 1, admin: 2, "co-owner": 3, owner: 3 };
-
-// "All my groups" sentinel for the group filter dropdown. Not a real group id,
-// but a stable value the Dropdown can key on.
-const ALL_GROUPS = "__all__";
 
 export function Users() {
   const { t } = useTranslation();
@@ -60,12 +57,12 @@ export function Users() {
   } = useAuth();
   const users = useAsync<User[]>(() => api.get("/api/admin/users"));
   const [userSearch, setUserSearch] = useState("");
-  const [userFilterRole, setUserFilterRole] = useState("");
+  const [userFilterRoles, setUserFilterRoles] = useState<Set<string>>(new Set());
   const [userFilterStatus, setUserFilterStatus] = useState("");
   // Group filter for the role-group-admin view. Ignored when the caller is
   // staff (they see everyone, no group scoping happens on the frontend). See
   // CONTEXT.md § "Role groups" for the model.
-  const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS);
+  const [groupFilters, setGroupFilters] = useState<Set<string>>(new Set());
 
   const filteredUsers = useMemo(() => {
     if (!users.data) return [];
@@ -81,33 +78,31 @@ export function Users() {
           String(u.id).includes(s),
       );
     }
-    if (userFilterRole) {
-      result = result.filter((u) => u.role === userFilterRole);
+    if (userFilterRoles.size > 0) {
+      result = result.filter((u) => userFilterRoles.has(u.role));
     }
-    if (userFilterStatus === "enabled") {
-      result = result.filter((u) => u.enabled);
-    } else if (userFilterStatus === "disabled") {
-      result = result.filter((u) => !u.enabled);
+    if (userFilterStatus) {
+      result = result.filter((u) =>
+        userFilterStatus === "enabled" ? u.enabled : !u.enabled,
+      );
     }
     // Client-side "narrow to one of my groups" filter for role-group admins.
     // The backend already scopes to the union of managed groups; the dropdown
     // simply lets an admin zoom into one group at a time.
-    if (isRoleGroupAdmin && groupFilter !== ALL_GROUPS) {
-      const gid = Number(groupFilter);
-      if (!Number.isNaN(gid)) {
-        result = result.filter((u) =>
-          (u.visible_via_group_ids ?? []).includes(gid),
-        );
-      }
+    if (isRoleGroupAdmin && groupFilters.size > 0) {
+      const ids = [...groupFilters].map(Number).filter((n) => !Number.isNaN(n));
+      result = result.filter((u) =>
+        (u.visible_via_group_ids ?? []).some((gid) => ids.includes(gid)),
+      );
     }
     return result;
   }, [
     users.data,
     userSearch,
-    userFilterRole,
+    userFilterRoles,
     userFilterStatus,
     isRoleGroupAdmin,
-    groupFilter,
+    groupFilters,
   ]);
 
   const allRoles = useMemo(() => {
@@ -207,22 +202,23 @@ export function Users() {
               onChange={(_, d) => setUserSearch(d.value)}
             />
             {showRoleColumn && (
-              <Dropdown
-                style={{ minWidth: 130 }}
+              <MultiSelectFilter
+                ariaLabel={t("users.userFilterAllRoles" as TK)}
                 placeholder={t("users.userFilterAllRoles" as TK)}
-                value={userFilterRole ? userFilterRole : t("users.userFilterAllRoles" as TK)}
-                selectedOptions={userFilterRole ? [userFilterRole] : []}
-                onOptionSelect={(_, d) => setUserFilterRole(d.optionValue ?? "")}
-              >
-                {allRoles.map((role) => (
-                  <Option key={role} value={role} text={role}>
-                    {role}
-                  </Option>
-                ))}
-              </Dropdown>
+                clearLabel={t("common.clearSelection" as TK)}
+                options={allRoles.map((role) => ({
+                  value: role,
+                  label: role,
+                }))}
+                selected={userFilterRoles}
+                onChange={setUserFilterRoles}
+                minWidth={130}
+              />
             )}
             <Dropdown
+              aria-label={t("users.userFilterAllStatus" as TK)}
               style={{ minWidth: 130 }}
+              clearable
               placeholder={t("users.userFilterAllStatus" as TK)}
               value={
                 userFilterStatus === "enabled"
@@ -232,7 +228,9 @@ export function Users() {
                     : t("users.userFilterAllStatus" as TK)
               }
               selectedOptions={userFilterStatus ? [userFilterStatus] : []}
-              onOptionSelect={(_, d) => setUserFilterStatus(d.optionValue ?? "")}
+              onOptionSelect={(_, d) =>
+                setUserFilterStatus(d.optionValue ?? "")
+              }
             >
               <Option value="enabled" text={t("users.userFilterEnabled" as TK)}>
                 {t("users.userFilterEnabled" as TK)}
@@ -245,27 +243,18 @@ export function Users() {
               // Only surface the "narrow to one group" dropdown when there's
               // more than one group to choose from — a single-group admin's
               // view is already unambiguous.
-              <Dropdown
-                style={{ minWidth: 160 }}
-                value={
-                  groupFilter === ALL_GROUPS
-                    ? t("users.groupFilterAll" as TK)
-                    : managedGroupNames[
-                        managedGroupIds.indexOf(Number(groupFilter))
-                      ] ?? String(groupFilter)
-                }
-                selectedOptions={[groupFilter]}
-                onOptionSelect={(_, d) => setGroupFilter(d.optionValue ?? ALL_GROUPS)}
-              >
-                <Option value={ALL_GROUPS} text={t("users.groupFilterAll" as TK)}>
-                  {t("users.groupFilterAll" as TK)}
-                </Option>
-                {managedGroupIds.map((gid, idx) => (
-                  <Option key={gid} value={String(gid)} text={managedGroupNames[idx] ?? String(gid)}>
-                    {managedGroupNames[idx] ?? String(gid)}
-                  </Option>
-                ))}
-              </Dropdown>
+              <MultiSelectFilter
+                ariaLabel={t("users.groupFilterAll" as TK)}
+                placeholder={t("users.groupFilterAll" as TK)}
+                clearLabel={t("common.clearSelection" as TK)}
+                options={managedGroupIds.map((gid, idx) => ({
+                  value: String(gid),
+                  label: managedGroupNames[idx] ?? String(gid),
+                }))}
+                selected={groupFilters}
+                onChange={setGroupFilters}
+                minWidth={160}
+              />
             )}
           </div>
           <DataTable ariaLabel={t("users.title" as TK)}>

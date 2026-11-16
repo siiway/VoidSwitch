@@ -156,7 +156,14 @@ func (a *App) modelsUpsert(c *gin.Context) {
 		}
 	}
 	if in.CategoryID != nil {
-		m.CategoryID = in.CategoryID
+		// 0 means "no category", the same encoding the batch editor uses. Nil
+		// stays "unchanged" because a JSON null is indistinguishable from an
+		// omitted field here.
+		if *in.CategoryID <= 0 {
+			m.CategoryID = nil
+		} else {
+			m.CategoryID = in.CategoryID
+		}
 	}
 	if created {
 		if err := a.GDB.Create(&m).Error; err != nil {
@@ -309,8 +316,39 @@ func (a *App) modelsBatch(c *gin.Context) {
 		}
 		updated++
 	}
+	changes := map[string]any{}
+	if in.DisplayName != nil {
+		changes["display_name"] = *in.DisplayName
+	}
+	if in.Description != nil {
+		changes["description"] = *in.Description
+	}
+	if in.Enabled != nil {
+		changes["enabled"] = *in.Enabled
+	}
+	if in.CategoryID != nil {
+		changes["category_id"] = *in.CategoryID
+	}
+	if in.Reasoning != nil {
+		changes["reasoning"] = *in.Reasoning
+	}
+	if len(in.Capabilities) > 0 {
+		changes["capabilities"] = true
+	}
+	if len(in.Modalities) > 0 {
+		changes["modalities"] = true
+	}
+	if len(in.OpenCodeConfig) > 0 {
+		changes["opencode_config"] = in.ConfigMode
+	}
+	if in.AllowedRoleGroupIDs != nil {
+		changes["allowed_role_group_ids"] = groupIDs
+	}
+	if in.LimitContext != nil || in.LimitInput != nil || in.LimitOutput != nil {
+		changes["limits"] = true
+	}
 	a.auditModel(c, "model.batch_update", "model", nil, map[string]any{
-		"model_ids": in.ModelIDs,
+		"model_ids": in.ModelIDs, "changes": changes,
 	})
 	c.JSON(http.StatusOK, gin.H{"updated": updated})
 }
@@ -355,6 +393,10 @@ func (a *App) modelMetadataWithUser(modelID string, uv *core.UserView) (*databas
 	return &m, true, nil
 }
 
+// mergeJSON deep-merges patch into base: nested objects combine recursively,
+// lists and scalars replace. Only merging one level left a nested block such as
+// limit or provider options silently overwritten wholesale, which is not what
+// the batch dialog's "merge" offers.
 func mergeJSON(base, patch database.JSON) database.JSON {
 	var b, p map[string]any
 	_ = json.Unmarshal(base, &b)
@@ -362,19 +404,24 @@ func mergeJSON(base, patch database.JSON) database.JSON {
 	if b == nil {
 		b = map[string]any{}
 	}
-	for k, v := range p {
-		if bv, ok := b[k].(map[string]any); ok {
+	return database.JSONOf(deepMergeMaps(b, p))
+}
+
+func deepMergeMaps(base, override map[string]any) map[string]any {
+	out := make(map[string]any, len(base)+len(override))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range override {
+		if bv, ok := out[k].(map[string]any); ok {
 			if pv, ok := v.(map[string]any); ok {
-				for kk, vv := range pv {
-					bv[kk] = vv
-				}
-				b[k] = bv
+				out[k] = deepMergeMaps(bv, pv)
 				continue
 			}
 		}
-		b[k] = v
+		out[k] = v
 	}
-	return database.JSONOf(b)
+	return out
 }
 
 // modelsBatchDelete deletes models by public id. An id may be a metadata row, a
@@ -414,6 +461,9 @@ func (a *App) modelsBatchDelete(c *gin.Context) {
 		a.internal(c, res.Error)
 		return
 	}
+	// A passthrough id whose whitelist entry was removed is a deleted model even
+	// though it never had a metadata row — reporting only RowsAffected told the
+	// operator "0 model(s) deleted" after a successful passthrough removal.
 	removed := removedIDs(ordered, existing, removedEntries)
 	if len(removed) > 0 {
 		a.auditModel(c, "model.delete", "model", nil,
@@ -506,25 +556,29 @@ func (a *App) modelsClean(c *gin.Context) {
 		a.internal(c, err)
 		return
 	}
-	var models []database.ExposedModel
-	a.GDB.Find(&models)
+	// "Unserved" is decided by the same helper the catalog uses, so the cleanup
+	// removes exactly the models flagged unserved in the UI: a route whose
+	// upstreams are all disabled, or whose providers are all disabled, serves
+	// nothing.
+	models, refs, err := a.loadModelsWithUpstreams()
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
 	removed := []string{}
-	for _, m := range models {
+	for i := range models {
+		m := &models[i]
 		if passthroughIDs[m.ModelID] {
 			continue
 		}
-		var route database.Route
-		if err := a.GDB.Where("exposed_model_id = ?", m.ID).First(&route).Error; err != nil {
-			removed = append(removed, m.ModelID)
-			a.GDB.Delete(&m)
+		if len(refs[m.ID]) > 0 {
 			continue
 		}
-		var count int64
-		a.GDB.Model(&database.RouteUpstream{}).Where("route_id = ? AND enabled = ?", route.ID, true).Count(&count)
-		if count == 0 {
-			removed = append(removed, m.ModelID)
-			a.GDB.Delete(&m)
+		if err := a.GDB.Delete(m).Error; err != nil {
+			a.internal(c, err)
+			return
 		}
+		removed = append(removed, m.ModelID)
 	}
 	if len(removed) > 0 {
 		a.auditModel(c, "model.clean_unserved", "model", nil,
@@ -767,7 +821,22 @@ func (a *App) modelRouteGet(c *gin.Context) {
 	rerr := a.GDB.Where("exposed_model_id = ?", m.ID).First(&route).Error
 	out := gin.H{
 		"id": m.ID, "model_id": m.ModelID, "display_name": m.DisplayName,
-		"enabled": m.Enabled, "route": nil,
+		"enabled": m.Enabled, "route": nil, "health": nil,
+	}
+	// The route editor shows each upstream's recent health next to its row, so it
+	// needs the same summary the catalog carries.
+	since := time.Now().UTC().Add(-24 * time.Hour)
+	recentCount := recentHealthSamples()
+	upstreamsHealth := a.modelUpstreamHealth(m.ModelID, since, recentCount)
+	if idx := a.modelHealthIndex(time.Now().UTC()); idx[m.ModelID] != nil {
+		h := idx[m.ModelID]
+		h["upstreams"] = upstreamsHealth
+		out["health"] = h
+	} else if len(upstreamsHealth) > 0 {
+		out["health"] = gin.H{
+			"model_id": m.ModelID, "status": "learning", "upstreams": upstreamsHealth,
+			"recent_request_count": 0, "sufficient_data": false,
+		}
 	}
 	if rerr == nil {
 		var ups []database.RouteUpstream
@@ -894,29 +963,67 @@ func (a *App) modelRoutePut(c *gin.Context) {
 	a.modelRouteGet(c)
 }
 
+// routeClearCooldown releases an upstream's cooldown. The row is expired rather
+// than deleted and its consecutive-trip counter reset, matching the Python
+// backend: deleting the row would also erase the history the backoff uses to
+// decide whether a persistently failing upstream should stay cooled.
 func (a *App) routeClearCooldown(c *gin.Context) {
+	modelID := c.Param("id")
 	upstreamID, _ := strconv.Atoi(c.Param("upstreamId"))
-	var u database.RouteUpstream
-	if err := a.GDB.First(&u, upstreamID).Error; err != nil {
-		a.fail(c, http.StatusNotFound, "Upstream not found.")
+	var m database.ExposedModel
+	if err := a.GDB.Where("model_id = ?", modelID).First(&m).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Model not found.")
 		return
 	}
-	if u.ProviderID != nil {
-		a.GDB.Where("provider_id = ? AND upstream_model = ? AND key_pool = ?",
-			*u.ProviderID, u.UpstreamModel, u.KeyPool).Delete(&database.UpstreamCooldown{})
+	var route database.Route
+	if err := a.GDB.Where("exposed_model_id = ?", m.ID).First(&route).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Route not found.")
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	var u database.RouteUpstream
+	if err := a.GDB.Where("id = ? AND route_id = ?", upstreamID, route.ID).First(&u).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Route upstream not found.")
+		return
+	}
+	if u.ProviderID == nil {
+		a.fail(c, http.StatusNotFound, "Route upstream not found.")
+		return
+	}
+	if err := a.GDB.Model(&database.UpstreamCooldown{}).
+		Where("provider_id = ? AND upstream_model = ? AND key_pool = ?",
+			*u.ProviderID, u.UpstreamModel, u.KeyPool).
+		Updates(map[string]any{"until": time.Now().UTC(), "consecutive_trips": 0}).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	tid := strconv.Itoa(u.ID)
+	a.auditModel(c, "upstream.cooldown.clear", "upstream", &tid, map[string]any{
+		"model_id": modelID, "provider_id": *u.ProviderID,
+		"upstream_model": u.UpstreamModel, "key_pool": u.KeyPool,
+	})
+	c.Status(http.StatusNoContent)
 }
 
 // ---- models.dev -----------------------------------------------------------
 
+// modelsDevSyncEnabled reports whether the models.dev catalogue is configured to
+// sync. An interval of 0 (or less) disables it, and a disabled catalogue must
+// answer with an empty result set rather than stale rows.
+func modelsDevSyncEnabled() bool {
+	return services.GetInt("models_dev_sync_interval_minutes", 1440) > 0
+}
+
 func (a *App) modelsDevSearch(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("q"))
-	if q == "" {
-		c.JSON(http.StatusOK, gin.H{"results": []any{}})
+	synced := modelsDevSyncEnabled()
+	if q == "" || !synced {
+		c.JSON(http.StatusOK, gin.H{"results": []any{}, "synced": synced})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"results": services.SearchModelsDev(a.GDB, q, 100)})
+	c.JSON(http.StatusOK, gin.H{
+		"results": services.SearchModelsDev(a.GDB, q, 100),
+		"synced":  synced,
+	})
 }
 
 func (a *App) modelsDevSync(c *gin.Context) {
@@ -925,30 +1032,39 @@ func (a *App) modelsDevSync(c *gin.Context) {
 		a.fail(c, http.StatusBadGateway, err.Error())
 		return
 	}
+	a.auditModel(c, "model.sync", "models_dev", nil, map[string]any{"synced": n})
 	c.JSON(http.StatusOK, gin.H{"synced": n})
 }
 
-// RegisterModelAdminRoutes wires the models write surface under /api/models.
+// registerModelRoutesImpl wires the models surface under /api/models.
+//
+// Reads are member-visible (the Models page is browsable), writes are staff-only,
+// and clearing an upstream cooldown is owner-only. Python enforced exactly this
+// split with require_staff / require_owner on every mutating endpoint; leaving
+// the whole group on RequireUser let any signed-in member delete models, rewrite
+// routes and disable a provider's passthrough.
 func registerModelRoutesImpl(r *gin.RouterGroup, a *App) {
 	g := r.Group("/models", core.RequireUser())
 	g.GET("", a.modelsList)
-	g.PUT("", a.modelsUpsert)
-	g.POST("/batch", a.modelsBatch)
-	g.POST("/batch-delete", a.modelsBatchDelete)
-	g.POST("/clean", a.modelsClean)
 	g.GET("/categories", a.categoriesList)
-	g.POST("/categories", a.categoriesCreate)
-	g.PATCH("/categories/:id", a.categoriesUpdate)
-	g.DELETE("/categories/:id", a.categoriesDelete)
-	g.DELETE("/provider-groups/:slug", a.providerGroupDelete)
+	g.GET("/:id/route", core.RequireStaff(), a.modelRouteGet)
+
+	w := g.Group("", core.RequireStaff())
+	w.PUT("", a.modelsUpsert)
+	w.POST("/batch", a.modelsBatch)
+	w.POST("/batch-delete", a.modelsBatchDelete)
+	w.POST("/clean", a.modelsClean)
+	w.POST("/categories", a.categoriesCreate)
+	w.PATCH("/categories/:id", a.categoriesUpdate)
+	w.DELETE("/categories/:id", a.categoriesDelete)
+	w.DELETE("/provider-groups/:slug", a.providerGroupDelete)
 	// A passthrough exposed id may itself contain slashes
 	// ("openrouter/stealth/space-bunny-alpha"), so the wildcard is required:
 	// with a single-segment param Gin returns 404 for those ids.
-	g.DELETE("/passthrough/:slug/*exposed", a.passthroughDelete)
-	g.GET("/models-dev/search", a.modelsDevSearch)
-	g.POST("/models-dev/sync", a.modelsDevSync)
-	g.GET("/:id/route", a.modelRouteGet)
-	g.PUT("/:id/route", a.modelRoutePut)
-	g.POST("/:id/route/upstreams/:upstreamId/clear-cooldown", a.routeClearCooldown)
-	g.DELETE("/:id", a.modelDelete)
+	w.DELETE("/passthrough/:slug/*exposed", a.passthroughDelete)
+	w.GET("/models-dev/search", a.modelsDevSearch)
+	w.POST("/models-dev/sync", a.modelsDevSync)
+	w.PUT("/:id/route", a.modelRoutePut)
+	w.POST("/:id/route/upstreams/:upstreamId/clear-cooldown", core.RequireOwner(), a.routeClearCooldown)
+	w.DELETE("/:id", a.modelDelete)
 }

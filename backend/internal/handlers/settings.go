@@ -2,12 +2,10 @@ package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/siiway/voidswitch/internal/core"
-	"github.com/siiway/voidswitch/internal/database"
 	"github.com/siiway/voidswitch/internal/services"
 	"github.com/siiway/voidswitch/internal/services/providers"
 )
@@ -92,38 +90,24 @@ func RegisterSettingsRoutes(admin *gin.RouterGroup, a *App) {
 // settingsCleanLogs prunes old request/audit logs and strips debug bodies that
 // exceed the debug retention window. Owner-only per permission policy.
 func (a *App) settingsCleanLogs(c *gin.Context) {
-	now := time.Now().UTC()
-	var reqDel, auditDel, debugStripped int64
-
-	reqDays := services.GetInt("request_log_retention_days", 0)
-	if reqDays > 0 {
-		cutoff := now.AddDate(0, 0, -reqDays)
-		res := a.GDB.Where("ts < ?", cutoff).Delete(&database.RequestLog{})
-		reqDel = res.RowsAffected
-	}
-	auditDays := services.GetInt("audit_log_retention_days", 0)
-	if auditDays > 0 {
-		cutoff := now.AddDate(0, 0, -auditDays)
-		res := a.GDB.Where("ts < ?", cutoff).Delete(&database.AuditLog{})
-		auditDel = res.RowsAffected
-	}
-	debugDays := services.GetInt("debug_log_retention_days", 0)
-	if debugDays > 0 {
-		cutoff := now.AddDate(0, 0, -debugDays)
-		res := a.GDB.Model(&database.RequestLog{}).
-			Where("debug = ? AND ts < ?", true, cutoff).
-			Updates(map[string]any{
-				"debug": false, "req_headers": nil, "req_body": nil, "resp_headers": nil,
-				"resp_body": nil, "debug_attempts": nil,
-			})
-		debugStripped = res.RowsAffected
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"deleted_request_logs": reqDel,
-		"deleted_audit_logs":   auditDel,
-		"stripped_debug_logs":  debugStripped,
+	res := services.CleanupLogs(a.GDB)
+	uv := core.GetUser(c)
+	sub := uv.User.Sub
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "logs.cleanup", ActorSub: &sub, ActorName: servicesName(uv),
+		Scope: core.AuditScopeAdmin, TargetType: strPtr("logs"),
+		Detail: map[string]any{
+			"deleted_request_logs":  res.DeletedRequests,
+			"deleted_audit_logs":    res.DeletedAudits,
+			"stripped_debug_logs":   res.StrippedDebug,
+			"deleted_heatmap_days":  res.DeletedHeatmapDays,
+			"deleted_session_spans": res.DeletedSpans,
+			"deleted_cooldowns":     res.DeletedCooldowns,
+			"deleted_node_samples":  res.DeletedNodeSamples,
+		},
+		IP: strPtr(clientIP(c)),
 	})
+	c.JSON(http.StatusOK, res)
 }
 
 // settingsTestStaticProxy attempts a HEAD/GET through the given proxy URL.

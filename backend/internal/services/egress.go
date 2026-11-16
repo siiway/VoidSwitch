@@ -150,6 +150,36 @@ func ExpandGroupNodes(db *gorm.DB, groupID int) []database.Node {
 	return out
 }
 
+// ExpandGroupNodesAll is ExpandGroupNodes without the enabled/active filter: it
+// answers "which nodes belong to this group", which is what probing needs (a
+// disabled node is exactly the one to inspect).
+func ExpandGroupNodesAll(db *gorm.DB, groupID int) []database.Node {
+	seenGroups := map[int]bool{}
+	var out []database.Node
+	var walk func(gid int)
+	walk = func(gid int) {
+		if seenGroups[gid] {
+			return
+		}
+		seenGroups[gid] = true
+		var members []database.NodeGroupMember
+		db.Where("group_id = ?", gid).Order("id").Find(&members)
+		for _, m := range members {
+			if m.NodeID != nil {
+				var n database.Node
+				if err := db.Where("id = ?", *m.NodeID).First(&n).Error; err == nil {
+					out = append(out, n)
+				}
+			}
+			if m.SourceGroupID != nil {
+				walk(*m.SourceGroupID)
+			}
+		}
+	}
+	walk(groupID)
+	return out
+}
+
 // SendThroughAgent performs an upstream request via a voidswitch-agent relay.
 func SendThroughAgent(ctx context.Context, e Egress, method, upstreamURL string, headers map[string]string, body []byte, timeout time.Duration) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(e.AgentURL, "/")+"/", strings.NewReader(string(body)))

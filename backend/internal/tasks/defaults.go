@@ -42,10 +42,8 @@ func RegisterDefaults(m *Manager, db *gorm.DB, secretKey string) {
 		EnabledKey:  "proxy_switching_enabled",
 		MinInterval: 15,
 		Tick: func(ctx context.Context) error {
-			if !services.GetBool("proxy_switching_enabled", true) {
-				return nil
-			}
-			return nil
+			_, err := services.ResurrectNodes(ctx, db, secretKey)
+			return err
 		},
 	})
 	m.Register(&Task{
@@ -54,7 +52,11 @@ func RegisterDefaults(m *Manager, db *gorm.DB, secretKey string) {
 		EnabledKey:  "log_cleanup_enabled",
 		MinInterval: 300,
 		Tick: func(ctx context.Context) error {
-			return reconcilePendingLogs(db)
+			if err := reconcilePendingLogs(db); err != nil {
+				return err
+			}
+			services.CleanupLogs(db)
+			return nil
 		},
 	})
 }

@@ -35,6 +35,9 @@ Automatic memberships and adminships are recomputed on every login; a temporary 
 A **role-group admin** (who need not be a platform moderator) sees **Users / Statistics / Logs / Audit** in the sidebar, but the content is **scoped to the members of the groups they administer**:
 
 - **Users** — only lists those groups' members. An info bar above the search box says "You administer A, B — this list shows only their members"; a dropdown lets an admin who manages more than one group narrow the view. The platform role column is hidden (only the Prism team role is shown), and roles can't be edited nor accounts enabled/disabled. **Force-logout** is allowed for the group's non-staff members (never for staff or another admin of a shared group).
+- **Dashboard** — shows a **24h summary for the managed groups** (members, tokens, requests, token
+  usage, success rate) instead of the platform-wide figures; the "my usage" block below it is still
+  your own traffic.
 - **Statistics** — the `/api/usage` data is scoped to the managed groups' members. Same info bar and group selector.
 - **Logs / Audit** — request logs are limited to the group's users; audit logs to entries whose `target=user` (a group member) or `target=role_group` (a managed group). Request-log detail exposes headers and per-attempt debug trails, but **not request/response bodies** — those remain owner / co-owner only. All `reveal` actions stay owner-only.
 

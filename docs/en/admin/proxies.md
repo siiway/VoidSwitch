@@ -36,6 +36,19 @@ Nodes within a group are ordered by health/latency:
   capped by the number of unique available routes. A connection error is returned when every route fails
   or the budget is exhausted. `max_proxy_failures` controls the failure threshold before a node is disabled.
 
+### Automatic resurrection
+
+A node marked failed (`status=disabled`) is **probed periodically through its own egress path**
+(`node_probe_interval_seconds`). The probe URL comes from the node group's `probe_url` when set, and
+falls back to the global `node_default_probe_url`; if neither is set the probe is skipped. Any HTTP
+response counts as reachable — 5xx included, since the question is whether the proxy is alive, not
+whether the probe URL is happy. Success restores the node and clears its failure count; failure
+increments it and records the reason in `disabled_reason`. Every probe writes a node health sample,
+which is what gives the health page its trend line.
+
+The task disables itself when **proxy switching** is off: an external proxy handles egress and there
+is no pool to probe.
+
 ### Pinned nodes
 
 In a node group's expanded member list, any node can be **pinned**: pinned nodes **always lead the list**

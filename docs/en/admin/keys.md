@@ -91,5 +91,18 @@ Owners can view the plaintext of stored keys after confirming. Each reveal is re
 ## Programmatic key management
 
 Owners can enable a **key management API** (a `vsk-…` token) per provider, so that external integrations can
-manage *that provider's* keys. Tokens are created, rotated, revealed, and disabled from the provider row;
-its Swagger UI is at `/provider-api/docs`.
+manage *that provider's* keys. Tokens are created, rotated, revealed, and disabled from the provider row.
+
+Call `/provider-api` with `Authorization: Bearer vsk-…`:
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /provider` | Confirm which provider the token belongs to |
+| `GET /keys` | List that provider's keys |
+| `POST /keys` | Add keys |
+| `PATCH /keys/{id}` | Change status / weight / note / pool |
+| `DELETE /keys/{id}` | Delete a key |
+| `POST /keys/reorder` | Reorder keys |
+| `POST /keys/refresh-balance` | Refresh every key's balance |
+| `POST /keys/{id}/refresh-balance` | Refresh one key's balance |
+| `POST /keys/cleanup` | Bulk-delete dead or out-of-balance keys (optionally scoped by `pool`) |

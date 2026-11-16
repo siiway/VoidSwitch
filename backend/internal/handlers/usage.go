@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"fmt"
+	"math"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -70,26 +74,123 @@ type heatmap struct {
 	Label         *string      `json:"label"`
 }
 
-func (a *App) usageRange(c *gin.Context) (time.Time, time.Time, bool) {
-	start, sok := parseTimeParam(c.Query("start"))
-	end, eok := parseTimeParam(c.Query("end"))
-	if !eok {
-		end = time.Now().UTC()
-	}
-	if !sok {
-		start = end.Add(-24 * time.Hour)
-	}
-	return start, end, sok && eok
+// usageWindow is the caller-requested time range. "All time" is represented by
+// nil bounds rather than a fabricated 24h window: the Statistics page's "all"
+// preset and the empty-range default must not silently become "last day".
+type usageWindow struct {
+	start *time.Time
+	end   *time.Time
 }
 
-func (a *App) usageScopeSub(c *gin.Context, uv *core.UserView) (string, bool) {
-	if uv.IsStaff() {
-		if sub := c.Query("user_sub"); sub != "" {
-			return sub, true
-		}
-		return "", false
+func (a *App) usageWindow(c *gin.Context) usageWindow {
+	var w usageWindow
+	if t, ok := parseTimeParam(c.Query("start")); ok {
+		w.start = &t
 	}
-	return uv.User.Sub, true
+	if t, ok := parseTimeParam(c.Query("end")); ok {
+		w.end = &t
+	}
+	return w
+}
+
+// apply adds the window predicate to a WHERE builder, so callers never inject a
+// bound they were not given.
+func (w usageWindow) apply(where string, args []any) (string, []any) {
+	if w.start != nil {
+		where += " AND ts >= ?"
+		args = append(args, *w.start)
+	}
+	if w.end != nil {
+		// Exclusive: the Statistics page's window end is "next day 00:00", so an
+		// inclusive bound counted a record at exactly midnight in both adjacent
+		// days.
+		where += " AND ts < ?"
+		args = append(args, *w.end)
+	}
+	return where, args
+}
+
+func (w usageWindow) bounded() bool { return w.start != nil || w.end != nil }
+
+// usageScope resolves the traffic a caller may aggregate over.
+//
+//   - Staff: platform-wide, or one user via user_sub, or the union of members
+//     of the requested group_ids (which for staff may be any group).
+//   - Role-group admin: the union of their managed groups' members, narrowed to
+//     one of them by group_ids; asking for a group they do not administer is a
+//     403.
+//   - Plain member: their own traffic.
+//
+// Returns an error status + message for the caller to fail with.
+func (a *App) usageScope(c *gin.Context, uv *core.UserView) (subs []string, scoped bool, status int, msg string) {
+	if sub := strings.TrimSpace(c.Query("user_sub")); sub != "" {
+		if uv.IsStaff() {
+			return []string{sub}, true, 0, ""
+		}
+		if sub == uv.User.Sub {
+			return []string{sub}, true, 0, ""
+		}
+		return nil, true, http.StatusForbidden, "You may only read your own usage."
+	}
+
+	requested := parseIDQuery(c, "group_ids")
+	staff := uv.IsStaff()
+	managed := uv.AdminGroupIDs
+	switch {
+	case staff && len(requested) == 0:
+		return nil, false, 0, ""
+	case len(requested) == 0:
+		if len(managed) == 0 {
+			return []string{uv.User.Sub}, true, 0, ""
+		}
+		requested = managed
+	default:
+		if !staff {
+			allowed := map[int]bool{}
+			for _, id := range managed {
+				allowed[id] = true
+			}
+			var outside []int
+			for _, id := range requested {
+				if !allowed[id] {
+					outside = append(outside, id)
+				}
+			}
+			if len(outside) > 0 {
+				return nil, true, http.StatusForbidden,
+					fmt.Sprintf("Not an admin of role group(s): %v.", outside)
+			}
+		}
+	}
+
+	members := a.GDB.Model(&database.RoleGroupMembership{}).
+		Where("role_group_id IN ?", requested).Distinct().Select("user_id")
+	var groupSubs []string
+	a.GDB.Model(&database.User{}).Where("id IN (?)", members).Pluck("sub", &groupSubs)
+	if len(groupSubs) == 0 {
+		// A non-empty scope with no members must aggregate over nothing, not
+		// fall back to the caller's own traffic.
+		return []string{""}, true, 0, ""
+	}
+	return groupSubs, true, 0, ""
+}
+
+// parseIDQuery reads an id list from either repeated query params or a single
+// comma-separated value.
+func parseIDQuery(c *gin.Context, key string) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, raw := range c.QueryArray(key) {
+		for _, part := range strings.Split(raw, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil || seen[n] {
+				continue
+			}
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func usageTotalsFromRow(r *usageTotals) usageTotals {
@@ -104,16 +205,92 @@ func usageTotalsFromRow(r *usageTotals) usageTotals {
 	return t
 }
 
+// autoGranularity picks a bucket size for the mode-B series, matching the
+// thresholds the Python backend used.
+func autoGranularity(start, end *time.Time) string {
+	if start == nil || end == nil {
+		return "year"
+	}
+	span := end.Sub(*start)
+	switch {
+	case span <= 48*time.Hour:
+		return "hour"
+	case span <= 95*24*time.Hour:
+		return "day"
+	case span <= 1150*24*time.Hour:
+		return "month"
+	default:
+		return "year"
+	}
+}
+
+// trailingLimits bounds the bucket count of an unbounded overview, one per
+// granularity.
+var trailingLimits = map[string]int{"hour": 48, "day": 30, "week": 12, "month": 12, "year": 5}
+
+// periodExpr and periodTrunc map a granularity onto the PostgreSQL expressions
+// that both label and group a bucket. They are constants, never user input.
+func periodExpr(granularity string) (label, trunc string) {
+	switch granularity {
+	case "hour":
+		return `to_char(date_trunc('hour', ts), 'YYYY-MM-DD HH24":00"')`, "date_trunc('hour', ts)"
+	case "week":
+		return `to_char(date_trunc('week', ts), 'IYYY-"W"IW')`, "date_trunc('week', ts)"
+	case "month":
+		return `to_char(date_trunc('month', ts), 'YYYY-MM')`, "date_trunc('month', ts)"
+	case "year":
+		return `to_char(date_trunc('year', ts), 'YYYY')`, "date_trunc('year', ts)"
+	default:
+		return `to_char(date_trunc('day', ts), 'YYYY-MM-DD')`, "date_trunc('day', ts)"
+	}
+}
+
+// usageSeries returns one bucket series at the given granularity: the trailing N
+// buckets when unbounded, or everything inside the window (capped) when bounded.
+func (a *App) usageSeries(where string, args []any, w usageWindow, granularity string) []usageBucket {
+	label, trunc := periodExpr(granularity)
+	limit := 1000
+	if !w.bounded() {
+		limit = trailingLimits[granularity]
+	}
+	rows := []usageBucket{}
+	a.GDB.Raw(`SELECT `+label+` AS period,
+		COUNT(*) AS requests,
+		COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END),0) AS success,
+		COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+		COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+		COALESCE(SUM(total_tokens),0) AS total_tokens,
+		AVG(first_token_ms) AS avg_first_token_ms
+		FROM request_logs WHERE `+where+`
+		GROUP BY `+trunc+` ORDER BY `+trunc+` DESC LIMIT ?`, append(args, limit)...).Scan(&rows)
+	for i := range rows {
+		rows[i].Failures = rows[i].Requests - rows[i].Success
+		if rows[i].Failures < 0 {
+			rows[i].Failures = 0
+		}
+	}
+	// The query walks backwards to take the newest buckets; charts read
+	// chronologically.
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
+	return rows
+}
+
 func (a *App) usageAnalytics(c *gin.Context) {
 	uv := core.GetUser(c)
-	start, end, _ := a.usageRange(c)
-	sub, scoped := a.usageScopeSub(c, uv)
+	w := a.usageWindow(c)
+	subs, scoped, status, msg := a.usageScope(c, uv)
+	if status != 0 {
+		a.fail(c, status, msg)
+		return
+	}
 
-	where := "ts >= ? AND ts <= ?"
-	args := []any{start, end}
+	where := "1=1"
+	args := []any{}
 	if scoped {
-		where += " AND user_sub = ?"
-		args = append(args, sub)
+		where += " AND user_sub IN ?"
+		args = append(args, subs)
 	}
 	if m := c.Query("model"); m != "" {
 		where += " AND model = ?"
@@ -123,12 +300,16 @@ func (a *App) usageAnalytics(c *gin.Context) {
 		where += " AND token_id = ?"
 		args = append(args, mustAtoi(t))
 	}
+	// scopeWhere scopes by caller/model/token but deliberately excludes the
+	// window: mode A's overview series spans all time regardless of the page's
+	// selected range, exactly as the metric is defined.
+	scopeWhere, scopeArgs := where, append([]any{}, args...)
+	where, args = w.apply(where, args)
 
 	scope := "all"
 	if scoped {
 		scope = "self"
 	}
-
 	var totals usageTotals
 	a.GDB.Raw(`SELECT COUNT(*) AS requests,
 		COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END),0) AS success,
@@ -138,34 +319,27 @@ func (a *App) usageAnalytics(c *gin.Context) {
 		FROM request_logs WHERE `+where, args...).Scan(&totals)
 
 	var perf usagePerformance
+	// Latency and throughput come from the DB clock (finished_at - started_at),
+	// the same expression the Logs page renders durations from. Rows written
+	// before latency_ms existed still report a duration, and successful-only
+	// averaging keeps a failed retry from dominating the figure.
 	a.GDB.Raw(`SELECT
 		AVG(first_token_ms) AS avg_first_token_ms,
-		AVG(latency_ms) AS avg_latency_ms,
+		AVG(CASE WHEN success THEN EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000.0 END) AS avg_latency_ms,
 		COALESCE(SUM(CASE WHEN stream THEN 1 ELSE 0 END),0) AS stream_requests,
 		COALESCE(SUM(CASE WHEN stream THEN 0 ELSE 1 END),0) AS non_stream_requests
 		FROM request_logs WHERE `+where, args...).Scan(&perf)
+	var totalSeconds *float64
+	a.GDB.Raw(`SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (finished_at - started_at))),0)
+		FROM request_logs WHERE `+where, args...).Scan(&totalSeconds)
 	if totals.Requests > 0 {
-		perf.AvgTokensPerRequest = float64(totals.TotalTokens) / float64(totals.Requests)
+		perf.AvgTokensPerRequest =
+			math.Round(float64(totals.TotalTokens)/float64(totals.Requests)*10) / 10
 	}
-
-	var buckets []usageBucket
-	a.GDB.Raw(`SELECT to_char(date_trunc('day', ts), 'YYYY-MM-DD') AS period,
-		COUNT(*) AS requests,
-		COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END),0) AS success,
-		COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
-		COALESCE(SUM(completion_tokens),0) AS completion_tokens,
-		COALESCE(SUM(total_tokens),0) AS total_tokens,
-		AVG(first_token_ms) AS avg_first_token_ms
-		FROM request_logs WHERE `+where+`
-		GROUP BY date_trunc('day', ts) ORDER BY date_trunc('day', ts)`, args...).Scan(&buckets)
-	if buckets == nil {
-		buckets = []usageBucket{}
-	}
-	for i := range buckets {
-		buckets[i].Failures = buckets[i].Requests - buckets[i].Success
-		if buckets[i].Failures < 0 {
-			buckets[i].Failures = 0
-		}
+	if totalSeconds != nil && *totalSeconds > 0 {
+		secs := *totalSeconds
+		tps := math.Round(float64(totals.TotalTokens)/secs*100) / 100
+		perf.TokensPerSecond = &tps
 	}
 
 	groupQuery := func(col, labelCol string) []usageGroupRow {
@@ -191,6 +365,7 @@ func (a *App) usageAnalytics(c *gin.Context) {
 	byToken := groupQuery("token_id", "COALESCE(CAST(token_id AS text),'')")
 	byModel := groupQuery("model", "COALESCE(model,'')")
 	byProvider := groupQuery("provider_name", "COALESCE(provider_name,'')")
+	a.labelUsageGroups(byUser, byToken)
 
 	var statuses []statusCount
 	a.GDB.Raw(`SELECT status_code, COUNT(*) AS count FROM request_logs
@@ -200,15 +375,40 @@ func (a *App) usageAnalytics(c *gin.Context) {
 		statuses = []statusCount{}
 	}
 
+	// Mode A is a trailing overview independent of the page window; mode B
+	// returns one auto-sized series for the window; mode C returns the four
+	// tabs clipped to the window. The response always carries the same keys so
+	// the client can switch modes without a shape change.
+	mode := strings.ToUpper(strings.TrimSpace(c.DefaultQuery("time_mode", "A")))
+	daily, weekly, monthly, yearly := []usageBucket{}, []usageBucket{}, []usageBucket{}, []usageBucket{}
+	var windowedSeries []usageBucket
+	var windowedGranularity *string
+	switch mode {
+	case "B":
+		g := autoGranularity(w.start, w.end)
+		windowedGranularity = &g
+		windowedSeries = a.usageSeries(where, args, w, g)
+	case "C":
+		daily = a.usageSeries(where, args, w, "day")
+		weekly = a.usageSeries(where, args, w, "week")
+		monthly = a.usageSeries(where, args, w, "month")
+		yearly = a.usageSeries(where, args, w, "year")
+	default:
+		daily = a.usageSeries(scopeWhere, scopeArgs, usageWindow{}, "day")
+		weekly = a.usageSeries(scopeWhere, scopeArgs, usageWindow{}, "week")
+		monthly = a.usageSeries(scopeWhere, scopeArgs, usageWindow{}, "month")
+		yearly = a.usageSeries(scopeWhere, scopeArgs, usageWindow{}, "year")
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"scope":                scope,
 		"totals":               usageTotalsFromRow(&totals),
-		"daily":                buckets,
-		"weekly":               []usageBucket{},
-		"monthly":              []usageBucket{},
-		"yearly":               []usageBucket{},
-		"windowed_series":      nil,
-		"windowed_granularity": nil,
+		"daily":                daily,
+		"weekly":               weekly,
+		"monthly":              monthly,
+		"yearly":               yearly,
+		"windowed_series":      windowedSeries,
+		"windowed_granularity": windowedGranularity,
 		"by_user":              byUser,
 		"by_token":             byToken,
 		"by_model":             byModel,
@@ -216,6 +416,90 @@ func (a *App) usageAnalytics(c *gin.Context) {
 		"performance":          perf,
 		"status_codes":         statuses,
 	})
+}
+
+// labelUsageGroups replaces the raw grouping keys with human labels, the way the
+// Python backend did: a user row shows "<name>#<id>" and a token row shows
+// "<token name>#<id>" with its owner as the sublabel. Without this the
+// Statistics breakdowns list bare subs and numeric ids.
+func (a *App) labelUsageGroups(byUser, byToken []usageGroupRow) {
+	if len(byUser) > 0 {
+		subs := make([]string, 0, len(byUser))
+		for i := range byUser {
+			if byUser[i].Key != "" {
+				subs = append(subs, byUser[i].Key)
+			}
+		}
+		names := map[string]string{}
+		if len(subs) > 0 {
+			var users []database.User
+			a.GDB.Where("sub IN ?", subs).Find(&users)
+			for i := range users {
+				names[users[i].Sub] = fmt.Sprintf("%s#%d", displayUserName(&users[i]), users[i].ID)
+			}
+		}
+		for i := range byUser {
+			if byUser[i].Key == "" {
+				// Internal Claude Code token ops have no caller.
+				byUser[i].Label = "<internal>"
+				continue
+			}
+			if label, ok := names[byUser[i].Key]; ok {
+				byUser[i].Label = label
+			}
+		}
+	}
+
+	if len(byToken) == 0 {
+		return
+	}
+	ids := make([]int, 0, len(byToken))
+	for i := range byToken {
+		if id, err := strconv.Atoi(byToken[i].Key); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		for i := range byToken {
+			byToken[i].Label = "<internal>"
+		}
+		return
+	}
+	var tokens []database.VoidToken
+	a.GDB.Select("id", "name", "user_id").Where("id IN ?", ids).Find(&tokens)
+	owners := make([]int, 0, len(tokens))
+	names := map[int]string{}
+	ownerOf := map[int]int{}
+	for i := range tokens {
+		names[tokens[i].ID] = tokens[i].Name
+		ownerOf[tokens[i].ID] = tokens[i].UserID
+		owners = append(owners, tokens[i].UserID)
+	}
+	ownerLabel := map[int]string{}
+	if len(owners) > 0 {
+		var users []database.User
+		a.GDB.Where("id IN ?", owners).Find(&users)
+		for i := range users {
+			ownerLabel[users[i].ID] = fmt.Sprintf("%s#%d", displayUserName(&users[i]), users[i].ID)
+		}
+	}
+	for i := range byToken {
+		id, err := strconv.Atoi(byToken[i].Key)
+		if err != nil {
+			byToken[i].Label = "<internal>"
+			continue
+		}
+		if name, ok := names[id]; ok {
+			byToken[i].Label = fmt.Sprintf("%s#%d", name, id)
+		} else {
+			byToken[i].Label = fmt.Sprintf("#%d", id)
+		}
+		if owner, ok := ownerOf[id]; ok {
+			if label, ok := ownerLabel[owner]; ok {
+				byToken[i].Sublabel = &label
+			}
+		}
+	}
 }
 
 func (a *App) heatmapRetention() int {

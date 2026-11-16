@@ -1,15 +1,19 @@
 import {
   Badge,
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Divider,
+  Dropdown,
   Input,
   MessageBar,
   MessageBarBody,
+  Option,
   Spinner,
   Table,
   Text,
@@ -761,6 +765,82 @@ export function formatDateMs(value?: string | null): string {
   if (Number.isNaN(d.getTime())) return "—";
   const iso = d.toISOString();
   return d.toLocaleString() + "." + iso.slice(20, 23);
+}
+
+// MultiSelectFilter is a Dropdown-shaped filter whose options carry
+// checkboxes. It reuses Fluent's Dropdown chrome (border, chevron, focus ring)
+// so a multi-select filter sits next to the single-select ones without looking
+// like a different control; only the popup content and the collapsed summary
+// differ.
+const MULTISELECT_CLEAR = "__clear__";
+
+export function MultiSelectFilter<T extends string>({
+  ariaLabel,
+  placeholder,
+  clearLabel,
+  options,
+  selected,
+  onChange,
+  minWidth = 150,
+}: {
+  ariaLabel: string;
+  placeholder: string;
+  clearLabel: string;
+  options: { value: T; label: string }[];
+  selected: Set<T>;
+  onChange: (next: Set<T>) => void;
+  minWidth?: number;
+}) {
+  const { t } = useTranslation();
+  const summary =
+    selected.size === 0
+      ? placeholder
+      : t("common.selectedCount").replace("{count}", String(selected.size));
+
+  return (
+    <Dropdown
+      aria-label={ariaLabel}
+      style={{ minWidth }}
+      multiselect
+      value={summary}
+      selectedOptions={[...selected]}
+      onOptionSelect={(_, d) => {
+        // The clear row is a sentinel, not a filter value.
+        if (d.optionValue === MULTISELECT_CLEAR) {
+          onChange(new Set<T>());
+          return;
+        }
+        onChange(new Set((d.selectedOptions ?? []) as T[]));
+      }}
+    >
+      {selected.size > 0 && (
+        <>
+          <Option value={MULTISELECT_CLEAR} text={clearLabel}>
+            {clearLabel}
+          </Option>
+          <Divider />
+        </>
+      )}
+      {options.map((o) => (
+        <Option
+          key={o.value}
+          value={o.value}
+          text={o.label}
+          // A real checkbox replaces Fluent's small check glyph so the popup
+          // reads like a filter list.
+          checkIcon={null}
+        >
+          <Checkbox
+            checked={selected.has(o.value)}
+            // The Option owns the click; the box only reflects state.
+            onChange={() => undefined}
+            label={o.label}
+            style={{ pointerEvents: "none" }}
+          />
+        </Option>
+      ))}
+    </Dropdown>
+  );
 }
 
 export function UserHandle({

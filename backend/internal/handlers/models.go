@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -12,7 +13,10 @@ import (
 )
 
 // loadModelsWithUpstreams loads exposed models plus their reachable upstream refs
-// ("slug/upstream-model") from the routing graph.
+// ("slug/upstream-model") from the routing graph. Only enabled upstreams whose
+// provider is also enabled count as "serving" the model — a route pointing at a
+// disabled provider serves nothing, which is what the unserved flag and the
+// cleanup action both mean.
 func (a *App) loadModelsWithUpstreams() ([]database.ExposedModel, map[int][]string, error) {
 	var models []database.ExposedModel
 	if err := a.GDB.Order("model_id").Find(&models).Error; err != nil {
@@ -30,19 +34,21 @@ func (a *App) loadModelsWithUpstreams() ([]database.ExposedModel, map[int][]stri
 	if err := a.GDB.Find(&upstreams).Error; err != nil {
 		return nil, nil, err
 	}
-	// provider slug map
+	// provider slug map, plus which providers can currently serve traffic
 	var providers []database.Provider
 	if err := a.GDB.Find(&providers).Error; err != nil {
 		return nil, nil, err
 	}
 	slugByID := map[int]string{}
+	enabledProvider := map[int]bool{}
 	for _, p := range providers {
 		slugByID[p.ID] = p.Slug
+		enabledProvider[p.ID] = p.Enabled
 	}
 
 	refsByRoute := map[int][]string{}
 	for _, u := range upstreams {
-		if u.ProviderID == nil {
+		if u.ProviderID == nil || !u.Enabled || !enabledProvider[*u.ProviderID] {
 			continue
 		}
 		slug := slugByID[*u.ProviderID]
@@ -89,6 +95,14 @@ func (a *App) modelsList(c *gin.Context) {
 	// id takes over any matching exposed-model row (merged metadata), so the same
 	// id never appears twice.
 	out = a.mergePassthroughVirtuals(out, uv.IsStaff())
+	// Recent-traffic health, computed in one pass so each card can show its
+	// status line. Python injected the same summary into the catalog.
+	health := a.modelHealthIndex(time.Now().UTC())
+	for i := range out {
+		if h, ok := health[out[i].ModelID]; ok {
+			out[i].Health = h
+		}
+	}
 	c.JSON(http.StatusOK, out)
 }
 

@@ -43,6 +43,10 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
   including the response headers and body that are force-recorded for errored requests (upstream 4xx / 5xx). This group also contains **heatmap data retention days**
   (`heatmap_retention_days`): the retention window for the daily usage aggregates that the dashboard activity heatmap relies on, independent of request log retention.
   The default is 365 days; `0` means keep forever, and a non-zero value must not be less than 365 days (validated on save).
+  Scheduled cleanup applies the same rules as **Clean now**: beyond the logs above it also drops upstream
+  cooldowns whose backoff has expired and whose retry counter is zero (after 7 days), node health samples
+  past `node_health_history_retention_days` (default 7), and daily aggregates and session spans past the
+  heatmap retention.
 - **OpenCode defaults** — the default model and small model published to the plugin.
 - **Models & catalog** — the models.dev placeholder-metadata sync interval
   (`models_dev_sync_interval_minutes`, `0` = disabled).

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -108,17 +107,18 @@ func (a *App) checkGatewayAccess(c *gin.Context, uv *core.UserView, token *datab
 }
 
 // modelAllowedForToken reports whether the token's allowed_models permits model.
+// An empty list allows everything; a malformed list denies everything, so a
+// corrupted column can never widen access.
 func modelAllowedForToken(token *database.VoidToken, model string) bool {
-	var allowed []string
-	database.DecodeJSON(token.AllowedModels, &allowed)
+	allowed, ok := allowedModelPatterns(token.AllowedModels)
+	if !ok {
+		return false
+	}
 	if len(allowed) == 0 {
 		return true
 	}
 	for _, p := range allowed {
-		if p == "*" || p == model {
-			return true
-		}
-		if ok, _ := filepath.Match(p, model); ok {
+		if p == "*" || p == model || globMatch(p, model) {
 			return true
 		}
 	}

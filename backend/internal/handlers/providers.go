@@ -375,12 +375,28 @@ func (a *App) keyAPIStatus(c *gin.Context) {
 }
 
 func (a *App) keyAPIAction(c *gin.Context) {
+	uv := core.GetUser(c)
 	id, _ := strconv.Atoi(c.Param("id"))
 	action := c.Param("action")
 	var p database.Provider
 	if err := a.GDB.First(&p, id).Error; err != nil {
 		a.fail(c, http.StatusNotFound, "Provider not found.")
 		return
+	}
+	// Rotating, enabling, disabling or revealing a key-management credential acts
+	// on a provider's secrets, so it belongs in the audit trail.
+	auditKeyAPI := func() {
+		if uv == nil || uv.User == nil {
+			return
+		}
+		sub := uv.User.Sub
+		_ = core.RecordAudit(a.GDB, core.AuditInput{
+			Action: "provider.key_api." + action, ActorSub: &sub, ActorName: servicesName(uv),
+			Scope: core.AuditScopeAdmin, TargetType: strPtr("provider"),
+			TargetID: strPtr(strconv.Itoa(p.ID)),
+			Detail:   map[string]any{"provider_name": p.Name, "action": action},
+			IP:       strPtr(clientIP(c)),
+		})
 	}
 	switch action {
 	case "enable", "rotate":
@@ -396,6 +412,7 @@ func (a *App) keyAPIAction(c *gin.Context) {
 			"key_api_enabled": true, "key_api_token_hash": hash,
 			"key_api_token_ciphertext": ct, "key_api_token_preview": preview,
 		})
+		auditKeyAPI()
 		c.JSON(http.StatusOK, gin.H{
 			"provider_id": p.ID, "provider_uuid": p.UUID, "enabled": true,
 			"token_preview": preview, "token": raw,
@@ -405,6 +422,7 @@ func (a *App) keyAPIAction(c *gin.Context) {
 			"key_api_enabled": false, "key_api_token_hash": nil,
 			"key_api_token_ciphertext": nil, "key_api_token_preview": nil,
 		})
+		auditKeyAPI()
 		c.JSON(http.StatusOK, gin.H{"provider_id": p.ID, "provider_uuid": p.UUID, "enabled": false, "token_preview": nil})
 	case "reveal":
 		if !p.KeyAPIEnabled || p.KeyAPITokenCiphertext == nil {
@@ -416,6 +434,7 @@ func (a *App) keyAPIAction(c *gin.Context) {
 			a.internal(c, err)
 			return
 		}
+		auditKeyAPI()
 		c.JSON(http.StatusOK, gin.H{
 			"provider_id": p.ID, "provider_uuid": p.UUID, "enabled": true,
 			"token_preview": p.KeyAPITokenPreview, "token": raw,

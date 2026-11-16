@@ -718,9 +718,16 @@ export interface AuthConfig {
   configured: boolean;
   dev_mode: boolean;
   issuer: string;
+  login_url?: string;
   version: string;
   commit?: string | null;
   chat_preset_questions?: string[];
+  opencode_default_model?: string;
+  opencode_small_model?: string;
+  logs_page_size?: number;
+  model_health_recent_request_count?: number;
+  proxy_switching_enabled?: boolean;
+  announcements_home_count?: number;
 }
 
 export interface LoginTokenStatus {

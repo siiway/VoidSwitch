@@ -80,8 +80,22 @@ func (a *App) healthStream(c *gin.Context) {
 
 // modelHealth computes a per-exposed-model health summary from recent request
 // logs (success rate, avg ttft) plus any active upstream cooldowns.
+// recentHealthSamples is the number of most recent requests a health figure is
+// computed over. It is clamped: a misconfigured 0 would sample nothing and make
+// every model look like it is still learning.
+func recentHealthSamples() int {
+	n := services.GetInt("model_health_recent_request_count", 50)
+	if n < 10 {
+		return 10
+	}
+	if n > 500 {
+		return 500
+	}
+	return n
+}
+
 func (a *App) modelHealth() []gin.H {
-	recentCount := services.GetInt("model_health_recent_request_count", 50)
+	recentCount := recentHealthSamples()
 	since := time.Now().UTC().Add(-24 * time.Hour)
 	var models []database.ExposedModel
 	a.GDB.Where("enabled = ?", true).Order("model_id").Find(&models)
@@ -144,7 +158,96 @@ func (a *App) modelHealth() []gin.H {
 			"best_success_rate":    rate,
 			"best_ttft_ms":         ttft,
 			"upstreams":            upstreams,
+			"recent_since":         recentSince(&rows),
 		})
+	}
+	return out
+}
+
+// recentSince is the timestamp of the oldest sampled request, i.e. how far back
+// the "recent" figures reach. The model card labels its line with it; without it
+// the card's health block stayed hidden even when data existed.
+func recentSince(rows *[]database.RequestLog) *time.Time {
+	if len(*rows) == 0 {
+		return nil
+	}
+	oldest := (*rows)[0].TS
+	for i := 1; i < len(*rows); i++ {
+		if (*rows)[i].TS.Before(oldest) {
+			oldest = (*rows)[i].TS
+		}
+	}
+	return &oldest
+}
+
+// modelHealthIndex computes the same per-model health the health tab shows, in
+// one pass, so the model catalog can carry it without a query per model.
+func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
+	recentCount := recentHealthSamples()
+	since := now.Add(-24 * time.Hour)
+	minSamples := services.GetInt("upstream_min_samples", 10)
+
+	var rows []database.RequestLog
+	a.GDB.Select("model", "success", "first_token_ms", "ts").
+		Where("ts >= ? AND model IS NOT NULL", since).Order("ts").Find(&rows)
+	byModel := map[string][]database.RequestLog{}
+	for i := range rows {
+		if rows[i].Model == nil {
+			continue
+		}
+		byModel[*rows[i].Model] = append(byModel[*rows[i].Model], rows[i])
+	}
+
+	out := make(map[string]gin.H, len(byModel))
+	for model, modelRows := range byModel {
+		// Only the newest recentCount samples count, matching the health tab.
+		sample := modelRows
+		if len(sample) > recentCount {
+			sample = sample[len(sample)-recentCount:]
+		}
+		var total, success int
+		var ttftSum float64
+		var ttftN int
+		for i := range sample {
+			total++
+			if sample[i].Success {
+				success++
+			}
+			if sample[i].FirstTokenMs != nil {
+				ttftSum += *sample[i].FirstTokenMs
+				ttftN++
+			}
+		}
+		status := "learning"
+		var rate *float64
+		if total > 0 {
+			r := float64(success) / float64(total)
+			rate = &r
+			switch {
+			case r >= 0.9:
+				status = "healthy"
+			case r >= 0.5:
+				status = "degraded"
+			default:
+				status = "unavailable"
+			}
+		}
+		var ttft *float64
+		if ttftN > 0 {
+			avg := ttftSum / float64(ttftN)
+			ttft = &avg
+		}
+		out[model] = gin.H{
+			"model_id":             model,
+			"status":               status,
+			"recent_success_rate":  rate,
+			"recent_request_count": total,
+			"recent_avg_ttft_ms":   ttft,
+			"sufficient_data":      total >= minSamples,
+			"best_success_rate":    rate,
+			"best_ttft_ms":         ttft,
+			"recent_since":         recentSince(&sample),
+		}
 	}
 	return out
 }

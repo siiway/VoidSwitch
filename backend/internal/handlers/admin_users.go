@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"fmt"
+	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -268,6 +271,14 @@ func (a *App) roleGroupDelete(c *gin.Context) {
 	a.GDB.Where("role_group_id = ?", g.ID).Delete(&database.RoleGroupMapping{})
 	a.GDB.Where("role_group_id = ?", g.ID).Delete(&database.RoleGroupMembership{})
 	a.GDB.Where("role_group_id = ?", g.ID).Delete(&database.RoleGroupAdminship{})
+	uv := core.GetUser(c)
+	sub := uv.User.Sub
+	tid := strconv.Itoa(g.ID)
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "role_group.delete", ActorSub: &sub, ActorName: servicesName(uv),
+		Scope: core.AuditScopeAdmin, TargetType: strPtr("role_group"), TargetID: &tid,
+		Detail: map[string]any{"name": g.Name}, IP: strPtr(clientIP(c)),
+	})
 	c.Status(http.StatusNoContent)
 }
 
@@ -283,7 +294,21 @@ type roleGroupMemberView struct {
 }
 
 func (a *App) roleGroupMembers(c *gin.Context) {
+	uv := core.GetUser(c)
 	id, _ := strconv.Atoi(c.Param("id"))
+	if !uv.IsStaff() {
+		allowed := false
+		for _, gid := range uv.AdminGroupIDs {
+			if gid == id {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			a.fail(c, http.StatusForbidden, "You do not administer this role group.")
+			return
+		}
+	}
 	var rows []database.RoleGroupMembership
 	if err := a.GDB.Where("role_group_id = ?", id).Order("id").Find(&rows).Error; err != nil {
 		a.internal(c, err)
@@ -328,14 +353,48 @@ func (a *App) roleGroupMemberDelete(c *gin.Context) {
 		a.fail(c, http.StatusNotFound, "Membership not found.")
 		return
 	}
+	uv := core.GetUser(c)
+	sub := uv.User.Sub
+	tid := strconv.Itoa(id)
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "role_group.member_remove", ActorSub: &sub, ActorName: servicesName(uv),
+		Scope: core.AuditScopeAdmin, TargetType: strPtr("role_group"), TargetID: &tid,
+		Detail: map[string]any{"user_id": uid}, IP: strPtr(clientIP(c)),
+	})
 	c.Status(http.StatusNoContent)
+}
+
+// userInGroups reports whether the user is a member of any of the groups.
+func (a *App) userInGroups(userID int, groupIDs []int) bool {
+	if len(groupIDs) == 0 {
+		return false
+	}
+	var n int64
+	a.GDB.Model(&database.RoleGroupMembership{}).
+		Where("user_id = ? AND role_group_id IN ?", userID, groupIDs).Count(&n)
+	return n > 0
 }
 
 // ---- users ----------------------------------------------------------------
 
+// usersList lists users. Staff see everyone; a role-group admin sees only the
+// union of their managed groups' members, so the page can be opened by the tier
+// that is actually documented to have it.
 func (a *App) usersList(c *gin.Context) {
+	uv := core.GetUser(c)
+	q := a.GDB.Order("id")
+	if !uv.IsStaff() {
+		managed := uv.AdminGroupIDs
+		if len(managed) == 0 {
+			c.JSON(http.StatusOK, []services.UserView{})
+			return
+		}
+		members := a.GDB.Model(&database.RoleGroupMembership{}).
+			Where("role_group_id IN ?", managed).Distinct().Select("user_id")
+		q = q.Where("id IN (?)", members)
+	}
 	var rows []database.User
-	if err := a.GDB.Order("id").Find(&rows).Error; err != nil {
+	if err := q.Find(&rows).Error; err != nil {
 		a.internal(c, err)
 		return
 	}
@@ -427,10 +486,24 @@ func (a *App) userForceLogout(c *gin.Context) {
 		a.fail(c, http.StatusForbidden, "Only an owner may act on an owner.")
 		return
 	}
+	// A role-group admin's authority stops at their own groups' members.
+	if !uv.IsStaff() && u.ID != uv.User.ID {
+		if !a.userInGroups(u.ID, uv.AdminGroupIDs) {
+			a.fail(c, http.StatusForbidden, "This user is not a member of a role group you administer.")
+			return
+		}
+	}
 	if err := a.GDB.Model(&u).Update("session_epoch", u.SessionEpoch+1).Error; err != nil {
 		a.internal(c, err)
 		return
 	}
+	sub, actor := uv.User.Sub, servicesName(uv)
+	tid := strconv.Itoa(u.ID)
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "user.force_logout", ActorSub: &sub, ActorName: actor,
+		Scope: core.AuditScopeAdmin, TargetType: strPtr("user"), TargetID: &tid,
+		Detail: map[string]any{"sub": u.Sub}, IP: strPtr(clientIP(c)),
+	})
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -627,6 +700,15 @@ func (a *App) adminTokenUpdate(c *gin.Context) {
 		a.internal(c, err)
 		return
 	}
+	uv := core.GetUser(c)
+	sub := uv.User.Sub
+	tid := strconv.Itoa(t.ID)
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "token.update", ActorSub: &sub, ActorName: servicesName(uv),
+		Scope: core.AuditScopeAdmin, TargetType: strPtr("void_token"), TargetID: &tid,
+		Detail: map[string]any{"name": t.Name, "enabled": t.Enabled},
+		IP:     strPtr(clientIP(c)),
+	})
 	var owner database.User
 	if err := a.GDB.First(&owner, t.UserID).Error; err == nil {
 		c.JSON(http.StatusOK, tokenView(&t, &owner))
@@ -649,7 +731,147 @@ func (a *App) adminTokenDelete(c *gin.Context) {
 		a.internal(c, err)
 		return
 	}
+	uv := core.GetUser(c)
+	sub := uv.User.Sub
+	tid := strconv.Itoa(t.ID)
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "token.delete", ActorSub: &sub, ActorName: servicesName(uv),
+		Scope: core.AuditScopeAdmin, TargetType: strPtr("void_token"), TargetID: &tid,
+		Detail: map[string]any{"name": t.Name}, IP: strPtr(clientIP(c)),
+	})
 	c.Status(http.StatusNoContent)
+}
+
+// roleGroupStats aggregates 24h traffic for the union of members of the
+// requested role groups — the scoped card a role-group admin sees instead of the
+// platform-wide dashboard. Provider/key/proxy counts are deliberately absent:
+// those are platform concerns, not per-group ones.
+func (a *App) roleGroupStats(c *gin.Context) {
+	uv := core.GetUser(c)
+	managed := uv.AdminGroupIDs
+
+	// group_ids is the requested scope; when it is present but contains no
+	// usable id the answer is an empty scope, not "everything I administer".
+	params := c.QueryArray("group_ids")
+	var effective []int
+	for _, id := range parseIDQuery(c, "group_ids") {
+		effective = append(effective, id)
+	}
+	if len(params) == 0 && len(managed) > 0 {
+		effective = append(effective, managed...)
+	} else if len(params) == 0 && uv.IsStaff() {
+		// Staff without an adminship would otherwise degenerate to "everyone";
+		// the platform-wide endpoint is what they want.
+		a.fail(c, http.StatusBadRequest,
+			"Staff callers must pass an explicit group_ids= (or use /api/admin/stats).")
+		return
+	}
+	sort.Ints(effective)
+
+	if !uv.IsStaff() {
+		allowed := map[int]bool{}
+		for _, id := range managed {
+			allowed[id] = true
+		}
+		var outside []int
+		for _, id := range effective {
+			if !allowed[id] {
+				outside = append(outside, id)
+			}
+		}
+		if len(outside) > 0 {
+			a.fail(c, http.StatusForbidden, fmt.Sprintf("Not an admin of role group(s): %v.", outside))
+			return
+		}
+	}
+
+	var groups []database.RoleGroup
+	if len(effective) > 0 {
+		if err := a.GDB.Where("id IN ?", effective).Order("id").Find(&groups).Error; err != nil {
+			a.internal(c, err)
+			return
+		}
+		if len(groups) != len(effective) {
+			found := map[int]bool{}
+			for i := range groups {
+				found[groups[i].ID] = true
+			}
+			var missing []int
+			for _, id := range effective {
+				if !found[id] {
+					missing = append(missing, id)
+				}
+			}
+			a.fail(c, http.StatusNotFound, fmt.Sprintf("Role group(s) not found: %v.", missing))
+			return
+		}
+	}
+
+	names := make([]string, 0, len(groups))
+	for i := range groups {
+		names = append(names, groups[i].Name)
+	}
+	out := gin.H{
+		"group_ids":                  effective,
+		"group_names":                names,
+		"users":                      0,
+		"tokens":                     0,
+		"requests_24h":               0,
+		"success_24h":                0,
+		"failures_24h":               0,
+		"tokens_24h":                 0,
+		"success_rate_24h":           0.0,
+		"avg_first_token_ms_24h":     nil,
+		"avg_tokens_per_request_24h": 0.0,
+	}
+	if len(effective) == 0 {
+		c.JSON(http.StatusOK, out)
+		return
+	}
+
+	// One subquery for the member ids keeps the aggregates off a round trip per
+	// id, and a member of several selected groups is counted once.
+	memberIDs := a.GDB.Model(&database.RoleGroupMembership{}).
+		Where("role_group_id IN ?", effective).Distinct()
+	var userCount, tokenCount int64
+	a.GDB.Model(&database.User{}).Where("id IN (?)", memberIDs.Select("user_id")).Count(&userCount)
+	a.GDB.Model(&database.VoidToken{}).
+		Where("deleted = ? AND user_id IN (?)", false, memberIDs.Select("user_id")).Count(&tokenCount)
+
+	var subs []string
+	a.GDB.Model(&database.User{}).Where("id IN (?)", memberIDs.Select("user_id")).Pluck("sub", &subs)
+	out["users"] = userCount
+	out["tokens"] = tokenCount
+
+	if len(subs) > 0 {
+		since := time.Now().UTC().Add(-24 * time.Hour)
+		var reqs, succ, tokens24 int64
+		base := a.GDB.Model(&database.RequestLog{}).Where("ts >= ? AND user_sub IN ?", since, subs)
+		base.Count(&reqs)
+		a.GDB.Model(&database.RequestLog{}).
+			Where("ts >= ? AND user_sub IN ? AND success = ?", since, subs, true).Count(&succ)
+		a.GDB.Model(&database.RequestLog{}).
+			Where("ts >= ? AND user_sub IN ?", since, subs).
+			Select("COALESCE(SUM(total_tokens),0)").Scan(&tokens24)
+		var avgTTFT *float64
+		a.GDB.Model(&database.RequestLog{}).
+			Where("ts >= ? AND user_sub IN ? AND success = ? AND stream = ? AND first_token_ms IS NOT NULL",
+				since, subs, true, true).
+			Select("AVG(first_token_ms)").Scan(&avgTTFT)
+
+		out["requests_24h"] = reqs
+		out["success_24h"] = succ
+		out["failures_24h"] = reqs - succ
+		out["tokens_24h"] = tokens24
+		if reqs > 0 {
+			out["success_rate_24h"] = math.Round(float64(succ)/float64(reqs)*1000) / 10
+			out["avg_tokens_per_request_24h"] = math.Round(float64(tokens24)/float64(reqs)*10) / 10
+		}
+		if avgTTFT != nil {
+			out["avg_first_token_ms_24h"] = math.Round(*avgTTFT*10) / 10
+		}
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // RegisterRoleGroupRoutes wires /api/admin/role-groups.
@@ -658,13 +880,26 @@ func RegisterRoleGroupRoutes(g *gin.RouterGroup, a *App) {
 	g.POST("/role-groups", core.RequireOwner(), a.roleGroupCreate)
 	g.PATCH("/role-groups/:id", core.RequireOwner(), a.roleGroupUpdate)
 	g.DELETE("/role-groups/:id", core.RequireOwner(), a.roleGroupDelete)
-	g.GET("/role-groups/:id/members", a.roleGroupMembers)
 	g.DELETE("/role-groups/:id/members/:userId", core.RequireOwner(), a.roleGroupMemberDelete)
+}
+
+// RegisterRoleGroupScopedRoutes wires the admin reads a *role-group admin* is
+// entitled to (not just staff): the scoped dashboard card, the member list of
+// the groups they administer, and the user list narrowed to those members.
+//
+// They are registered outside the staff-gated /admin group on purpose — a group
+// middleware runs before the route handler, so a route-level
+// RequireStaffOrRoleGroupAdmin cannot rescue a member who was already rejected
+// by the group.
+func RegisterRoleGroupScopedRoutes(g *gin.RouterGroup, a *App) {
+	scoped := g.Group("", core.RequireStaffOrRoleGroupAdmin())
+	scoped.GET("/role-groups/stats", a.roleGroupStats)
+	scoped.GET("/role-groups/:id/members", a.roleGroupMembers)
+	scoped.GET("/users", a.usersList)
 }
 
 // RegisterUserRoutes wires /api/admin/users.
 func RegisterUserRoutes(g *gin.RouterGroup, a *App) {
-	g.GET("/users", a.usersList)
 	g.PATCH("/users/:id", core.RequireOwner(), a.userUpdate)
 	g.POST("/users/:id/force-logout", a.userForceLogout)
 }

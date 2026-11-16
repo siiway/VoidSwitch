@@ -14,7 +14,7 @@ func TestDownloadSafeRedactsCredentials(t *testing.T) {
 		"proxy_url":     "http://user:pw@10.0.0.5:3128",
 		"local_address": "127.0.0.1:9",
 		"key":           "vs-secret",
-		"key_preview":   "vs-…cret",
+		"key_preview":   "vs-abcdefghij",
 		"access_token":  "tok",
 		"error":         "connect to 10.0.0.5:3128 timed out",
 		"req_headers": map[string]any{
@@ -25,8 +25,13 @@ func TestDownloadSafeRedactsCredentials(t *testing.T) {
 
 	got := downloadSafe(payload, true, secrets).(map[string]any)
 
-	if got["key"] != nil || got["key_preview"] != nil || got["access_token"] != nil {
+	if got["key"] != nil || got["access_token"] != nil {
 		t.Fatalf("credentials were not dropped: %v", got)
+	}
+	// A preview is already masked, so the export keeps it: it tells the reader
+	// which key served the request without revealing the credential.
+	if s, _ := got["key_preview"].(string); s != "vs-a***ghij" {
+		t.Fatalf("key_preview = %q, want the masked preview kept", got["key_preview"])
 	}
 	if got["local_address"] != nil {
 		t.Fatalf("local address was not dropped: %v", got["local_address"])

@@ -46,8 +46,17 @@ func downloadSafe(value any, includeBodies bool, secrets map[string]string) any 
 					continue
 				}
 				out[key] = nil
-			case "local_address", "key", "api_key", "access_token", "key_preview":
+			case "local_address", "key", "api_key", "access_token":
 				out[key] = nil
+			case "key_preview":
+				// A preview is already masked; keeping it makes the export
+				// diagnosable ("which key pool served this") without revealing
+				// the credential.
+				if s := toStr(item); s != "" {
+					out[key] = maskKeyPreview(s)
+				} else {
+					out[key] = nil
+				}
 			case "req_body", "resp_body":
 				if !includeBodies {
 					out[key] = nil
@@ -92,4 +101,61 @@ func toStr(v any) string {
 		return s
 	}
 	return ""
+}
+
+// maskKeyPreview shows the first and last four characters of a provider key
+// preview, hiding the middle. A preview of eight characters or fewer is short
+// enough to be meaningless and is returned unchanged, matching the Python
+// backend so an operator still recognises the key in the log detail.
+func maskKeyPreview(preview string) string {
+	// Count runes, not bytes: a preview may already contain "…", and slicing
+	// bytes would split it into invalid UTF-8.
+	r := []rune(preview)
+	if len(r) <= 8 {
+		return preview
+	}
+	return string(r[:4]) + "***" + string(r[len(r)-4:])
+}
+
+// redactAttemptSummaries strips the route secrets from persisted attempt
+// summaries, keeping the shape so a member still sees which route type was used
+// without learning the egress address. Python published "route_type" in place of
+// the removed fields rather than silently dropping the information.
+func redactAttemptSummaries(value any) any {
+	switch v := value.(type) {
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, redactAttemptSummaries(item))
+		}
+		return out
+	case map[string]any:
+		hadProxy := false
+		hadLocal := false
+		out := make(map[string]any, len(v)+1)
+		for key, item := range v {
+			switch key {
+			case "proxy_url":
+				if item != nil && toStr(item) != "" {
+					hadProxy = true
+				}
+				continue
+			case "local_address":
+				if item != nil && toStr(item) != "" {
+					hadLocal = true
+				}
+				continue
+			}
+			out[key] = redactAttemptSummaries(item)
+		}
+		if _, ok := out["route_type"]; !ok {
+			if hadProxy {
+				out["route_type"] = "proxy"
+			} else if hadLocal {
+				out["route_type"] = "local"
+			}
+		}
+		return out
+	}
+	return value
 }

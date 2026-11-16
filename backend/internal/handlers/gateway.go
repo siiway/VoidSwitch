@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -269,7 +270,10 @@ func (a *App) advertisedModels(token *database.VoidToken, uv *core.UserView) ([]
 		if !uv.IsStaff() && !services.ModelAllowedForGroups(m, uv.GroupIDs, false) {
 			continue
 		}
-		push(gatewayModelItem(m.ModelID, m.CreatedAt.Unix(), m, nil, mdIndex))
+		// created is 0 for every entry, matching the Python contract: the field
+		// exists for OpenAI-client compatibility, not as model metadata, and a
+		// per-model timestamp made clients treat the list as changing.
+		push(gatewayModelItem(m.ModelID, 0, m, nil, mdIndex))
 	}
 
 	// Passthrough models are callable as "<provider-slug>/<exposed-id>" but have
@@ -312,6 +316,22 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 		a.fail(c, http.StatusBadRequest, "Missing model.")
 		return
 	}
+	// A body in the wrong shape (messages as a string, tools as an object) would
+	// only fail deep inside the translator — after the upstream has been called
+	// and billed. Reject it up front instead.
+	for _, field := range []string{"messages", "tools", "input"} {
+		v, ok := body[field]
+		if !ok || v == nil {
+			continue
+		}
+		_, isList := v.([]any)
+		_, isString := v.(string)
+		valid := isList || (field == "input" && isString)
+		if !valid {
+			a.fail(c, http.StatusBadRequest, fmt.Sprintf("'%s' must be a list.", field))
+			return
+		}
+	}
 	// Gateway access gates: token allow-list, RPM, daily quota, model resolution,
 	// role-group access, per-role-group call rate limit.
 	uv := a.gatewayUserView(user)
@@ -336,7 +356,14 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 	res, err := disp.Do()
 	if err != nil {
 		msg := err.Error()
-		status := constants.UpstreamUnavailable
+		// 543 is a VoidSwitch-specific "no upstream could serve this" code that
+		// the OpenCode plugin renders as "Upstream Failed". Every other client
+		// keeps the standard 502: SDKs and intermediaries are entitled to treat
+		// an unfamiliar status as a protocol error.
+		status := http.StatusBadGateway
+		if clientType == constants.OpenCodeClientHint {
+			status = constants.UpstreamUnavailable
+		}
 		a.logRequest(c, requestLogInfo{
 			TokenID: token.ID, UserSub: user.Sub, Model: modelID, Upstream: modelID,
 			Inbound: string(inbound), Stream: stream, Start: start, StatusCode: status,
@@ -432,25 +459,17 @@ func (a *App) modelsSync(c *gin.Context) {
 		return
 	}
 	uv := a.gatewayUserView(user)
-	var models []database.ExposedModel
-	a.GDB.Where("enabled = ?", true).Order("model_id").Find(&models)
-	count := 0
-	for i := range models {
-		m := &models[i]
-		if !modelAllowedForToken(token, m.ModelID) {
-			continue
-		}
-		if !uv.IsStaff() && !services.ModelAllowedForGroups(m, uv.GroupIDs, false) {
-			continue
-		}
-		count++
+	// Count from the same enumeration /v1/models uses, so the picker and the
+	// list can never disagree: a model with no reachable upstream is advertised
+	// by neither, and passthrough ids are included by both.
+	advertised, err := a.advertisedModels(token, uv)
+	if err != nil {
+		a.internal(c, err)
+		return
 	}
-	// Passthrough models are callable too, so the sync count must include them;
-	// otherwise the picker reports fewer models than /v1/models lists.
-	count += len(a.visiblePassthroughModels(token, uv))
 	c.JSON(http.StatusOK, gin.H{
 		"added":                  0,
-		"total":                  count,
+		"total":                  len(advertised),
 		"opencode_default_model": services.GetString("opencode_default_model", "claude-opus-4-8"),
 		"opencode_small_model":   services.GetString("opencode_small_model", ""),
 	})

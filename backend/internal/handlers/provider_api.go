@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/siiway/voidswitch/internal/constants"
 	"github.com/siiway/voidswitch/internal/core"
 	"github.com/siiway/voidswitch/internal/database"
 	"github.com/siiway/voidswitch/internal/services"
@@ -180,6 +182,75 @@ func (a *App) providerAPIRefreshBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// providerAPIRefreshOneBalance rescans a single key's balance on demand.
+func (a *App) providerAPIRefreshOneBalance(c *gin.Context) {
+	p, ok := a.providerAPIAuth(c)
+	if !ok {
+		return
+	}
+	kid, _ := strconv.Atoi(c.Param("keyId"))
+	var k database.ApiKey
+	if err := a.GDB.Where("id = ? AND provider_id = ?", kid, p.ID).First(&k).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Key not found.")
+		return
+	}
+	services.RefreshKeyBalance(a.GDB, &k, p, a.Cfg.Server.SecretKey,
+		services.GetBool("auto_disable_zero_balance", true))
+	a.GDB.First(&k, k.ID)
+	c.JSON(http.StatusOK, toApiKeyView(&k))
+}
+
+// providerAPICleanupKeys bulk-deletes dead keys (invalid or out of balance),
+// optionally restricted to one pool. An external integration needs this so a
+// rotated provider does not accumulate dead credentials.
+func (a *App) providerAPICleanupKeys(c *gin.Context) {
+	p, ok := a.providerAPIAuth(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		Target  string `json:"target"`
+		MinDays int    `json:"min_days"`
+	}
+	_ = c.ShouldBindJSON(&in)
+	// target is a whitelist, not "anything that is not invalid". A typo or an
+	// empty body otherwise deleted every out-of-balance key, which is not
+	// recoverable.
+	q := a.GDB.Where("provider_id = ?", p.ID)
+	switch in.Target {
+	case "invalid":
+		q = q.Where("status = ?", string(constants.KeyStatusInvalid))
+	case "insufficient_balance":
+		q = q.Where("status = ?", string(constants.KeyStatusInsufficientBalance))
+		if in.MinDays > 0 {
+			cutoff := time.Now().UTC().AddDate(0, 0, -in.MinDays)
+			q = q.Where("disabled_since IS NOT NULL AND disabled_since < ?", cutoff)
+		}
+	default:
+		a.fail(c, http.StatusUnprocessableEntity, "target must be 'invalid' or 'insufficient_balance'.")
+		return
+	}
+	if pool := strings.TrimSpace(c.Query("pool")); pool != "" {
+		q = q.Where("pool = ?", pool)
+	}
+	res := q.Delete(&database.ApiKey{})
+	if res.Error != nil {
+		a.internal(c, res.Error)
+		return
+	}
+	// The provider's own integration deleted credentials; record it.
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: "key.cleanup", Scope: core.AuditScopeAdmin,
+		TargetType: strPtr("provider"), TargetID: strPtr(strconv.Itoa(p.ID)),
+		Detail: map[string]any{
+			"provider_name": p.Name, "target": in.Target, "deleted": res.RowsAffected,
+			"actor": providerAPIProvider, "pool": c.Query("pool"),
+		},
+		IP: strPtr(clientIP(c)),
+	})
+	c.JSON(http.StatusOK, gin.H{"deleted": res.RowsAffected})
+}
+
 // RegisterProviderAPIRoutes mounts the per-provider key-management API.
 func RegisterProviderAPIRoutes(r *gin.Engine, a *App) {
 	g := r.Group("/provider-api")
@@ -190,4 +261,6 @@ func RegisterProviderAPIRoutes(r *gin.Engine, a *App) {
 	g.DELETE("/keys/:keyId", a.providerAPIDeleteKey)
 	g.POST("/keys/reorder", a.providerAPIReorder)
 	g.POST("/keys/refresh-balance", a.providerAPIRefreshBalance)
+	g.POST("/keys/:keyId/refresh-balance", a.providerAPIRefreshOneBalance)
+	g.POST("/keys/cleanup", a.providerAPICleanupKeys)
 }

@@ -16,16 +16,35 @@ import (
 )
 
 // authConfig is the public /api/auth/config payload the frontend reads at boot.
+//
+// Besides identity it carries the non-secret settings the member-facing shell
+// needs. They belong here rather than in the staff-only settings endpoint: the
+// Logs pagination, the hidden Proxies tab and the OpenCode install snippet are
+// all rendered for ordinary members, and without these keys the values they
+// configure never reach the client.
 func (a *App) authConfig(c *gin.Context) {
 	configured := a.Cfg.Prism.ClientID != "" && a.Cfg.Prism.ClientSecret != ""
+	base := strings.TrimRight(a.Cfg.Server.BaseURL, "/")
+	loginURL := ""
+	if base != "" {
+		loginURL = base + "/api/auth/login?redirect=1"
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"configured":             configured,
 		"dev_mode":               a.Cfg.DevAuthBypassActive() || a.Cfg.Server.DevMode,
 		"issuer":                 a.Cfg.Prism.Issuer,
+		"login_url":              loginURL,
 		"version":                Version,
 		"commit":                 CommitID(),
-		"chat_preset_questions":  services.GetSetting("chat_preset_questions"),
-		"opencode_default_model": services.GetString("opencode_default_model", ""),
+		"opencode_default_model": services.GetString("opencode_default_model", "claude-opus-4-8"),
+		"opencode_small_model":   services.GetString("opencode_small_model", ""),
+		"logs_page_size":         services.GetInt("logs_page_size", 50),
+		"model_health_recent_request_count": services.GetInt(
+			"model_health_recent_request_count", 50,
+		),
+		"proxy_switching_enabled":  services.GetBool("proxy_switching_enabled", true),
+		"announcements_home_count": services.GetInt("announcements_home_count", 3),
+		"chat_preset_questions":    services.GetSetting("chat_preset_questions"),
 	})
 }
 

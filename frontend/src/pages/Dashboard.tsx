@@ -14,7 +14,7 @@ import { useTranslation } from "react-i18next";
 import { useFormatNumber } from "../lib/formatNumber";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { HeatmapBundle, Stats, SystemInfo } from "../api/types";
+import type { GroupStats, HeatmapBundle, Stats, SystemInfo } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
 import {
   ErrorText,
@@ -321,7 +321,90 @@ function StaffDashboard() {
   );
 }
 
+function GroupAdminDashboard() {
+  const { t } = useTranslation();
+  const fmt = useFormatNumber();
+  const { managedGroupNames } = useAuth();
+  // Omit group_ids so the backend uses the caller's managed set: a role-group
+  // admin must not be able to widen the view by tampering with the query.
+  const stats = useAsync<GroupStats>(() => api.get("/api/admin/role-groups/stats"));
+  const usage = useAsync<MyUsage>(() => api.get("/api/me/usage"));
+  const groups = managedGroupNames.join(", ");
+
+  return (
+    <div>
+      <PageHeader
+        title={t("dashboard.title" as TK)}
+        subtitle={t("dashboard.subtitleGroupAdmin" as TK).replace("{groups}", groups)}
+        onRefresh={() => {
+          stats.reload();
+          usage.reload();
+        }}
+      />
+      <AnnouncementsPanel />
+      {stats.loading ? (
+        <Loading />
+      ) : stats.error ? (
+        <ErrorText error={stats.error} />
+      ) : stats.data ? (
+        <>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+            <Stat
+              label={t("dashboard.groupMembers" as TK)}
+              value={fmt(stats.data.users)}
+              icon={<PeopleRegular />}
+            />
+            <Stat
+              label={t("dashboard.groupTokens" as TK)}
+              value={fmt(stats.data.tokens)}
+              icon={<KeyRegular />}
+            />
+            <Stat
+              label={t("dashboard.requests24h" as TK)}
+              value={fmt(stats.data.requests_24h)}
+              icon={<ChartMultipleRegular />}
+            />
+            <Stat
+              label={t("dashboard.tokens24h" as TK)}
+              value={fmt(stats.data.tokens_24h)}
+              icon={<DataUsageRegular />}
+              accent={tokens.colorPaletteGreenForeground1}
+            />
+            <Stat
+              label={t("dashboard.successRate24h" as TK)}
+              value={`${stats.data.success_rate_24h}%`}
+              icon={<CheckmarkCircleRegular />}
+            />
+          </div>
+          {usage.data ? (
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+              <Stat
+                label={t("dashboard.myRequests" as TK)}
+                value={fmt(usage.data.requests)}
+                icon={<ChartMultipleRegular />}
+              />
+              <Stat
+                label={t("dashboard.myTokens" as TK)}
+                value={fmt(usage.data.tokens)}
+                icon={<DataUsageRegular />}
+              />
+              <Stat
+                label={t("dashboard.myApiKeys" as TK)}
+                value={usage.data.token_count}
+                icon={<KeyRegular />}
+              />
+            </div>
+          ) : null}
+        </>
+      ) : null}
+      <HeatmapSection />
+    </div>
+  );
+}
+
 export function Dashboard() {
-  const { isStaff } = useAuth();
-  return isStaff ? <StaffDashboard /> : <MemberDashboard />;
+  const { isStaff, isRoleGroupAdmin } = useAuth();
+  if (isStaff) return <StaffDashboard />;
+  if (isRoleGroupAdmin) return <GroupAdminDashboard />;
+  return <MemberDashboard />;
 }

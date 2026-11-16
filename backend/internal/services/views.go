@@ -101,6 +101,9 @@ type ModelEntryView struct {
 	ProviderName *string `json:"provider_name"`
 	ProviderSlug *string `json:"provider_slug"`
 	Unserved     bool    `json:"unserved"`
+	// Health is the recent-traffic summary the model card renders. It is only
+	// set when the model has recent samples.
+	Health map[string]any `json:"health,omitempty"`
 }
 
 // BuildModelEntryView maps an exposed model + its reachable upstream refs.

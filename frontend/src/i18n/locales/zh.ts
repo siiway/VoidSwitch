@@ -38,6 +38,8 @@ const zh: Translations = {
     self: "本人",
     system: "系统",
     all: "全部",
+    selectedCount: "已选择 {count} 项",
+    clearSelection: "清除选择",
     areYouSure: "确定吗？",
     confirmDelete: "此操作不可撤销。",
     saveChanges: "保存更改",
@@ -234,6 +236,9 @@ const zh: Translations = {
     myRequests: "我的请求数",
     myTokens: "我的 Token 用量",
     myApiKeys: "我的令牌数",
+    subtitleGroupAdmin: "{groups} 身份组",
+    groupMembers: "成员",
+    groupTokens: "令牌数",
   },
   announcements: {
     title: "公告",

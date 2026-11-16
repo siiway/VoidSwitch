@@ -56,6 +56,7 @@ import { BRAND_KEYS, getBrandIcon, resolveBrandKey } from "../components/brand_i
 import {
   ErrorText,
   Loading,
+  MultiSelectFilter,
   PageHeader,
   useAsync,
   useConfirm,
@@ -387,7 +388,7 @@ export function Models() {
   const [search, setSearch] = useState("");
   const [searchField, setSearchField] = useState<SearchField>("all");
   const [filterAvail, setFilterAvail] = useState("all");
-  const [filterGroup, setFilterGroup] = useState("all");
+  const [filterGroups, setFilterGroups] = useState<Set<string>>(new Set());
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterCapabilities, setFilterCapabilities] = useState<Set<ModelCapability>>(
     new Set(),
@@ -601,10 +602,19 @@ export function Models() {
     }
     if (match && filterAvail === "available") match = m.enabled;
     else if (match && filterAvail === "hidden") match = !m.enabled;
-    if (match && filterGroup === "unassigned")
-      match = m.allowed_role_group_ids.length === 0;
-    else if (match && filterGroup !== "all")
-      match = m.allowed_role_group_ids.includes(Number(filterGroup));
+    if (match && filterGroups.size > 0) {
+      // Group membership is OR across the picked groups: selecting two groups
+      // shows models reachable by either, which is what a multi-select filter
+      // means.
+      const wantsUnassigned = filterGroups.has("unassigned");
+      const ids = [...filterGroups]
+        .filter((v) => v !== "unassigned")
+        .map(Number)
+        .filter((n) => !Number.isNaN(n));
+      match =
+        (wantsUnassigned && m.allowed_role_group_ids.length === 0) ||
+        m.allowed_role_group_ids.some((gid) => ids.includes(gid));
+    }
     if (match && filterCategory !== "all") {
       if (filterCategory === "uncategorized")
         match = (m.category_id == null) && !m.provider;
@@ -1345,25 +1355,19 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
           })}
         </Dropdown>
         {isStaff && (
-          <Dropdown
-            aria-label={t("models.filterGroup" as TK)}
-            style={{ minWidth: 150 }}
-            selectedOptions={[filterGroup]}
-            value={
-              filterGroup === "all"
-                ? t("models.filterAllGroups" as TK)
-                : filterGroup === "unassigned"
-                  ? t("models.filterUnassigned" as TK)
-                  : (roleGroups.data ?? []).find((g) => String(g.id) === filterGroup)?.name ?? filterGroup
-            }
-            onOptionSelect={(_, d) => setFilterGroup(d.optionValue ?? "all")}
-          >
-            <Option value="all">{t("models.filterAllGroups" as TK)}</Option>
-            <Option value="unassigned">{t("models.filterUnassigned" as TK)}</Option>
-            {(roleGroups.data ?? []).filter((g) => !g.builtin).map((g) => (
-              <Option key={g.id} value={String(g.id)}>{g.name}</Option>
-            ))}
-          </Dropdown>
+          <MultiSelectFilter
+            ariaLabel={t("models.filterGroup" as TK)}
+            placeholder={t("models.filterAllGroups" as TK)}
+            clearLabel={t("common.clearSelection" as TK)}
+            options={[
+              { value: "unassigned", label: t("models.filterUnassigned" as TK) },
+              ...(roleGroups.data ?? [])
+                .filter((g) => !g.builtin)
+                .map((g) => ({ value: String(g.id), label: g.name })),
+            ]}
+            selected={filterGroups}
+            onChange={setFilterGroups}
+          />
         )}
         <Menu closeOnScroll={false} persistOnItemClick>
           <MenuTrigger disableButtonEnhancement>

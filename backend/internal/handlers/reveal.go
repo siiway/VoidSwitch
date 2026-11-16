@@ -87,6 +87,22 @@ func (a *App) revealKeySearch(c *gin.Context) {
 		}
 	}
 
+	// A search reveal exposes which providers or tokens hold a secret, so it is
+	// recorded even though the secret itself is only partially echoed.
+	uv := core.GetUser(c)
+	if uv != nil && uv.User != nil {
+		sub := uv.User.Sub
+		_ = core.RecordAudit(a.GDB, core.AuditInput{
+			Action: "key.search_reveal", ActorSub: &sub, ActorName: servicesName(uv),
+			Scope: core.AuditScopeAdmin, TargetType: strPtr("key"),
+			Detail: map[string]any{
+				"scope": scope, "provider_matches": len(providerMatches),
+				"token_matches": len(tokenMatches),
+			},
+			IP: strPtr(clientIP(c)),
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"provider_matches": providerMatches, "token_matches": tokenMatches,
 	})

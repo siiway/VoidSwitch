@@ -36,6 +36,8 @@ const en = {
     self: "self",
     system: "system",
     all: "All",
+    selectedCount: "{count} selected",
+    clearSelection: "Clear selection",
     areYouSure: "Are you sure?",
     confirmDelete: "This cannot be undone.",
     saveChanges: "Save changes",
@@ -233,6 +235,9 @@ const en = {
     myRequests: "My requests",
     myTokens: "My tokens used",
     myApiKeys: "My tokens",
+    subtitleGroupAdmin: "Role group {groups}",
+    groupMembers: "Members",
+    groupTokens: "Tokens",
   },
   announcements: {
     title: "Announcements",

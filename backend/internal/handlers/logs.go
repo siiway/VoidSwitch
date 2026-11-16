@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,36 +19,39 @@ import (
 )
 
 type requestLogView struct {
-	ID               int        `json:"id"`
-	TS               time.Time  `json:"ts"`
-	StartedAt        *time.Time `json:"started_at"`
-	FinishedAt       *time.Time `json:"finished_at"`
-	FirstTokenMs     *float64   `json:"first_token_ms"`
-	ReqStatus        *string    `json:"req_status"`
-	ClientIP         *string    `json:"client_ip"`
-	UserSub          *string    `json:"user_sub"`
-	UserName         *string    `json:"user_name"`
-	TokenID          *int       `json:"token_id"`
-	TokenName        *string    `json:"token_name"`
-	ProviderName     *string    `json:"provider_name"`
-	Model            *string    `json:"model"`
-	UpstreamModel    *string    `json:"upstream_model"`
-	InboundStyle     *string    `json:"inbound_style"`
-	UpstreamStyle    *string    `json:"upstream_style"`
-	StatusCode       *int       `json:"status_code"`
-	Success          bool       `json:"success"`
-	LatencyMs        *float64   `json:"latency_ms"`
-	PromptTokens     int64      `json:"prompt_tokens"`
-	CompletionTokens int64      `json:"completion_tokens"`
-	TotalTokens      int64      `json:"total_tokens"`
-	Stream           bool       `json:"stream"`
-	Attempts         int        `json:"attempts"`
-	ProviderAttempts int        `json:"provider_attempts"`
-	NetworkAttempts  int        `json:"network_attempts"`
-	Error            *string    `json:"error"`
-	UserAgent        *string    `json:"user_agent"`
-	ClientType       *string    `json:"client_type"`
-	IsOpenCode       bool       `json:"is_opencode"`
+	ID                 int        `json:"id"`
+	TS                 time.Time  `json:"ts"`
+	StartedAt          *time.Time `json:"started_at"`
+	FinishedAt         *time.Time `json:"finished_at"`
+	FirstTokenMs       *float64   `json:"first_token_ms"`
+	ReqStatus          *string    `json:"req_status"`
+	ClientIP           *string    `json:"client_ip"`
+	UserSub            *string    `json:"user_sub"`
+	UserName           *string    `json:"user_name"`
+	UserNickname       *string    `json:"user_nickname"`
+	TokenID            *int       `json:"token_id"`
+	TokenName          *string    `json:"token_name"`
+	TokenOwnerName     *string    `json:"token_owner_name"`
+	TokenOwnerNickname *string    `json:"token_owner_nickname"`
+	ProviderName       *string    `json:"provider_name"`
+	Model              *string    `json:"model"`
+	UpstreamModel      *string    `json:"upstream_model"`
+	InboundStyle       *string    `json:"inbound_style"`
+	UpstreamStyle      *string    `json:"upstream_style"`
+	StatusCode         *int       `json:"status_code"`
+	Success            bool       `json:"success"`
+	LatencyMs          *float64   `json:"latency_ms"`
+	PromptTokens       int64      `json:"prompt_tokens"`
+	CompletionTokens   int64      `json:"completion_tokens"`
+	TotalTokens        int64      `json:"total_tokens"`
+	Stream             bool       `json:"stream"`
+	Attempts           int        `json:"attempts"`
+	ProviderAttempts   int        `json:"provider_attempts"`
+	NetworkAttempts    int        `json:"network_attempts"`
+	Error              *string    `json:"error"`
+	UserAgent          *string    `json:"user_agent"`
+	ClientType         *string    `json:"client_type"`
+	IsOpenCode         bool       `json:"is_opencode"`
 	// OpenCodePlugin is "v1", "v2", or null when the plugin was not used.
 	OpenCodePlugin *string `json:"opencode_plugin"`
 	Debug          bool    `json:"debug"`
@@ -56,6 +60,7 @@ type requestLogView struct {
 type requestLogDetailView struct {
 	requestLogView
 	KeyID           *int    `json:"key_id"`
+	KeyPreview      *string `json:"key_preview"`
 	ProxyID         *int    `json:"proxy_id"`
 	ProxyURL        *string `json:"proxy_url"`
 	UpstreamURL     *string `json:"upstream_url"`
@@ -174,8 +179,17 @@ func (a *App) requestLogsQuery(c *gin.Context, uv *core.UserView) *gorm.DB {
 	if t := c.Query("token_id"); t != "" {
 		q = q.Where("token_id = ?", mustAtoi(t))
 	}
-	if ip := c.Query("client_ip"); ip != "" {
-		q = q.Where("client_ip = ?", ip)
+	// client_ip is a substring match, so a prefix such as "10.0." narrows to a
+	// subnet the way it does on every other text filter in the table.
+	if ip := strings.TrimSpace(c.Query("client_ip")); ip != "" {
+		// Escape LIKE's own metacharacters first, then translate the glob ones,
+		// so a literal "%" in the input cannot match everything.
+		escaped := strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(ip)
+		pattern := "%" + escaped + "%"
+		if strings.ContainsAny(ip, "*?") {
+			pattern = strings.NewReplacer("*", "%", "?", "_").Replace(escaped)
+		}
+		q = q.Where(`client_ip LIKE ? ESCAPE '\'`, pattern)
 	}
 	if rs := c.Query("req_status"); rs != "" {
 		q = q.Where("req_status = ?", rs)
@@ -197,9 +211,50 @@ func (a *App) requestLogsQuery(c *gin.Context, uv *core.UserView) *gorm.DB {
 	return q
 }
 
-func (a *App) enrichRequestLogs(rows []database.RequestLog) (map[string]string, map[int]string) {
+// applyLogLabels fills the display fields of one row from the looked-up labels.
+// The identifier formats ("name#id") match the usage breakdowns, so the same
+// person or key reads the same way on both pages.
+func applyLogLabels(v *requestLogView, r *database.RequestLog, labels requestLogLabels) {
+	if r.UserSub != nil {
+		if n, ok := labels.UserName[*r.UserSub]; ok {
+			v.UserName = strPtr(n)
+		}
+		if n, ok := labels.UserNickname[*r.UserSub]; ok {
+			v.UserNickname = strPtr(n)
+		}
+	}
+	if r.TokenID != nil {
+		if n, ok := labels.TokenName[*r.TokenID]; ok {
+			v.TokenName = strPtr(n)
+		}
+		if n, ok := labels.TokenOwnerName[*r.TokenID]; ok {
+			v.TokenOwnerName = strPtr(n)
+		}
+		if n, ok := labels.TokenOwnerNickname[*r.TokenID]; ok {
+			v.TokenOwnerNickname = strPtr(n)
+		}
+	}
+}
+
+// requestLogLabels carries the human labels for a page of request logs.
+type requestLogLabels struct {
+	// UserName is "name#id", the same identifier the usage breakdowns use.
+	UserName map[string]string
+	// UserNickname is the display nickname, which can differ from the login name.
+	UserNickname map[string]string
+	// TokenName is "key name#id".
+	TokenName map[int]string
+	// TokenOwnerName/TokenOwnerNickname describe who owns the token.
+	TokenOwnerName     map[int]string
+	TokenOwnerNickname map[int]string
+	// KeyPreview is the stored preview of a provider key.
+	KeyPreview map[int]string
+}
+
+func (a *App) enrichRequestLogs(rows []database.RequestLog) requestLogLabels {
 	subs := map[string]bool{}
 	tids := map[int]bool{}
+	kids := map[int]bool{}
 	for i := range rows {
 		if rows[i].UserSub != nil {
 			subs[*rows[i].UserSub] = true
@@ -207,8 +262,15 @@ func (a *App) enrichRequestLogs(rows []database.RequestLog) (map[string]string, 
 		if rows[i].TokenID != nil {
 			tids[*rows[i].TokenID] = true
 		}
+		if rows[i].KeyID != nil {
+			kids[*rows[i].KeyID] = true
+		}
 	}
-	userNames := map[string]string{}
+	labels := requestLogLabels{
+		UserName: map[string]string{}, UserNickname: map[string]string{},
+		TokenName: map[int]string{}, TokenOwnerName: map[int]string{},
+		TokenOwnerNickname: map[int]string{}, KeyPreview: map[int]string{},
+	}
 	if len(subs) > 0 {
 		keys := make([]string, 0, len(subs))
 		for k := range subs {
@@ -217,22 +279,56 @@ func (a *App) enrichRequestLogs(rows []database.RequestLog) (map[string]string, 
 		var users []database.User
 		a.GDB.Where("sub IN ?", keys).Find(&users)
 		for i := range users {
-			userNames[users[i].Sub] = displayUserName(&users[i])
+			u := &users[i]
+			labels.UserName[u.Sub] = fmt.Sprintf("%s#%d", displayUserName(u), u.ID)
+			if u.Name != nil {
+				labels.UserNickname[u.Sub] = *u.Name
+			}
 		}
 	}
-	tokenNames := map[int]string{}
 	if len(tids) > 0 {
 		keys := make([]int, 0, len(tids))
 		for k := range tids {
 			keys = append(keys, k)
 		}
 		var tokens []database.VoidToken
-		a.GDB.Where("id IN ?", keys).Find(&tokens)
+		a.GDB.Select("id", "name", "user_id").Where("id IN ?", keys).Find(&tokens)
+		ownerIDs := make([]int, 0, len(tokens))
 		for i := range tokens {
-			tokenNames[tokens[i].ID] = tokens[i].Name
+			labels.TokenName[tokens[i].ID] = fmt.Sprintf("%s#%d", tokens[i].Name, tokens[i].ID)
+			ownerIDs = append(ownerIDs, tokens[i].UserID)
+		}
+		if len(ownerIDs) > 0 {
+			var owners []database.User
+			a.GDB.Where("id IN ?", ownerIDs).Find(&owners)
+			byID := map[int]*database.User{}
+			for i := range owners {
+				byID[owners[i].ID] = &owners[i]
+			}
+			for i := range tokens {
+				u, ok := byID[tokens[i].UserID]
+				if !ok {
+					continue
+				}
+				labels.TokenOwnerName[tokens[i].ID] = fmt.Sprintf("%s#%d", displayUserName(u), u.ID)
+				if u.Name != nil {
+					labels.TokenOwnerNickname[tokens[i].ID] = *u.Name
+				}
+			}
 		}
 	}
-	return userNames, tokenNames
+	if len(kids) > 0 {
+		keys := make([]int, 0, len(kids))
+		for k := range kids {
+			keys = append(keys, k)
+		}
+		var keys2 []database.ApiKey
+		a.GDB.Select("id", "key_preview").Where("id IN ?", keys).Find(&keys2)
+		for i := range keys2 {
+			labels.KeyPreview[keys2[i].ID] = keys2[i].KeyPreview
+		}
+	}
+	return labels
 }
 
 func displayUserName(u *database.User) string {
@@ -287,26 +383,72 @@ func (a *App) logsRequestsList(c *gin.Context) {
 		a.internal(c, err)
 		return
 	}
-	userNames, tokenNames := a.enrichRequestLogs(rows)
+	labels := a.enrichRequestLogs(rows)
 
 	items := make([]requestLogView, 0, len(rows))
 	for i := range rows {
 		v := toRequestLogView(&rows[i])
-		if rows[i].UserSub != nil {
-			if n, ok := userNames[*rows[i].UserSub]; ok {
-				v.UserName = strPtr(n)
-			}
-		}
-		if rows[i].TokenID != nil {
-			if n, ok := tokenNames[*rows[i].TokenID]; ok {
-				v.TokenName = strPtr(n)
-			}
-		}
+		applyLogLabels(&v, &rows[i], labels)
 		items = append(items, v)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"items": items, "total": total, "limit": limit, "offset": offset,
 	})
+}
+
+// buildRequestLogDetail assembles the detail/export view for one row, applying
+// the caller's visibility once. The detail endpoint and the download endpoint
+// previously each repeated this logic and drifted apart (one leaked the proxy
+// URL and the failover trail to non-owners); they now share it.
+func (a *App) buildRequestLogDetail(r *database.RequestLog, uv *core.UserView) requestLogDetailView {
+	labels := a.enrichRequestLogs([]database.RequestLog{*r})
+	v := requestLogDetailView{requestLogView: toRequestLogView(r)}
+	applyLogLabels(&v.requestLogView, r, labels)
+	if r.KeyID != nil {
+		if preview, ok := labels.KeyPreview[*r.KeyID]; ok && preview != "" {
+			v.KeyPreview = strPtr(preview)
+		}
+	}
+	v.ProxyID = r.ProxyID
+	v.UpstreamURL = r.UpstreamURL
+	v.ReqMethod = r.ReqMethod
+	if uv.IsOwner() {
+		v.KeyID = r.KeyID
+		if r.KeyID != nil {
+			var k database.ApiKey
+			if err := a.GDB.Select("id", "key_preview").First(&k, *r.KeyID).Error; err == nil {
+				v.KeyPreview = strPtr(k.KeyPreview)
+			}
+		}
+		v.ProxyURL = r.ProxyURL
+		v.ReqHeaders = jsonAny(r.ReqHeaders)
+		v.ReqBody = jsonAny(r.ReqBody)
+		v.RespHeaders = jsonAny(r.RespHeaders)
+		v.RespBody = jsonAny(r.RespBody)
+		v.DebugAttempts = jsonAny(r.DebugAttempts)
+		v.AttemptsSummary = jsonAny(r.AttemptsSummary)
+		return v
+	}
+	// Non-owner: the provider key is identified by a masked preview only, the
+	// egress address and the failover trail are withheld, and headers/bodies are
+	// never exposed. Staff do see the response headers, which is what makes a
+	// request diagnosable without revealing credentials.
+	v.AttemptsSummary = redactAttemptSummaries(jsonAny(r.AttemptsSummary))
+	// A member's own detail stays anonymous: the provider key identifies which
+	// credential pool served the request, which is an operator concern. Staff and
+	// role-group admins get a masked preview.
+	if uv.IsStaff() || uv.IsRoleGroupAdmin() {
+		if r.KeyID != nil {
+			var k database.ApiKey
+			if err := a.GDB.Select("id", "key_preview").First(&k, *r.KeyID).Error; err == nil {
+				v.KeyPreview = strPtr(maskKeyPreview(k.KeyPreview))
+				v.KeyID = r.KeyID
+			}
+		}
+		v.ReqHeaders = jsonAny(r.ReqHeaders)
+		v.RespHeaders = jsonAny(r.RespHeaders)
+	}
+	return v
 }
 
 func (a *App) logsRequestDetail(c *gin.Context) {
@@ -321,33 +463,7 @@ func (a *App) logsRequestDetail(c *gin.Context) {
 		a.fail(c, http.StatusNotFound, "Request log not found.")
 		return
 	}
-
-	userNames, tokenNames := a.enrichRequestLogs([]database.RequestLog{r})
-	v := requestLogDetailView{requestLogView: toRequestLogView(&r)}
-	if r.UserSub != nil {
-		if n, ok := userNames[*r.UserSub]; ok {
-			v.UserName = strPtr(n)
-		}
-	}
-	if r.TokenID != nil {
-		if n, ok := tokenNames[*r.TokenID]; ok {
-			v.TokenName = strPtr(n)
-		}
-	}
-	v.KeyID = r.KeyID
-	v.ProxyID = r.ProxyID
-	v.ProxyURL = r.ProxyURL
-	v.UpstreamURL = r.UpstreamURL
-	v.ReqMethod = r.ReqMethod
-	if uv.IsOwner() {
-		v.ReqHeaders = jsonAny(r.ReqHeaders)
-		v.ReqBody = jsonAny(r.ReqBody)
-		v.RespHeaders = jsonAny(r.RespHeaders)
-		v.RespBody = jsonAny(r.RespBody)
-	}
-	v.DebugAttempts = jsonAny(r.DebugAttempts)
-	v.AttemptsSummary = jsonAny(r.AttemptsSummary)
-	c.JSON(http.StatusOK, v)
+	c.JSON(http.StatusOK, a.buildRequestLogDetail(&r, uv))
 }
 
 // logsRequestDownload serves one request log as a downloadable JSON document.
@@ -365,26 +481,7 @@ func (a *App) logsRequestDownload(c *gin.Context) {
 		a.fail(c, http.StatusNotFound, "Request log not found.")
 		return
 	}
-	userNames, tokenNames := a.enrichRequestLogs([]database.RequestLog{r})
-	v := requestLogDetailView{requestLogView: toRequestLogView(&r)}
-	if r.UserSub != nil {
-		if n, ok := userNames[*r.UserSub]; ok {
-			v.UserName = strPtr(n)
-		}
-	}
-	if r.TokenID != nil {
-		if n, ok := tokenNames[*r.TokenID]; ok {
-			v.TokenName = strPtr(n)
-		}
-	}
-	v.KeyID, v.ProxyID, v.ProxyURL = r.KeyID, r.ProxyID, r.ProxyURL
-	v.UpstreamURL, v.ReqMethod = r.UpstreamURL, r.ReqMethod
-	if uv.IsOwner() {
-		v.ReqHeaders, v.ReqBody = jsonAny(r.ReqHeaders), jsonAny(r.ReqBody)
-		v.RespHeaders, v.RespBody = jsonAny(r.RespHeaders), jsonAny(r.RespBody)
-	}
-	v.DebugAttempts = jsonAny(r.DebugAttempts)
-	v.AttemptsSummary = jsonAny(r.AttemptsSummary)
+	v := a.buildRequestLogDetail(&r, uv)
 
 	// The export must not leak credentials or egress addresses. Owners get the
 	// bodies; everyone else gets metadata only.
@@ -444,7 +541,7 @@ func (a *App) logsRequestFilters(c *gin.Context) {
 	}
 
 	var providers []string
-	a.GDB.Model(&database.RequestLog{}).Where("provider_name IS NOT NULL AND provider_name <> ''").
+	base.Session(&gorm.Session{}).Where("provider_name IS NOT NULL AND provider_name <> ''").
 		Distinct().Order("provider_name").Pluck("provider_name", &providers)
 	if providers == nil {
 		providers = []string{}
@@ -453,6 +550,7 @@ func (a *App) logsRequestFilters(c *gin.Context) {
 	var subs []string
 	base.Session(&gorm.Session{}).Where("user_sub IS NOT NULL AND user_sub <> ''").
 		Distinct().Pluck("user_sub", &subs)
+	sort.Strings(subs)
 	users := make([]gin.H, 0, len(subs))
 	if len(subs) > 0 {
 		var userRows []database.User
@@ -464,12 +562,57 @@ func (a *App) logsRequestFilters(c *gin.Context) {
 		for _, s := range subs {
 			name := s
 			if u, ok := bySub[s]; ok {
-				name = displayUserName(u)
+				name = fmt.Sprintf("%s#%d", displayUserName(u), u.ID)
 			}
 			users = append(users, gin.H{"sub": s, "name": name})
 		}
+		sort.SliceStable(users, func(i, j int) bool {
+			return toStr(users[i]["name"]) < toStr(users[j]["name"])
+		})
 	}
-	c.JSON(http.StatusOK, gin.H{"models": models, "providers": providers, "users": users})
+
+	// The token filter needs the tokens appearing in the caller's visible
+	// traffic plus their owner, otherwise the dropdown stays empty and a member
+	// cannot narrow the table to one key.
+	var tokenIDs []int
+	base.Session(&gorm.Session{}).Where("token_id IS NOT NULL").
+		Distinct().Pluck("token_id", &tokenIDs)
+	tokens := make([]gin.H, 0, len(tokenIDs))
+	if len(tokenIDs) > 0 {
+		var tokenRows []database.VoidToken
+		a.GDB.Select("id", "name", "user_id").Where("id IN ?", tokenIDs).Find(&tokenRows)
+		ownerIDs := make([]int, 0, len(tokenRows))
+		for i := range tokenRows {
+			ownerIDs = append(ownerIDs, tokenRows[i].UserID)
+		}
+		ownerName := map[int]string{}
+		ownerSub := map[int]string{}
+		if len(ownerIDs) > 0 {
+			var owners []database.User
+			a.GDB.Where("id IN ?", ownerIDs).Find(&owners)
+			for i := range owners {
+				ownerName[owners[i].ID] = fmt.Sprintf("%s#%d",
+					displayUserName(&owners[i]), owners[i].ID)
+				ownerSub[owners[i].ID] = owners[i].Sub
+			}
+		}
+		for i := range tokenRows {
+			tok := &tokenRows[i]
+			tokens = append(tokens, gin.H{
+				"id":        tok.ID,
+				"name":      fmt.Sprintf("%s#%d", tok.Name, tok.ID),
+				"user_sub":  ownerSub[tok.UserID],
+				"user_name": ownerName[tok.UserID],
+			})
+		}
+		sort.SliceStable(tokens, func(i, j int) bool {
+			return toStr(tokens[i]["name"]) < toStr(tokens[j]["name"])
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"models": models, "providers": providers, "users": users, "tokens": tokens,
+	})
 }
 
 func (a *App) logsRequestLocate(c *gin.Context) {
@@ -550,20 +693,11 @@ func (a *App) logsRequestStream(c *gin.Context) {
 			if len(rows) == 0 {
 				continue
 			}
-			userNames, tokenNames := a.enrichRequestLogs(rows)
+			labels := a.enrichRequestLogs(rows)
 			for i := range rows {
 				lastID = rows[i].ID
 				v := toRequestLogView(&rows[i])
-				if rows[i].UserSub != nil {
-					if n, ok := userNames[*rows[i].UserSub]; ok {
-						v.UserName = strPtr(n)
-					}
-				}
-				if rows[i].TokenID != nil {
-					if n, ok := tokenNames[*rows[i].TokenID]; ok {
-						v.TokenName = strPtr(n)
-					}
-				}
+				applyLogLabels(&v, &rows[i], labels)
 				payload, err := json.Marshal(v)
 				if err != nil {
 					continue
@@ -782,19 +916,38 @@ func (a *App) logsAuditReveal(c *gin.Context) {
 		return
 	}
 	if r.SensitiveCiphertext == nil || *r.SensitiveCiphertext == "" {
-		a.fail(c, http.StatusBadRequest, "No sensitive payload is stored for this entry.")
+		a.fail(c, http.StatusNotFound, "No sensitive data for this entry.")
 		return
 	}
 	plain, err := cryptoutil.DecryptSecret(*r.SensitiveCiphertext, a.Cfg.Server.SecretKey)
 	if err != nil {
-		a.fail(c, http.StatusBadRequest, "Stored payload could not be decrypted (secret key changed?).")
+		// An unreadable ciphertext is a server-side problem (the secret key
+		// changed), not a client mistake.
+		a.internal(c, err)
 		return
 	}
-	var out map[string]any
-	if err := json.Unmarshal([]byte(plain), &out); err != nil || out == nil {
-		out = map[string]any{"raw": plain}
+	// Keep the stored JSON shape: a sensitive payload may be an array or a
+	// scalar, and wrapping it in {"raw": …} would invent a structure.
+	var out any
+	if err := json.Unmarshal([]byte(plain), &out); err != nil {
+		out = plain
 	}
-	c.JSON(http.StatusOK, gin.H{"action": r.Action, "sensitive": out})
+
+	// Who looked at a previously concealed payload is itself auditable.
+	uv := core.GetUser(c)
+	if uv != nil && uv.User != nil {
+		sub := uv.User.Sub
+		_ = core.RecordAudit(a.GDB, core.AuditInput{
+			Action: "audit.reveal", ActorSub: &sub, ActorName: servicesName(uv),
+			Scope: core.AuditScopeAdmin, TargetType: strPtr("audit"),
+			TargetID: strPtr(strconv.Itoa(r.ID)),
+			Detail: map[string]any{
+				"revealed_action": r.Action, "revealed_actor": deref(r.ActorName),
+			},
+			IP: strPtr(clientIP(c)),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"id": r.ID, "action": r.Action, "sensitive": out})
 }
 
 func (a *App) settingInt(key string) (int, bool) {

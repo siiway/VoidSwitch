@@ -394,7 +394,7 @@ function SelectiveIgnoreRuleEditor({
 }
 
 export function Providers() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const notify = useNotify();
   const confirm = useConfirm();
@@ -1860,10 +1860,17 @@ export function Providers() {
             <DialogActions>
               <Button
                 appearance="secondary"
-                onClick={() => {
-                  const target = new URL("/provider-api/docs", window.location.origin);
-                  window.open(target.href, "_blank", "noopener,noreferrer");
-                }}
+                // The Go backend serves no Swagger UI; the documented endpoint
+                // table lives in the usage site instead of a 404.
+                onClick={() =>
+                  window.open(
+                    i18n.language.startsWith("zh")
+                      ? "https://voidswitch.siiway.page/admin/keys"
+                      : "https://voidswitch.siiway.page/en/admin/keys",
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
               >
                 {t("providers.keyApiDocs" as TK)}
               </Button>
