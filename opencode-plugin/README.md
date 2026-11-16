@@ -71,13 +71,16 @@ make OpenCode load it and point it at your gateway.
 curl -fsSL "https://your-voidswitch-host/install.sh" | sh
 ```
 
-This drops the plugin into `~/.config/opencode/plugins/`, where OpenCode discovers
-it automatically. Then run `/connect` → **VoidSwitch** and paste a `vs-…` token.
+This drops the directory plugin (server + rpc + tui parts) into
+`~/.config/opencode/plugins/voidswitch/`, where OpenCode discovers it
+automatically, and bakes the gateway you installed from into the server part.
+Then run `/connect` → **VoidSwitch** and paste a `vs-…` token.
 
 ### Manual
 
-Copy `src/index.ts` to `~/.config/opencode/plugins/voidswitch.ts` (or any directory
-you then reference from `plugins`):
+Copy `src/index.ts`, `src/rpc.ts` and `src/tui.ts` into
+`~/.config/opencode/plugins/voidswitch/` (or any directory you then reference
+from `plugins`):
 
 ```jsonc
 {
@@ -99,7 +102,7 @@ Then authenticate once:
 ```
 
 The gateway URL may also come from `$VOIDSWITCH_URL` (default
-`http://localhost:8080`), or from `providers.voidswitch.settings.baseURL` in
+`https://voidswitch.siiway.org`), or from `providers.voidswitch.settings.baseURL` in
 `opencode.json`.
 
 ### Nix Flakes
@@ -135,7 +138,7 @@ an input and reference the store path:
 
 | Option              | Type                                                | Default                                     | Meaning                                                                                   |
 | ------------------- | --------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `url`               | string                                              | `$VOIDSWITCH_URL` / `http://localhost:8080` | Gateway base URL                                                                          |
+| `url`               | string                                              | `$VOIDSWITCH_URL` / `https://voidswitch.siiway.org` | Gateway base URL                                                                          |
 | `effort`            | `low\|medium\|high\|xhigh\|max\|ultracode\|default` | `default`                                   | Effort used when no picker variant is chosen (`default` = let the model decide)           |
 | `thinking`          | boolean                                             | `true`                                      | Enable adaptive extended thinking on 4.6+ models                                          |
 | `thinkingDisplay`   | `summarized\|omitted`                               | `summarized`                                | Surface thinking text on Opus 4.7/4.8                                                     |
@@ -192,7 +195,14 @@ the rest of the session:
 | `/effort auto`                                                 | Clears the override (model decides)                        |
 | `/fast` · `/fast off`                                          | Turns fast mode on / off for the session                   |
 | `/ultracode`                                                   | xhigh effort for the session                               |
-| `/sync-models`                                                 | Refresh the available-model list from the gateway          |
+
+Palette commands (`Ctrl+P`, no session message) and external paths:
+
+| Command                                                        | Effect                                                    |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| **VoidSwitch: sync models** (palette)                          | Refresh the available-model list from the gateway          |
+| **VoidSwitch: set gateway URL** (palette)                      | Switch gateways, then refresh the model list               |
+| `opencode auth login` → VoidSwitch                             | Re-paste the token; refreshes the list on success          |
 
 Precedence: a per-turn model-variant pick (e.g. `…:low`) overrides the session
 command, which overrides the `effort` plugin option.

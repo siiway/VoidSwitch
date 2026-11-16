@@ -29,9 +29,10 @@ or it may have been **hidden** (disabled) by staff — hidden models are not sho
 
 Staff maintain the shared catalog from the **Models** page. Members cannot create, edit, or delete models.
 
-**OpenCode users (including members)** use the `/sync-models` command (`POST /v1/models/sync`)
-to have the plugin align its model list with the models they **can currently call** — this step is open to all members, requires no admin
-privileges, and does not touch the shared catalog. You only see models you have access to and that are not hidden.
+**OpenCode users (including members)** press `Ctrl+P` in OpenCode and run **VoidSwitch: sync models**
+(`POST /v1/models/sync`) to have the plugin align its model list with the models they **can currently call** — this
+step is open to all members, requires no admin privileges, and does not touch the shared catalog. You only see models
+you have access to and that are not hidden.
 
 Members usually don't need to sync explicitly — models that are already served and that you have access to already appear in the list and in `/v1/models`.
 

@@ -31,8 +31,18 @@ irm https://voidswitch.siiway.org/install.ps1 | iex
 
 :::
 
-The V2 plugin is discovered automatically (it lives in `~/.config/opencode/plugins/`), so you do **not** need to edit
-`opencode.json`. Restart `opencode` afterwards.
+The V2 plugin is a **directory plugin** discovered automatically (all three parts land in
+`~/.config/opencode/plugins/voidswitch/`: `index.ts`, `rpc.ts`, `tui.ts`), so you do **not** need to edit
+`opencode.json`. Restart `opencode` afterwards. The `Ctrl+P` palette commands (sync models, set gateway) require
+OpenCode **≥ 2.3**; on older 2.x the plugin still works, just without the palette commands.
+
+The installer bakes **the host you fetched it from** into the plugin's default gateway, so a self-hosted install
+points at its own gateway and the public instance at the public one. Precedence: plugin option or the
+`VOIDSWITCH_URL` environment variable > a gateway previously set from the palette or `/connect` (persisted in
+`opencode.json`) > the baked gateway > the public instance `https://voidswitch.siiway.org`. If you ever set the
+gateway from the palette (**VoidSwitch: set gateway URL**), reset it there (submit empty) before reinstalling to a
+new host — the persisted value outranks the baked one. To switch hosts on reinstall you can also pass it
+explicitly: `VOIDSWITCH_GATEWAY=https://… curl -fsSL …/install.sh | sh`.
 
 ## One-line install (V1, legacy)
 
@@ -77,8 +87,8 @@ When you cannot run the install script, expand **Manual setup** in the OpenCode 
 1. A complete `opencode.json` (with the VoidSwitch provider registered and all available models listed).
 2. A **manually install the plugin** guide — this step gives manually configured users the full plugin capabilities as
    well (effort, fast mode, adaptive thinking, 1M context). It does the same thing as the one-line script: it **fetches
-   the plugin source in real time** from the gateway (always in sync with the current server) and saves it to the
-   OpenCode config directory.
+   the plugin source in real time** from the gateway (always in sync with the current server) and saves the three parts
+   as `index.ts`, `rpc.ts` and `tui.ts` under the `plugins/voidswitch/` directory.
 
 ### V2 plugin (recommended)
 
@@ -131,14 +141,20 @@ On the first write, build once with a placeholder hash and let Nix report the ac
 
 ## Refreshing the model list
 
-The plugin reads the platform model catalog. Running `/sync-models` (`POST /v1/models/sync`) makes the plugin align its
-model list with the models you **can currently call** — available to **all members**, no admin privileges required; it
-only returns models you have access to and that are not hidden, and it also syncs the recommended `model` /
-`small_model` top-level selectors.
+The plugin reads the platform model catalog. Press `Ctrl+P` to open the command palette and run
+**VoidSwitch: sync models** (`POST /v1/models/sync`) to align the plugin's model list with the models you
+**can currently call** — available to **all members**, no admin privileges required; it only returns models you have
+access to and that are not hidden, and it also syncs the recommended `model` / `small_model` top-level selectors. The
+palette command runs through the plugin's RPC in the background and **never writes a message to the session** (the old
+`/sync-models` slash command was removed, because slash commands always produce a session message).
+
+Two paths exist outside the palette: run `opencode auth login`, pick VoidSwitch and paste the token again (the catalog
+refreshes automatically), or run **VoidSwitch: set gateway URL** from the palette to switch gateways (it refreshes and
+migrates the model cache automatically).
 
 This is distinct from **Sync from providers**: the latter (a button on the **Models** page) reshapes the *shared*
-catalog, registering catalog rows for models newly served by providers, and is a **staff-only** action. A member's
-`/sync-models` does not touch the shared catalog.
+catalog, registering catalog rows for models newly served by providers, and is a **staff-only** action. The palette
+refresh does not touch the shared catalog.
 
 ## Telling the plugin generations apart
 
@@ -149,6 +165,14 @@ actually loaded.
 ## Where the installer comes from
 
 `/install.sh` picks the plugin generation from the `?v` parameter (or the `VOIDSWITCH_PLUGIN_V` environment variable),
-defaulting to V2. The plugin source itself is served from `/opencode/voidswitch.ts` (V2) and
-`/opencode/voidswitch-v1.ts` (V1), so a self-hosted gateway is fully self-contained and always hands out the source
-matching its own release.
+defaulting to V2. The V2 plugin source is served from `/opencode/voidswitch.ts` (server),
+`/opencode/voidswitch-rpc.ts` (RPC contract) and `/opencode/voidswitch-tui.ts` (TUI part); the installer drops the
+three into `~/.config/opencode/plugins/voidswitch/`. V1 is served from `/opencode/voidswitch-v1.ts` (baked into
+`voidswitch.plugin.ts`). A self-hosted gateway is therefore fully self-contained and always hands out the source
+matching its own release. If an old single-file `voidswitch.ts` sits next to the directory, the installer renames it
+to `voidswitch.ts.bak` — otherwise the server part would load twice.
+
+The script uses the host you visited as the gateway (proxy headers first, then the request Host, falling back to the
+server's configured BaseURL) and, after downloading, rewrites the plugin's install-time gateway marker line to that
+host (both V1 and V2 bake) — the same source bakes to whichever host it was installed from. The palette's
+**VoidSwitch: set gateway URL** command or the `VOIDSWITCH_URL` environment variable still override it at runtime.

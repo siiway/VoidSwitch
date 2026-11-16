@@ -7,6 +7,9 @@
  *
  *   • auth        — paste a `vs-…` token via the integration key method
  *   • models      — pulled live from `<gateway>/v1/models`
+ *   • palette     — Ctrl+P commands (sync models, set gateway) via the RPC
+ *                   contract in rpc.ts and the TUI part in tui.ts; a directory
+ *                   plugin loads all three parts together
  *   • effort      — `output_config.effort` ∈ low|medium|high|xhigh|max, picker variants
  *   • fast mode   — top-level `speed: "fast"` (Claude Code's /fast), picker variant
  *   • thinking    — adaptive extended thinking on 4.6+ models
@@ -25,6 +28,7 @@
  */
 
 import { Model, Plugin, Provider } from "@opencode/plugin";
+import { VoidSwitchRpc, type SyncResult } from "./rpc";
 import {
   appendFileSync,
   existsSync,
@@ -72,7 +76,14 @@ const TASK_BUDGET_MIN = 20_000;
 /** Auto-enable 1M context once the serialized prompt is this large (~150k tokens). */
 const LONG_CONTEXT_CHARS = 600_000;
 
-const DEFAULT_GATEWAY = "http://localhost:8080";
+/** Gateway used when nothing is configured: the public VoidSwitch instance. */
+const DEFAULT_GATEWAY = "https://voidswitch.siiway.org";
+/**
+ * Install-time gateway, baked into this file by the /install.sh (or /install.ps1)
+ * script as the host the installer was fetched from — so a self-hosted install
+ * points at its own gateway without extra configuration. Empty otherwise.
+ */
+const INSTALL_GATEWAY = ""; // @voidswitch-install-host
 
 /** Header advertising this plugin to the gateway (consumed there, never forwarded). */
 const CLIENT_HINT_HEADER = "x-voidswitch-client";
@@ -632,16 +643,33 @@ export default Plugin.define({
   async setup(ctx) {
     const opt = (ctx.options ?? {}) as VoidSwitchOptions;
 
-    // Gateway precedence: plugin option → env → persisted config → default.
-    let gateway = (
-      opt.url ??
-      process.env.VOIDSWITCH_URL ??
-      loadPersistedBaseUrl() ??
-      DEFAULT_GATEWAY
-    ).replace(/\/+$/, "");
+    /**
+     * Resolve the gateway from the option → env → persisted → install chain.
+     * Shared by setup and the RPC gateway reset, so both stay in step.
+     */
+    function resolveGateway(): { url: string; source: string } {
+      if (opt.url) return { url: opt.url, source: "option" };
+      if (process.env.VOIDSWITCH_URL)
+        return { url: process.env.VOIDSWITCH_URL, source: "env" };
+      const persisted = loadPersistedBaseUrl();
+      if (persisted) return { url: persisted, source: "config" };
+      return {
+        url: INSTALL_GATEWAY || DEFAULT_GATEWAY,
+        source: INSTALL_GATEWAY ? "install" : "default",
+      };
+    }
+
+    // Gateway precedence: plugin option → env → persisted config → install
+    // host (baked in by the installer) → public default.
+    const resolved = resolveGateway();
+    let gateway = resolved.url.replace(/\/+$/, "");
+    let gatewaySource = resolved.source;
     let gatewayV1 = `${gateway}/v1`;
 
-    /** Last token seen, so `/sync-models` can authenticate its refresh call. */
+    /**
+     * Last token seen, so the palette sync and the credential watcher can
+     * authenticate their refresh calls.
+     */
     let lastToken: string | undefined;
 
     async function fetchModels(
@@ -689,16 +717,21 @@ export default Plugin.define({
     type RemoteDefaults = { defaultModel?: string; smallModel?: string };
 
     /**
-     * Ask the gateway to refresh its catalog; returns a status line plus the
-     * recommended default / small model ids.
+     * Ask the gateway to refresh its catalog; returns an ok flag (false on any
+     * failure), a status line plus the recommended default / small model ids.
      */
     async function syncModels(): Promise<{
+      ok: boolean;
       note: string;
       defaults: RemoteDefaults;
     }> {
       let token = lastToken ?? (await resolveToken(ctx));
       if (token) lastToken = token;
-      const fail = (note: string) => ({ note, defaults: {} as RemoteDefaults });
+      const fail = (note: string) => ({
+        ok: false,
+        note,
+        defaults: {} as RemoteDefaults,
+      });
       const url = `${gatewayV1}/models/sync`;
       try {
         const res = await fetch(url, {
@@ -731,6 +764,7 @@ export default Plugin.define({
         const pick = (v: unknown): string | undefined =>
           typeof v === "string" && v ? v : undefined;
         return {
+          ok: true,
           note: `models synced — ${j?.total ?? "?"} available to you.`,
           defaults: {
             defaultModel: pick(j?.opencode_default_model),
@@ -880,27 +914,6 @@ export default Plugin.define({
             await prompt(sessionID, (p.text ?? "").trim());
           },
         });
-
-        editor.add({
-          name: "sync-models",
-          description:
-            "Refresh the VoidSwitch available-model list from the gateway",
-          execute: async ({ sessionID }) => {
-            const { note, defaults } = await syncModels();
-            const lines = [note];
-            if (!note.includes("couldn't")) {
-              const infos = await fetchModels(lastToken);
-              persistModels(infos);
-              lines.push(`${infos.length} models written to config.`);
-              lines.push(...persistDefaultModels(defaults));
-              await registerModels(infos);
-            }
-            await ctx.session.synthetic({
-              sessionID,
-              text: `VoidSwitch\n${lines.join("\n")}`,
-            });
-          },
-        });
       });
     }
 
@@ -910,6 +923,121 @@ export default Plugin.define({
       await ctx.provider.transform((editor) => {
         if (editor.get(PROVIDER_ID)) editor.models.set(PROVIDER_ID, models);
       });
+    }
+
+    // --------------------------------------------------------------------- //
+    // RPC (drives the TUI part's palette commands; never touches a session)
+    // --------------------------------------------------------------------- //
+
+    /** Refresh the catalog from the gateway and persist it (RPC entry). */
+    async function syncNow(): Promise<SyncResult> {
+      const { ok, note, defaults } = await syncModels();
+      if (!ok) return { ok: false, note };
+      const infos = await fetchModels(lastToken);
+      if (infos === FALLBACK_MODEL_INFOS)
+        return {
+          ok: false,
+          note:
+            `${note}\n` +
+            "but the catalog refresh failed — the picker falls back to the built-in list. " +
+            'Run "opencode auth login", pick VoidSwitch and paste a fresh vs-… token.',
+        };
+      persistModels(infos);
+      const notes = [
+        note,
+        `${infos.length} models written to config.`,
+        ...persistDefaultModels(defaults),
+      ];
+      await registerModels(infos);
+      return { ok: true, note: notes.join("\n") };
+    }
+
+    /** Point the plugin at another gateway; empty resets to the default. */
+    async function setGateway(raw: string): Promise<SyncResult> {
+      const url = raw.trim().replace(/\/+$/, "");
+      if (url) {
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+            throw new Error(parsed.protocol);
+        } catch {
+          return { ok: false, note: `not a valid http(s) URL: ${url}` };
+        }
+      }
+      persistBaseUrl(url || undefined);
+      const next = url ? { url, source: "config" } : resolveGateway();
+      gateway = next.url.replace(/\/+$/, "");
+      gatewaySource = next.source;
+      gatewayV1 = `${gateway}/v1`;
+      await registerProvider();
+      const infos = await fetchModels(await resolveToken(ctx));
+      persistModels(infos);
+      await registerModels(infos);
+      if (infos === FALLBACK_MODEL_INFOS)
+        return {
+          ok: false,
+          note:
+            `Gateway is now ${gateway} (${gatewaySource}), but it rejected the current ` +
+            "credential — the picker falls back to the built-in list. " +
+            'Run "opencode auth login", pick VoidSwitch and paste a fresh vs-… token.',
+        };
+      return {
+        ok: true,
+        note: `Gateway set to ${gateway} (${gatewaySource}) — ${infos.length} models loaded. Reopen the model picker to see changes.`,
+      };
+    }
+
+    /** Expose the palette-command surface to the TUI part. */
+    async function registerRpc(): Promise<void> {
+      // Older OpenCode 2.x builds have no RPC domain; degrade to server-only
+      // behaviour instead of failing the whole plugin.
+      if (
+        typeof (ctx as { rpc?: { register?: unknown } }).rpc?.register !==
+        "function"
+      ) {
+        console.error(
+          "[VoidSwitch] ctx.rpc.register unavailable — palette commands disabled; upgrade OpenCode.",
+        );
+        return;
+      }
+      await ctx.rpc.register(VoidSwitchRpc, {
+        syncModels: async () => syncNow(),
+        gateway: async () => ({ url: gateway, source: gatewaySource }),
+        setGateway: async (input) =>
+          setGateway(
+            typeof (input as { url?: unknown })?.url === "string"
+              ? (input as { url: string }).url
+              : "",
+          ),
+      });
+    }
+
+    /**
+     * Refresh the catalog whenever a VoidSwitch credential is stored — the
+     * `opencode auth login` path, so an external command refresh stays working
+     * after the slash command was removed.
+     */
+    function watchCredentials(): () => void {
+      let stopped = false;
+      const loop = (async () => {
+        try {
+          for await (const event of ctx.event.subscribe({
+            types: ["credential.updated"],
+          })) {
+            if (stopped) break;
+            if (event.data.integrationID !== PROVIDER_ID) continue;
+            const infos = await fetchModels(await resolveToken(ctx));
+            persistModels(infos);
+            await registerModels(infos);
+          }
+        } catch {
+          // Subscription closed or the server restarted — nothing to do.
+        }
+      })();
+      return () => {
+        stopped = true;
+        void loop.catch(() => {});
+      };
     }
 
     // --------------------------------------------------------------------- //
@@ -1095,8 +1223,11 @@ export default Plugin.define({
     await registerModels(infos);
 
     await registerCommands();
+    await registerRpc();
+    const stopWatcher = watchCredentials();
 
     return () => {
+      stopWatcher();
       sessionState.clear();
     };
   },

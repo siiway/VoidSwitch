@@ -93,7 +93,14 @@ const H_BASE_URL = "x-voidswitch-base-url"
  */
 const H_SESSION = "x-voidswitch-session"
 
-const DEFAULT_GATEWAY = "http://localhost:8080"
+/** Gateway used when nothing is configured: the public VoidSwitch instance. */
+const DEFAULT_GATEWAY = "https://voidswitch.siiway.org"
+/**
+ * Install-time gateway, baked into this file by the /install.sh (or /install.ps1)
+ * script as the host the installer was fetched from — so a self-hosted install
+ * points at its own gateway without extra configuration. Empty otherwise.
+ */
+const INSTALL_GATEWAY = "" // @voidswitch-install-host
 
 /** Fallback model list when `/v1/models` is unreachable (offline picker). */
 const FALLBACK_MODELS = [
@@ -757,13 +764,13 @@ const stripV1 = (u: unknown): string | undefined =>
 const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOptions): Promise<Hooks> => {
   const opt = (options ?? {}) as VoidSwitchOptions
   const opn = _input.client
-  // Gateway precedence: plugin option → env → persisted state → existing config
-  // baseURL (adopted in the config hook) → default.
+  // Gateway precedence: plugin option → env → persisted state → install host
+  // (baked in by the installer) → public default.
   let gateway = (
     opt.url ??
     process.env.VOIDSWITCH_URL ??
     loadPersistedBaseUrl() ??
-    DEFAULT_GATEWAY
+    (INSTALL_GATEWAY || DEFAULT_GATEWAY)
   ).replace(/\/+$/, "")
   let gatewayV1 = `${gateway}/v1`
   // Last vs-… token observed (from the auth loader / models ctx), so the
@@ -880,7 +887,10 @@ const VoidSwitchPlugin: Plugin = async (_input: PluginInput, options?: PluginOpt
     }
     persistBaseUrl(undefined)
     opt.url = undefined
-    gateway = (process.env.VOIDSWITCH_URL ?? DEFAULT_GATEWAY).replace(/\/+$/, "")
+    gateway = (
+      process.env.VOIDSWITCH_URL ??
+      (INSTALL_GATEWAY || DEFAULT_GATEWAY)
+    ).replace(/\/+$/, "")
     gatewayV1 = `${gateway}/v1`
     return authSideEffectResult(`Base URL reset to default: ${gateway}`)
   }

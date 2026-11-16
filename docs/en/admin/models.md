@@ -113,7 +113,7 @@ role-group ids are rejected rather than dropped silently.
 Previously the Models page had a **Sync from providers** button (`POST /api/models/sync`)
 that ingested the upstream models currently served by enabled providers and reshaped the
 shared catalog. The button has been removed — use **Create model** to manually expose models.
-(OpenCode's `/sync-models` command — `POST /v1/models/sync` — is open to **all members** and
+(OpenCode's model-refresh command — `POST /v1/models/sync` — is open to **all members** and
 aligns the plugin's list with the exposed models you **can currently call**; it never touches
 the shared catalog.)
 

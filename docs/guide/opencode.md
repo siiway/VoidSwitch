@@ -31,8 +31,17 @@ irm https://voidswitch.siiway.org/install.ps1 | iex
 
 :::
 
-V2 插件会被自动发现（放在 `~/.config/opencode/plugins/`），**无需**编辑
-`opencode.json`。安装后重启 `opencode` 即可。
+V2 插件是**目录插件**，会被自动发现（三个 part 一起装进
+`~/.config/opencode/plugins/voidswitch/`：`index.ts`、`rpc.ts`、`tui.ts`），**无需**编辑
+`opencode.json`。安装后重启 `opencode` 即可。Ctrl+P 面板命令（同步模型、切换网关）要求
+OpenCode **≥ 2.3**；更旧的 2.x 上插件仍可用，只是没有面板命令。
+
+安装程序会把**你获取它的主机**写进插件的默认网关（安装时烤入），因此自托管部署装完即指向
+自己的网关，公共实例装完即指向公共实例。覆盖优先级：插件选项或 `VOIDSWITCH_URL` 环境变量 >
+面板/`/connect` 里设置过的网关（持久化在 `opencode.json`）> 安装时烤入的网关 > 公共实例
+`https://voidswitch.siiway.org`。因此若曾用面板的 **VoidSwitch: set gateway URL** 设置过地址，
+重装换主机前需先在面板里重置（清空提交即可），否则烤入值会被持久化值压制。重装换主机时也可用
+`VOIDSWITCH_GATEWAY=https://… curl -fsSL …/install.sh | sh` 直接指定。
 
 ## 一行安装（V1，旧版）
 
@@ -77,7 +86,8 @@ V1 插件**不会**被自动发现，需要先把它登记到 `opencode.json` �
 1. 一份完整的 `opencode.json`（已注册 VoidSwitch 供应商并列出全部可用模型）。
 2. **手动安装插件**指南 —— 这一步让手动配置的用户也能获得完整的插件功能
    （effort、fast mode、adaptive thinking、1M context）。它与一行脚本做的事一样，从网关
-   **实时获取**插件源码（始终与当前服务器一致），保存到 OpenCode 配置目录。
+   **实时获取**插件源码（始终与当前服务器一致），把三个 part 分别保存为
+   `plugins/voidswitch/` 目录下的 `index.ts`、`rpc.ts`、`tui.ts`。
 
 ### V2 插件（推荐）
 
@@ -129,12 +139,18 @@ V2 的本地插件路径必须是一个**目录**，指向单个文件会被跳�
 
 ## 刷新模型列表
 
-插件读取平台模型目录。运行 `/sync-models`（`POST /v1/models/sync`）可让插件把模型列表
-与你**当前可调用**的模型对齐 —— **所有成员**都能用，无需管理员权限，只会返回你有权访问且
-未被隐藏的模型，并同步推荐的 `model` / `small_model` 顶层选择器。
+插件读取平台模型目录。按 `Ctrl+P` 打开命令面板，运行 **VoidSwitch: sync models**（
+`POST /v1/models/sync`）即可把模型列表与你**当前可调用**的模型对齐 —— **所有成员**都能用，
+无需管理员权限，只返回你有权访问且未被隐藏的模型，并同步推荐的 `model` / `small_model`
+顶层选择器。面板命令经由插件 RPC 在后台完成，**不会向会话写入任何消息**（旧版的
+`/sync-models` 斜杠命令已移除，因为斜杠命令必然产生一条会话消息）。
+
+不走面板时也有两条路：运行 `opencode auth login` 选择 VoidSwitch 重新粘贴令牌（成功后自动
+刷新），或在面板中运行 **VoidSwitch: set gateway URL** 更换网关地址（自动刷新并迁移模型
+缓存）。
 
 这与**从供应商同步**是两件事：后者（**模型**页面上的按钮）会重塑*共享*目录，为供应商
-新服务的模型注册目录行，属于**仅限管理人员**的操作。成员的 `/sync-models` 不会改动共享目录。
+新服务的模型注册目录行，属于**仅限管理人员**的操作。面板的模型刷新不会改动共享目录。
 
 ## 判断请求来自哪个插件
 
@@ -144,5 +160,14 @@ V2 的本地插件路径必须是一个**目录**，指向单个文件会被跳�
 ## 安装程序的来源
 
 `/install.sh` 根据 `?v` 参数（或 `VOIDSWITCH_PLUGIN_V` 环境变量）选择插件版本，缺省为 V2。
-插件源码本身由 `/opencode/voidswitch.ts`（V2）与 `/opencode/voidswitch-v1.ts`（V1）提供，
-因此自托管网关完全自包含，始终分发与自身版本匹配的源码。
+V2 插件源码由 `/opencode/voidswitch.ts`（server）、`/opencode/voidswitch-rpc.ts`（RPC 契约）与
+`/opencode/voidswitch-tui.ts`（TUI part）提供，安装脚本把三者装进
+`~/.config/opencode/plugins/voidswitch/`；V1 由 `/opencode/voidswitch-v1.ts` 提供（烤入目标为
+`voidswitch.plugin.ts`）。因此自托管网关完全自包含，始终分发与自身版本匹配的源码。若目录旁留有
+旧版单文件 `voidswitch.ts`，安装脚本会把它改名为 `voidswitch.ts.bak` —— 否则 server part 会被
+加载两次。
+
+安装脚本用你访问的主机作为网关（代理头优先，其次请求 Host，回退到服务器配置的 BaseURL），
+下载后把插件源码中的安装时网关标记行改写为该主机（V1 与 V2 均烤入）—— 同一份插件源码，从
+哪个主机装，默认就连哪个主机；运行时仍可用面板的 **VoidSwitch: set gateway URL** 或
+`VOIDSWITCH_URL` 环境变量覆盖。
