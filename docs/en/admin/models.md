@@ -104,6 +104,10 @@ are removed from their provider's whitelist (`POST /api/models/batch-delete`).
 - Other users need one of the [role groups](/en/admin/role-groups) listed on the model.
 - Therefore, an empty allow-list means "moderator only".
 
+Batch editing covers the same **role groups**: ticking it replaces each selected model's allow-list with
+the ticked groups, and ticking none means "moderator only". As with the single-model editor, unknown
+role-group ids are rejected rather than dropped silently.
+
 ## Sync from providers
 
 Previously the Models page had a **Sync from providers** button (`POST /api/models/sync`)
@@ -114,6 +118,8 @@ aligns the plugin's list with the exposed models you **can currently call**; it 
 the shared catalog.)
 
 **Clean up unserved** removes metadata rows no longer served by any upstream model (staff-only).
+Passthrough models are **never** removed by this cleanup: the provider forwards them directly, so an
+empty local route is normal.
 
 ## Hidden models
 

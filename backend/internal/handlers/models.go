@@ -166,6 +166,10 @@ func (a *App) mergePassthroughVirtuals(exposed []services.ModelEntryView, isStaf
 				// category it was given.
 				v.ProviderName = &name
 				v.ProviderSlug = &slug
+				// Passthrough forwards the id straight to the provider, so an
+				// empty local route is normal, not "unserved". Leaving this set
+				// would list every passthrough model under "clean unserved".
+				v.Unserved = false
 				if v.DisplayName == nil || *v.DisplayName == "" {
 					dn := exposedID
 					v.DisplayName = &dn

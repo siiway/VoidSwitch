@@ -1073,13 +1073,18 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
       if (lo != null) payload.limit_output = lo;
     }
     if (batchCategoryOn) {
-      const cid = intOrEmpty(batchCategoryId);
-      payload.category_id = cid;
+      // 0 means "no category": null would be indistinguishable from "leave
+      // unchanged" on the wire, so clearing a category silently did nothing.
+      payload.category_id = intOrEmpty(batchCategoryId) ?? 0;
     }
     setSaving(true);
     try {
       await api.post("/api/models/batch", payload);
-      notify(t("models.updated" as TK), `${ids.length} model(s) updated.`, "success");
+      notify(
+        t("models.updated" as TK),
+        t("models.batchUpdatedDetail" as TK).replace("{count}", String(ids.length)),
+        "success",
+      );
       setBatchOpen(false);
       setSelected(new Set());
       catalog.reload();

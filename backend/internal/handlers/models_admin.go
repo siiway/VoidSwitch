@@ -2,12 +2,15 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/siiway/voidswitch/internal/core"
 	"github.com/siiway/voidswitch/internal/database"
@@ -34,12 +37,66 @@ type modelUpsertIn struct {
 	CategoryID          *int            `json:"category_id"`
 }
 
+// validateRoleGroupIDs rejects unknown ids and drops duplicates instead of
+// storing them silently: a stale dashboard tab would otherwise persist a group
+// that no longer exists, and the model would then be callable by nobody.
+func (a *App) validateRoleGroupIDs(ids []int) ([]int, []int) {
+	var existing []int
+	a.GDB.Model(&database.RoleGroup{}).Where("builtin = ?", false).Pluck("id", &existing)
+	known := make(map[int]bool, len(existing))
+	for _, id := range existing {
+		known[id] = true
+	}
+	seen := make(map[int]bool, len(ids))
+	out := make([]int, 0, len(ids))
+	var unknown []int
+	for _, id := range ids {
+		if !known[id] {
+			unknown = append(unknown, id)
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out, unknown
+}
+
+// auditModel records a model-admin action. Model changes were previously
+// unaudited, so the audit page could not answer "who removed this model".
+func (a *App) auditModel(c *gin.Context, action, targetType string, targetID *string, detail map[string]any) {
+	uv := core.GetUser(c)
+	if uv == nil || uv.User == nil {
+		return
+	}
+	sub := uv.User.Sub
+	_ = core.RecordAudit(a.GDB, core.AuditInput{
+		Action: action, ActorSub: &sub, ActorName: servicesName(uv),
+		Scope: core.AuditScopeAdmin, TargetType: &targetType, TargetID: targetID,
+		Detail: detail, IP: strPtr(clientIP(c)),
+	})
+}
+
+// modelMetadata returns the metadata row for a public id, creating an empty one
+// (without a route) when the admin is editing an id that only exists as a
+// passthrough entry. Editing a passthrough model's name, groups or limits must
+// work exactly like editing a regular model; the entry simply has no route.
 func (a *App) modelsUpsert(c *gin.Context) {
 	uv := core.GetUser(c)
 	var in modelUpsertIn
 	if err := c.ShouldBindJSON(&in); err != nil || strings.TrimSpace(in.ModelID) == "" {
 		a.fail(c, http.StatusUnprocessableEntity, "model_id is required.")
 		return
+	}
+	if in.AllowedRoleGroupIDs != nil {
+		kept, unknown := a.validateRoleGroupIDs(*in.AllowedRoleGroupIDs)
+		if len(unknown) > 0 {
+			a.fail(c, http.StatusUnprocessableEntity, fmt.Sprintf("Unknown role group id(s): %v.", unknown))
+			return
+		}
+		in.AllowedRoleGroupIDs = &kept
 	}
 	var m database.ExposedModel
 	err := a.GDB.Where("model_id = ?", in.ModelID).First(&m).Error
@@ -113,6 +170,12 @@ func (a *App) modelsUpsert(c *gin.Context) {
 		}
 	}
 	a.modelsOut(c, &m, http.StatusOK)
+
+	detail := map[string]any{"model_id": m.ModelID}
+	if created {
+		detail["created"] = true
+	}
+	a.auditModel(c, "model.upsert", "model", strPtr(strconv.Itoa(m.ID)), detail)
 }
 
 func (a *App) modelsOut(c *gin.Context, m *database.ExposedModel, status int) {
@@ -124,40 +187,76 @@ func (a *App) modelsOut(c *gin.Context, m *database.ExposedModel, status int) {
 
 func (a *App) modelDelete(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	res := a.GDB.Delete(&database.ExposedModel{}, id)
-	if res.Error != nil {
-		a.internal(c, res.Error)
-		return
-	}
-	if res.RowsAffected == 0 {
+	var m database.ExposedModel
+	if err := a.GDB.First(&m, id).Error; err != nil {
 		a.fail(c, http.StatusNotFound, "Model not found.")
 		return
 	}
+	if err := a.GDB.Delete(&m).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	a.auditModel(c, "model.delete", "model", strPtr(strconv.Itoa(id)),
+		map[string]any{"model_id": m.ModelID})
 	c.Status(http.StatusNoContent)
 }
 
 // ---- batch update / delete / clean ---------------------------------------
 
+// modelsBatch applies the same metadata to many models at once. Every field the
+// single-model editor accepts is accepted here too, otherwise the batch dialog
+// silently drops most of what it offers (access groups, capabilities, reasoning,
+// limits, category) and reports success anyway.
 func (a *App) modelsBatch(c *gin.Context) {
 	var in struct {
 		ModelIDs       []string        `json:"model_ids"`
+		DisplayName    *string         `json:"display_name"`
 		Description    *string         `json:"description"`
 		OpenCodeConfig json.RawMessage `json:"opencode_config"`
-		Enabled        *bool           `json:"enabled"`
-		CategoryID     *int            `json:"category_id"`
-		Mode           string          `json:"mode"`
+		// ConfigMode is the documented contract; Mode keeps the older spelling.
+		ConfigMode          string          `json:"opencode_config_mode"`
+		Mode                string          `json:"mode"`
+		Enabled             *bool           `json:"enabled"`
+		CategoryID          *int            `json:"category_id"`
+		Reasoning           *bool           `json:"reasoning"`
+		Capabilities        json.RawMessage `json:"capabilities"`
+		Modalities          json.RawMessage `json:"modalities"`
+		LimitContext        *int            `json:"limit_context"`
+		LimitInput          *int            `json:"limit_input"`
+		LimitOutput         *int            `json:"limit_output"`
+		AllowedRoleGroupIDs *[]int          `json:"allowed_role_group_ids"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil || len(in.ModelIDs) == 0 {
 		a.fail(c, http.StatusUnprocessableEntity, "model_ids are required.")
 		return
 	}
-	var models []database.ExposedModel
-	if err := a.GDB.Where("model_id IN ?", in.ModelIDs).Find(&models).Error; err != nil {
-		a.internal(c, err)
-		return
+	var groupIDs []int
+	if in.AllowedRoleGroupIDs != nil {
+		kept, unknown := a.validateRoleGroupIDs(*in.AllowedRoleGroupIDs)
+		if len(unknown) > 0 {
+			a.fail(c, http.StatusUnprocessableEntity, fmt.Sprintf("Unknown role group id(s): %v.", unknown))
+			return
+		}
+		groupIDs = kept
 	}
-	for i := range models {
-		m := &models[i]
+	merge := in.ConfigMode != "overwrite" && in.Mode != "overwrite"
+
+	updated := 0
+	for _, rawID := range in.ModelIDs {
+		modelID := strings.TrimSpace(rawID)
+		if modelID == "" {
+			continue
+		}
+		// A passthrough id has no row until its metadata is first edited; the
+		// batch dialog selects those ids too, so create the row on demand.
+		m, created, err := a.modelMetadataWithUser(modelID, core.GetUser(c))
+		if err != nil {
+			a.internal(c, err)
+			return
+		}
+		if in.DisplayName != nil {
+			m.DisplayName = blankToNil(*in.DisplayName)
+		}
 		if in.Description != nil {
 			m.Description = in.Description
 		}
@@ -165,18 +264,95 @@ func (a *App) modelsBatch(c *gin.Context) {
 			m.Enabled = *in.Enabled
 		}
 		if in.CategoryID != nil {
-			m.CategoryID = in.CategoryID
+			if *in.CategoryID <= 0 {
+				m.CategoryID = nil
+			} else {
+				m.CategoryID = in.CategoryID
+			}
+		}
+		if in.Reasoning != nil {
+			m.Reasoning = in.Reasoning
+		}
+		if in.LimitContext != nil {
+			m.LimitContext = nonNegative(in.LimitContext)
+		}
+		if in.LimitInput != nil {
+			m.LimitInput = nonNegative(in.LimitInput)
+		}
+		if in.LimitOutput != nil {
+			m.LimitOutput = nonNegative(in.LimitOutput)
+		}
+		if len(in.Capabilities) > 0 {
+			m.Capabilities = database.JSON(in.Capabilities)
+		}
+		if len(in.Modalities) > 0 {
+			m.Modalities = database.JSON(in.Modalities)
+		}
+		if in.AllowedRoleGroupIDs != nil {
+			m.AllowedRoleGroupIDs = database.JSONOf(groupIDs)
 		}
 		if len(in.OpenCodeConfig) > 0 {
-			if in.Mode == "merge" {
+			if merge {
 				m.OpenCodeConfig = mergeJSON(m.OpenCodeConfig, database.JSON(in.OpenCodeConfig))
 			} else {
 				m.OpenCodeConfig = database.JSON(in.OpenCodeConfig)
 			}
 		}
-		a.GDB.Save(m)
+		if created {
+			if err := a.GDB.Create(m).Error; err != nil {
+				a.internal(c, err)
+				return
+			}
+		} else if err := a.GDB.Save(m).Error; err != nil {
+			a.internal(c, err)
+			return
+		}
+		updated++
 	}
-	c.JSON(http.StatusOK, gin.H{"updated": len(models)})
+	a.auditModel(c, "model.batch_update", "model", nil, map[string]any{
+		"model_ids": in.ModelIDs,
+	})
+	c.JSON(http.StatusOK, gin.H{"updated": updated})
+}
+
+func blankToNil(s string) *string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return &s
+}
+
+func nonNegative(v *int) *int {
+	if v == nil || *v < 0 {
+		zero := 0
+		return &zero
+	}
+	return v
+}
+
+// modelMetadataWithUser is modelMetadata with an explicit actor, so the row a
+// batch edit creates records who added it.
+func (a *App) modelMetadataWithUser(modelID string, uv *core.UserView) (*database.ExposedModel, bool, error) {
+	var m database.ExposedModel
+	err := a.GDB.Where("model_id = ?", modelID).First(&m).Error
+	if err == nil {
+		return &m, false, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, err
+	}
+	m = database.ExposedModel{
+		ModelID: modelID, Enabled: true,
+		OpenCodeConfig:      database.JSONOf(map[string]any{}),
+		AllowedRoleGroupIDs: database.JSONOf([]int{}),
+		Capabilities:        database.JSONOf(map[string]any{}),
+		Modalities:          database.JSONOf(map[string]any{}),
+	}
+	if uv != nil && uv.User != nil {
+		m.AddedBy = &uv.User.ID
+		m.AddedByName = uv.User.Username
+	}
+	return &m, true, nil
 }
 
 func mergeJSON(base, patch database.JSON) database.JSON {
@@ -201,28 +377,142 @@ func mergeJSON(base, patch database.JSON) database.JSON {
 	return database.JSONOf(b)
 }
 
+// modelsBatchDelete deletes models by public id. An id may be a metadata row, a
+// passthrough entry, or (as the UI presents it) both at once: a passthrough id
+// the operator has edited carries a metadata row *and* an entry in its
+// provider's whitelist. Deleting it must clear both, otherwise the model
+// reappears on the next catalog build.
 func (a *App) modelsBatchDelete(c *gin.Context) {
 	var in struct {
 		ModelIDs []string `json:"model_ids"`
 	}
-	if err := c.ShouldBindJSON(&in); err != nil {
-		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
+	if err := c.ShouldBindJSON(&in); err != nil || len(in.ModelIDs) == 0 {
+		a.fail(c, http.StatusUnprocessableEntity, "model_ids is required.")
 		return
 	}
-	res := a.GDB.Where("model_id IN ?", in.ModelIDs).Delete(&database.ExposedModel{})
+
+	seen := map[string]bool{}
+	var ordered []string
+	for _, raw := range in.ModelIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ordered = append(ordered, id)
+	}
+
+	removedEntries, err := a.deletePassthroughEntries(ordered)
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
+	var existing []string
+	a.GDB.Model(&database.ExposedModel{}).Where("model_id IN ?", ordered).Pluck("model_id", &existing)
+	res := a.GDB.Where("model_id IN ?", ordered).Delete(&database.ExposedModel{})
 	if res.Error != nil {
 		a.internal(c, res.Error)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"deleted": res.RowsAffected, "model_ids": in.ModelIDs})
+	removed := removedIDs(ordered, existing, removedEntries)
+	if len(removed) > 0 {
+		a.auditModel(c, "model.delete", "model", nil,
+			map[string]any{"model_ids": removed, "batch": true})
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": len(removed), "model_ids": removed})
 }
 
+// removedIDs returns the requested ids that actually existed, in request order.
+func removedIDs(requested, hadRow []string, passthrough map[string]bool) []string {
+	exists := make(map[string]bool, len(hadRow)+len(passthrough))
+	for _, id := range hadRow {
+		exists[id] = true
+	}
+	for id := range passthrough {
+		exists[id] = true
+	}
+	out := make([]string, 0, len(requested))
+	for _, id := range requested {
+		if exists[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// deletePassthroughEntries strips every "slug/exposed" id from the matching
+// provider's passthrough whitelist, returning the ids it removed. Ids that are
+// not passthrough entries are ignored, so this is safe to call with a mixed
+// selection.
+func (a *App) deletePassthroughEntries(modelIDs []string) (map[string]bool, error) {
+	var providers []database.Provider
+	if err := a.GDB.Where("passthrough_enabled = ?", true).Find(&providers).Error; err != nil {
+		return nil, err
+	}
+	removed := map[string]bool{}
+	if len(providers) == 0 {
+		return removed, nil
+	}
+	wanted := map[string]map[string]bool{}
+	for _, id := range modelIDs {
+		i := strings.Index(id, "/")
+		if i <= 0 {
+			continue
+		}
+		slug, exposed := id[:i], id[i+1:]
+		if wanted[slug] == nil {
+			wanted[slug] = map[string]bool{}
+		}
+		wanted[slug][exposed] = true
+	}
+	for pi := range providers {
+		p := &providers[pi]
+		targets := wanted[p.Slug]
+		if len(targets) == 0 {
+			continue
+		}
+		var list []string
+		database.DecodeJSON(p.PassthroughModels, &list)
+		kept := make([]string, 0, len(list))
+		for _, entry := range list {
+			exposed := parsePassthroughExposed(entry)
+			if targets[exposed] {
+				removed[p.Slug+"/"+exposed] = true
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		if len(kept) == len(list) {
+			continue
+		}
+		if err := a.GDB.Model(p).Update("passthrough_models", database.JSONOf(kept)).Error; err != nil {
+			return nil, err
+		}
+	}
+	return removed, nil
+}
+
+// modelsClean deletes exposed models whose route resolves to no enabled
+// upstream.
+//
+// A model served by passthrough is *not* unserved: the provider forwards it
+// directly, so a passthrough id's metadata row (created when its access groups
+// were edited) has no route by design and must survive. Python's clean_unserved
+// skips these ids; deleting them here silently wiped every passthrough model's
+// metadata and access control.
 func (a *App) modelsClean(c *gin.Context) {
-	// Delete exposed models that have no route or an empty/disabled route.
+	passthroughIDs, err := a.passthroughModelIDs()
+	if err != nil {
+		a.internal(c, err)
+		return
+	}
 	var models []database.ExposedModel
 	a.GDB.Find(&models)
-	var removed []string
+	removed := []string{}
 	for _, m := range models {
+		if passthroughIDs[m.ModelID] {
+			continue
+		}
 		var route database.Route
 		if err := a.GDB.Where("exposed_model_id = ?", m.ID).First(&route).Error; err != nil {
 			removed = append(removed, m.ModelID)
@@ -236,7 +526,34 @@ func (a *App) modelsClean(c *gin.Context) {
 			a.GDB.Delete(&m)
 		}
 	}
+	if len(removed) > 0 {
+		a.auditModel(c, "model.clean_unserved", "model", nil,
+			map[string]any{"model_ids": removed, "deleted": len(removed)})
+	}
 	c.JSON(http.StatusOK, gin.H{"deleted": len(removed), "model_ids": removed})
+}
+
+// passthroughModelIDs is the set of "slug/exposed" ids served by enabled
+// passthrough providers.
+func (a *App) passthroughModelIDs() (map[string]bool, error) {
+	var providers []database.Provider
+	err := a.GDB.Where("enabled = ? AND passthrough_enabled = ?", true, true).Find(&providers).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool)
+	for pi := range providers {
+		p := &providers[pi]
+		var list []string
+		database.DecodeJSON(p.PassthroughModels, &list)
+		for _, entry := range list {
+			exposed := parsePassthroughExposed(entry)
+			if exposed != "" {
+				out[p.Slug+"/"+exposed] = true
+			}
+		}
+	}
+	return out, nil
 }
 
 // ---- categories -----------------------------------------------------------
@@ -328,38 +645,105 @@ func (a *App) categoriesDelete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// ---- provider-groups (delete a provider's passthrough namespace) ----------
-
+// providerGroupDelete disables a provider's passthrough namespace and removes
+// the metadata rows it created. It deliberately preserves the provider itself
+// (keys, base URL, model config): deleting the provider here would destroy an
+// entity this action never presents itself as deleting.
 func (a *App) providerGroupDelete(c *gin.Context) {
 	slug := c.Param("slug")
-	res := a.GDB.Where("slug = ?", slug).Delete(&database.Provider{})
-	if res.Error != nil {
-		a.internal(c, res.Error)
+	var p database.Provider
+	if err := a.GDB.Where("slug = ? AND passthrough_enabled = ?", slug, true).First(&p).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Passthrough provider not found.")
 		return
 	}
+	var stale []database.ExposedModel
+	if err := a.GDB.Where("model_id LIKE ?", slug+"/%").Find(&stale).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	deletedIDs := make([]string, 0, len(stale))
+	for i := range stale {
+		deletedIDs = append(deletedIDs, stale[i].ModelID)
+	}
+	if len(stale) > 0 {
+		if err := a.GDB.Delete(&stale).Error; err != nil {
+			a.internal(c, err)
+			return
+		}
+	}
+	if err := a.GDB.Model(&p).Updates(map[string]any{
+		"passthrough_enabled": false,
+		"passthrough_models":  database.JSONOf([]string{}),
+	}).Error; err != nil {
+		a.internal(c, err)
+		return
+	}
+	tid := strconv.Itoa(p.ID)
+	a.auditModel(c, "model.delete", "provider_passthrough_group", &tid, map[string]any{
+		"provider_slug": slug, "deleted_model_ids": deletedIDs,
+	})
 	c.Status(http.StatusNoContent)
 }
 
 // ---- passthrough ----------------------------------------------------------
 
+// passthroughDelete removes one passthrough model: its entry in the provider's
+// whitelist plus any metadata row carrying that id.
+//
+// The exposed id may itself contain slashes ("openrouter/stealth/x"), which is
+// why the route captures the remainder of the path rather than one segment;
+// encoding the slash as %2F is equally accepted.
 func (a *App) passthroughDelete(c *gin.Context) {
 	slug := c.Param("slug")
-	exposed := c.Param("exposed")
+	exposed := strings.TrimPrefix(c.Param("exposed"), "/")
+	if exposed == "" {
+		a.fail(c, http.StatusUnprocessableEntity, "The model id is required.")
+		return
+	}
 	var p database.Provider
 	if err := a.GDB.Where("slug = ?", slug).First(&p).Error; err != nil {
-		a.fail(c, http.StatusNotFound, "Provider not found.")
+		a.fail(c, http.StatusNotFound, "Passthrough provider not found.")
 		return
 	}
 	var list []string
 	database.DecodeJSON(p.PassthroughModels, &list)
-	var kept []string
+	kept := make([]string, 0, len(list))
+	removedEntries := 0
 	for _, e := range list {
-		exp := parsePassthroughExposed(e)
-		if exp != exposed {
-			kept = append(kept, e)
+		if parsePassthroughExposed(e) == exposed {
+			removedEntries++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	modelID := slug + "/" + exposed
+	var stale database.ExposedModel
+	staleErr := a.GDB.Where("model_id = ?", modelID).First(&stale).Error
+	hadMetadata := staleErr == nil
+	if !hadMetadata && !errors.Is(staleErr, gorm.ErrRecordNotFound) {
+		a.internal(c, staleErr)
+		return
+	}
+	if removedEntries == 0 && !hadMetadata {
+		a.fail(c, http.StatusNotFound, "Passthrough model not found.")
+		return
+	}
+	if removedEntries > 0 {
+		if err := a.GDB.Model(&p).Update("passthrough_models", database.JSONOf(kept)).Error; err != nil {
+			a.internal(c, err)
+			return
 		}
 	}
-	a.GDB.Model(&p).Update("passthrough_models", database.JSONOf(kept))
+	if hadMetadata {
+		if err := a.GDB.Delete(&stale).Error; err != nil {
+			a.internal(c, err)
+			return
+		}
+	}
+	tid := strconv.Itoa(p.ID)
+	a.auditModel(c, "model.delete", "model", &tid, map[string]any{
+		"model_id": modelID, "provider_id": p.ID, "passthrough_removed": removedEntries,
+	})
 	c.Status(http.StatusNoContent)
 }
 
@@ -557,7 +941,10 @@ func registerModelRoutesImpl(r *gin.RouterGroup, a *App) {
 	g.PATCH("/categories/:id", a.categoriesUpdate)
 	g.DELETE("/categories/:id", a.categoriesDelete)
 	g.DELETE("/provider-groups/:slug", a.providerGroupDelete)
-	g.DELETE("/passthrough/:slug/:exposed", a.passthroughDelete)
+	// A passthrough exposed id may itself contain slashes
+	// ("openrouter/stealth/space-bunny-alpha"), so the wildcard is required:
+	// with a single-segment param Gin returns 404 for those ids.
+	g.DELETE("/passthrough/:slug/*exposed", a.passthroughDelete)
 	g.GET("/models-dev/search", a.modelsDevSearch)
 	g.POST("/models-dev/sync", a.modelsDevSync)
 	g.GET("/:id/route", a.modelRouteGet)

@@ -587,6 +587,7 @@ const zh: Translations = {
       "删除 {count} 个模型？暴露模型会从目录移除；直通模型会从其提供商的 passthrough 列表中移除。",
     batchDeleted: "模型已删除",
     batchDeletedDetail: "{count} 个模型已删除。",
+    batchUpdatedDetail: "{count} 个模型已更新。",
     selectFiltered: "选择当前筛选结果（{count}）",
     clearSelection: "清除选择（{count}）",
     modelId: "模型 ID",
