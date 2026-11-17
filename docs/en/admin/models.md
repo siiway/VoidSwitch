@@ -72,6 +72,17 @@ For any exposed model, staff can set:
 - **Enable** — hide the model from `/v1/models` and the selector without deleting it;
 - The **role groups** allowed to call it.
 
+### Output cap and Claude upstreams
+
+Anthropic upstreams (Claude Messages) require `max_tokens` on every request. When an OpenAI-format
+client omits it, the gateway uses, in order:
+
+1. the model's **limit_output** (max output tokens);
+2. the default `8192`.
+
+The **context window** (`limit_context`) is the shared input + output budget, so it cannot be sent as
+`max_tokens`: upstreams reject a value above their output cap.
+
 ### models.dev integration
 
 - Search **models.dev** on the Models page and **map** a model onto the exposed model;

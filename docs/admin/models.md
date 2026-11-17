@@ -61,6 +61,17 @@ SSE；管理人员可查看各上游详情和节点历史趋势，owner 仍可�
 - **启用** — 将模型从 `/v1/models` 和选择器中隐藏，而不删除它；
 - 允许调用它的**身份组**。
 
+### 输出上限与 Claude 上游
+
+上游是 Anthropic（Claude Messages）时，请求必须带 `max_tokens`。OpenAI 格式的客户端没有传
+`max_tokens` 时，网关依次使用：
+
+1. 该模型的 **limit_output**（最大输出 tokens）；
+2. 默认值 `8192`。
+
+**上下文窗口**（`limit_context`）是输入与输出共享的总窗口，不能直接当作 `max_tokens` 发送，
+否则会超过上游的输出上限被拒绝。
+
 ### models.dev 集成
 
 - 在**模型**页面搜索 **models.dev**，把某个模型**映射**到暴露模型；

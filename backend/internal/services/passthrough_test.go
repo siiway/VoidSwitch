@@ -160,6 +160,47 @@ func TestPassthroughBareEntryKeepsID(t *testing.T) {
 	}
 }
 
+// A passthrough id has no exposed-model row, so the Claude conversion default
+// must still satisfy the Messages API's max_tokens requirement.
+func TestPassthroughOpenAIToClaudeInjectsDefaultMaxTokens(t *testing.T) {
+	var gotTokens any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		var body map[string]any
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &body)
+		gotTokens = body["max_tokens"]
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"upstream-model","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+	}))
+	defer srv.Close()
+
+	db := newTestDB(t)
+	secret := "test-secret"
+	p := seedPassthrough(t, db, srv.URL, secret, []string{"fast-model => upstream-model"})
+	if err := db.Model(&database.Provider{}).Where("id = ?", p.ID).
+		Update("type", "anthropic").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Settings{}
+	cfg.Server.SecretKey = secret
+	req := &DispatchRequest{
+		Ctx: context.Background(), DB: db, Cfg: cfg, Pool: GetPool(),
+		ExposedModel: "pt/fast-model", InboundStyle: constants.ApiStyleOpenAI,
+		Body: map[string]any{"model": "pt/fast-model", "messages": []any{}},
+		Kind: KindChat,
+	}
+	if _, err := NewDispatcher(req).Do(); err != nil {
+		t.Fatalf("passthrough dispatch failed: %v", err)
+	}
+	if gotTokens != float64(claudeDefaultMaxTokens) {
+		t.Fatalf("upstream max_tokens = %v, want %d", gotTokens, claudeDefaultMaxTokens)
+	}
+}
+
 // An id that is not in the whitelist must be rejected, not silently dispatched.
 func TestPassthroughUnknownIDRejected(t *testing.T) {
 	db := newTestDB(t)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -97,11 +98,18 @@ type Usage struct {
 	FirstTokenMs     *float64
 }
 
+// claudeDefaultMaxTokens is the max_tokens injected when an OpenAI-style request
+// is converted for a Claude upstream and the model declares no output cap. The
+// Claude Messages API rejects requests without max_tokens; 8192 is the relay
+// default (new-api uses the same), overridable per model via limit_output.
+const claudeDefaultMaxTokens = 8192
+
 // Dispatcher resolves a route and failovers across upstreams/keys.
 type Dispatcher struct {
 	req          *DispatchRequest
 	seq          []Candidate
 	egressNodeID int
+	maxTokens    int
 }
 
 func NewDispatcher(req *DispatchRequest) *Dispatcher {
@@ -429,6 +437,11 @@ func (d *Dispatcher) buildUpstreamBody(cand Candidate, upstreamStyle constants.A
 		OriginModelName:     d.req.ExposedModel,
 		UpstreamModelName:   cand.UpstreamModel,
 		ChannelMetaAttached: true,
+		Options: &convmeta.Options{
+			Claude: convmeta.ClaudeOptions{
+				DefaultMaxTokens: func(string) int { return d.defaultMaxTokens() },
+			},
+		},
 	}
 	res, err := relayconvert.ConvertRequest(d.req.Ctx, meta, target, inbound)
 	if err != nil {
@@ -453,6 +466,25 @@ func (d *Dispatcher) buildUpstreamBody(cand Candidate, upstreamStyle constants.A
 		out = adapter.PrepareBody(out)
 	}
 	return out, nil
+}
+
+// defaultMaxTokens resolves the max_tokens injected when an OpenAI-style request
+// reaches a Claude upstream without one: the exposed model's configured output
+// cap (limit_output), else claudeDefaultMaxTokens. The result is cached for the
+// request so failover attempts do not re-read the model row.
+func (d *Dispatcher) defaultMaxTokens() int {
+	if d.maxTokens > 0 {
+		return d.maxTokens
+	}
+	d.maxTokens = claudeDefaultMaxTokens
+	var m database.ExposedModel
+	if err := d.req.DB.Select("limit_output").Where("model_id = ?", d.req.ExposedModel).
+		Limit(1).Find(&m).Error; err != nil {
+		slog.Warn("default max tokens lookup failed", "model", d.req.ExposedModel, "err", err)
+	} else if m.LimitOutput != nil && *m.LimitOutput > 0 {
+		d.maxTokens = *m.LimitOutput
+	}
+	return d.maxTokens
 }
 
 func (d *Dispatcher) convertResponse(raw []byte, from, to types.RelayFormat, model string) ([]byte, error) {

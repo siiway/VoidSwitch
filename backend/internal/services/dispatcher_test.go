@@ -140,6 +140,74 @@ func TestDispatchOpenAIToOpenAI(t *testing.T) {
 	}
 }
 
+// TestDispatchOpenAIToClaudeInjectsMaxTokens covers the Claude Messages
+// requirement that every request carries max_tokens: an OpenAI-style request
+// without one must be completed from the exposed model's output cap
+// (limit_output), else from the relay default.
+func TestDispatchOpenAIToClaudeInjectsMaxTokens(t *testing.T) {
+	cases := []struct {
+		name       string
+		limitOut   int
+		clientMax  float64
+		wantTokens float64
+	}{
+		{name: "relay default", wantTokens: claudeDefaultMaxTokens},
+		{name: "model output cap", limitOut: 1234, wantTokens: 1234},
+		{name: "client value wins", limitOut: 1234, clientMax: 99, wantTokens: 99},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotTokens any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/v1/messages") {
+					t.Errorf("unexpected path %s", r.URL.Path)
+				}
+				var body map[string]any
+				b, _ := io.ReadAll(r.Body)
+				json.Unmarshal(b, &body)
+				gotTokens = body["max_tokens"]
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"upstream-model","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`))
+			}))
+			defer srv.Close()
+
+			db := newTestDB(t)
+			secret := "test-secret"
+			seedDispatch(t, db, srv.URL, secret)
+			if err := db.Model(&database.Provider{}).Where("slug = ?", "mock").
+				Update("type", "anthropic").Error; err != nil {
+				t.Fatal(err)
+			}
+			if tc.limitOut > 0 {
+				if err := db.Model(&database.ExposedModel{}).Where("model_id = ?", "test-model").
+					Update("limit_output", tc.limitOut).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			body := map[string]any{
+				"model":    "test-model",
+				"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+			}
+			if tc.clientMax > 0 {
+				body["max_tokens"] = tc.clientMax
+			}
+			cfg := &config.Settings{}
+			cfg.Server.SecretKey = secret
+			req := &DispatchRequest{
+				Ctx: context.Background(), DB: db, Cfg: cfg, Pool: GetPool(),
+				ExposedModel: "test-model", InboundStyle: constants.ApiStyleOpenAI, Body: body,
+			}
+			if _, err := NewDispatcher(req).Do(); err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			if gotTokens != tc.wantTokens {
+				t.Fatalf("upstream max_tokens = %v, want %v", gotTokens, tc.wantTokens)
+			}
+		})
+	}
+}
+
 func TestDispatchFailsOverOnCooldown(t *testing.T) {
 	// First provider returns 500 → cooldown recorded; second provider succeeds.
 	callCount := 0
