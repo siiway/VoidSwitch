@@ -182,6 +182,22 @@ const useStyles = makeStyles({
     columnGap: "10px",
     ...shorthands.padding("16px", "16px"),
   },
+  brandText: {
+    minWidth: 0,
+  },
+  // The tagline doubles as the version affordance: hovering lifts the line a
+  // little so the version tooltip has a visible anchor, keeping the header
+  // quiet until someone actually looks for the build.
+  tagline: {
+    display: "inline-block",
+    color: tokens.colorNeutralForeground3,
+    transitionProperty: "transform",
+    transitionDuration: tokens.durationNormal,
+    transitionTimingFunction: tokens.curveEasyEase,
+  },
+  taglineRaised: {
+    transform: "translateY(-2px)",
+  },
   brandMark: {
     display: "grid",
     placeItems: "center",
@@ -368,11 +384,24 @@ export function Layout() {
     () => window.matchMedia("(max-width: 768px)").matches,
   );
   const [proxySwitching, setProxySwitching] = useState(true);
+  // Build string shown when the sidebar header is hovered. It comes from the
+  // same public config call the shell already makes, so no extra request.
+  const [build, setBuild] = useState("");
+  const [brandHover, setBrandHover] = useState(false);
 
   useEffect(() => {
     api
-      .get<{ proxy_switching_enabled?: boolean }>("/api/auth/config")
-      .then((c) => setProxySwitching(c.proxy_switching_enabled !== false))
+      .get<{
+        proxy_switching_enabled?: boolean;
+        version?: string;
+        commit?: string | null;
+      }>("/api/auth/config")
+      .then((c) => {
+        setProxySwitching(c.proxy_switching_enabled !== false);
+        if (c.version) {
+          setBuild(`v${c.version}${c.commit ? ` (${c.commit})` : ""}`);
+        }
+      })
       .catch(() => {});
   }, [location.pathname]);
 
@@ -461,16 +490,32 @@ export function Layout() {
           >
             <div className={styles.brand}>
               <span className={styles.brandMark}>⚡</span>
-              <div>
+              <div className={styles.brandText}>
                 <Text size={400} weight="bold" block>
                   {t("nav.brand" as TranslationKey)}
                 </Text>
-                <Text
-                  size={100}
-                  style={{ color: tokens.colorNeutralForeground3 }}
+                <Tooltip
+                  content={
+                    build
+                      ? `${t("nav.brand" as TranslationKey)} ${build}`
+                      : t("nav.tagline" as TranslationKey)
+                  }
+                  relationship="description"
+                  withArrow
                 >
-                  {t("nav.tagline" as TranslationKey)}
-                </Text>
+                  <Text
+                    as="span"
+                    size={100}
+                    className={mergeClasses(
+                      styles.tagline,
+                      brandHover && styles.taglineRaised,
+                    )}
+                    onMouseEnter={() => setBrandHover(true)}
+                    onMouseLeave={() => setBrandHover(false)}
+                  >
+                    {t("nav.tagline" as TranslationKey)}
+                  </Text>
+                </Tooltip>
               </div>
             </div>
 

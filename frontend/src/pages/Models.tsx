@@ -650,6 +650,25 @@ export function Models() {
 const unserved = items.filter((m) => !m.provider && m.unserved === true);
 const cleanable = items.filter((m) => !m.provider && m.unserved === true);
 
+  // Model counts per group for the "manage groups" dialog: the pill answers
+  // "how much lives in here", so it is computed from the full catalog rather
+  // than the filtered view.
+  const categoryCounts = useMemo(() => {
+    const byCategory = new Map<number, number>();
+    const byProvider = new Map<string, number>();
+    for (const m of items) {
+      if (m.provider) {
+        const slug = providerSlugOf(m);
+        if (slug) byProvider.set(slug, (byProvider.get(slug) ?? 0) + 1);
+        continue;
+      }
+      if (m.category_id != null) {
+        byCategory.set(m.category_id, (byCategory.get(m.category_id) ?? 0) + 1);
+      }
+    }
+    return { byCategory, byProvider };
+  }, [items]);
+
   const providerPassthrough = Array.from(
     new Map(
       (isStaff ? providers.data ?? [] : items.filter((m) => m.provider))
@@ -2439,7 +2458,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                           content={t("models.groupModelCountTooltip" as TK)}
                           relationship="description"
                         >
-                          <Badge appearance="tint" color="informative" size="small">
+                          <Badge appearance="outline" color="informative" size="small">
                             {t("roleGroups.modelCount" as TK).replace(
                               "{count}",
                               String(g.model_count),
@@ -2554,7 +2573,15 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
               </Button>
               {(categories.data ?? []).map((category) => (
                 <div key={category.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <Text>{category.name}</Text>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
+                    <Text truncate>{category.name}</Text>
+                    <Badge appearance="outline" color="informative" size="small">
+                      {t("models.modelCount" as TK).replace(
+                        "{count}",
+                        String(categoryCounts.byCategory.get(category.id) ?? 0),
+                      )}
+                    </Badge>
+                  </div>
                   <Tooltip content={t("common.delete" as TK)} relationship="label">
                     <Button appearance="subtle" icon={<DeleteRegular />} aria-label={t("common.delete" as TK)} onClick={() => void deleteCategory(category)} />
                   </Tooltip>
@@ -2562,8 +2589,15 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
               ))}
               {providerPassthrough.map(({ slug, name }) => (
                 <div key={slug} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <Text>{name}</Text><Badge appearance="tint" color="informative" shape="rounded">{`${slug}/`}</Badge>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
+                    <Text truncate>{name}</Text>
+                    <Badge appearance="tint" color="informative" shape="rounded">{`${slug}/`}</Badge>
+                    <Badge appearance="outline" color="informative" size="small">
+                      {t("models.modelCount" as TK).replace(
+                        "{count}",
+                        String(categoryCounts.byProvider.get(slug) ?? 0),
+                      )}
+                    </Badge>
                   </div>
                   <Tooltip content={t("common.delete" as TK)} relationship="label">
                     <Button appearance="subtle" icon={<DeleteRegular />} aria-label={t("common.delete" as TK)} onClick={() => void deleteProviderGroup(slug, name)} />
