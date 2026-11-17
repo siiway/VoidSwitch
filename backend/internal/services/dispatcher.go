@@ -117,6 +117,9 @@ type Dispatcher struct {
 	egressNodeID int
 	maxTokens    int
 	attempts     []*AttemptRecord
+	// routeBudget is the route's own max-upstream-attempts (0 = unlimited). The
+	// global max_provider_attempts still applies as a second ceiling.
+	routeBudget int
 }
 
 func NewDispatcher(req *DispatchRequest) *Dispatcher {
@@ -253,6 +256,7 @@ func (d *Dispatcher) resolve() error {
 	if err := db.Where("exposed_model_id = ?", model.ID).First(&route).Error; err != nil {
 		return fmt.Errorf("no route for model %q: %w", d.req.ExposedModel, err)
 	}
+	d.routeBudget = route.MaxUpstreamAttempts
 	var upstreams []database.RouteUpstream
 	if err := db.Where("route_id = ? AND enabled = ?", route.ID, true).
 		Order("group_position asc, position asc, weight desc").Find(&upstreams).Error; err != nil {
@@ -327,8 +331,29 @@ func (d *Dispatcher) Do() (*DispatchResult, error) {
 	if err := d.resolve(); err != nil {
 		return nil, err
 	}
+	// Attempt budget. max_provider_attempts is the global ceiling (it includes
+	// the first request); a route may narrow it further with its own
+	// max_upstream_attempts. Without this the loop walked every candidate, so a
+	// single request could fire far more upstream calls than configured.
+	budget := GetInt("max_provider_attempts", 6)
+	if budget < 1 {
+		budget = 1
+	}
+	if d.routeBudget > 0 && d.routeBudget < budget {
+		budget = d.routeBudget
+	}
+
 	var lastErr error
 	for _, cand := range d.seq {
+		if len(d.attempts) >= budget {
+			break
+		}
+		// The caller went away: further upstream calls can only waste egress and
+		// burn provider quota, and each would fail with "context canceled".
+		if err := d.req.Ctx.Err(); err != nil {
+			lastErr = err
+			break
+		}
 		res, err := d.attempt(cand)
 		if err != nil {
 			lastErr = err

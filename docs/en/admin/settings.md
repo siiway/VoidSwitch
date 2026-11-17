@@ -21,8 +21,11 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
 - **Timeouts & Retries** — connection / request / stream-idle timeouts and two independent attempt
   budgets. `max_provider_attempts` is the **provider-attempt maximum**, including the initial request;
   entering another route-upstream candidate, changing keys, calling again after OAuth refresh, and an
-  identical protected-error repeat each consume one attempt. **Maximum network attempts per provider
-  request** defaults to `3`, also including the initial attempt. It applies only to connection, DNS, TLS,
+  identical protected-error repeat each consume one attempt. A route's own **max upstream attempts**
+  narrows it further when set; once the budget is exhausted the request fails instead of walking the
+  remaining candidates. If the client has already disconnected the request context is canceled and
+  retries stop immediately rather than firing doomed upstream calls. **Maximum network attempts per
+  provider request** defaults to `3`, also including the initial attempt. It applies only to connection, DNS, TLS,
   proxy, or protocol failures before response headers and uses each available egress route at most once.
   Any HTTP status, including 5xx, ends network retry and moves to provider error handling. The actual
   count is the lesser of this setting and the number of unique available routes; a sole static/direct

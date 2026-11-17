@@ -208,6 +208,83 @@ func TestDispatchOpenAIToClaudeInjectsMaxTokens(t *testing.T) {
 	}
 }
 
+func TestDispatchRespectsRouteAttemptBudget(t *testing.T) {
+	// Six usable keys for one upstream; a route budget of 2 must stop after two
+	// upstream calls. Before the budget was enforced this fired all six.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"boom"}`))
+	}))
+	defer bad.Close()
+
+	db := newTestDB(t)
+	secret := "sec"
+	seedDispatch(t, db, bad.URL, secret)
+
+	var provider database.Provider
+	if err := db.Where("slug = ?", "mock").First(&provider).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		ct, _ := cryptoutil.EncryptSecret("sk-extra", secret)
+		db.Create(&database.ApiKey{
+			ProviderID: provider.ID, KeyCiphertext: ct,
+			KeyHash:    fmt.Sprintf("h-extra-%d", i),
+			KeyPreview: "sk-…extra", Status: "active", Weight: 1,
+			Balance: database.JSONOf(map[string]any{}),
+		})
+	}
+	if err := db.Model(&database.Route{}).Where("1 = 1").
+		Update("max_upstream_attempts", 2).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Settings{}
+	cfg.Server.SecretKey = secret
+	req := &DispatchRequest{
+		Ctx: context.Background(), DB: db, Cfg: cfg, Pool: GetPool(),
+		ExposedModel: "test-model", InboundStyle: constants.ApiStyleOpenAI,
+		Body: map[string]any{"model": "test-model", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+	}
+	disp := NewDispatcher(req)
+	if _, err := disp.Do(); err == nil {
+		t.Fatal("expected the dispatch to fail")
+	}
+	if got := len(disp.Attempts()); got != 2 {
+		t.Fatalf("recorded %d attempts, want 2 (route budget)", got)
+	}
+}
+
+func TestDispatchStopsWhenContextCanceled(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"boom"}`))
+	}))
+	defer bad.Close()
+
+	db := newTestDB(t)
+	secret := "sec"
+	seedDispatch(t, db, bad.URL, secret)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the caller is already gone
+
+	cfg := &config.Settings{}
+	cfg.Server.SecretKey = secret
+	req := &DispatchRequest{
+		Ctx: ctx, DB: db, Cfg: cfg, Pool: GetPool(),
+		ExposedModel: "test-model", InboundStyle: constants.ApiStyleOpenAI,
+		Body: map[string]any{"model": "test-model", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+	}
+	disp := NewDispatcher(req)
+	if _, err := disp.Do(); err == nil {
+		t.Fatal("expected the dispatch to fail")
+	}
+	if got := len(disp.Attempts()); got != 0 {
+		t.Fatalf("recorded %d attempts, want 0 once the caller is gone", got)
+	}
+}
+
 func TestDispatchFailsOverOnCooldown(t *testing.T) {
 	// First provider returns 500 → cooldown recorded; second provider succeeds.
 	callCount := 0
