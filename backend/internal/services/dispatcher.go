@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"time"
 
@@ -412,6 +413,11 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 	rec.ProxyURL = egress.ProxyURL
 	rec.LocalAddress = egress.LocalAddress
 	rec.RouteType = strPtr(routeTypeOf(egress))
+	// ConnectMs measures getting a usable upstream connection (DNS + TCP + TLS),
+	// which is what the log's "latency" column means now that "duration" already
+	// covers the whole request. It is recorded even when the dial fails, so a
+	// timeout shows how long it waited instead of a blank cell.
+	var connectTracker *connectTrace
 	rec.NetworkAttempts = []NetworkAttempt{{
 		Attempt:   1,
 		NodeID:    intPtrOrNil(egress.NodeID),
@@ -459,7 +465,9 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 			httpReq.Header.Set("Accept", "text/event-stream")
 		}
 		startNet := time.Now()
-		resp, err = client.Do(httpReq)
+		connectTracker = &connectTrace{start: startNet}
+		resp, err = client.Do(httpReq.WithContext(httptrace.WithClientTrace(httpReq.Context(), connectTracker.trace())))
+		rec.ConnectMs = connectTracker.elapsed()
 		if err != nil {
 			recordDuration()
 			rec.NetworkError = true

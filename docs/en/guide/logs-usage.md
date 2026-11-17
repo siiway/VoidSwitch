@@ -71,9 +71,11 @@ Token exchanges for Claude Code subscription OAuth are also counted in the **Req
 such as `<cc-refresh-token>` or `<cc-exchange-token>`; these records usually have no user and no Void-Token.
 
 Every request row has an **info** button (ℹ) that opens its regular details —
-time, start / finish time, request duration, TTFT, request status (full text), the **full client IP**,
-caller, token, model, inbound style, stream flag, total attempt count, User-Agent, plugin version, and any error —
-every table header is shown here in **untruncated** form. Fields that belong to a specific attempt
+time, start / finish time, **request duration** (the whole wall clock from start to finish), **connect time**
+(how long it took to establish the upstream connection: DNS + TCP + TLS; near 0 when a pooled connection was
+reused), TTFT, request status (full text), the **full client IP**, caller, token, model, inbound style, stream
+flag, total attempt count, User-Agent, plugin version, and any error — every table header is shown here in
+**untruncated** form. Fields that belong to a specific attempt
 (provider, key, proxy / node, upstream model and URL, status code, token usage, per-attempt duration)
 are no longer part of the summary; they live in the **per-attempt** cards below, so the summary is never
 misled by the last attempt's values.
@@ -81,11 +83,11 @@ misled by the last attempt's values.
 ### Per-attempt trail
 
 Every request's detail lists the **whole failover chain** as a card per attempt, collapsed by default.
-Collapsed shows the attempt number, upstream status, and provider · upstream model · key preview · duration;
-expanding it reveals the attempt's detail — status and error, proxy / node, token usage, outbound method / URL,
-and the network-call breakdown. **Request / response headers** and (for owner / co-owner on a debug-enabled
-token) the request and response bodies are visible only in the admin-and-above **debug view**. Credential
-values in request headers are always masked.
+Collapsed shows the attempt number, upstream status, and provider · upstream model · key preview · attempt time;
+expanding it reveals the attempt's detail — status and error, **connect time**, proxy / node, token usage,
+outbound method / URL, and the network-call breakdown. **Request / response headers** and (for owner / co-owner
+on a debug-enabled token) the request and response bodies are visible only in the admin-and-above **debug view**.
+Credential values in request headers are always masked.
 
 ### Debug details (admin and above)
 

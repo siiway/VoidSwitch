@@ -53,7 +53,16 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 	attempts := info.Attempts
 
 	end := time.Now().UTC()
-	latency := float64(end.Sub(start).Milliseconds())
+	// LatencyMs is the upstream *connect* time of the attempt that served (or
+	// last tried) the request: DNS + TCP + TLS. The whole-request wall clock is
+	// started_at → finished_at, which the UI renders as "duration"; keeping the
+	// two separate stops the two columns from showing the same number.
+	var latency float64
+	if n := len(attempts); n > 0 {
+		if c := attempts[n-1].ConnectMs; c != nil {
+			latency = *c
+		}
+	}
 	ip := clientIP(c)
 	ua := c.Request.UserAgent()
 	// The version distinguishes the V1 and V2 plugins; "" means no plugin.
@@ -94,7 +103,7 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 		full = append(full, at.Full())
 		networkAttempts += len(at.NetworkAttempts)
 	}
-	if networkAttempts == 0 {
+	if networkAttempts == 0 && len(attempts) > 0 {
 		networkAttempts = 1
 	}
 

@@ -1589,6 +1589,12 @@ function RequestLogs({
                     {detailLog.finished_at ? <DetailRow label={tr("logs.finishedAt" as TK)} value={formatDateMs(detailLog.finished_at)} /> : null}
                     {detailLog.first_token_ms != null ? <DetailRow label={tr("logs.colTtft" as TK)} value={`${Math.round(detailLog.first_token_ms)}ms`} /> : null}
                     <DetailRow label={tr("logs.colDuration" as TK)} value={formatDuration(requestDurationMs(detailLog, Date.now(), liveEnabled))} />
+                    {detailLog.latency_ms != null ? (
+                      <DetailRow
+                        label={tr("logs.connectTime" as TK)}
+                        value={`${Math.round(detailLog.latency_ms)}ms`}
+                      />
+                    ) : null}
                     <DetailRow
                       label={tr("logs.colReqStatus" as TK)}
                       value={
@@ -1873,6 +1879,12 @@ function AttemptTrail({
                   {a.upstream_model ? <DetailRow label={t("logs.modelRoute" as TK)} value={a.upstream_model} /> : null}
                   {a.key_preview ? <DetailRow label={t("logs.key" as TK)} value={a.key_preview} /> : null}
                   {route ? <DetailRow label={t("logs.proxy" as TK)} value={route} /> : null}
+                  {a.connect_ms != null ? (
+                    <DetailRow
+                      label={t("logs.connectTime" as TK)}
+                      value={`${Math.round(a.connect_ms)}ms`}
+                    />
+                  ) : null}
                   {a.duration_ms != null ? <DetailRow label={t("logs.latency" as TK)} value={`${Math.round(a.duration_ms)}ms`} /> : null}
                   {a.total_tokens ? (
                     <DetailRow

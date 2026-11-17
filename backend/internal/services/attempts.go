@@ -41,7 +41,11 @@ type AttemptRecord struct {
 	CompletionTokens int64             `json:"completion_tokens,omitempty"`
 	TotalTokens      int64             `json:"total_tokens,omitempty"`
 	DurationMs       *float64          `json:"duration_ms,omitempty"`
-	NetworkAttempts  []NetworkAttempt  `json:"network_attempts,omitempty"`
+	// ConnectMs is how long it took to obtain a usable upstream connection
+	// (DNS + TCP + TLS). Nil when unmeasured (the agent path, or a failure
+	// before the dial started).
+	ConnectMs       *float64         `json:"connect_ms,omitempty"`
+	NetworkAttempts []NetworkAttempt `json:"network_attempts,omitempty"`
 
 	// respCapture holds the upstream SSE accumulated while a streaming response
 	// drains. Full() resolves it into RespBody at log time.

@@ -582,6 +582,8 @@ export interface RequestLogAttempt {
   completion_tokens?: number;
   total_tokens?: number;
   duration_ms?: number | null;
+  // Upstream connect time (DNS + TCP + TLS) in ms; absent when unmeasured.
+  connect_ms?: number | null;
   network_attempts?: Array<{
     attempt: number;
     node_id?: number | null;
