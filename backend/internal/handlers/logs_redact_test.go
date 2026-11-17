@@ -1,6 +1,11 @@
 package handlers
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/siiway/voidswitch/internal/core"
+	"github.com/siiway/voidswitch/internal/database"
+)
 
 // The export must drop credentials and local egress addresses anywhere they
 // appear, while keeping the rest of the payload diagnosable.
@@ -76,5 +81,113 @@ func TestScrubSecretsStripsUserinfo(t *testing.T) {
 	want := "via http://proxy.internal:8080 failed"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// Staff may see per-attempt headers but never bodies; stripAttemptBodies nulls
+// bodies at any depth while leaving the headers intact.
+func TestStripAttemptBodies(t *testing.T) {
+	in := []any{
+		map[string]any{
+			"attempt":     float64(1),
+			"req_headers": map[string]any{"content-type": "application/json"},
+			"req_body":    map[string]any{"messages": []any{"hi"}},
+			"resp_body":   "data: hello\n\n",
+			"error":       "upstream 500",
+		},
+	}
+	out := stripAttemptBodies(in).([]any)
+	m := out[0].(map[string]any)
+	if m["req_body"] != nil || m["resp_body"] != nil {
+		t.Fatalf("bodies were not stripped: %v", m)
+	}
+	if m["req_headers"] == nil {
+		t.Fatal("headers were stripped too")
+	}
+	if m["error"] != "upstream 500" {
+		t.Fatalf("chain detail was dropped: %v", m)
+	}
+}
+
+// The always-visible chain must not reveal the egress address, even inside a
+// nested per-attempt array; route_type is published in its place.
+func TestRedactAttemptSummariesNested(t *testing.T) {
+	in := map[string]any{
+		"attempts": []any{
+			map[string]any{
+				"proxy_url":      "http://user:pw@10.0.0.5:3128",
+				"upstream_model": "m",
+				"network_attempts": []any{
+					map[string]any{"local_address": "127.0.0.1:9", "attempt": float64(1)},
+				},
+			},
+		},
+	}
+	out := redactAttemptSummaries(in).(map[string]any)
+	attempt := out["attempts"].([]any)[0].(map[string]any)
+	if attempt["proxy_url"] != nil {
+		t.Fatalf("proxy_url leaked: %v", attempt)
+	}
+	if attempt["route_type"] != "proxy" {
+		t.Fatalf("route_type = %v, want proxy", attempt["route_type"])
+	}
+	if attempt["upstream_model"] != "m" {
+		t.Fatalf("chain detail was dropped: %v", attempt)
+	}
+	net := attempt["network_attempts"].([]any)[0].(map[string]any)
+	if net["local_address"] != nil || net["route_type"] != "local" {
+		t.Fatalf("nested local address not redacted: %v", net)
+	}
+}
+
+// A member's own chain stays anonymous: the provider key identifies which
+// credential pool served the request, an operator concern.
+func TestStripAttemptKeys(t *testing.T) {
+	in := []any{map[string]any{
+		"key_preview":    "sk-…test",
+		"key_id":         float64(3),
+		"upstream_model": "m",
+	}}
+	out := stripAttemptKeys(in).([]any)[0].(map[string]any)
+	if out["key_preview"] != nil || out["key_id"] != nil {
+		t.Fatalf("key identifiers not stripped: %v", out)
+	}
+	if out["upstream_model"] != "m" {
+		t.Fatalf("chain detail was dropped: %v", out)
+	}
+}
+
+// The download export collapses both projections into one `attempts` array and
+// never carries bodies for a non-owner.
+func TestExportPayloadUsesAttemptsArray(t *testing.T) {
+	v := &requestLogDetailView{
+		requestLogView:  requestLogView{ID: 1},
+		AttemptsSummary: []any{map[string]any{"attempt": float64(1)}},
+		DebugAttempts:   []any{map[string]any{"attempt": float64(1), "req_body": map[string]any{"x": float64(1)}}},
+	}
+	a := &App{}
+
+	member := a.exportPayload(v, &core.UserView{Role: "member"}, &database.RequestLog{}).(map[string]any)
+	if _, ok := member["attempts_summary"]; ok {
+		t.Fatal("export kept attempts_summary")
+	}
+	if _, ok := member["debug_attempts"]; ok {
+		t.Fatal("export kept debug_attempts")
+	}
+	attempts, ok := member["attempts"].([]any)
+	if !ok || len(attempts) != 1 {
+		t.Fatalf("export attempts = %v", member["attempts"])
+	}
+	if m := attempts[0].(map[string]any); m["req_body"] != nil {
+		t.Fatalf("member export leaked a body: %v", m)
+	}
+
+	owner := a.exportPayload(v, &core.UserView{Role: "owner"}, &database.RequestLog{}).(map[string]any)
+	ownerAttempts, _ := owner["attempts"].([]any)
+	if len(ownerAttempts) != 1 {
+		t.Fatalf("owner attempts = %v", owner["attempts"])
+	}
+	if m := ownerAttempts[0].(map[string]any); m["req_body"] == nil {
+		t.Fatalf("owner export lost the body: %v", m)
 	}
 }

@@ -552,6 +552,9 @@ export interface RequestLogAttempt {
   url?: string | null;
   proxy_url?: string | null;
   local_address?: string | null;
+  // Coarse egress class the backend substitutes for proxy_url/local_address
+  // when the caller may not see the exact egress address.
+  route_type?: string | null;
   req_headers?: Record<string, unknown> | null;
   req_body?: unknown;
   status_code?: number | null;
@@ -560,6 +563,10 @@ export interface RequestLogAttempt {
   error?: string | null;
   resp_headers?: Record<string, unknown> | null;
   resp_body?: unknown;
+  // Token usage this attempt produced (omitted when it produced none).
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
   duration_ms?: number | null;
   network_attempts?: Array<{
     attempt: number;
@@ -589,10 +596,6 @@ export interface RequestLogDetail extends RequestLog {
   proxy_url?: string | null;
   upstream_url?: string | null;
   req_method?: string | null;
-  req_headers?: Record<string, unknown> | null;
-  req_body?: Record<string, unknown> | null;
-  resp_headers?: Record<string, unknown> | null;
-  resp_body?: unknown;
   debug_attempts?: RequestLogAttempt[] | null;
   attempts_summary?: RequestLogAttempt[] | null;
 }

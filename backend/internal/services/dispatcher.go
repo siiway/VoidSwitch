@@ -63,6 +63,9 @@ type DispatchRequest struct {
 	Kind         RelayKind
 	TokenID      *int
 	UserSub      *string
+	// Debug captures request/response bodies (and streamed SSE) into the
+	// per-attempt trail. Headers and the routing chain are always recorded.
+	Debug bool
 }
 
 // RelayKind is a coarse endpoint kind used for protocol conversion.
@@ -83,8 +86,10 @@ type DispatchResult struct {
 	Provider   *database.Provider
 	Key        *database.ApiKey
 	Upstream   string
-	Usage      Usage
-	Attempts   int
+	// UpstreamStyle is the provider's API style (e.g. "anthropic"), so the log
+	// records the real inbound→upstream protocol pair.
+	UpstreamStyle string
+	Usage         Usage
 	// UsageReady is closed when a streaming response has fully drained and Usage
 	// is final (non-stream results set it before returning).
 	UsageReady chan struct{}
@@ -110,11 +115,17 @@ type Dispatcher struct {
 	seq          []Candidate
 	egressNodeID int
 	maxTokens    int
+	attempts     []*AttemptRecord
 }
 
 func NewDispatcher(req *DispatchRequest) *Dispatcher {
 	return &Dispatcher{req: req}
 }
+
+// Attempts returns the recorded failover trail in chronological order. It is
+// valid after Do() returns, whether the dispatch succeeded or exhausted every
+// candidate.
+func (d *Dispatcher) Attempts() []*AttemptRecord { return d.attempts }
 
 // ParsePassthroughEntry splits a passthrough whitelist entry into its parts.
 // The grammar is "exposed [=> upstream] [@ pool]": the exposed id is what
@@ -316,7 +327,7 @@ func (d *Dispatcher) Do() (*DispatchResult, error) {
 		return nil, err
 	}
 	var lastErr error
-	for i, cand := range d.seq {
+	for _, cand := range d.seq {
 		res, err := d.attempt(cand)
 		if err != nil {
 			lastErr = err
@@ -328,33 +339,84 @@ func (d *Dispatcher) Do() (*DispatchResult, error) {
 		// empty reply.
 		if cand.Provider.RetryOnZeroToken && !d.req.Stream && res.Usage.TotalTokens == 0 {
 			d.noteFailure(cand, 200)
+			// Mark the attempt so the trail explains why a 200 was retried.
+			if n := len(d.attempts); n > 0 {
+				d.attempts[n-1].Error = strPtr("upstream returned 200 OK with 0 tokens")
+			}
 			lastErr = fmt.Errorf("upstream %s returned 200 OK with 0 tokens", cand.Provider.Name)
 			continue
 		}
-		res.Attempts = i + 1
 		return res, nil
 	}
 	return nil, fmt.Errorf("all upstreams failed: %v", lastErr)
 }
 
 func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
+	n := len(d.attempts) + 1
+	rec := &AttemptRecord{
+		Attempt:         n,
+		ProviderAttempt: intPtr(n),
+		Method:          strPtr(http.MethodPost),
+		Provider:        strPtr(cand.Provider.Name),
+		ProviderID:      intPtr(cand.Provider.ID),
+		KeyID:           intPtr(cand.Key.ID),
+		KeyPreview:      strPtr(cand.Key.KeyPreview),
+		Pool:            nullableString(cand.Upstream.KeyPool),
+		UpstreamModel:   strPtr(cand.UpstreamModel),
+	}
+	start := time.Now()
+	// Register the append first so it runs last: the recording helpers below
+	// mutate the same pointer the deferred append captures.
+	defer func() { d.attempts = append(d.attempts, rec) }()
+
+	recordDuration := func() {
+		dur := float64(time.Since(start).Milliseconds())
+		rec.DurationMs = &dur
+		if len(rec.NetworkAttempts) > 0 {
+			rec.NetworkAttempts[0].DurationMs = &dur
+		}
+	}
+
 	plainKey, err := ResolveCredential(d.req.DB, cand.Provider, cand.Key, d.req.Cfg.Server.SecretKey)
 	if err != nil {
+		recordDuration()
+		rec.Error = strPtr("resolve credential: " + err.Error())
 		return nil, fmt.Errorf("resolve credential: %w", err)
 	}
 
 	adapter := ResolveAdapter(cand.Provider)
 	url := adapter.UpstreamURL()
 	headers := adapter.Headers(plainKey, nil)
+	rec.URL = strPtr(url)
+	rec.ReqHeaders = redactRequestHeaders(headers)
+	if d.req.Stream {
+		if rec.ReqHeaders == nil {
+			rec.ReqHeaders = map[string]string{}
+		}
+		rec.ReqHeaders["Accept"] = "text/event-stream"
+	}
 
 	upstreamBody, err := d.buildUpstreamBody(cand, adapter.GetStyle())
 	if err != nil {
+		recordDuration()
+		rec.Error = strPtr(err.Error())
 		return nil, err
 	}
 	raw, _ := json.Marshal(upstreamBody)
+	if d.req.Debug {
+		rec.ReqBody = captureValue(upstreamBody, logBodyCaptureMax())
+	}
 
 	egress := ResolveEgress(d.req.DB, cand.Provider, d.req.Cfg.Server.SecretKey)
 	d.egressNodeID = egress.NodeID
+	rec.ProxyURL = egress.ProxyURL
+	rec.LocalAddress = egress.LocalAddress
+	rec.RouteType = strPtr(routeTypeOf(egress))
+	rec.NetworkAttempts = []NetworkAttempt{{
+		Attempt:   1,
+		NodeID:    intPtrOrNil(egress.NodeID),
+		RouteType: strPtr(routeTypeOf(egress)),
+	}}
 
 	var resp *http.Response
 	if egress.NodeKind == "agent" {
@@ -364,17 +426,30 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 		}
 		resp, err = SendThroughAgent(d.req.Ctx, egress, http.MethodPost, url, h, raw, 300*time.Second)
 		if err != nil {
+			recordDuration()
+			rec.NetworkError = true
+			msg := redactEgressText(err.Error(), egress)
+			rec.Error = strPtr(msg)
+			rec.NetworkAttempts[0].Error = strPtr(msg)
 			d.recordNodeHealth(egress.NodeID, false, 0)
-			return nil, err
+			return nil, fmt.Errorf("%s", msg)
 		}
 	} else {
 		route := NewRoute(egress.ProxyURL, egress.LocalAddress)
 		client, cerr := d.req.Pool.Get(route, 15*time.Second, 300*time.Second)
 		if cerr != nil {
-			return nil, cerr
+			recordDuration()
+			msg := redactEgressText(cerr.Error(), egress)
+			rec.Error = strPtr(msg)
+			rec.NetworkAttempts[0].Error = strPtr(msg)
+			rec.NetworkAttempts[0].PoolTimeout = true
+			return nil, fmt.Errorf("%s", msg)
 		}
 		httpReq, berr := http.NewRequestWithContext(d.req.Ctx, http.MethodPost, url, bytes.NewReader(raw))
 		if berr != nil {
+			recordDuration()
+			rec.Error = strPtr(berr.Error())
+			rec.NetworkAttempts[0].Error = strPtr(berr.Error())
 			return nil, berr
 		}
 		for k, v := range headers {
@@ -383,50 +458,88 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 		if d.req.Stream {
 			httpReq.Header.Set("Accept", "text/event-stream")
 		}
-		start := time.Now()
+		startNet := time.Now()
 		resp, err = client.Do(httpReq)
 		if err != nil {
+			recordDuration()
+			rec.NetworkError = true
+			msg := redactEgressText(err.Error(), egress)
+			rec.Error = strPtr(msg)
+			rec.NetworkAttempts[0].Error = strPtr(msg)
 			d.recordNodeHealth(egress.NodeID, false, 0)
-			return nil, err
+			return nil, fmt.Errorf("%s", msg)
 		}
-		d.recordNodeHealth(egress.NodeID, true, float64(time.Since(start).Milliseconds()))
+		d.recordNodeHealth(egress.NodeID, true, float64(time.Since(startNet).Milliseconds()))
 	}
+	rec.NetworkAttempts[0].StatusCode = intPtr(resp.StatusCode)
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		// Some upstreams echo the credential back in the error (e.g. OpenAI's
+		// "Incorrect API key provided: sk-…"); never persist or return it.
+		b = []byte(redactSecrets(string(b), plainKey))
+		recordDuration()
+		rec.StatusCode = intPtr(resp.StatusCode)
+		rec.ErrorClass = strPtr(string(adapter.Classify(resp.StatusCode, nil)))
+		rec.RespHeaders = redactedResponseHeaders(resp.Header)
+		// An error body carries the provider's real reason, so capture it even
+		// when the token has debug off (still capped by the same setting).
+		rec.RespBody = captureBody(b, logBodyCaptureMax())
+		errMsg := redactSecrets(fmt.Sprintf("upstream %s returned %d: %s", cand.Provider.Name, resp.StatusCode, truncate(string(b), 300)), plainKey)
+		rec.Error = strPtr(errMsg)
 		d.noteFailure(cand, resp.StatusCode)
-		return nil, fmt.Errorf("upstream %s returned %d: %s", cand.Provider.Name, resp.StatusCode, truncate(string(b), 300))
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	d.noteSuccess(cand)
+	rec.StatusCode = intPtr(resp.StatusCode)
+	rec.ErrorClass = strPtr("ok")
+	rec.RespHeaders = redactedResponseHeaders(resp.Header)
 
 	upstreamFormat := UpstreamFormat(adapter.GetStyle())
 	inboundFormat := InboundFormat(string(d.req.InboundStyle))
 
 	if d.req.Stream {
-		stream := d.convertStream(resp.Body, upstreamFormat, inboundFormat, cand.UpstreamModel)
+		streamBody := io.ReadCloser(resp.Body)
+		if d.req.Debug {
+			rec.respCapture = newBodyCapture(logBodyCaptureMax())
+			streamBody = &captureReader{src: resp.Body, c: rec.respCapture}
+		}
+		stream := d.convertStream(streamBody, upstreamFormat, inboundFormat, cand.UpstreamModel)
 		ready := make(chan struct{})
 		res := &DispatchResult{
 			StatusCode: http.StatusOK, Stream: stream, Headers: resp.Header,
 			Provider: cand.Provider, Key: cand.Key, Upstream: cand.UpstreamModel,
-			UsageReady: ready,
+			UpstreamStyle: string(adapter.GetStyle()),
+			UsageReady:    ready,
 		}
 		// Tee the converted downstream SSE to accumulate usage + first-token time.
 		res.Stream = newUsageTee(stream, res, ready)
+		recordDuration()
 		return res, nil
 	}
 
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(resp.Body)
+	recordDuration()
+	if d.req.Debug {
+		rec.RespBody = captureBody(bodyBytes, logBodyCaptureMax())
+	}
 	outBody, err := d.convertResponse(bodyBytes, upstreamFormat, inboundFormat, cand.UpstreamModel)
 	if err != nil {
+		rec.Error = strPtr(err.Error())
 		return nil, err
 	}
 	usage := extractUsage(bodyBytes)
+	rec.PromptTokens = usage.PromptTokens
+	rec.CompletionTokens = usage.CompletionTokens
+	rec.TotalTokens = usage.TotalTokens
 	return &DispatchResult{
 		StatusCode: http.StatusOK, Body: outBody, Headers: resp.Header,
 		Provider: cand.Provider, Key: cand.Key, Upstream: cand.UpstreamModel,
-		Usage: usage,
+		UpstreamStyle: string(adapter.GetStyle()),
+		Usage:         usage,
 	}, nil
 }
 

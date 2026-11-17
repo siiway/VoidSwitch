@@ -23,7 +23,7 @@ Reserved for owners and co-owners:
 - Deleting providers and managing the per-provider key management API;
 - Revealing audit secrets (plaintext keys, tokens, announcement edit history);
 - **Creating / editing / deleting role groups** (including temporary member removal);
-- **Viewing request / response bodies in request logs** (headers and debug attempts are visible to admin & role-group admin too);
+- **Viewing request / response bodies in request logs** (request headers and per-attempt detail are visible to **admin and above**, not role-group admins; request / response bodies only to owner / co-owner);
 - **Editing** system settings and running **"Clean logs now"** (admins can only *view* the read-only settings).
 
 ## Where roles come from

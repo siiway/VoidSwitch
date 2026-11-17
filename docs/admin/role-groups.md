@@ -38,7 +38,7 @@
 - **Dashboard** — 仪表盘展示**所属组的 24 小时汇总**（成员数、令牌数、请求数、Token 用量、成功率），
   而不是平台全局数字；下方的「我的用量」仍是本人的数据。
 - **Statistics** — `/api/usage` 数据被按管理组的成员作用域化。同样有提示条和组选择器。
-- **Logs / Audit** — 只看到本组成员产生的请求日志；审计日志只看到 `target=user`（且 user 属于本组）或 `target=role_group`（且属于本组）的条目。请求日志详情里可见 headers 与调试尝试，但**看不到 request/response body**（body 仅 owner/co-owner 可见）。所有的 `reveal` 操作依然仅 owner 可用。
+- **Logs / Audit** — 只看到本组成员产生的请求日志；审计日志只看到 `target=user`（且 user 属于本组）或 `target=role_group`（且属于本组）的条目。请求日志详情里只能看到不含头/体的链路摘要，**看不到 headers、每次尝试明细，也看不到 request/response body**（headers 与每次尝试明细仅 admin 及以上可见，body 仅 owner/co-owner 可见）。所有的 `reveal` 操作依然仅 owner 可用。
 
 ::: warning
 **身份组管理员是只读角色**（除强制登出外），无法编辑身份组、无法修改用户、无法查看敏感值或明文 Void-Token。

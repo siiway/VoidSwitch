@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,23 +13,33 @@ import (
 
 // requestLogInfo carries the context for one request-log write.
 type requestLogInfo struct {
-	TokenID    int
-	UserSub    string
-	Model      string
-	Upstream   string
-	Inbound    string
-	Stream     bool
-	Start      time.Time
-	FirstToken *float64
-	Provider   string
-	KeyID      int
-	StatusCode int
-	Success    bool
-	Attempts   int
-	Err        *string
-	Usage      services.Usage
-	SessionKey string
-	ClientType string
+	TokenID       int
+	UserSub       string
+	Model         string
+	Upstream      string
+	Inbound       string
+	UpstreamStyle string
+	Stream        bool
+	Start         time.Time
+	FirstToken    *float64
+	Provider      string
+	KeyID         int
+	StatusCode    int
+	Success       bool
+	Attempts      []*services.AttemptRecord
+	Err           *string
+	Usage         services.Usage
+	SessionKey    string
+	ClientType    string
+	Debug         bool
+}
+
+func jsonRaw(v any) database.JSON {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return database.JSON(raw)
 }
 
 // logRequest persists a request_log row and updates the token counters plus the
@@ -37,8 +48,9 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 	userSub, model, upstream, inbound := info.UserSub, info.Model, info.Upstream, info.Inbound
 	stream, start, firstTokenMs := info.Stream, info.Start, info.FirstToken
 	providerName, keyID, statusCode, success := info.Provider, info.KeyID, info.StatusCode, info.Success
-	attempts, errMsg, usage := info.Attempts, info.Err, info.Usage
+	errMsg, usage := info.Err, info.Usage
 	tokenID := info.TokenID
+	attempts := info.Attempts
 
 	end := time.Now().UTC()
 	latency := float64(end.Sub(start).Milliseconds())
@@ -46,6 +58,45 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 	ua := c.Request.UserAgent()
 	// The version distinguishes the V1 and V2 plugins; "" means no plugin.
 	pluginVersion := opencodePluginVersion(c)
+
+	// A failed dispatch passes no provider/key/upstream; fall back to the last
+	// attempt in the trail so the row still shows what was tried.
+	if len(attempts) > 0 {
+		last := attempts[len(attempts)-1]
+		if providerName == "" && last.Provider != nil {
+			providerName = *last.Provider
+		}
+		if keyID == 0 && last.KeyID != nil {
+			keyID = *last.KeyID
+		}
+		if upstream == "" && last.UpstreamModel != nil {
+			upstream = *last.UpstreamModel
+		}
+	}
+
+	// A streamed response's usage is only known once the downstream SSE drains;
+	// stamp it on the winning (last) attempt so the per-attempt trail accounts
+	// for the tokens that attempt produced.
+	if info.Stream && usage.TotalTokens > 0 && len(attempts) > 0 {
+		last := attempts[len(attempts)-1]
+		if last.TotalTokens == 0 {
+			last.PromptTokens = usage.PromptTokens
+			last.CompletionTokens = usage.CompletionTokens
+			last.TotalTokens = usage.TotalTokens
+		}
+	}
+
+	chain := make([]services.AttemptRecord, 0, len(attempts))
+	full := make([]services.AttemptRecord, 0, len(attempts))
+	networkAttempts := 0
+	for _, at := range attempts {
+		chain = append(chain, at.Chain())
+		full = append(full, at.Full())
+		networkAttempts += len(at.NetworkAttempts)
+	}
+	if networkAttempts == 0 {
+		networkAttempts = 1
+	}
 
 	row := database.RequestLog{
 		TS:               start.UTC(),
@@ -59,9 +110,9 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 		ProviderName:     strPtr(providerName),
 		KeyID:            &keyID,
 		Model:            strPtr(model),
-		UpstreamModel:    strPtr(upstream),
+		UpstreamModel:    nullableStr(upstream),
 		InboundStyle:     strPtr(inbound),
-		UpstreamStyle:    strPtr(upstream),
+		UpstreamStyle:    nullableStr(info.UpstreamStyle),
 		StatusCode:       &statusCode,
 		Success:          success,
 		LatencyMs:        &latency,
@@ -69,15 +120,26 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 		CompletionTokens: usage.CompletionTokens,
 		TotalTokens:      usage.TotalTokens,
 		Stream:           stream,
-		Attempts:         attempts,
-		ProviderAttempts: attempts,
-		NetworkAttempts:  1,
+		Attempts:         len(attempts),
+		ProviderAttempts: len(attempts),
+		NetworkAttempts:  networkAttempts,
 		Error:            errMsg,
 		UserAgent:        strPtr(ua),
 		IsOpenCode:       pluginVersion != "",
 		OpenCodePlugin:   nullableStr(pluginVersion),
-		Debug:            false,
+		Debug:            info.Debug,
 		ReqMethod:        strPtr("POST"),
+	}
+	if len(chain) > 0 {
+		row.AttemptsSummary = jsonRaw(chain)
+		row.DebugAttempts = jsonRaw(full)
+		last := attempts[len(attempts)-1]
+		row.UpstreamURL = last.URL
+		row.ProxyURL = last.ProxyURL
+		row.ProviderID = last.ProviderID
+		if len(last.NetworkAttempts) > 0 {
+			row.ProxyID = last.NetworkAttempts[0].NodeID
+		}
 	}
 	if info.SessionKey != "" {
 		row.SessionID = strPtr(info.SessionKey)

@@ -38,9 +38,12 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
   **60** minutes is used as-is; when Prism sends none and nothing is configured, the server config's
   `session_ttl_minutes` is used. A non-zero value below 60 is rejected on save.
 - **Logs & Retention** — page size, the auto-cleanup toggle and interval, and the retention windows for request / audit / debug logs
-  (`0` = keep forever). Owners can also **clean up now**. After the debug log retention window
-  (`debug_log_retention_days`) expires, the detailed debug fields on rows are stripped (request/response headers and bodies, per-attempt records),
-  including the response headers and body that are force-recorded for errored requests (upstream 4xx / 5xx). This group also contains **heatmap data retention days**
+  (`0` = keep forever). Owners can also **clean up now**. The **body capture cap**
+  (`log_body_capture_max_bytes`, bytes, default 262144, `0` = uncapped) bounds the request body, response
+  body and streamed SSE stored in a request log. After the debug log retention window
+  (`debug_log_retention_days`) expires, the request/response headers, bodies, per-attempt detail and proxy
+  addresses are stripped from the row (the chain summary without headers/bodies is kept). This group also
+  contains **heatmap data retention days**
   (`heatmap_retention_days`): the retention window for the daily usage aggregates that the dashboard activity heatmap relies on, independent of request log retention.
   The default is 365 days; `0` means keep forever, and a non-zero value must not be less than 365 days (validated on save).
   Scheduled cleanup applies the same rules as **Clean now**: beyond the logs above it also drops upstream

@@ -27,6 +27,8 @@ import {
   ArrowEnterRegular,
   ArrowDownloadRegular,
   BugRegular,
+  ChevronDownRegular,
+  ChevronRightRegular,
   CopyRegular,
   DismissRegular,
   EyeRegular,
@@ -38,7 +40,7 @@ import {
 } from "@fluentui/react-icons";
 import type { BadgeProps } from "@fluentui/react-components";
 import { makeStyles } from "@fluentui/react-components";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import { formatGrouped } from "../lib/formatNumber";
@@ -859,7 +861,6 @@ function RequestLogs({
   // Guard against a detail fetch resolving after the dialog was closed (or a
   // different row opened): only the latest request may populate the dialog.
   const detailReqRef = useRef<{ id: number; mode: "info" | "debug" } | null>(null);
-  const [revealMode, setRevealMode] = useState(false);
 
   useEffect(() => {
     setFilters(requestFiltersFromParams(searchParams));
@@ -1043,13 +1044,12 @@ function RequestLogs({
     const reqId = { id, mode };
     detailReqRef.current = reqId;
     setDetailLoading(true);
-    setRevealMode(false);
     setDetailMode(mode);
     try {
       const detail = await api.get<unknown>(`/api/admin/logs/requests/${id}`);
       if (detailReqRef.current !== reqId) return;
       if (!isRequestLog(detail)) throw new Error("unexpected log-detail shape");
-      if (mode === "debug" && !(detail as RequestLogDetail).debug) {
+      if (mode === "debug" && !isStaffView) {
         notify(tr("logs.debugNotAvailable" as TK), `#${id}`, "warning");
         return;
       }
@@ -1070,7 +1070,6 @@ function RequestLogs({
     const reqId = { id: r.id, mode };
     detailReqRef.current = reqId;
     setDetailLoading(true);
-    setRevealMode(false);
     setDetailMode(mode);
     try {
       const d = await api.get<unknown>(`/api/admin/logs/requests/${r.id}`);
@@ -1273,7 +1272,7 @@ function RequestLogs({
             <Button
               appearance="subtle"
               icon={<BugRegular />}
-              disabled={!goToId.trim() || detailLoading || !(isStaffView || isRoleGroupAdminView)}
+              disabled={!goToId.trim() || detailLoading || !isStaffView}
               onClick={() => void openRequestById("debug")}
               aria-label={tr("logs.viewDebug" as TK)}
             />
@@ -1509,11 +1508,11 @@ function RequestLogs({
                       onClick={() => openDetail(r, "info")}
                     />
                   </Tooltip>
-                  {/* Debug detail (headers + per-attempt trail) is visible to
-                      staff and role-group admins; bodies inside remain owner-
-                      only (rendered conditionally in the detail dialog). Only
-                      surfaces for rows recorded in debug mode. */}
-                  {(isStaffView || isRoleGroupAdminView) && r.debug ? (
+                  {/* Debug detail: the per-attempt trail with redacted headers.
+                      Staff (admin and above) can open it for any row that made
+                      an attempt; bodies inside remain owner / co-owner only and
+                      are stripped server-side for everyone else. */}
+                  {isStaffView && r.attempts > 0 ? (
                     <Tooltip content={tr("logs.viewDebug" as TK)} relationship="label">
                       <Button
                         size="small"
@@ -1578,7 +1577,6 @@ function RequestLogs({
                       }
                     />
                     <DetailRow label={tr("logs.colClientIp" as TK)} value={detailLog.client_ip ?? "—"} />
-                    <DetailRow label={tr("logs.status" as TK)} value={detailLog.success ? `${detailLog.status_code} OK` : `${detailLog.status_code ?? "ERR"}`} />
                     <DetailRow
                       label={tr("logs.user" as TK)}
                       value={
@@ -1596,22 +1594,9 @@ function RequestLogs({
                       }
                     />
                     <DetailRow label={tr("logs.model" as TK)} value={detailLog.model ?? "—"} />
-                    {detailLog.upstream_model &&
-                    detailLog.upstream_model !== detailLog.model ? (
-                      <DetailRow
-                        label={tr("logs.modelRoute" as TK)}
-                        value={`${detailLog.model ?? "?"} → ${detailLog.upstream_model}`}
-                      />
-                    ) : null}
-                    <DetailRow label={tr("logs.provider" as TK)} value={detailLog.provider_name ?? "—"} />
-                    <DetailRow label={tr("logs.key" as TK)} value={detailLog.key_preview ?? (detailLog.key_id != null ? `#${detailLog.key_id}` : "—")} />
-                    <DetailRow label={tr("logs.proxy" as TK)} value={detailLog.proxy_id != null ? `#${detailLog.proxy_id}` : "—"} />
                     <DetailRow label={tr("logs.route" as TK)} value={`${detailLog.inbound_style ?? "?"}→${detailLog.upstream_style ?? "?"}`} />
                     <DetailRow label={tr("logs.stream" as TK)} value={detailLog.stream ? "yes" : "no"} />
                     <DetailRow label={tr("logs.tries" as TK)} value={String(detailLog.attempts)} />
-                    <DetailRow label={tr("logs.tokens" as TK)} value={`${formatGrouped(detailLog.prompt_tokens, i18n.language || "en")}+${formatGrouped(detailLog.completion_tokens, i18n.language || "en")}=${formatGrouped(detailLog.total_tokens, i18n.language || "en")}`} />
-                    {detailLog.latency_ms != null && <DetailRow label={tr("logs.latency" as TK)} value={`${Math.round(detailLog.latency_ms)}ms`} />}
-                    {detailLog.upstream_url && <DetailRow label={tr("logs.upstreamUrl" as TK)} value={detailLog.upstream_url} />}
                     <DetailRow label={tr("logs.userAgent" as TK)} value={detailLog.user_agent ?? "—"} />
                     <DetailRow label={tr("logs.opencodePlugin" as TK)} value={detailLog.opencode_plugin ?? "—"} />
                   </div>
@@ -1627,59 +1612,26 @@ function RequestLogs({
                     </div>
                   )}
 
-                  {detailLog.attempts_summary && detailLog.attempts_summary.length > 0 ? (
+                  {detailMode === "info" && detailLog.attempts_summary && detailLog.attempts_summary.length > 0 ? (
                     <AttemptTrail attempts={detailLog.attempts_summary} />
                   ) : null}
 
-                  {/* Debug view — owner / co-owner only, only reachable via the
-                      dedicated debug button on a debug-recorded row. */}
+                  {/* Debug view: the full per-attempt trail. Staff (admin and
+                      above) see headers; bodies are owner / co-owner only. The
+                      backend strips bodies for non-owners. */}
                   {detailMode === "debug" && (
                     <div style={{ borderTop: `1px solid ${tokens.colorNeutralStroke2}`, paddingTop: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                        <Text size={200} weight="semibold">{tr("logs.debugData" as TK)}</Text>
-                        {isOwner && (
-                          <Button
-                            size="small"
-                            appearance={revealMode ? "primary" : "subtle"}
-                            icon={<EyeRegular />}
-                            onClick={() => setRevealMode(!revealMode)}
-                          >
-                            {revealMode ? tr("logs.revealOn" as TK) : tr("logs.revealSecret" as TK)}
-                          </Button>
-                        )}
-                      </div>
-                      {/* Detail-panel visibility split (matches the backend's
-                          strip policy in api/admin/logs.py):
-                          - identity headers (method, upstream url, proxy, key
-                            preview) + req/resp headers + debug attempts:
-                            visible to platform staff AND role-group admins;
-                          - req/resp bodies: owner / co-owner only. */}
-                      {(isStaffView || isRoleGroupAdminView) ? (
-                        <>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: tokens.fontSizeBase200, marginBottom: 8 }}>
-                            <DetailRow label={tr("logs.method" as TK)} value={detailLog.req_method ?? "—"} />
-                            <DetailRow label={tr("logs.upstreamUrl" as TK)} value={detailLog.upstream_url ?? "—"} />
-                            <DetailRow label={tr("logs.proxy" as TK)} value={detailLog.proxy_url ?? (detailLog.proxy_id != null ? `#${detailLog.proxy_id}` : "—")} />
-                            <DetailRow label={tr("logs.key" as TK)} value={detailLog.key_preview ?? (detailLog.key_id != null ? `#${detailLog.key_id}` : "—")} />
-                          </div>
-                          <CodeBlock label={tr("logs.reqHeaders" as TK)} value={detailLog.req_headers} />
-                          {isOwner ? (
-                            <CodeBlock label={tr("logs.reqBody" as TK)} value={detailLog.req_body} />
-                          ) : null}
-                          <CodeBlock label={tr("logs.respHeaders" as TK)} value={detailLog.resp_headers} />
-                          {isOwner ? (
-                            <CodeBlock label={tr("logs.respBody" as TK)} value={detailLog.resp_body} />
-                          ) : null}
-                          {detailLog.debug_attempts && detailLog.debug_attempts.length > 0 ? (
-                            <AttemptTrail
-                              attempts={detailLog.debug_attempts}
-                              showBodies={isOwner}
-                            />
-                          ) : null}
-                        </>
+                      <Text size={200} weight="semibold" block style={{ marginBottom: 8 }}>
+                        {tr("logs.debugData" as TK)}
+                      </Text>
+                      {detailLog.debug_attempts && detailLog.debug_attempts.length > 0 ? (
+                        <AttemptTrail
+                          attempts={detailLog.debug_attempts}
+                          showBodies={isOwner}
+                        />
                       ) : (
                         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-                          {tr("logs.debugOwnerOnly" as TK)}
+                          {tr("logs.attemptsEmpty" as TK)}
                         </Text>
                       )}
                     </div>
@@ -1758,11 +1710,37 @@ function AttemptTrail({
 }: {
   attempts: RequestLogAttempt[];
   // Owner-only: request/response bodies inside each attempt entry. Headers
-  // are shown regardless (they're the diagnostic minimum admins need).
+  // are shown to staff and above; the backend strips bodies for non-owners.
   showBodies?: boolean;
 }) {
   const { t } = useTranslation();
   type TK = keyof Translations;
+  // Collapsed by default. Each attempt card expands independently. The detail
+  // wrapper is display-toggled rather than conditionally mounted so a Dialog's
+  // FocusTrapZone never re-focuses when an attempt opens.
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const toggle = (key: string) =>
+    setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+  const onKey = (key: string) => (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle(key);
+    }
+  };
+
+  const cardStyle = {
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: 8,
+  } as const;
+  const headerStyle = {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+    cursor: "pointer",
+  } as const;
+
   return (
     <div style={{ marginTop: 8 }}>
       <Text
@@ -1775,24 +1753,23 @@ function AttemptTrail({
       </Text>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {attempts.map((a, i) => {
+          const key = String(a.attempt ?? i);
+          const expanded = !!open[key];
+          const chevron = expanded ? <ChevronDownRegular /> : <ChevronRightRegular />;
+          const route = a.proxy_url ?? a.local_address ?? a.route_type;
+          const detailStyle = { display: expanded ? "block" : "none", marginTop: 6 };
+
           if (a.skipped) {
             return (
-              <div
-                key={a.attempt ?? i}
-                style={{
-                  border: `1px solid ${tokens.colorNeutralStroke2}`,
-                  borderRadius: tokens.borderRadiusMedium,
-                  padding: 8,
-                }}
-              >
+              <div key={key} style={cardStyle}>
                 <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => toggle(key)}
+                  onKeyDown={onKey(key)}
+                  style={headerStyle}
                 >
+                  {chevron}
                   <Badge appearance="tint" color="informative">
                     #{a.attempt ?? i + 1}
                   </Badge>
@@ -1805,19 +1782,22 @@ function AttemptTrail({
                     {a.pool ? ` · pool ${a.pool}` : ""}
                   </Text>
                 </div>
-                {a.error ? (
-                  <Text
-                    size={200}
-                    block
-                    style={{
-                      color: tokens.colorPaletteYellowForeground1,
-                      fontFamily: "monospace",
-                      marginTop: 4,
-                    }}
-                  >
-                    {a.error}
-                  </Text>
-                ) : null}
+                <div style={detailStyle}>
+                  {route ? <Text size={200} block style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace" }}>{route}</Text> : null}
+                  {a.error ? (
+                    <Text
+                      size={200}
+                      block
+                      style={{
+                        color: tokens.colorPaletteYellowForeground1,
+                        fontFamily: "monospace",
+                        marginTop: 4,
+                      }}
+                    >
+                      {a.error}
+                    </Text>
+                  ) : null}
+                </div>
               </div>
             );
           }
@@ -1840,23 +1820,15 @@ function AttemptTrail({
               : null,
           ].filter(Boolean).join(" · ");
           return (
-            <div
-              key={a.attempt ?? i}
-              style={{
-                border: `1px solid ${tokens.colorNeutralStroke2}`,
-                borderRadius: tokens.borderRadiusMedium,
-                padding: 8,
-              }}
-            >
+            <div key={key} style={cardStyle}>
               <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  gap: 8,
-                  marginBottom: 6,
-                }}
+                role="button"
+                tabIndex={0}
+                onClick={() => toggle(key)}
+                onKeyDown={onKey(key)}
+                style={headerStyle}
               >
+                {chevron}
                 <Badge appearance="tint" color="informative">
                   #{a.attempt ?? i + 1}
                 </Badge>
@@ -1873,77 +1845,94 @@ function AttemptTrail({
                   {a.duration_ms != null ? ` · ${Math.round(a.duration_ms)}ms` : ""}
                 </Text>
               </div>
-              {policyDetails ? (
-                <Text size={200} block style={{ color: tokens.colorNeutralForeground3, marginBottom: 4 }}>
-                  {t("logs.policyDecision" as TK)}: {policyDetails}
-                  {a.protected_repeat_used ? ` · ${t("logs.protectedRepeat" as TK)}` : ""}
-                  {a.rule_status_matched ? ` · ${t("logs.statusMatched" as TK)}` : ""}
-                  {a.rule_body_matched ? ` · ${t("logs.bodyMatched" as TK)}` : ""}
-                </Text>
-              ) : null}
-              {a.network_attempts && a.network_attempts.length > 0 ? (
-                <div style={{ marginBottom: 6, paddingLeft: 12, borderLeft: `2px solid ${tokens.colorNeutralStroke2}` }}>
-                  <Text size={200} weight="semibold" block style={{ color: tokens.colorNeutralForeground3, marginBottom: 2 }}>
-                    {t("logs.networkAttempts" as TK)} ({a.network_attempts.length})
-                  </Text>
-                  {a.network_attempts.map((networkAttempt, networkIndex) => {
-                    const route = networkAttempt.node_id != null
-                      ? `${t("logs.node" as TK)} #${networkAttempt.node_id}`
-                      : networkAttempt.route_type;
-                    return (
-                      <Text
-                        key={`${networkAttempt.attempt}-${networkIndex}`}
-                        size={200}
-                        block
-                        style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace", wordBreak: "break-all" }}
-                      >
-                        #{networkAttempt.attempt}
-                        {route ? ` · ${route}` : ""}
-                        {networkAttempt.status_code != null ? ` · HTTP ${networkAttempt.status_code}` : ""}
-                        {networkAttempt.pool_timeout ? ` · ${t("logs.poolTimeout" as TK)}` : ""}
-                        {networkAttempt.deadline_timeout ? ` · ${t("logs.deadlineTimeout" as TK)}` : ""}
-                        {networkAttempt.duration_ms != null ? ` · ${Math.round(networkAttempt.duration_ms)}ms` : ""}
-                        {networkAttempt.error ? ` · ${networkAttempt.error}` : ""}
-                      </Text>
-                    );
-                  })}
+              <div style={detailStyle}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: tokens.fontSizeBase200, marginBottom: 6 }}>
+                  <DetailRow label={t("logs.status" as TK)} value={String(statusLabel)} />
+                  <DetailRow label={t("logs.provider" as TK)} value={a.provider ?? "—"} />
+                  {a.upstream_model ? <DetailRow label={t("logs.modelRoute" as TK)} value={a.upstream_model} /> : null}
+                  {a.key_preview ? <DetailRow label={t("logs.key" as TK)} value={a.key_preview} /> : null}
+                  {route ? <DetailRow label={t("logs.proxy" as TK)} value={route} /> : null}
+                  {a.duration_ms != null ? <DetailRow label={t("logs.latency" as TK)} value={`${Math.round(a.duration_ms)}ms`} /> : null}
+                  {a.total_tokens ? (
+                    <DetailRow
+                      label={t("logs.tokens" as TK)}
+                      value={`${formatGrouped(a.prompt_tokens ?? 0, i18n.language || "en")}+${formatGrouped(a.completion_tokens ?? 0, i18n.language || "en")}=${formatGrouped(a.total_tokens, i18n.language || "en")}`}
+                    />
+                  ) : null}
+                  {a.pool ? <DetailRow label={t("logs.pool" as TK)} value={a.pool} /> : null}
                 </div>
-              ) : null}
-              <Text
-                size={200}
-                block
-                style={{
-                  color: tokens.colorNeutralForeground3,
-                  fontFamily: "monospace",
-                  wordBreak: "break-all",
-                  marginBottom: 4,
-                }}
-              >
-                {`${a.method ?? "POST"} ${a.url ?? "—"}`}
-              </Text>
-              {a.error ? (
+                {policyDetails ? (
+                  <Text size={200} block style={{ color: tokens.colorNeutralForeground3, marginBottom: 4 }}>
+                    {t("logs.policyDecision" as TK)}: {policyDetails}
+                    {a.protected_repeat_used ? ` · ${t("logs.protectedRepeat" as TK)}` : ""}
+                    {a.rule_status_matched ? ` · ${t("logs.statusMatched" as TK)}` : ""}
+                    {a.rule_body_matched ? ` · ${t("logs.bodyMatched" as TK)}` : ""}
+                  </Text>
+                ) : null}
+                {a.network_attempts && a.network_attempts.length > 0 ? (
+                  <div style={{ marginBottom: 6, paddingLeft: 12, borderLeft: `2px solid ${tokens.colorNeutralStroke2}` }}>
+                    <Text size={200} weight="semibold" block style={{ color: tokens.colorNeutralForeground3, marginBottom: 2 }}>
+                      {t("logs.networkAttempts" as TK)} ({a.network_attempts.length})
+                    </Text>
+                    {a.network_attempts.map((networkAttempt, networkIndex) => {
+                      const netRoute = networkAttempt.node_id != null
+                        ? `${t("logs.node" as TK)} #${networkAttempt.node_id}`
+                        : networkAttempt.route_type;
+                      return (
+                        <Text
+                          key={`${networkAttempt.attempt}-${networkIndex}`}
+                          size={200}
+                          block
+                          style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace", wordBreak: "break-all" }}
+                        >
+                          #{networkAttempt.attempt}
+                          {netRoute ? ` · ${netRoute}` : ""}
+                          {networkAttempt.status_code != null ? ` · HTTP ${networkAttempt.status_code}` : ""}
+                          {networkAttempt.pool_timeout ? ` · ${t("logs.poolTimeout" as TK)}` : ""}
+                          {networkAttempt.deadline_timeout ? ` · ${t("logs.deadlineTimeout" as TK)}` : ""}
+                          {networkAttempt.duration_ms != null ? ` · ${Math.round(networkAttempt.duration_ms)}ms` : ""}
+                          {networkAttempt.error ? ` · ${networkAttempt.error}` : ""}
+                        </Text>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 <Text
                   size={200}
                   block
                   style={{
-                    color: tokens.colorPaletteRedForeground1,
+                    color: tokens.colorNeutralForeground3,
                     fontFamily: "monospace",
-                    whiteSpace: "pre-wrap",
                     wordBreak: "break-all",
                     marginBottom: 4,
                   }}
                 >
-                  {a.error}
+                  {`${a.method ?? "POST"} ${a.url ?? "—"}`}
                 </Text>
-              ) : null}
-              <CodeBlock label={t("logs.reqHeaders" as TK)} value={a.req_headers} />
-              {showBodies ? (
-                <CodeBlock label={t("logs.reqBody" as TK)} value={a.req_body} />
-              ) : null}
-              <CodeBlock label={t("logs.respHeaders" as TK)} value={a.resp_headers} />
-              {showBodies ? (
-                <CodeBlock label={t("logs.respBody" as TK)} value={a.resp_body} />
-              ) : null}
+                {a.error ? (
+                  <Text
+                    size={200}
+                    block
+                    style={{
+                      color: tokens.colorPaletteRedForeground1,
+                      fontFamily: "monospace",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                      marginBottom: 4,
+                    }}
+                  >
+                    {a.error}
+                  </Text>
+                ) : null}
+                <CodeBlock label={t("logs.reqHeaders" as TK)} value={a.req_headers} />
+                {showBodies ? (
+                  <CodeBlock label={t("logs.reqBody" as TK)} value={a.req_body} />
+                ) : null}
+                <CodeBlock label={t("logs.respHeaders" as TK)} value={a.resp_headers} />
+                {showBodies ? (
+                  <CodeBlock label={t("logs.respBody" as TK)} value={a.resp_body} />
+                ) : null}
+              </div>
             </div>
           );
         })}

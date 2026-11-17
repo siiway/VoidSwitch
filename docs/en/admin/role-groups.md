@@ -39,7 +39,7 @@ A **role-group admin** (who need not be a platform moderator) sees **Users / Sta
   usage, success rate) instead of the platform-wide figures; the "my usage" block below it is still
   your own traffic.
 - **Statistics** — the `/api/usage` data is scoped to the managed groups' members. Same info bar and group selector.
-- **Logs / Audit** — request logs are limited to the group's users; audit logs to entries whose `target=user` (a group member) or `target=role_group` (a managed group). Request-log detail exposes headers and per-attempt debug trails, but **not request/response bodies** — those remain owner / co-owner only. All `reveal` actions stay owner-only.
+- **Logs / Audit** — request logs are limited to the group's users; audit logs to entries whose `target=user` (a group member) or `target=role_group` (a managed group). Request-log detail exposes only the chain summary (no headers or bodies): **request headers and per-attempt detail are admin-and-above only**, and request / response bodies remain owner / co-owner only. All `reveal` actions stay owner-only.
 
 ::: warning
 **A role-group admin is a read-only role** (with force-logout as the sole write action). They can't edit role groups, modify users, or reveal any secret or plaintext Void-Token.

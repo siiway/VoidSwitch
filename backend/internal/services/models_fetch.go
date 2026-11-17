@@ -131,19 +131,37 @@ func resolveFetchEndpoint(baseURL, path string) (string, error) {
 }
 
 // redactedHeaders copies response headers, masking credential-bearing values.
+// Response headers use a narrower credential set than request headers: an
+// upstream's rate-limit headers (x-ratelimit-*-tokens) are valuable diagnostic
+// data and must not be blanket-redacted by a bare "token" match.
 func redactedHeaders(h http.Header) map[string]string {
 	out := make(map[string]string, len(h))
 	for k, v := range h {
 		joined := strings.Join(v, ", ")
-		switch strings.ToLower(k) {
-		case "set-cookie", "authorization", "proxy-authorization", "x-api-key", "api-key":
-			if joined != "" {
-				joined = "<redacted>"
-			}
+		if joined != "" && isSensitiveResponseHeader(k) {
+			joined = "<redacted>"
 		}
 		out[k] = joined
 	}
 	return out
+}
+
+// isSensitiveResponseHeader reports whether a response header name carries a
+// credential. Kept in sync with isSensitiveHeader's intent but without the broad
+// "key"/"token"/"auth" substrings that would also catch rate-limit headers.
+func isSensitiveResponseHeader(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	switch n {
+	case "set-cookie", "cookie", "authorization", "proxy-authorization",
+		"x-api-key", "api-key", "x-goog-api-key", "x-auth-token":
+		return true
+	}
+	for _, frag := range []string{"secret", "credential", "signature", "private-key"} {
+		if strings.Contains(n, frag) {
+			return true
+		}
+	}
+	return false
 }
 
 // FetchUpstreamModels calls a provider's models endpoint and extracts model ids.

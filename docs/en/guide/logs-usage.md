@@ -71,33 +71,51 @@ Token exchanges for Claude Code subscription OAuth are also counted in the **Req
 such as `<cc-refresh-token>` or `<cc-exchange-token>`; these records usually have no user and no Void-Token.
 
 Every request row has an **info** button (ℹ) that opens its regular details —
-time, start / finish time, request duration, status code, request status (full text), the **full client IP**,
-caller, token, model, provider, key, proxy, token counts, and any error — every table header is shown here in
-**untruncated** form. When a model is routed (aliased to a different upstream ID), the details show the **model route** (e.g. `codex-gpt-5.5 → gpt-5.5`),
-making it easy to trace the mapping. Even if a request failed on all providers, the details still show the last attempted provider, key, and route.
+time, start / finish time, request duration, TTFT, request status (full text), the **full client IP**,
+caller, token, model, inbound style, stream flag, total attempt count, User-Agent, plugin version, and any error —
+every table header is shown here in **untruncated** form. Fields that belong to a specific attempt
+(provider, key, proxy / node, upstream model and URL, status code, token usage, per-attempt duration)
+are no longer part of the summary; they live in the **per-attempt** cards below, so the summary is never
+misled by the last attempt's values.
 
-### Debug details (owner / co-owner only)
+### Per-attempt trail
 
-Requests made with a **debug-enabled token** get a second **debug** button (🐞),
-visible only to **owner / co-owner**. It opens the full capture: the outbound URL and method, the proxy used, request headers
-and body, response status code, response headers and body — plus a **record of each attempt** across the entire failover process
-(the provider / key / proxy for each attempt, along with its upstream status and response). This lets you go from a vague "upstream 500"
-to pinpointing the specific problem. Credential values in request headers are always masked; nothing else is redacted. Admins can only see the info button,
-and never the debug capture.
+Every request's detail lists the **whole failover chain** as a card per attempt, collapsed by default.
+Collapsed shows the attempt number, upstream status, and provider · upstream model · key preview · duration;
+expanding it reveals the attempt's detail — status and error, proxy / node, token usage, outbound method / URL,
+and the network-call breakdown. **Request / response headers** and (for owner / co-owner on a debug-enabled
+token) the request and response bodies are visible only in the admin-and-above **debug view**. Credential
+values in request headers are always masked.
 
-The lower-left corner of the debug detail dialog has a button to download a redacted request JSON.
-The export keeps the upstream SSE response, request headers, and response headers, but removes API keys,
-access tokens, and proxy URLs while retaining the proxy name. Non-owner users receive no request or response body.
+### Debug details (admin and above)
 
-Even without a **debug-enabled** token, as long as a request **errors** (upstream 4xx / 5xx), that error's
-**response headers and body** are force-recorded (but not the request headers / body, and no per-attempt records), so any upstream error is traceable.
-This data is also considered debug information: only owner / co-owner can view it via the debug button, and it is cleaned up automatically according to the **debug log retention window**
-(`debug_log_retention_days`, see [Settings](/en/admin/settings)).
+Each attempt's chain and its **redacted request / response headers** are always recorded. Admins
+(admin / co-owner / owner) can open the full per-attempt view with the **debug** button (🐞) on any row
+that made an upstream attempt. **Role-group admins and members do not see request headers** — they only
+get the chain summary without headers or bodies.
+
+Request / response bodies are recorded only in these cases, and are visible only to **owner / co-owner**
+(always truncated by the **body capture cap**):
+
+- The request's **Void-Token has debug enabled**: the request body, the non-stream response body, and the
+  upstream SSE of a streaming response are captured;
+- The request **errors** (upstream 4xx / 5xx): the error response body (usually the upstream JSON error) is
+  captured regardless of debug; a streaming SSE error body is not.
+
+The lower-left corner of the debug detail dialog has a button to download a redacted request JSON. The export
+puts the whole chain into a single `attempts` array, removes API keys, access tokens and proxy URLs, and
+omits request / response bodies for non-owner users.
+
+This data counts as debug information: after the **debug log retention window** (`debug_log_retention_days`,
+see [Settings](/en/admin/settings)) the request / response headers, bodies, per-attempt detail and proxy
+addresses are stripped from the row, leaving only the chain summary.
 
 ## What members can see
 
 - Your own request logs and usage.
-- Not: other users' traffic, audit records, or debug-level request/response bodies (these are limited to staff/owner).
+- Not: other users' traffic, audit records, or request headers / bodies / responses. Request headers are
+  visible only to **admin and above** (not role-group admins); request / response bodies only to
+  **owner / co-owner**.
 
 ## Retention
 

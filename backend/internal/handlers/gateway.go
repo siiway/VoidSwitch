@@ -351,7 +351,7 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 	req := &services.DispatchRequest{
 		Ctx: c.Request.Context(), DB: a.GDB, Cfg: a.Cfg, Pool: services.GetPool(),
 		ExposedModel: modelID, InboundStyle: inbound, Stream: stream, Body: body,
-		Kind: kind, TokenID: &token.ID, UserSub: &subPtr,
+		Kind: kind, TokenID: &token.ID, UserSub: &subPtr, Debug: token.DebugEnabled,
 	}
 	disp := services.NewDispatcher(req)
 	res, err := disp.Do()
@@ -366,9 +366,10 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 			status = constants.UpstreamUnavailable
 		}
 		a.logRequest(c, requestLogInfo{
-			TokenID: token.ID, UserSub: user.Sub, Model: modelID, Upstream: modelID,
+			TokenID: token.ID, UserSub: user.Sub, Model: modelID,
 			Inbound: string(inbound), Stream: stream, Start: start, StatusCode: status,
-			Success: false, Attempts: 0, Err: &msg, SessionKey: sessionKey, ClientType: clientType,
+			Success: false, Attempts: disp.Attempts(), Err: &msg, SessionKey: sessionKey,
+			ClientType: clientType, Debug: token.DebugEnabled,
 		})
 		a.fail(c, status, msg)
 		return
@@ -404,10 +405,10 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 		}
 		a.logRequest(c, requestLogInfo{
 			TokenID: token.ID, UserSub: user.Sub, Model: modelID, Upstream: upstream(res),
-			Inbound: string(inbound), Stream: true, Start: start,
+			Inbound: string(inbound), UpstreamStyle: res.UpstreamStyle, Stream: true, Start: start,
 			FirstToken: res.Usage.FirstTokenMs, Provider: providerName(res), KeyID: keyID(res),
-			StatusCode: res.StatusCode, Success: true, Attempts: res.Attempts, Usage: res.Usage,
-			SessionKey: sessionKey, ClientType: clientType,
+			StatusCode: res.StatusCode, Success: true, Attempts: disp.Attempts(), Usage: res.Usage,
+			SessionKey: sessionKey, ClientType: clientType, Debug: token.DebugEnabled,
 		})
 		return
 	}
@@ -415,10 +416,10 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 	c.Data(res.StatusCode, "application/json", res.Body)
 	a.logRequest(c, requestLogInfo{
 		TokenID: token.ID, UserSub: user.Sub, Model: modelID, Upstream: upstream(res),
-		Inbound: string(inbound), Stream: false, Start: start,
+		Inbound: string(inbound), UpstreamStyle: res.UpstreamStyle, Stream: false, Start: start,
 		Provider: providerName(res), KeyID: keyID(res),
-		StatusCode: res.StatusCode, Success: true, Attempts: res.Attempts, Usage: res.Usage,
-		SessionKey: sessionKey, ClientType: clientType,
+		StatusCode: res.StatusCode, Success: true, Attempts: disp.Attempts(), Usage: res.Usage,
+		SessionKey: sessionKey, ClientType: clientType, Debug: token.DebugEnabled,
 	})
 }
 

@@ -65,10 +65,6 @@ type requestLogDetailView struct {
 	ProxyURL        *string `json:"proxy_url"`
 	UpstreamURL     *string `json:"upstream_url"`
 	ReqMethod       *string `json:"req_method"`
-	ReqHeaders      any     `json:"req_headers"`
-	ReqBody         any     `json:"req_body"`
-	RespHeaders     any     `json:"resp_headers"`
-	RespBody        any     `json:"resp_body"`
 	DebugAttempts   any     `json:"debug_attempts"`
 	AttemptsSummary any     `json:"attempts_summary"`
 }
@@ -404,11 +400,6 @@ func (a *App) buildRequestLogDetail(r *database.RequestLog, uv *core.UserView) r
 	labels := a.enrichRequestLogs([]database.RequestLog{*r})
 	v := requestLogDetailView{requestLogView: toRequestLogView(r)}
 	applyLogLabels(&v.requestLogView, r, labels)
-	if r.KeyID != nil {
-		if preview, ok := labels.KeyPreview[*r.KeyID]; ok && preview != "" {
-			v.KeyPreview = strPtr(preview)
-		}
-	}
 	v.ProxyID = r.ProxyID
 	v.UpstreamURL = r.UpstreamURL
 	v.ReqMethod = r.ReqMethod
@@ -421,23 +412,16 @@ func (a *App) buildRequestLogDetail(r *database.RequestLog, uv *core.UserView) r
 			}
 		}
 		v.ProxyURL = r.ProxyURL
-		v.ReqHeaders = jsonAny(r.ReqHeaders)
-		v.ReqBody = jsonAny(r.ReqBody)
-		v.RespHeaders = jsonAny(r.RespHeaders)
-		v.RespBody = jsonAny(r.RespBody)
 		v.DebugAttempts = jsonAny(r.DebugAttempts)
 		v.AttemptsSummary = jsonAny(r.AttemptsSummary)
 		return v
 	}
-	// Non-owner: the provider key is identified by a masked preview only, the
-	// egress address and the failover trail are withheld, and headers/bodies are
-	// never exposed. Staff do see the response headers, which is what makes a
-	// request diagnosable without revealing credentials.
+	// Non-owner: the routing chain is always visible (redacted); the provider key
+	// is a masked preview. Staff (admin and above) additionally get the
+	// per-attempt headers, but never bodies; role-group admins and members get
+	// neither headers nor bodies.
 	v.AttemptsSummary = redactAttemptSummaries(jsonAny(r.AttemptsSummary))
-	// A member's own detail stays anonymous: the provider key identifies which
-	// credential pool served the request, which is an operator concern. Staff and
-	// role-group admins get a masked preview.
-	if uv.IsStaff() || uv.IsRoleGroupAdmin() {
+	if uv.IsStaff() {
 		if r.KeyID != nil {
 			var k database.ApiKey
 			if err := a.GDB.Select("id", "key_preview").First(&k, *r.KeyID).Error; err == nil {
@@ -445,8 +429,19 @@ func (a *App) buildRequestLogDetail(r *database.RequestLog, uv *core.UserView) r
 				v.KeyID = r.KeyID
 			}
 		}
-		v.ReqHeaders = jsonAny(r.ReqHeaders)
-		v.RespHeaders = jsonAny(r.RespHeaders)
+		v.DebugAttempts = stripAttemptBodies(redactAttemptSummaries(jsonAny(r.DebugAttempts)))
+	} else if uv.IsRoleGroupAdmin() {
+		if r.KeyID != nil {
+			var k database.ApiKey
+			if err := a.GDB.Select("id", "key_preview").First(&k, *r.KeyID).Error; err == nil {
+				v.KeyPreview = strPtr(maskKeyPreview(k.KeyPreview))
+				v.KeyID = r.KeyID
+			}
+		}
+	} else {
+		// A member's own detail stays anonymous: the provider key identifies
+		// which credential pool served the request, an operator concern.
+		v.AttemptsSummary = stripAttemptKeys(v.AttemptsSummary)
 	}
 	return v
 }
@@ -485,16 +480,40 @@ func (a *App) logsRequestDownload(c *gin.Context) {
 
 	// The export must not leak credentials or egress addresses. Owners get the
 	// bodies; everyone else gets metadata only.
-	payload := downloadSafe(toPlainMap(v), uv.IsOwner(), a.exportSecrets(&r))
+	payload := a.exportPayload(&v, uv, &r)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="voidswitch-request-%d.json"`, r.ID))
 	c.Header("Content-Type", "application/json; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, payload)
 }
 
+// exportPayload builds the downloadable JSON. The detail view carries two
+// projections of the failover trail (the always-on chain and the debug view);
+// the export keeps a single `attempts` array — the most detailed projection the
+// caller may see — then scrubs credentials, egress addresses and, for
+// non-owners, bodies.
+func (a *App) exportPayload(v *requestLogDetailView, uv *core.UserView, r *database.RequestLog) any {
+	m, _ := toPlainMap(v).(map[string]any)
+	if m == nil {
+		m = map[string]any{}
+	}
+	attempts := m["debug_attempts"]
+	if attempts == nil {
+		attempts = m["attempts_summary"]
+	}
+	if attempts == nil {
+		attempts = []any{}
+	}
+	delete(m, "attempts_summary")
+	delete(m, "debug_attempts")
+	m["attempts"] = attempts
+	return downloadSafe(m, uv.IsOwner(), a.exportSecrets(r))
+}
+
 // exportSecrets collects the values a request-log export must scrub anywhere
-// they appear: the proxy's credentials/address (including inside error text) and
-// the provider key placeholder.
+// they appear: the proxy's credentials/address, including inside error text. The
+// provider key never reaches the row — request headers are redacted at capture
+// time and upstream error text is scrubbed before it is stored.
 func (a *App) exportSecrets(r *database.RequestLog) map[string]string {
 	secrets := map[string]string{}
 	if r.ProxyURL != nil && *r.ProxyURL != "" {

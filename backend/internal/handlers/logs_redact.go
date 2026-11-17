@@ -159,3 +159,54 @@ func redactAttemptSummaries(value any) any {
 	}
 	return value
 }
+
+// stripAttemptBodies nulls every req_body/resp_body inside the debug attempt
+// trail at any depth. Staff may see per-attempt headers but never bodies; the
+// skip saves the client from receiving payloads it may not display.
+func stripAttemptBodies(value any) any {
+	switch v := value.(type) {
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, stripAttemptBodies(item))
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			if key == "req_body" || key == "resp_body" {
+				out[key] = nil
+				continue
+			}
+			out[key] = stripAttemptBodies(item)
+		}
+		return out
+	}
+	return value
+}
+
+// stripAttemptKeys nulls the provider-key identifiers inside a chain summary. A
+// member sees their own traffic, but which credential pool served it is an
+// operator concern (staff and role-group admins still get the masked preview).
+func stripAttemptKeys(value any) any {
+	switch v := value.(type) {
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, stripAttemptKeys(item))
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			switch key {
+			case "key_preview", "key_id":
+				out[key] = nil
+			default:
+				out[key] = stripAttemptKeys(item)
+			}
+		}
+		return out
+	}
+	return value
+}
