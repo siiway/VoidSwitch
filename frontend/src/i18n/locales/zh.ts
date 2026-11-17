@@ -92,6 +92,8 @@ const zh: Translations = {
     darkMode: "深色模式",
     openSidebar: "打开侧栏",
     closeSidebar: "关闭侧栏",
+    collapseSidebar: "收起侧栏",
+    expandSidebar: "展开侧栏",
   },
   nodes: {
     direct: "直连",

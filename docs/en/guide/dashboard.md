@@ -48,6 +48,8 @@ The standalone **Health** page has been folded into the **Models** and **Nodes**
 
 The sidebar groups pages into **Overview**, **Routing**, **Operations**, and **Account**. You only see pages your tier can access; theme switch, language switch, and sign out are in the footer.
 
+On desktop the sidebar can **collapse into an icon rail** (the arrow button in the footer; the choice is remembered in the browser). While collapsed, moving the pointer to the **very left edge of the page** slides the full sidebar out over the content without reflowing it, and leaving folds it back. Below 768px the hamburger drawer is used instead. Hovering the tagline at the top of the sidebar reveals the current build version.
+
 | Page | Who sees it |
 | ---- | ---- |
 | Dashboard | Everyone |

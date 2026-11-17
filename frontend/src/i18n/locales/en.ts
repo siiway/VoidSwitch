@@ -90,6 +90,8 @@ const en = {
     darkMode: "Dark mode",
     openSidebar: "Open sidebar",
     closeSidebar: "Close sidebar",
+    collapseSidebar: "Collapse sidebar",
+    expandSidebar: "Expand sidebar",
   },
   nodes: {
     direct: "Direct",
