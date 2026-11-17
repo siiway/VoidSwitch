@@ -40,7 +40,6 @@ type usagePerformance struct {
 	AvgFirstTokenMs     *float64 `json:"avg_first_token_ms"`
 	AvgLatencyMs        *float64 `json:"avg_latency_ms"`
 	AvgTokensPerRequest float64  `json:"avg_tokens_per_request"`
-	TokensPerSecond     *float64 `json:"tokens_per_second"`
 	StreamRequests      int64    `json:"stream_requests"`
 	NonStreamRequests   int64    `json:"non_stream_requests"`
 }
@@ -319,24 +318,20 @@ func (a *App) usageAnalytics(c *gin.Context) {
 		FROM request_logs WHERE `+where, args...).Scan(&totals)
 
 	var perf usagePerformance
-	// Latency and throughput come from the DB clock (finished_at - started_at),
-	// the same expression the Logs page renders durations from. Rows written
-	// before latency_ms existed still report a duration, and successful-only
-	// averaging keeps a failed retry from dominating the figure.
+	// Latency comes from the DB clock (finished_at - started_at), the same
+	// expression the Logs page renders durations from. Rows written before
+	// latency_ms existed still report a duration, and successful-only averaging
+	// keeps a failed retry from dominating the figure.
 	a.GDB.Raw(`SELECT
 		AVG(first_token_ms) AS avg_first_token_ms,
 		AVG(CASE WHEN success THEN EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000.0 END) AS avg_latency_ms,
 		COALESCE(SUM(CASE WHEN stream THEN 1 ELSE 0 END),0) AS stream_requests,
 		COALESCE(SUM(CASE WHEN stream THEN 0 ELSE 1 END),0) AS non_stream_requests
 		FROM request_logs WHERE `+where, args...).Scan(&perf)
-	var totalSeconds *float64
-	a.GDB.Raw(`SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (finished_at - started_at))),0)
-		FROM request_logs WHERE `+where, args...).Scan(&totalSeconds)
 	if totals.Requests > 0 {
 		perf.AvgTokensPerRequest =
 			math.Round(float64(totals.TotalTokens)/float64(totals.Requests)*10) / 10
 	}
-	perf.TokensPerSecond = tokensPerSecond(totals.TotalTokens, totalSeconds)
 
 	groupQuery := func(col, labelCol string) []usageGroupRow {
 		rows := []usageGroupRow{}

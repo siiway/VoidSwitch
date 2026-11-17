@@ -1039,14 +1039,6 @@ export function Statistics() {
                 label={t("stats.avgTokensPerReq" as TK)}
                 value={stats.data.performance.avg_tokens_per_request}
               />
-              <Stat
-                label={t("stats.tokensPerSec" as TK)}
-                value={
-                  stats.data.performance.tokens_per_second != null
-                    ? nf(stats.data.performance.tokens_per_second)
-                    : "—"
-                }
-              />
             </div>
           </CollapsibleSection>
 

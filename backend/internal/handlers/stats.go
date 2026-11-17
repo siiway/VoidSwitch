@@ -42,14 +42,6 @@ func (a *App) statsSummary(c *gin.Context) {
 	if reqs > 0 {
 		successRate = math.Round(float64(succ)/float64(reqs)*1000) / 10
 	}
-
-	// Throughput over the same window: tokens divided by the summed wall-clock
-	// duration of those requests — the same expression the Statistics page uses,
-	// so the two pages never disagree.
-	var totalSeconds *float64
-	a.GDB.Model(&database.RequestLog{}).Where("ts >= ?", since).
-		Select("COALESCE(SUM(EXTRACT(EPOCH FROM (finished_at - started_at))),0)").
-		Scan(&totalSeconds)
 	c.JSON(http.StatusOK, gin.H{
 		"providers": providers, "active_keys": activeKeys, "total_keys": totalKeys,
 		"active_proxies": activeProxies, "total_proxies": totalProxies,
@@ -58,7 +50,6 @@ func (a *App) statsSummary(c *gin.Context) {
 		"tokens_24h": tokens24, "success_rate_24h": successRate,
 		"avg_first_token_ms_24h":     avgTTFT,
 		"avg_tokens_per_request_24h": avgTokensPerReq(tokens24, reqs),
-		"tokens_per_second_24h":      tokensPerSecond(tokens24, totalSeconds),
 	})
 }
 

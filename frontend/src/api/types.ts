@@ -428,7 +428,6 @@ export interface GroupStats {
   success_rate_24h: number;
   avg_first_token_ms_24h?: number | null;
   avg_tokens_per_request_24h: number;
-  tokens_per_second_24h?: number | null;
 }
 
 export interface Announcement {
@@ -466,9 +465,6 @@ export interface Stats {
   success_rate_24h: number;
   avg_first_token_ms_24h?: number | null;
   avg_tokens_per_request_24h: number;
-  // Throughput: total tokens / summed request seconds (same formula as the
-  // Statistics page). Null when the window has no measurable duration.
-  tokens_per_second_24h?: number | null;
 }
 
 export interface AuditLog {
@@ -660,7 +656,6 @@ export interface UsagePerformance {
   avg_first_token_ms?: number | null;
   avg_latency_ms?: number | null;
   avg_tokens_per_request: number;
-  tokens_per_second?: number | null;
   stream_requests: number;
   non_stream_requests: number;
 }

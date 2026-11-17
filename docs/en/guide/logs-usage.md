@@ -10,7 +10,7 @@ across day, week, month, and year windows.
 From top to bottom the page shows:
 
 - **Summary** — total requests, successes / failures, tokens used, and the **success rate**.
-- **Performance** — **average time-to-first-token (TTFT)**, **average latency**, **average tokens per request**, and **token throughput (tokens/sec)**.
+- **Performance** — **average time-to-first-token (TTFT)**, **average latency**, and **average tokens per request**.
   TTFT is measured from when the gateway initiates the upstream request to when the first *real content token* arrives (streamed requests; control frames are ignored).
   Average latency uses the database-recorded `started_at → finished_at` span.
 - **Request quality** — **streamed / non-streamed** request counts and the **status-code distribution** (how often each status code occurred).

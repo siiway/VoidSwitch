@@ -823,7 +823,6 @@ func (a *App) roleGroupStats(c *gin.Context) {
 		"success_rate_24h":           0.0,
 		"avg_first_token_ms_24h":     nil,
 		"avg_tokens_per_request_24h": 0.0,
-		"tokens_per_second_24h":      nil,
 	}
 	if len(effective) == 0 {
 		c.JSON(http.StatusOK, out)
@@ -871,12 +870,6 @@ func (a *App) roleGroupStats(c *gin.Context) {
 		if avgTTFT != nil {
 			out["avg_first_token_ms_24h"] = math.Round(*avgTTFT*10) / 10
 		}
-		var totalSeconds *float64
-		a.GDB.Model(&database.RequestLog{}).
-			Where("ts >= ? AND user_sub IN ?", since, subs).
-			Select("COALESCE(SUM(EXTRACT(EPOCH FROM (finished_at - started_at))),0)").
-			Scan(&totalSeconds)
-		out["tokens_per_second_24h"] = tokensPerSecond(tokens24, totalSeconds)
 	}
 	c.JSON(http.StatusOK, out)
 }

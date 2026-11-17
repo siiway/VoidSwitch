@@ -8,7 +8,6 @@ import {
   PeopleRegular,
   PlugConnectedRegular,
   TimerRegular,
-  TopSpeedRegular,
 } from "@fluentui/react-icons";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -234,12 +233,6 @@ function StaffDashboard() {
                 value={fmt(stats.data.tokens)}
                 icon={<KeyRegular />}
               />
-              <Stat
-                label={t("dashboard.successRate24h" as TK)}
-                value={`${stats.data.success_rate_24h}%`}
-                icon={<CheckmarkCircleRegular />}
-                accent={tokens.colorPaletteGreenForeground1}
-              />
             </div>
             <div
               style={{
@@ -249,6 +242,12 @@ function StaffDashboard() {
                 marginBottom: 20,
               }}
             >
+              <Stat
+                label={t("dashboard.successRate24h" as TK)}
+                value={`${stats.data.success_rate_24h}%`}
+                icon={<CheckmarkCircleRegular />}
+                accent={tokens.colorPaletteGreenForeground1}
+              />
               <Stat
                 label={t("dashboard.tokens24h" as TK)}
                 value={fmt(stats.data.tokens_24h)}
@@ -267,15 +266,6 @@ function StaffDashboard() {
                 label={t("dashboard.avgTokensPerReq24h" as TK)}
                 value={stats.data.avg_tokens_per_request_24h}
                 icon={<ChartMultipleRegular />}
-              />
-              <Stat
-                label={t("dashboard.tokensPerSec24h" as TK)}
-                value={
-                  stats.data.tokens_per_second_24h != null
-                    ? `${stats.data.tokens_per_second_24h} tok/s`
-                    : "—"
-                }
-                icon={<TopSpeedRegular />}
               />
             </div>
           </>
@@ -384,15 +374,6 @@ function GroupAdminDashboard() {
               label={t("dashboard.successRate24h" as TK)}
               value={`${stats.data.success_rate_24h}%`}
               icon={<CheckmarkCircleRegular />}
-            />
-            <Stat
-              label={t("dashboard.tokensPerSec24h" as TK)}
-              value={
-                stats.data.tokens_per_second_24h != null
-                  ? `${stats.data.tokens_per_second_24h} tok/s`
-                  : "—"
-              }
-              icon={<TopSpeedRegular />}
             />
           </div>
           {usage.data ? (

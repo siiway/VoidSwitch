@@ -153,14 +153,6 @@ const SECTIONS: NavSection[] = [
     items: [
       { to: "/chat", label: "Chat", labelKey: "nav.chat", icon: <ChatRegular />, scope: "member" },
       { to: "/token", label: "My API Key", labelKey: "nav.myApiKey", icon: <KeyRegular />, scope: "member" },
-      {
-        to: DOCS_URL,
-        label: "Docs",
-        labelKey: "nav.docs",
-        icon: <BookRegular />,
-        scope: "member",
-        external: true,
-      },
     ],
   },
 ];
@@ -413,6 +405,11 @@ const useStyles = makeStyles({
     ...shorthands.padding("10px", "6px"),
     alignItems: "stretch",
   },
+  footerActionsCollapsed: {
+    flexDirection: "column",
+    alignItems: "center",
+    rowGap: "6px",
+  },
   userRowCollapsed: {
     justifyContent: "center",
     ...shorthands.padding("4px", "0"),
@@ -483,19 +480,12 @@ export function Layout() {
     }
   }, [collapsed]);
 
-  // Edge peek: while the rail is collapsed, touching the left edge slides the
-  // full sidebar out as an overlay. Leaving the sidebar collapses it again.
-  // Desktop only — the narrow layout uses its own drawer.
+  // Edge peek: while the rail is collapsed, hovering the rail itself slides the
+  // full sidebar out as an overlay (the pointer is already on it, so no hunting
+  // for a 6px strip). Leaving the sidebar folds it back. Desktop only — the
+  // narrow layout uses its own drawer.
   useEffect(() => {
-    if (isNarrow || !collapsed) {
-      setPeeking(false);
-      return;
-    }
-    const onMove = (e: MouseEvent) => {
-      if (e.clientX <= 6) setPeeking(true);
-    };
-    window.addEventListener("mousemove", onMove);
-    return () => window.removeEventListener("mousemove", onMove);
+    if (isNarrow || !collapsed) setPeeking(false);
   }, [isNarrow, collapsed]);
 
   const toggleSidebar = useCallback(() => setSidebarOpen((p) => !p), []);
@@ -503,9 +493,6 @@ export function Layout() {
 
   const handleNavClick = useCallback(() => {
     if (isNarrow) closeSidebar();
-    // Navigating from the peeking overlay folds it again, so the rail returns
-    // as soon as the user has picked a destination.
-    setPeeking(false);
   }, [isNarrow, closeSidebar]);
 
   const cycleLang = useCallback(() => {
@@ -584,6 +571,9 @@ export function Layout() {
               !isNarrow && collapsed && styles.sidebarCollapsed,
               !isNarrow && collapsed && peeking && styles.sidebarPeek,
             )}
+            onMouseEnter={() => {
+              if (!isNarrow && collapsed) setPeeking(true);
+            }}
             onMouseLeave={() => setPeeking(false)}
           >
             <div
@@ -638,34 +628,6 @@ export function Layout() {
                     {section.heading}
                   </Text>
                   {section.items.map((item) => {
-                    if (item.external) {
-                      const link = (
-                        <a
-                          key={item.to}
-                          href={docsUrlForLang(item.to, i18n.language)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={mergeClasses(
-                            styles.item,
-                            rail && styles.itemCollapsed,
-                          )}
-                          onClick={handleNavClick}
-                        >
-                          <span className={styles.itemIcon}>{item.icon}</span>
-                          <span style={{ flex: 1, display: rail ? "none" : "inline" }}>
-                            {item.label}
-                          </span>
-                          {rail ? null : <OpenRegular fontSize={16} />}
-                        </a>
-                      );
-                      return rail ? (
-                        <Tooltip key={item.to} content={item.label} relationship="label" withArrow>
-                          {link}
-                        </Tooltip>
-                      ) : (
-                        link
-                      );
-                    }
                     const active =
                       location.pathname === item.to ||
                       location.pathname.startsWith(item.to + "/");
@@ -697,6 +659,23 @@ export function Layout() {
             </nav>
 
             <div className={mergeClasses(styles.footer, rail && styles.footerCollapsed)}>
+              <a
+                href={docsUrlForLang(DOCS_URL, i18n.language)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={mergeClasses(styles.item, rail && styles.itemCollapsed)}
+                aria-label={t("nav.docs" as TranslationKey)}
+              >
+                <span className={styles.itemIcon}>
+                  <BookRegular />
+                </span>
+                {rail ? null : (
+                  <>
+                    <span style={{ flex: 1 }}>{t("nav.docs" as TranslationKey)}</span>
+                    <OpenRegular fontSize={16} />
+                  </>
+                )}
+              </a>
               <div
                 className={mergeClasses(
                   styles.userRow,
@@ -741,7 +720,39 @@ export function Layout() {
                   </Badge>
                 </div>
               </div>
-              <div className={styles.footerActions}>
+              <div
+                className={mergeClasses(
+                  styles.footerActions,
+                  rail && styles.footerActionsCollapsed,
+                )}
+              >
+                {!rail ? (
+                  <Tooltip
+                    content={
+                      collapsed
+                        ? t("nav.expandSidebar" as TranslationKey)
+                        : t("nav.collapseSidebar" as TranslationKey)
+                    }
+                    relationship="label"
+                  >
+                    <Button
+                      appearance="subtle"
+                      icon={
+                        collapsed ? (
+                          <ChevronRightRegular />
+                        ) : (
+                          <ChevronLeftRegular />
+                        )
+                      }
+                      onClick={() => setCollapsed((c) => !c)}
+                      aria-label={
+                        collapsed
+                          ? t("nav.expandSidebar" as TranslationKey)
+                          : t("nav.collapseSidebar" as TranslationKey)
+                      }
+                    />
+                  </Tooltip>
+                ) : null}
                 <Menu
                   checkedValues={{ theme: [mode] }}
                   onCheckedValueChange={(_, data) => {
@@ -771,7 +782,7 @@ export function Layout() {
                             <WeatherSunnyRegular />
                           )
                         }
-                        style={{ flex: 1 }}
+                        style={{ flex: rail ? "0 0 auto" : 1 }}
                       />
                     </Tooltip>
                   </MenuTrigger>
@@ -814,37 +825,34 @@ export function Layout() {
                     {i18n.language === "zh" ? "EN" : "中"}
                   </Button>
                 </Tooltip>
-                <Button
-                  appearance="subtle"
-                  icon={<SignOutRegular />}
-                  onClick={logout}
-                  style={{ flex: 1 }}
-                  aria-label={t("nav.signOut" as TranslationKey)}
+                <Tooltip
+                  content={t("nav.signOut" as TranslationKey)}
+                  relationship="label"
                 >
-                  {rail ? null : t("nav.signOut" as TranslationKey)}
-                </Button>
+                  <Button
+                    appearance="subtle"
+                    icon={<SignOutRegular />}
+                    onClick={logout}
+                    style={{ flex: rail ? "0 0 auto" : 1 }}
+                    aria-label={t("nav.signOut" as TranslationKey)}
+                  >
+                    {rail ? null : t("nav.signOut" as TranslationKey)}
+                  </Button>
+                </Tooltip>
+                {rail ? (
+                  <Tooltip
+                    content={t("nav.expandSidebar" as TranslationKey)}
+                    relationship="label"
+                  >
+                    <Button
+                      appearance="subtle"
+                      icon={<ChevronRightRegular />}
+                      onClick={() => setCollapsed(false)}
+                      aria-label={t("nav.expandSidebar" as TranslationKey)}
+                    />
+                  </Tooltip>
+                ) : null}
               </div>
-              <Tooltip
-                content={
-                  collapsed
-                    ? t("nav.expandSidebar" as TranslationKey)
-                    : t("nav.collapseSidebar" as TranslationKey)
-                }
-                relationship="label"
-              >
-                <Button
-                  appearance="subtle"
-                  icon={
-                    collapsed ? <ChevronRightRegular /> : <ChevronLeftRegular />
-                  }
-                  onClick={() => setCollapsed((c) => !c)}
-                  aria-label={
-                    collapsed
-                      ? t("nav.expandSidebar" as TranslationKey)
-                      : t("nav.collapseSidebar" as TranslationKey)
-                  }
-                />
-              </Tooltip>
             </div>
           </aside>
 
