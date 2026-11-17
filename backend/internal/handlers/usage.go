@@ -14,7 +14,7 @@ import (
 	"github.com/siiway/voidswitch/internal/database"
 )
 
-type usageTotals struct {
+type UsageTotals struct {
 	Requests         int64 `json:"requests"`
 	Success          int64 `json:"success"`
 	Failures         int64 `json:"failures"`
@@ -24,13 +24,13 @@ type usageTotals struct {
 }
 
 type usageBucket struct {
-	usageTotals
+	UsageTotals
 	Period          string   `json:"period"`
 	AvgFirstTokenMs *float64 `json:"avg_first_token_ms"`
 }
 
 type usageGroupRow struct {
-	usageTotals
+	UsageTotals
 	Key      string  `json:"key"`
 	Label    string  `json:"label"`
 	Sublabel *string `json:"sublabel"`
@@ -192,9 +192,9 @@ func parseIDQuery(c *gin.Context, key string) []int {
 	return out
 }
 
-func usageTotalsFromRow(r *usageTotals) usageTotals {
+func usageTotalsFromRow(r *UsageTotals) UsageTotals {
 	if r == nil {
-		return usageTotals{}
+		return UsageTotals{}
 	}
 	t := *r
 	t.Failures = t.Requests - t.Success
@@ -309,7 +309,7 @@ func (a *App) usageAnalytics(c *gin.Context) {
 	if scoped {
 		scope = "self"
 	}
-	var totals usageTotals
+	var totals UsageTotals
 	a.GDB.Raw(`SELECT COUNT(*) AS requests,
 		COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END),0) AS success,
 		COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
