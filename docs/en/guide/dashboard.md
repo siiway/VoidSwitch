@@ -33,13 +33,16 @@ A staff member's dashboard shows **both** heatmaps: **Site activity** (platform-
 Staff see a platform-wide overview:
 
 - Counts of **Providers**, **Active keys**, and **Void-Tokens**.
-- **24-hour activity**: requests, successes, failures, success rate, token usage, average time-to-first-token (TTFT), and average tokens per request.
+- **24-hour activity**: requests, successes, failures, success rate, token usage, average time-to-first-token (TTFT), average tokens per request, and **throughput (tok/s = total tokens / total request time)**.
 - **Background jobs**: the status of the balance-probe, proxy-revival, and log-cleanup scheduled tasks.
 - The **Site** and **Personal** activity heatmaps at the bottom of the page (see "Activity heatmap" above).
 
-## Health page
+## Model and node health
 
-**Health → Models** shows each model's live availability status, recent success rate, average time-to-first-token, and request sample count. Use the status filter at the top of the page to show only **Healthy**, **Degraded**, **Unavailable**, or **Learning** models; choose **All statuses** to restore the complete list. Staff can also switch to the **Nodes** tab to inspect outbound-node quality.
+The standalone **Health** page has been folded into the **Models** and **Nodes** pages:
+
+- Each card on the **Models** page keeps its health summary line (status, recent success rate, average TTFT, throughput, sample count); clicking a card opens a **model detail dialog** with the full description, capabilities, limits, the health summary and — staff only — each upstream candidate's success rate / TTFT / sample count and cooldown. Members never see upstream information.
+- The **Nodes** page table gains **rank score** and **probe trend** columns, with a health window picker (30m / 1h / 3h / 12h / 1d / 3d / 7d) above the table.
 
 ## Sidebar navigation
 

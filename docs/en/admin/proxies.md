@@ -44,7 +44,7 @@ falls back to the global `node_default_probe_url`; if neither is set the probe i
 response counts as reachable — 5xx included, since the question is whether the proxy is alive, not
 whether the probe URL is happy. Success restores the node and clears its failure count; failure
 increments it and records the reason in `disabled_reason`. Every probe writes a node health sample,
-which is what gives the health page its trend line.
+which is what feeds the **probe trend** column on the Nodes page.
 
 The task disables itself when **proxy switching** is off: an external proxy handles egress and there
 is no pool to probe.

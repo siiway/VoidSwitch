@@ -37,13 +37,13 @@ import {
   PinOffRegular,
   PulseRegular,
 } from "@fluentui/react-icons";
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import type { Translations } from "../i18n/locales/en";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { Node, NodeGroup, NodeGroupMember } from "../api/types";
+import type { Node, NodeGroup, NodeGroupMember, NodeHealth, NodeHealthSample } from "../api/types";
 import {
   DataTable,
   ErrorText,
@@ -66,6 +66,9 @@ function redactUrl(url: string): string {
 
 const COLLAPSED_KEY = "voidswitch.nodes.collapsedGroups";
 
+type HealthWindow = "30m" | "1h" | "3h" | "12h" | "1d" | "3d" | "7d";
+const HEALTH_WINDOWS: HealthWindow[] = ["30m", "1h", "3h", "12h", "1d", "3d", "7d"];
+
 function loadCollapsed(): Set<number> {
   try {
     const raw = localStorage.getItem(COLLAPSED_KEY);
@@ -86,6 +89,36 @@ function persistCollapsed(set: Set<number>): void {
   }
 }
 
+// NodeTrend is the tiny latency sparkline the Health page used to render: one
+// bar per sample, green for success and red for failure. It lives on the Nodes
+// row now that the Health page is gone.
+function NodeTrend({ samples }: { samples: NodeHealthSample[] }) {
+  const recent = samples.slice(-24);
+  if (recent.length === 0) {
+    return <span style={{ color: tokens.colorNeutralForeground3 }}>—</span>;
+  }
+  const max = Math.max(1, ...recent.map((s) => s.latency_ms ?? 0));
+  return (
+    <div style={{ display: "flex", height: 22, alignItems: "flex-end", gap: 2 }}>
+      {recent.map((sample, index) => (
+        <span
+          key={`${sample.ts}-${index}`}
+          title={`${sample.latency_ms ?? 0} ms`}
+          style={{
+            width: 4,
+            minHeight: 2,
+            height: `${Math.max(8, ((sample.latency_ms ?? 0) / max) * 100)}%`,
+            background: sample.success
+              ? tokens.colorPaletteGreenBackground3
+              : tokens.colorPaletteRedBackground3,
+            borderRadius: 1,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function Nodes() {
   const { t } = useTranslation();
   const notify = useNotify();
@@ -97,6 +130,19 @@ export function Nodes() {
   );
   const nodes = useAsync<Node[]>(() => api.get("/api/admin/nodes"));
   const groups = useAsync<NodeGroup[]>(() => api.get("/api/admin/node-groups"));
+
+  // Node health moved here from the retired Health page: score, EWMA latency and
+  // the probe history trend, over a selectable window.
+  const [healthWindow, setHealthWindow] = useState<HealthWindow>("1d");
+  const health = useAsync<{ tab: string; nodes?: NodeHealth[] }>(
+    () => api.get("/api/health", { tab: "nodes", window: healthWindow }),
+    [healthWindow],
+  );
+  const healthById = useMemo(() => {
+    const map = new Map<number, NodeHealth>();
+    for (const h of health.data?.nodes ?? []) map.set(h.id, h);
+    return map;
+  }, [health.data]);
 
   // ---- Add nodes ----
   const [bulk, setBulk] = useState("");
@@ -469,9 +515,33 @@ export function Nodes() {
         }
       />
 
-      <Text size={500} weight="semibold" block style={{ margin: "8px 0 12px" }}>
-        {t("nodes.nodesSection" as TK)}
-      </Text>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          margin: "8px 0 12px",
+        }}
+      >
+        <Text size={500} weight="semibold">
+          {t("nodes.nodesSection" as TK)}
+        </Text>
+        <Dropdown
+          aria-label={t("nodes.healthWindow" as TK)}
+          style={{ minWidth: 96 }}
+          value={healthWindow}
+          selectedOptions={[healthWindow]}
+          onOptionSelect={(_, d) =>
+            setHealthWindow((d.optionValue as HealthWindow) ?? "1d")
+          }
+        >
+          {HEALTH_WINDOWS.map((w) => (
+            <Option key={w} value={w}>
+              {w}
+            </Option>
+          ))}
+        </Dropdown>
+      </div>
 
       <div
         style={{
@@ -522,6 +592,8 @@ export function Nodes() {
               <TableHeaderCell>{t("nodes.status" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.fails" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.latency" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("nodes.healthScore" as TK)}</TableHeaderCell>
+              <TableHeaderCell>{t("nodes.healthTrend" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.checked" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("nodes.actions" as TK)}</TableHeaderCell>
             </TableRow>
@@ -554,6 +626,14 @@ export function Nodes() {
                   {n.latency_ms != null
                     ? `${Math.round(n.latency_ms)} ms`
                     : "—"}
+                </TableCell>
+                <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                  {healthById.get(n.id)?.score != null
+                    ? healthById.get(n.id)!.score.toFixed(1)
+                    : "—"}
+                </TableCell>
+                <TableCell>
+                  <NodeTrend samples={healthById.get(n.id)?.samples ?? []} />
                 </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {formatDate(n.last_checked_at)}

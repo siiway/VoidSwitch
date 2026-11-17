@@ -40,8 +40,10 @@ Members usually don't need to sync explicitly — models that are already served
 
 Use the model's **exposed model ID** as the `model` field in your request. See [Calling the API](/en/guide/using-the-api).
 
-## Health page
+## Model detail
 
-The **Health** page connects live updates automatically. Members only see aggregate health for models
-they may call. Staff can switch to Nodes for rank scores, failures, and latency/success trends from
-`30m` through `7d`.
+Clicking any model card opens a **model detail dialog**: the full description, capabilities / modalities,
+context and output limits, how many role groups grant access, the recent health summary (status, success
+rate, average TTFT, throughput in tok/s, sample count) and — staff only — each upstream candidate's own
+success rate / TTFT / sample count and cooldown. Members see only the model's own information and the
+aggregated health, never the upstreams.

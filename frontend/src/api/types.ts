@@ -320,6 +320,14 @@ export interface UpstreamHealth {
   cooled_until?: string | null;
 }
 
+export interface ModelDetailResponse {
+  model_id: string;
+  health: ModelHealth | null;
+  // Staff-only: which route candidates can serve this model, with their own
+  // recent figures. Absent for a member.
+  upstreams?: UpstreamHealth[];
+}
+
 export interface ModelHealth {
   model_id: string;
   status: ModelHealthStatus;

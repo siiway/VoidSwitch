@@ -46,6 +46,7 @@ import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
   ModelCategory,
+  ModelDetailResponse,
   ModelEntry,
   ModelsDevSearchResult,
   Provider,
@@ -58,6 +59,7 @@ import {
   Loading,
   MultiSelectFilter,
   PageHeader,
+  formatDate,
   useAsync,
   useConfirm,
   useNotify,
@@ -86,6 +88,7 @@ const useStyles = makeStyles({
     borderRadius: "10px",
     background: tokens.colorNeutralBackground1,
     transition: "box-shadow 0.15s",
+    cursor: "pointer",
     ":hover": {
       borderTopColor: tokens.colorNeutralForeground1,
       borderRightColor: tokens.colorNeutralForeground1,
@@ -99,6 +102,7 @@ const useStyles = makeStyles({
     gap: "8px",
     ...shorthands.padding("16px"),
     opacity: 0.55,
+    cursor: "pointer",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: "10px",
     background: tokens.colorNeutralBackground1,
@@ -396,6 +400,7 @@ export function Models() {
     new Set(),
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [detail, setDetail] = useState<ModelEntry | null>(null);
   const [edit, setEdit] = useState<EditState | null>(null);
   const [create, setCreate] = useState<CreateState | null>(null);
   const [createPickerOpen, setCreatePickerOpen] = useState(false);
@@ -1513,7 +1518,20 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                         (m.opencode_config && Object.keys(m.opencode_config).length > 0) ||
                         (m.opencode_config_v2 && Object.keys(m.opencode_config_v2).length > 0);
                       return (
-                        <div key={m.model_id} className={m.enabled ? styles.card : styles.cardHidden}>
+                        <div
+                          key={m.model_id}
+                          className={m.enabled ? styles.card : styles.cardHidden}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setDetail(m)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setDetail(m);
+                            }
+                          }}
+                          aria-label={t("models.viewDetail" as TK).replace("{id}", m.model_id)}
+                        >
                           <div className={styles.head}>
                             <div style={{ display: "flex", gap: 8, alignItems: "flex-start", minWidth: 0 }}>
                               <BrandIcon brand={m.brand} modelId={m.model_id} />
@@ -1640,7 +1658,11 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                             )}
 
                           {isStaff && (
-                            <div className={styles.actions}>
+                            <div
+                              className={styles.actions}
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
                               {!m.provider && (
                                 <Tooltip content={t("models.route" as TK)} relationship="label">
                                   <Button
@@ -2617,7 +2639,239 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
           </DialogBody>
         </DialogSurface>
       </Dialog>
+
+      <ModelDetailDialog model={detail} onClose={() => setDetail(null)} />
     </div>
+  );
+}
+
+// ModelDetailDialog is the click-through for a model card: the card's metadata
+// plus the recent-traffic health summary and — staff only — every route
+// candidate's own figures. The standalone Health page was folded into Models /
+// Nodes, so this is where its per-model half now lives.
+function ModelDetailDialog({
+  model,
+  onClose,
+}: {
+  model: ModelEntry | null;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  type TK = keyof Translations;
+  const { isStaff } = useAuth();
+  const detail = useAsync<ModelDetailResponse>(
+    () =>
+      model
+        ? api.get("/api/health/model", { model_id: model.model_id })
+        : Promise.resolve({ model_id: "", health: null, upstreams: [] }),
+    [model?.model_id],
+  );
+
+  if (!model) return null;
+  const health = detail.data?.health ?? model.health ?? null;
+  // Members never receive the upstream list, but gate the render too so a stale
+  // payload cannot surface provider names.
+  const upstreams = isStaff ? detail.data?.upstreams ?? [] : [];
+  const caps = MODEL_CAPABILITIES.filter((c) =>
+    Boolean((model.capabilities as Record<string, unknown>)[c]),
+  );
+
+  return (
+    <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+      <DialogSurface style={{ maxWidth: 720, width: "100%" }}>
+        <DialogBody>
+          <DialogTitle>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <BrandIcon brand={model.brand} modelId={model.model_id} />
+              <span>{model.display_name || model.model_id}</span>
+            </span>
+          </DialogTitle>
+          <DialogContent>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {model.description ? <Text size={200}>{model.description}</Text> : null}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {!model.enabled ? (
+                  <Badge appearance="filled" color="subtle">
+                    {t("models.unavailableHidden" as TK)}
+                  </Badge>
+                ) : null}
+                {model.reasoning ? (
+                  <Badge appearance="tint" color="brand">
+                    {t("models.reasoningBadge" as TK)}
+                  </Badge>
+                ) : null}
+                {caps.map((c) => (
+                  <Badge key={c} appearance="outline" color="informative" style={{ borderStyle: "dashed" }}>
+                    {t(`models.capability_${c}` as TK)}
+                  </Badge>
+                ))}
+                {model.category_name && !model.provider ? (
+                  <Badge appearance="outline" color="brand">
+                    {model.category_name}
+                  </Badge>
+                ) : null}
+                {model.provider_name ? (
+                  <Badge appearance="tint" color="informative">
+                    {model.provider_name}
+                  </Badge>
+                ) : null}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: tokens.fontSizeBase200 }}>
+                <DetailRow label={t("models.modelId" as TK)} value={model.model_id} />
+                <DetailRow
+                  label={t("models.limitContext" as TK)}
+                  value={model.limit_context != null ? String(model.limit_context) : "—"}
+                />
+                <DetailRow
+                  label={t("models.limitOutput" as TK)}
+                  value={model.limit_output != null ? String(model.limit_output) : "—"}
+                />
+                <DetailRow
+                  label={t("models.access" as TK)}
+                  value={
+                    model.allowed_role_group_ids.length > 0
+                      ? t("models.accessCount" as TK).replace(
+                          "{count}",
+                          String(model.allowed_role_group_ids.length),
+                        )
+                      : t("models.accessTooltip" as TK)
+                  }
+                />
+              </div>
+
+              {health ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    borderLeft: `3px solid ${health.status === "healthy" ? tokens.colorPaletteGreenBorderActive : tokens.colorPaletteDarkOrangeBorderActive}`,
+                    background: tokens.colorNeutralBackground2,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Badge appearance="tint" color={health.status === "healthy" ? "success" : "warning"}>
+                      {t(`models.health.${health.status}` as TK)}
+                    </Badge>
+                    <Text size={200}>
+                      {t("models.detailHealthLine" as TK)
+                        .replace(
+                          "{rate}",
+                          health.recent_success_rate == null
+                            ? "--"
+                            : (health.recent_success_rate * 100).toFixed(1),
+                        )
+                        .replace(
+                          "{ttft}",
+                          health.recent_avg_ttft_ms == null
+                            ? "--"
+                            : String(Math.round(health.recent_avg_ttft_ms)),
+                        )
+                        .replace(
+                          "{tps}",
+                          health.tokens_per_second == null
+                            ? "--"
+                            : String(health.tokens_per_second),
+                        )
+                        .replace("{samples}", String(health.recent_request_count))}
+                    </Text>
+                  </div>
+                  {health.recent_since ? (
+                    <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                      {t("models.detailWindow" as TK).replace(
+                        "{time}",
+                        relativeHealthTime(health.recent_since, t),
+                      )}
+                    </Text>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {upstreams.length > 0 ? (
+                <div>
+                  <Text size={200} weight="semibold" block style={{ marginBottom: 4 }}>
+                    {t("models.detailUpstreams" as TK)} ({upstreams.length})
+                  </Text>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {upstreams.map((u) => (
+                      <div
+                        key={u.upstream_id}
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "6px 8px",
+                          borderRadius: 6,
+                          background: tokens.colorNeutralBackground3,
+                          fontSize: tokens.fontSizeBase200,
+                        }}
+                      >
+                        <Badge appearance="outline" color="informative" size="small">
+                          {u.provider_name ?? "—"}
+                        </Badge>
+                        <Text size={200} style={{ fontFamily: "monospace" }}>
+                          {u.upstream_model}
+                        </Text>
+                        <Badge
+                          appearance="tint"
+                          color={u.status === "healthy" ? "success" : u.status === "unavailable" ? "danger" : "warning"}
+                          size="small"
+                        >
+                          {t(`models.health.${u.status}` as TK)}
+                        </Badge>
+                        <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                          {t("models.detailUpstreamLine" as TK)
+                            .replace(
+                              "{rate}",
+                              u.success_rate == null ? "--" : (u.success_rate * 100).toFixed(1),
+                            )
+                            .replace(
+                              "{ttft}",
+                              u.ttft_ms == null ? "--" : String(Math.round(u.ttft_ms)),
+                            )
+                            .replace("{samples}", String(u.samples ?? 0))}
+                        </Text>
+                        {u.cooled_until ? (
+                          <Badge appearance="outline" color="warning" size="small">
+                            {t("models.cooledUntil" as TK).replace(
+                              "{time}",
+                              formatDate(u.cooled_until),
+                            )}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="primary" onClick={onClose}>
+              {t("common.close" as TK)}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <Text size={200} weight="semibold" style={{ color: tokens.colorNeutralForeground3 }}>
+        {label}
+      </Text>
+      <Text size={200} style={{ wordBreak: "break-all" }}>
+        {value}
+      </Text>
+    </>
   );
 }
 

@@ -29,8 +29,10 @@ consume the budget, so one unusable lead candidate cannot fail the whole request
 candidates are recorded in the request detail's attempt list for diagnosis.
 
 The Models page receives a recent health summary with its normal catalog request and no longer keeps
-an SSE connection open. The dedicated Health page connects live updates automatically; staff see
-per-upstream details and node history, while owners can still clear cooldowns from the route page.
+an SSE connection open. The standalone **Health** page has been folded into **Models** and **Nodes**:
+clicking a model card opens a detail dialog with each upstream candidate's health and cooldown, and the
+Nodes page shows rank score and probe trend as table columns. Owners can still clear cooldowns from the
+route page.
 
 ## Creating models
 

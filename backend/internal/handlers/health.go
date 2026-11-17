@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -334,14 +335,45 @@ func (a *App) nodeHealth(window string) []gin.H {
 	return out
 }
 
+// modelDetail returns one model's health summary plus its per-upstream detail.
+// It backs the model detail dialog on the Models page (the standalone Health
+// page was folded into Models / Nodes). Upstreams are staff-only: which provider
+// and key serves a model is an operator concern, so a member's payload omits
+// them entirely rather than sending and hiding them client-side.
+func (a *App) modelDetail(c *gin.Context) {
+	uv := core.GetUser(c)
+	modelID := strings.TrimSpace(c.Query("model_id"))
+	if modelID == "" {
+		a.fail(c, http.StatusBadRequest, "model_id is required.")
+		return
+	}
+	now := time.Now().UTC()
+	health, ok := a.modelHealthIndex(now)[modelID]
+	if !ok {
+		health = gin.H{
+			"model_id": modelID, "status": "learning",
+			"recent_success_rate": nil, "recent_request_count": 0,
+			"recent_avg_ttft_ms": nil, "sufficient_data": false,
+			"best_success_rate": nil, "best_ttft_ms": nil,
+			"recent_since": nil, "tokens_per_second": nil,
+		}
+	}
+	payload := gin.H{"model_id": modelID, "health": health}
+	if uv.IsStaff() {
+		since := now.Add(-24 * time.Hour)
+		payload["upstreams"] = a.modelUpstreamHealth(modelID, since, recentHealthSamples())
+	}
+	c.JSON(http.StatusOK, payload)
+}
+
 // RegisterHealthRoutes wires /api/health + /api/health/stream (authenticated).
 func RegisterHealthRoutes(authed *gin.RouterGroup, a *App) {
 	g := authed.Group("/health", core.RequireUser())
 	g.GET("", a.healthSnapshot)
 	g.GET("/stream", a.healthStream)
+	g.GET("/model", a.modelDetail)
 }
 
-// modelUpstreamHealth builds the per-upstream health detail for one exposed
 // model: each route candidate with its recent success rate, TTFT, sample count
 // and any active cooldown.
 func (a *App) modelUpstreamHealth(modelID string, since time.Time, recentCount int) []gin.H {
