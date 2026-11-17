@@ -1639,30 +1639,42 @@ function RequestLogs({
                     </div>
                   )}
 
-                  {detailMode === "info" && detailLog.attempts_summary && detailLog.attempts_summary.length > 0 ? (
-                    <AttemptTrail attempts={detailLog.attempts_summary} />
-                  ) : null}
-
-                  {/* Debug view: the full per-attempt trail. Staff (admin and
-                      above) see headers; bodies are owner / co-owner only. The
-                      backend strips bodies for non-owners. */}
-                  {detailMode === "debug" && (
-                    <div style={{ borderTop: `1px solid ${tokens.colorNeutralStroke2}`, paddingTop: 8 }}>
-                      <Text size={200} weight="semibold" block style={{ marginBottom: 8 }}>
-                        {tr("logs.debugData" as TK)}
-                      </Text>
-                      {detailLog.debug_attempts && detailLog.debug_attempts.length > 0 ? (
-                        <AttemptTrail
-                          attempts={detailLog.debug_attempts}
-                          showBodies={isOwner}
-                        />
-                      ) : (
+                  {/* Exactly one attempt trail per dialog. The debug view's copy
+                      is a strict superset of the summary (chain + headers, plus
+                      bodies for owners), so rendering both only repeated the
+                      same rows. */}
+                  {(() => {
+                    const isDebug = detailMode === "debug";
+                    const attempts = isDebug
+                      ? detailLog.debug_attempts
+                      : detailLog.attempts_summary;
+                    if (!attempts || attempts.length === 0) {
+                      return isDebug ? (
                         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
                           {tr("logs.attemptsEmpty" as TK)}
                         </Text>
-                      )}
-                    </div>
-                  )}
+                      ) : null;
+                    }
+                    return (
+                      <div
+                        style={
+                          isDebug
+                            ? {
+                                borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+                                paddingTop: 8,
+                              }
+                            : undefined
+                        }
+                      >
+                        {isDebug ? (
+                          <Text size={200} weight="semibold" block style={{ marginBottom: 8 }}>
+                            {tr("logs.debugData" as TK)}
+                          </Text>
+                        ) : null}
+                        <AttemptTrail attempts={attempts} showBodies={isDebug && isOwner} />
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </DialogContent>
