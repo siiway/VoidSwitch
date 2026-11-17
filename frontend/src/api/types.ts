@@ -222,6 +222,9 @@ export interface ModelEntry {
   display_name?: string | null;
   description?: string | null;
   opencode_config: Record<string, unknown>;
+  // OpenCode 2.x (V2) model overrides; kept apart from the V1 block because
+  // their shapes differ (capabilities/variants).
+  opencode_config_v2: Record<string, unknown>;
   enabled: boolean;
   // Role groups allowed to call this model (moderator always allowed, not listed).
   allowed_role_group_ids: number[];

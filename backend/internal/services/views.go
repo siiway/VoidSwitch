@@ -76,6 +76,7 @@ type ModelEntryView struct {
 	DisplayName         *string    `json:"display_name"`
 	Description         *string    `json:"description"`
 	OpenCodeConfig      any        `json:"opencode_config"`
+	OpenCodeConfigV2    any        `json:"opencode_config_v2"`
 	Enabled             bool       `json:"enabled"`
 	AllowedRoleGroupIDs []int      `json:"allowed_role_group_ids"`
 	LimitContext        *int       `json:"limit_context"`
@@ -108,8 +109,9 @@ type ModelEntryView struct {
 
 // BuildModelEntryView maps an exposed model + its reachable upstream refs.
 func BuildModelEntryView(m *database.ExposedModel, upstreams []string) ModelEntryView {
-	var oc, caps, mods, allowed any
+	var oc, oc2, caps, mods, allowed any
 	_ = decodeAny(m.OpenCodeConfig, &oc)
+	_ = decodeAny(m.OpenCodeConfigV2, &oc2)
 	_ = decodeAny(m.Capabilities, &caps)
 	_ = decodeAny(m.Modalities, &mods)
 	var allowedIDs []int
@@ -120,6 +122,9 @@ func BuildModelEntryView(m *database.ExposedModel, upstreams []string) ModelEntr
 	}
 	if oc == nil {
 		oc = map[string]any{}
+	}
+	if oc2 == nil {
+		oc2 = map[string]any{}
 	}
 	if caps == nil {
 		caps = map[string]any{}
@@ -135,6 +140,7 @@ func BuildModelEntryView(m *database.ExposedModel, upstreams []string) ModelEntr
 		DisplayName:         m.DisplayName,
 		Description:         m.Description,
 		OpenCodeConfig:      oc,
+		OpenCodeConfigV2:    oc2,
 		Enabled:             m.Enabled,
 		AllowedRoleGroupIDs: allowedIDs,
 		LimitContext:        m.LimitContext,

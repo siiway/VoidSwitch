@@ -159,6 +159,7 @@ func gatewayModelItem(id string, created int64, m *database.ExposedModel, slot *
 		devEntry = mdIndex[*meta.ModelsDevID]
 	}
 	item["opencode"] = services.BuildOpencodeConfig(meta, devEntry)
+	item["opencode_v2"] = services.BuildOpencodeConfigV2(meta, devEntry)
 	if meta.DisplayName != nil && *meta.DisplayName != "" {
 		item["display_name"] = *meta.DisplayName
 	}

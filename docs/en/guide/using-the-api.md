@@ -26,13 +26,19 @@ Each entry carries the standard `id` / `object` / `created` / `owned_by` plus co
 | Field | Meaning |
 | --- | --- |
 | `id` | The model ID to send as `model`. A passthrough model looks like `provider-slug/model-id` |
-| `opencode` | The merged OpenCode model config block (`name`, `limit`, `reasoning`, `capabilities`, `modalities`, custom config, …) |
+| `opencode` | The merged OpenCode **1.x** model config block (`name`, `limit`, `reasoning`, `capabilities`, `modalities`, custom config, …) |
+| `opencode_v2` | The merged OpenCode **2.x** block (`capabilities.input/output/tools/reasoning`, array-shaped `variants`, `limit`, …). V1-only keys never appear here |
 | `display_name` | Display name; omitted when unset |
 | `description` | Description; omitted when unset |
 
-`opencode` merges, highest precedence first: **structured fields** (display name, limits, reasoning,
-capabilities, modalities) → **custom OpenCode config** → **models.dev placeholder**. Plugin defaults are
-applied last on the client and are not part of this block. Upstream providers and keys never appear here.
+Both blocks merge, highest precedence first: **structured fields** (display name, limits, reasoning,
+capabilities, modalities) → **the matching custom OpenCode config** (`opencode_config` /
+`opencode_config_v2`) → **models.dev placeholder**. Plugin defaults are applied last on the client and are
+not part of these blocks. Upstream providers and keys never appear here.
+
+The two blocks are **not interchangeable**: writing a V1 shape into the V2 block makes OpenCode 2 discard
+the whole provider (and its cached model list), and vice versa. Clients pick the block matching their
+generation.
 
 ## OpenAI style
 

@@ -26,13 +26,17 @@ curl https://voidswitch.siiway.org/v1/models \
 | 字段 | 说明 |
 | --- | --- |
 | `id` | 调用时填进 `model` 的模型 ID。passthrough 模型形如 `provider-slug/model-id` |
-| `opencode` | 已合并好的 OpenCode 模型配置块（`name`、`limit`、`reasoning`、`capabilities`、`modalities`、自定义配置等） |
+| `opencode` | 已合并好的 OpenCode **1.x** 模型配置块（`name`、`limit`、`reasoning`、`capabilities`、`modalities`、自定义配置等） |
+| `opencode_v2` | 已合并好的 OpenCode **2.x** 模型配置块（`capabilities.input/output/tools/reasoning`、数组形式的 `variants`、`limit` 等）。V1 专有键不会出现在这里 |
 | `display_name` | 展示名；未设置时省略 |
 | `description` | 说明；未设置时省略 |
 
-`opencode` 的合并优先级（高 → 低）为：**结构化字段**（展示名、limit、reasoning、能力、模态）
-→ **自定义 OpenCode 配置** → **models.dev 占位信息**。插件侧默认值在客户端最后应用，不在此块内。
-上游供应商与密钥信息不会出现在这里。
+两代配置块的合并优先级相同（高 → 低）：**结构化字段**（展示名、limit、reasoning、能力、模态）
+→ **对应版本的自定义 OpenCode 配置**（`opencode_config` / `opencode_config_v2`）→
+**models.dev 占位信息**。插件侧默认值在客户端最后应用，不在此块内。上游供应商与密钥信息不会出现在这里。
+
+两套块**不可混用**：把 V1 形状写进 V2 块会让 OpenCode 2 丢弃整个 provider（连同缓存的模型列表），
+反之亦然。客户端应按自己的代际取用对应字段。
 
 ## OpenAI 风格
 

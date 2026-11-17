@@ -68,7 +68,8 @@ For any exposed model, staff can set:
 - **Display name** and **description**;
 - The structured fields **limit_context / limit_input / limit_output / reasoning /
   capabilities (text/image/audio/tool) / modalities**;
-- A custom **OpenCode config** (`opencode_config`);
+- A custom **OpenCode config** (`opencode_config`, V1 shape);
+- A custom **OpenCode V2 config** (`opencode_config_v2`, OpenCode 2.x shape);
 - **Enable** — hide the model from `/v1/models` and the selector without deleting it;
 - The **role groups** allowed to call it.
 
@@ -94,6 +95,26 @@ The **context window** (`limit_context`) is the shared input + output budget, so
 
 Structured fields **>** custom `opencode_config` **>** models.dev placeholder **>** defaults.
 
+The plugin has two generations, and `/v1/models` ships one block for each:
+
+- `opencode` — the V1 shape (`capabilities.{text,image,audio,tool}`, top-level `reasoning`,
+  `variants` as an object map) for `opencode-plugin-v1`;
+- `opencode_v2` — the V2 shape (`capabilities.{input,output,tools,reasoning}`, `variants` as an
+  array of `[{id, body}]`) for `opencode-plugin`. It is derived from the same structured fields
+  using V2 rules, then deep-merged with `opencode_config_v2`.
+
+The two are **not interchangeable**: writing a V1 shape into `opencode_config_v2` (or vice versa)
+makes OpenCode treat the fields as invalid — and a V2 client **discards the whole provider block**
+together with its cached model list. Only put V2 fields in `opencode_config_v2`; V1-only keys
+(`options`, top-level `reasoning`, object-shaped `variants`) are dropped by the gateway before the block
+is advertised. `modalities` is V1-only — the V2 block expresses media support through
+`capabilities.input/output`.
+
+An existing `opencode_config` is **not migrated automatically** to V2 clients: the V2 plugin only
+projects a V1 block onto the V2 shape when the gateway serves no `opencode_v2` (an older gateway). If you
+customised a V1 config for a model and want OpenCode 2 users to get it too, copy the relevant fields into
+`opencode_config_v2`.
+
 ## Bulk edit / delete
 
 Apply the same change to multiple models at once — description, enabled state, allowed role groups,
@@ -101,7 +122,8 @@ OpenCode config, capabilities, reasoning, limits, or category.
 You can first filter by search, provider, availability status, or role group, then check **Select current
 filter results**. After clearing the filter, the selected models stay selected; click **Clear selection** when
 you need to start over.
-For OpenCode config, choose:
+For OpenCode config, the V1 (`opencode_config`) and V2 (`opencode_config_v2`) fields are ticked
+separately, each with its own choice:
 
 - **Merge** — deep-merge into each model's existing config (nested dicts merge, lists/scalars replace); or
 - **Overwrite** — replace entirely.

@@ -127,6 +127,7 @@ interface EditState {
   description: string;
   enabled: boolean;
   config: string;
+  config_v2: string;
   limit_context: string;
   limit_input: string;
   limit_output: string;
@@ -153,6 +154,7 @@ interface CreateState {
   upstream_model: string;
   category_id: string;
   config: string;
+  config_v2: string;
   limit_context: string;
   limit_input: string;
   limit_output: string;
@@ -517,6 +519,8 @@ export function Models() {
   const [batchGroupSearch, setBatchGroupSearch] = useState("");
   const [batchConfigOn, setBatchConfigOn] = useState(false);
   const [batchConfig, setBatchConfig] = useState("");
+  const [batchConfigV2On, setBatchConfigV2On] = useState(false);
+  const [batchConfigV2, setBatchConfigV2] = useState("");
   const [batchConfigMode, setBatchConfigMode] = useState<"merge" | "overwrite">(
     "merge",
   );
@@ -545,6 +549,8 @@ export function Models() {
     setBatchGroupSearch("");
     setBatchConfigOn(false);
     setBatchConfig("");
+    setBatchConfigV2On(false);
+    setBatchConfigV2("");
     setBatchConfigMode("merge");
     setBatchCapabilitiesOn(false);
     setBatchCapabilities({ text: false, image: false, audio: false, tool: false });
@@ -890,6 +896,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
       description: m.description ?? "",
       enabled: m.enabled,
       config: prettyJson(m.opencode_config),
+      config_v2: prettyJson(m.opencode_config_v2),
       limit_context: m.limit_context != null ? String(m.limit_context) : "",
       limit_input: m.limit_input != null ? String(m.limit_input) : "",
       limit_output: m.limit_output != null ? String(m.limit_output) : "",
@@ -919,11 +926,21 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
       );
       return;
     }
+    const configV2 = parseConfig(edit.config_v2);
+    if (configV2 === "INVALID") {
+      notify(
+        t("models.invalidConfig" as TK),
+        t("models.invalidConfigMsg" as TK),
+        "error",
+      );
+      return;
+    }
     const payload: Record<string, unknown> = {
       model_id: edit.model_id,
       display_name: edit.display_name.trim(),
       description: edit.description,
       opencode_config: config,
+      opencode_config_v2: configV2,
       enabled: edit.enabled,
       reasoning: edit.reasoning,
       capabilities: {},
@@ -978,10 +995,16 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
       notify(t("models.invalidConfig" as TK), t("models.invalidConfigMsg" as TK), "error");
       return;
     }
+    const configV2 = parseConfig(create.config_v2);
+    if (configV2 === "INVALID") {
+      notify(t("models.invalidConfig" as TK), t("models.invalidConfigMsg" as TK), "error");
+      return;
+    }
     const payload: Record<string, unknown> = {
       model_id: modelId,
       enabled: create.enabled,
       opencode_config: config,
+      opencode_config_v2: configV2,
       reasoning: create.reasoning,
       capabilities: {},
       modalities: {},
@@ -1063,6 +1086,19 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
         return;
       }
       payload.opencode_config = cfg;
+      payload.opencode_config_mode = batchConfigMode;
+    }
+    if (batchConfigV2On) {
+      const cfg = parseConfig(batchConfigV2);
+      if (cfg === "INVALID") {
+        notify(
+          t("models.invalidConfig" as TK),
+          t("models.invalidConfigMsg" as TK),
+          "error",
+        );
+        return;
+      }
+      payload.opencode_config_v2 = cfg;
       payload.opencode_config_mode = batchConfigMode;
     }
     if (batchCapabilitiesOn) {
@@ -1245,6 +1281,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                     upstream_model: "",
                     category_id: "",
                     config: "",
+                    config_v2: "",
                     limit_context: "",
                     limit_input: "",
                     limit_output: "",
@@ -1454,7 +1491,8 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                     {g.models.map((m) => {
                       const health = m.health;
                       const hasConfig =
-                        m.opencode_config && Object.keys(m.opencode_config).length > 0;
+                        (m.opencode_config && Object.keys(m.opencode_config).length > 0) ||
+                        (m.opencode_config_v2 && Object.keys(m.opencode_config_v2).length > 0);
                       return (
                         <div key={m.model_id} className={m.enabled ? styles.card : styles.cardHidden}>
                           <div className={styles.head}>
@@ -1799,6 +1837,20 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                   }
                 />
               </Field>
+              <Field
+                label={t("models.configV2Label" as TK)}
+                hint={t("models.configV2Hint" as TK)}
+              >
+                <Textarea
+                  value={edit?.config_v2 ?? ""}
+                  rows={6}
+                  placeholder={t("models.configV2Placeholder" as TK)}
+                  style={{ fontFamily: tokens.fontFamilyMonospace }}
+                  onChange={(_, d) =>
+                    setEdit((f) => (f ? { ...f, config_v2: d.value } : f))
+                  }
+                />
+              </Field>
               <Switch
                 label={t("models.availableLabel" as TK)}
                 checked={edit?.enabled ?? true}
@@ -1934,6 +1986,43 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                   gap: 8,
                 }}
               >
+                <Textarea
+                  value={batchConfig}
+                  rows={5}
+                  placeholder={t("models.configPlaceholder" as TK)}
+                  style={{ fontFamily: tokens.fontFamilyMonospace }}
+                  onChange={(_, d) => setBatchConfig(d.value)}
+                />
+              </div>
+
+              <Checkbox
+                checked={batchConfigV2On}
+                onChange={(_, d) => setBatchConfigV2On(!!d.checked)}
+                label={t("models.batchConfigV2Label" as TK)}
+              />
+              <div
+                style={{
+                  display: batchConfigV2On ? "flex" : "none",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                <Textarea
+                  value={batchConfigV2}
+                  rows={5}
+                  placeholder={t("models.configV2Placeholder" as TK)}
+                  style={{ fontFamily: tokens.fontFamilyMonospace }}
+                  onChange={(_, d) => setBatchConfigV2(d.value)}
+                />
+              </div>
+
+              <div
+                style={{
+                  display: batchConfigOn || batchConfigV2On ? "flex" : "none",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
                 <Dropdown
                   value={
                     batchConfigMode === "merge"
@@ -1952,13 +2041,6 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                     {t("models.batchConfigOverwrite" as TK)}
                   </Option>
                 </Dropdown>
-                <Textarea
-                  value={batchConfig}
-                  rows={5}
-                  placeholder={t("models.configPlaceholder" as TK)}
-                  style={{ fontFamily: tokens.fontFamilyMonospace }}
-                  onChange={(_, d) => setBatchConfig(d.value)}
-                />
                 <Text size={100} className={styles.dim}>
                   {batchConfigMode === "merge"
                     ? t("models.batchConfigMergeHint" as TK)
@@ -2276,6 +2358,9 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
               </div>
               <Field label={t("models.configLabel" as TK)} hint={t("models.configHint" as TK)}>
                 <Textarea value={create?.config ?? ""} rows={6} placeholder={t("models.configPlaceholder" as TK)} style={{ fontFamily: tokens.fontFamilyMonospace }} onChange={(_, d) => setCreate((f) => f ? { ...f, config: d.value } : f)} />
+              </Field>
+              <Field label={t("models.configV2Label" as TK)} hint={t("models.configV2Hint" as TK)}>
+                <Textarea value={create?.config_v2 ?? ""} rows={6} placeholder={t("models.configV2Placeholder" as TK)} style={{ fontFamily: tokens.fontFamilyMonospace }} onChange={(_, d) => setCreate((f) => f ? { ...f, config_v2: d.value } : f)} />
               </Field>
               <Switch label={t("models.availableLabel" as TK)} checked={create?.enabled ?? true} onChange={(_, d) => setCreate((f) => f ? { ...f, enabled: d.checked } : f)} />
               <ModelsDevSection

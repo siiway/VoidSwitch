@@ -160,6 +160,7 @@ type ExposedModel struct {
 	DisplayName         *string    `gorm:"column:display_name;type:varchar(255)"`
 	Description         *string    `gorm:"column:description;type:text"`
 	OpenCodeConfig      JSON       `gorm:"column:opencode_config;type:json;not null"`
+	OpenCodeConfigV2    JSON       `gorm:"column:opencode_config_v2;type:json;not null;default:'{}'"`
 	Enabled             bool       `gorm:"column:enabled;not null"`
 	AllowedRoleGroupIDs JSON       `gorm:"column:allowed_role_group_ids;type:json;not null"`
 	LimitContext        *int       `gorm:"column:limit_context"`

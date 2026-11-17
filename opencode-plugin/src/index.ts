@@ -124,6 +124,7 @@ type ModelInfo = {
   display_name?: string;
   description?: string;
   opencode?: Record<string, any>;
+  opencode_v2?: Record<string, any>;
 };
 
 const FALLBACK_MODEL_INFOS: ModelInfo[] = FALLBACK_MODELS.map((id) => ({ id }));
@@ -331,8 +332,11 @@ function buildModel(info: ModelInfo, gatewayV1: string): Model.Info {
   // Carry the dashboard-set description (shown by pickers that support it).
   if (info.description) model.name = info.display_name || prettyName(id);
   // Deep-merge the admin's custom OpenCode config last, so it wins over the
-  // computed defaults (name, limit, cost, capabilities, variants, …).
-  return info.opencode ? deepMerge(model, info.opencode) : model;
+  // computed defaults (name, limit, cost, capabilities, variants, …). The V2
+  // block is authoritative; a V1-only gateway is projected onto the V2 shape
+  // first, because V1's dict `variants`/`options` are rejected by OpenCode 2.
+  const override = modelOverride(info);
+  return Object.keys(override).length > 0 ? deepMerge(model, override) : model;
 }
 
 // --------------------------------------------------------------------------- //
@@ -492,18 +496,64 @@ function persistBaseUrl(url: string | undefined): void {
     if (!cfg) return;
     if (!cfg.providers) cfg.providers = {};
     if (!cfg.providers[PROVIDER_ID]) cfg.providers[PROVIDER_ID] = {};
-    if (!cfg.providers[PROVIDER_ID].settings)
-      cfg.providers[PROVIDER_ID].settings = {};
+    const block = cfg.providers[PROVIDER_ID];
+    if (!block.settings) block.settings = {};
     if (url) {
-      cfg.providers[PROVIDER_ID].settings.baseURL =
-        url.replace(/\/+$/, "") + "/v1";
+      block.settings.baseURL = url.replace(/\/+$/, "") + "/v1";
     } else {
-      delete cfg.providers[PROVIDER_ID].settings.baseURL;
+      delete block.settings.baseURL;
     }
     writeFileSync(path, JSON.stringify(cfg, null, detectIndent(raw)) + "\n");
   } catch (e) {
     console.error("[VoidSwitch] persistBaseUrl failed:", e);
   }
+}
+
+/**
+ * Map the gateway's V1-shaped capability flags (`{text,image,tool}`) onto the
+ * V2 config form (`{input:[...], tools:bool}`). Writing the V1 shape verbatim
+ * makes OpenCode silently drop the capabilities.
+ */
+function v2Capabilities(raw: any): Record<string, any> | undefined {
+  if (!isPlainObject(raw)) return undefined;
+  const caps: Record<string, any> = {};
+  const input: string[] = [];
+  if (raw.text === true) input.push("text");
+  if (raw.image === true) input.push("image");
+  if (raw.audio === true) input.push("audio");
+  if (raw.pdf === true) input.push("pdf");
+  if (input.length > 0) caps.input = input;
+  if (raw.tool === true) caps.tools = true;
+  return Object.keys(caps).length > 0 ? caps : undefined;
+}
+
+/**
+ * Project a V1-shaped model override onto the V2 vocabulary. Used when the
+ * gateway predates `opencode_v2`: the V1 block keeps `variants` as a dict and
+ * carries `options`/`reasoning`, which OpenCode 2 rejects (and which would make
+ * it discard the whole provider block).
+ */
+function v2Override(meta: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (typeof meta.name === "string") out.name = meta.name;
+  if (typeof meta.description === "string") out.description = meta.description;
+  if (isPlainObject(meta.limit)) out.limit = meta.limit;
+  const caps = v2Capabilities(meta.capabilities);
+  if (caps) out.capabilities = caps;
+  if (Array.isArray(meta.variants)) out.variants = meta.variants;
+  return out;
+}
+
+/**
+ * The model override to apply: the gateway's own V2 block when it carries
+ * anything, otherwise the V1 block projected onto the V2 shape. An empty V2
+ * block must not shadow a populated V1 block — a gateway that only configured
+ * `opencode_config` would otherwise silently stop affecting V2 clients.
+ */
+function modelOverride(info: ModelInfo): Record<string, any> {
+  if (info.opencode_v2 && Object.keys(info.opencode_v2).length > 0)
+    return info.opencode_v2;
+  return v2Override(info.opencode ?? {});
 }
 
 /**
@@ -516,21 +566,50 @@ function persistModels(infos: ModelInfo[]): void {
     if (!existsSync(path)) return;
     const raw = readFileSync(path, "utf8");
     const cfg = JSON.parse(stripJsonc(raw));
+    // Only persist when the user already has a VoidSwitch block (the plugin's
+    // provider is registered runtime-side otherwise).
     if (!cfg?.providers?.[PROVIDER_ID]) return;
-    const existing: Record<string, any> =
-      cfg.providers[PROVIDER_ID].models ?? {};
+    const block = cfg.providers[PROVIDER_ID];
+    const existing: Record<string, any> = block.models ?? {};
     const models: Record<string, any> = {};
     for (const info of infos) {
-      const prev = existing[info.id] ?? {};
-      // Build an override from display_name, so the dashboard's Display name
-      // field overrides the model name in the OpenCode picker.
-      const override: Record<string, any> = { ...(info.opencode ?? {}) };
-      if (info.display_name && !override.name)
-        override.name = info.display_name;
-      models[info.id] =
-        Object.keys(override).length > 0 ? deepMerge(prev, override) : prev;
+      const prev: Record<string, any> = { ...(existing[info.id] ?? {}) };
+      // OpenCode rejects the whole provider block when a recognised field has
+      // the wrong shape, so scrub shapes written by older plugin builds: V1
+      // keeps `variants` as a dict and uses `options`/`reasoning`, while V2
+      // wants an array (and ignores the rest).
+      if (prev.variants !== undefined && !Array.isArray(prev.variants))
+        delete prev.variants;
+      delete prev.options;
+      delete prev.reasoning;
+      // Scrub only shapes written by older builds: a user's hand-written V2
+      // capabilities (input/output lists) must survive every sync.
+      const rawCaps = prev.capabilities;
+      if (isPlainObject(rawCaps)) {
+        const hasV2Shape =
+          Array.isArray(rawCaps.input) ||
+          Array.isArray(rawCaps.output) ||
+          rawCaps.tools !== undefined ||
+          rawCaps.reasoning !== undefined;
+        const looksV1 = ["text", "image", "audio", "pdf", "tool"].some(
+          (k) => k in rawCaps,
+        );
+        if (looksV1 && !hasV2Shape) {
+          const mapped = v2Capabilities(rawCaps);
+          if (mapped) prev.capabilities = mapped;
+          else delete prev.capabilities;
+        }
+      }
+
+      // The gateway's dedicated V2 block is already in the right vocabulary;
+      // a V1-only gateway is projected so the persisted config cannot poison
+      // the provider with an unrecognised shape.
+      const override = modelOverride(info);
+      const merged = deepMerge(prev, override);
+      if (!merged.name && info.display_name) merged.name = info.display_name;
+      models[info.id] = merged;
     }
-    cfg.providers[PROVIDER_ID].models = models;
+    block.models = models;
     writeFileSync(path, JSON.stringify(cfg, null, detectIndent(raw)) + "\n");
   } catch (e) {
     console.error("[VoidSwitch] persistModels failed:", e);
@@ -672,6 +751,20 @@ export default Plugin.define({
      */
     let lastToken: string | undefined;
 
+    /**
+     * The token to use right now. The stored credential always wins over the
+     * cached value, so rotating a key and re-running `/connect` takes effect
+     * immediately instead of replaying the old secret.
+     */
+    async function currentToken(): Promise<string | undefined> {
+      const fresh = await resolveToken(ctx);
+      if (fresh) {
+        lastToken = fresh;
+        return fresh;
+      }
+      return lastToken;
+    }
+
     async function fetchModels(
       token: string | undefined,
     ): Promise<ModelInfo[]> {
@@ -696,6 +789,9 @@ export default Plugin.define({
             description:
               typeof m?.description === "string" ? m.description : undefined,
             opencode: isPlainObject(m?.opencode) ? m.opencode : undefined,
+            opencode_v2: isPlainObject(m?.opencode_v2)
+              ? m.opencode_v2
+              : undefined,
           }))
           .filter(
             (m: ModelInfo) => typeof m.id === "string" && m.id.length > 0,
@@ -725,8 +821,7 @@ export default Plugin.define({
       note: string;
       defaults: RemoteDefaults;
     }> {
-      let token = lastToken ?? (await resolveToken(ctx));
-      if (token) lastToken = token;
+      const token = await currentToken();
       const fail = (note: string) => ({
         ok: false,
         note,
@@ -821,7 +916,13 @@ export default Plugin.define({
       });
     }
 
-    /** Install the key method that backs `/connect` for this provider. */
+    /**
+     * Install the key method that backs `/connect` for this provider.
+     *
+     * No `form` fields: OpenCode renders a form field *before* asking for the
+     * secret, so a `key` form field made users paste the same token twice (the
+     * form answer and then the actual credential).
+     */
     async function registerAuth(): Promise<void> {
       await ctx.integration.transform((editor) => {
         editor.method.update({
@@ -829,17 +930,7 @@ export default Plugin.define({
           method: {
             type: "key",
             label: "Paste a VoidSwitch token (vs-…)",
-            form: [
-              {
-                key: "key",
-                title: "Void-Token",
-                description: "Starts with vs-",
-                type: "string",
-                required: true,
-                placeholder: "vs-…",
-              },
-            ],
-          } as any,
+          },
         });
       });
     }
@@ -921,7 +1012,13 @@ export default Plugin.define({
     async function registerModels(infos: ModelInfo[]): Promise<void> {
       const models = infos.map((info) => buildModel(info, gatewayV1));
       await ctx.provider.transform((editor) => {
-        if (editor.get(PROVIDER_ID)) editor.models.set(PROVIDER_ID, models);
+        if (editor.get(PROVIDER_ID)) {
+          editor.models.set(PROVIDER_ID, models);
+          return;
+        }
+        // A malformed config block is skipped by OpenCode's normalization;
+        // re-register rather than silently dropping the fresh catalog.
+        editor.add({ info: providerInfo(), models });
       });
     }
 
@@ -933,7 +1030,7 @@ export default Plugin.define({
     async function syncNow(): Promise<SyncResult> {
       const { ok, note, defaults } = await syncModels();
       if (!ok) return { ok: false, note };
-      const infos = await fetchModels(lastToken);
+      const infos = await fetchModels(await currentToken());
       if (infos === FALLBACK_MODEL_INFOS)
         return {
           ok: false,
@@ -970,7 +1067,7 @@ export default Plugin.define({
       gatewaySource = next.source;
       gatewayV1 = `${gateway}/v1`;
       await registerProvider();
-      const infos = await fetchModels(await resolveToken(ctx));
+      const infos = await fetchModels(await currentToken());
       persistModels(infos);
       await registerModels(infos);
       if (infos === FALLBACK_MODEL_INFOS)
@@ -1026,7 +1123,7 @@ export default Plugin.define({
           })) {
             if (stopped) break;
             if (event.data.integrationID !== PROVIDER_ID) continue;
-            const infos = await fetchModels(await resolveToken(ctx));
+            const infos = await fetchModels(await currentToken());
             persistModels(infos);
             await registerModels(infos);
           }
@@ -1217,8 +1314,7 @@ export default Plugin.define({
     await registerProvider();
 
     // Seed the model inventory so the picker isn't empty before the first sync.
-    const token = await resolveToken(ctx);
-    if (token) lastToken = token;
+    const token = await currentToken();
     const infos = await fetchModels(token);
     await registerModels(infos);
 

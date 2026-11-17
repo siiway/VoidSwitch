@@ -468,6 +468,16 @@ export function MyToken() {
                     components={{ code: <code /> }}
                   />
                 </Text>
+                <Text
+                  size={200}
+                  block
+                  style={{ color: tokens.colorNeutralForeground3 }}
+                >
+                  <Trans
+                    i18nKey="myToken.manualV1Only"
+                    components={{ code: <code />, strong: <strong /> }}
+                  />
+                </Text>
                 {manual.loading ? (
                   <Loading />
                 ) : manual.error ? (

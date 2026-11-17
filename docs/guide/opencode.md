@@ -83,7 +83,8 @@ V1 插件**不会**被自动发现，需要先把它登记到 `opencode.json` �
 无法运行安装脚本时，可以在 [**我的令牌**](/guide/api-keys) 页面的 OpenCode 连接指南中展开
 **手动设置**，其中提供：
 
-1. 一份完整的 `opencode.json`（已注册 VoidSwitch 供应商并列出全部可用模型）。
+1. 一份完整的 `opencode.json`（已注册 VoidSwitch 供应商并列出全部可用模型）。它是 OpenCode
+   **1.x** 的 `provider`（单数）格式 —— OpenCode 2.x 请用一行安装脚本，插件会自行注册供应商。
 2. **手动安装插件**指南 —— 这一步让手动配置的用户也能获得完整的插件功能
    （effort、fast mode、adaptive thinking、1M context）。它与一行脚本做的事一样，从网关
    **实时获取**插件源码（始终与当前服务器一致），把三个 part 分别保存为

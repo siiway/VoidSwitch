@@ -608,6 +608,10 @@ const zh: Translations = {
     configHint:
       '深度合并到 OpenCode 插件构建的模型块中。支持 JSONC/JSON5（允许尾随逗号和注释）— 例如 {"name": "…", "limit": {"context": 200000}}。',
     configPlaceholder: '{\n  "name": "My Model",\n  "limit": { "context": 200000 }\n}',
+    configV2Label: "自定义 OpenCode V2 配置（OpenCode 2.x，JSON / JSONC）",
+    configV2Hint:
+      '深度合并到 V2 模型块（capabilities.input/output/tools，variants 为 {id, body} 数组）。V1 专有键（options、顶层 reasoning、对象形状的 variants）会在下发前被丢弃。',
+    configV2Placeholder: '{\n  "capabilities": { "input": ["text", "image"], "tools": true },\n  "variants": [{ "id": "max", "body": { "output_config": { "effort": "max" } } }]\n}',
     availableLabel: "可用（取消勾选以从模型列表隐藏）",
     unavailableHidden: "不可用 (隐藏)",
     deleteTitle: "删除模型元数据",
@@ -630,6 +634,7 @@ const zh: Translations = {
     batchAccessLabel: "为所有已选模型设置可访问身份组",
     batchAccessHint: "将替换每个所选模型的可访问身份组（管理员始终可访问）。",
     batchConfigLabel: "为所有已选模型设置 OpenCode 配置",
+    batchConfigV2Label: "为所有已选模型设置 OpenCode V2 配置",
     batchConfigMerge: "合并（深度合并到现有配置）",
     batchConfigOverwrite: "覆盖（替换现有配置）",
     batchConfigMergeHint: "深度合并到每个模型现有的 OpenCode 配置；嵌套键会被合并。",
@@ -1324,6 +1329,8 @@ const zh: Translations = {
     manual: "手动设置（无脚本）",
     manualIntro:
       "推荐使用上方的一行安装脚本——它还会接入 VoidSwitch 插件（支持设置 Claude Code 模型推理强度，并可从网关获取最新配置）。如果无法运行脚本，可直接粘贴下面这份完整的 <code>opencode.json</code>：其中已预置全部可用模型及其调优配置，但模型列表更新后需要手动重新获取。",
+    manualV1Only:
+      "这份手动配置是 OpenCode <strong>1.x</strong> 的 <code>provider</code>（单数）格式。OpenCode 2.x 请使用上方安装脚本：插件会自行注册供应商并注入模型。",
     manualStep1:
       "1. 保存上面的配置——不要填 <code>apiKey</code>，让 OpenCode 提示你输入。",
     manualStep2:

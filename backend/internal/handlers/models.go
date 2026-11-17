@@ -197,8 +197,9 @@ func (a *App) mergePassthroughVirtuals(exposed []services.ModelEntryView, isStaf
 			virtuals = append(virtuals, services.ModelEntryView{
 				ID: &id, ModelID: modelID, DisplayName: &dn, Enabled: true,
 				ProviderName: &name, ProviderSlug: &slug, Provider: true,
-				OpenCodeConfig: map[string]any{}, Capabilities: map[string]any{},
-				Modalities: map[string]any{}, AllowedRoleGroupIDs: []int{}, Upstreams: []string{},
+				OpenCodeConfig: map[string]any{}, OpenCodeConfigV2: map[string]any{},
+				Capabilities: map[string]any{},
+				Modalities:   map[string]any{}, AllowedRoleGroupIDs: []int{}, Upstreams: []string{},
 			})
 		}
 	}

@@ -84,7 +84,9 @@ If you did not embed a token during install:
 When you cannot run the install script, expand **Manual setup** in the OpenCode connection guide on the
 [**My Tokens**](/en/guide/api-keys) page, which provides:
 
-1. A complete `opencode.json` (with the VoidSwitch provider registered and all available models listed).
+1. A complete `opencode.json` (with the VoidSwitch provider registered and all available models listed). It uses the
+   OpenCode **1.x** singular `provider` format — on OpenCode 2.x use the one-line installer instead, so the plugin
+   registers the provider itself.
 2. A **manually install the plugin** guide — this step gives manually configured users the full plugin capabilities as
    well (effort, fast mode, adaptive thinking, 1M context). It does the same thing as the one-line script: it **fetches
    the plugin source in real time** from the gateway (always in sync with the current server) and saves the three parts

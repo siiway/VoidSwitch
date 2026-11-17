@@ -24,6 +24,7 @@ type modelUpsertIn struct {
 	DisplayName         *string         `json:"display_name"`
 	Description         *string         `json:"description"`
 	OpenCodeConfig      json.RawMessage `json:"opencode_config"`
+	OpenCodeConfigV2    json.RawMessage `json:"opencode_config_v2"`
 	Enabled             *bool           `json:"enabled"`
 	AllowedRoleGroupIDs *[]int          `json:"allowed_role_group_ids"`
 	LimitContext        *int            `json:"limit_context"`
@@ -106,6 +107,7 @@ func (a *App) modelsUpsert(c *gin.Context) {
 		m = database.ExposedModel{
 			ModelID: in.ModelID, Enabled: true,
 			OpenCodeConfig:      database.JSONOf(map[string]any{}),
+			OpenCodeConfigV2:    database.JSONOf(map[string]any{}),
 			AllowedRoleGroupIDs: database.JSONOf([]int{}),
 			Capabilities:        database.JSONOf(map[string]any{}),
 			Modalities:          database.JSONOf(map[string]any{}),
@@ -120,6 +122,9 @@ func (a *App) modelsUpsert(c *gin.Context) {
 	}
 	if len(in.OpenCodeConfig) > 0 {
 		m.OpenCodeConfig = database.JSON(in.OpenCodeConfig)
+	}
+	if len(in.OpenCodeConfigV2) > 0 {
+		m.OpenCodeConfigV2 = database.JSON(in.OpenCodeConfigV2)
 	}
 	if in.Enabled != nil {
 		m.Enabled = *in.Enabled
@@ -216,10 +221,11 @@ func (a *App) modelDelete(c *gin.Context) {
 // limits, category) and reports success anyway.
 func (a *App) modelsBatch(c *gin.Context) {
 	var in struct {
-		ModelIDs       []string        `json:"model_ids"`
-		DisplayName    *string         `json:"display_name"`
-		Description    *string         `json:"description"`
-		OpenCodeConfig json.RawMessage `json:"opencode_config"`
+		ModelIDs         []string        `json:"model_ids"`
+		DisplayName      *string         `json:"display_name"`
+		Description      *string         `json:"description"`
+		OpenCodeConfig   json.RawMessage `json:"opencode_config"`
+		OpenCodeConfigV2 json.RawMessage `json:"opencode_config_v2"`
 		// ConfigMode is the documented contract; Mode keeps the older spelling.
 		ConfigMode          string          `json:"opencode_config_mode"`
 		Mode                string          `json:"mode"`
@@ -247,6 +253,12 @@ func (a *App) modelsBatch(c *gin.Context) {
 		groupIDs = kept
 	}
 	merge := in.ConfigMode != "overwrite" && in.Mode != "overwrite"
+	// Record the normalised mode: a client using the older `mode` spelling left
+	// `ConfigMode` empty, which made the audit entry meaningless.
+	configMode := "merge"
+	if !merge {
+		configMode = "overwrite"
+	}
 
 	updated := 0
 	for _, rawID := range in.ModelIDs {
@@ -305,6 +317,13 @@ func (a *App) modelsBatch(c *gin.Context) {
 				m.OpenCodeConfig = database.JSON(in.OpenCodeConfig)
 			}
 		}
+		if len(in.OpenCodeConfigV2) > 0 {
+			if merge {
+				m.OpenCodeConfigV2 = mergeJSON(m.OpenCodeConfigV2, database.JSON(in.OpenCodeConfigV2))
+			} else {
+				m.OpenCodeConfigV2 = database.JSON(in.OpenCodeConfigV2)
+			}
+		}
 		if created {
 			if err := a.GDB.Create(m).Error; err != nil {
 				a.internal(c, err)
@@ -339,7 +358,10 @@ func (a *App) modelsBatch(c *gin.Context) {
 		changes["modalities"] = true
 	}
 	if len(in.OpenCodeConfig) > 0 {
-		changes["opencode_config"] = in.ConfigMode
+		changes["opencode_config"] = configMode
+	}
+	if len(in.OpenCodeConfigV2) > 0 {
+		changes["opencode_config_v2"] = configMode
 	}
 	if in.AllowedRoleGroupIDs != nil {
 		changes["allowed_role_group_ids"] = groupIDs
@@ -382,6 +404,7 @@ func (a *App) modelMetadataWithUser(modelID string, uv *core.UserView) (*databas
 	m = database.ExposedModel{
 		ModelID: modelID, Enabled: true,
 		OpenCodeConfig:      database.JSONOf(map[string]any{}),
+		OpenCodeConfigV2:    database.JSONOf(map[string]any{}),
 		AllowedRoleGroupIDs: database.JSONOf([]int{}),
 		Capabilities:        database.JSONOf(map[string]any{}),
 		Modalities:          database.JSONOf(map[string]any{}),

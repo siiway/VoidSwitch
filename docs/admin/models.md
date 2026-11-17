@@ -57,7 +57,8 @@ SSE；管理人员可查看各上游详情和节点历史趋势，owner 仍可�
 - **显示名称**和**描述**；
 - 结构化字段 **limit_context / limit_input / limit_output / reasoning /
   capabilities（text/image/audio/tool）/ modalities**；
-- 自定义 **OpenCode 配置**（`opencode_config`）；
+- 自定义 **OpenCode 配置**（`opencode_config`，V1 形状）；
+- 自定义 **OpenCode V2 配置**（`opencode_config_v2`，OpenCode 2.x 形状）；
 - **启用** — 将模型从 `/v1/models` 和选择器中隐藏，而不删除它；
 - 允许调用它的**身份组**。
 
@@ -83,12 +84,31 @@ SSE；管理人员可查看各上游详情和节点历史趋势，owner 仍可�
 
 结构化字段 **>** 自定义 `opencode_config` **>** models.dev 占位 **>** 默认值。
 
+插件有 V1 与 V2 两代，`/v1/models` 分别为它们下发两个块：
+
+- `opencode` —— V1 形状（`capabilities.{text,image,audio,tool}`、顶层 `reasoning`、
+  `variants` 为对象映射），供 `opencode-plugin-v1`；
+- `opencode_v2` —— V2 形状（`capabilities.{input,output,tools,reasoning}`、`variants` 为
+  `[{id, body}]` 数组），供 `opencode-plugin`。它由同一份结构化字段按 V2 规则生成，再被
+  `opencode_config_v2` 深度覆盖。
+
+两代**不可混用**：把 V1 形状写进 `opencode_config_v2`（或反之）会被 OpenCode 判定为非法字段
+—— V2 客户端甚至会**整块丢弃该 provider**（连同缓存的模型列表）。`opencode_config_v2` 里
+只应出现 V2 字段；写入 V1 专有键（`options`、顶层 `reasoning`、对象形状的 `variants`）时网关会在
+下发前丢弃它们。`modalities` 是 V1 专有字段，V2 块用 `capabilities.input/output` 表达。
+
+已配置的 `opencode_config` **不会自动迁移**到 V2 客户端：V2 插件只在网关没有下发 `opencode_v2`
+（旧网关）时才把 V1 块投影成 V2 形状。若你为某个模型定制了 V1 配置并希望 OpenCode 2 用户也使用，
+请把对应字段复制到 `opencode_config_v2`。V2 插件在网关只提供 `opencode` 时会把 V1 块转换成
+V2 形状再使用。
+
 ## 批量编辑 / 删除
 
 同时将相同的更改应用到多个模型 — 描述、启用状态、允许的身份组、OpenCode 配置、
 能力、推理、限制或分类。
 可以先使用搜索、提供商、可用状态或身份组筛选，再勾选**选择当前筛选结果**。清除筛选后，已选择的模型会保持选中；需要重新开始时点击**清除选择**。
-对于 OpenCode 配置，选择：
+对于 OpenCode 配置，V1（`opencode_config`）与 V2（`opencode_config_v2`）两个字段可分别勾选并
+各自选择：
 
 - **合并** — 深度合并到每个模型的现有配置中（嵌套字典合并，列表/标量替换）；或
 - **覆盖** — 完全替换。

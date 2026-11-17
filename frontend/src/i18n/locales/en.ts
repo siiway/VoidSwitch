@@ -621,6 +621,10 @@ const en = {
     configHint:
       'Deep-merged into the model block the OpenCode plugin builds. Accepts JSONC/JSON5 (trailing commas & comments OK) — e.g. {"name": "…", "limit": {"context": 200000}}.',
     configPlaceholder: '{\n  "name": "My Model",\n  "limit": { "context": 200000 }\n}',
+    configV2Label: "Custom OpenCode V2 config (OpenCode 2.x, JSON / JSONC)",
+    configV2Hint:
+      'Deep-merged into the V2 model block (capabilities.input/output/tools, variants as an array of {id, body}). V1-only keys (options, top-level reasoning, object-shaped variants) are dropped before the block is advertised.',
+    configV2Placeholder: '{\n  "capabilities": { "input": ["text", "image"], "tools": true },\n  "variants": [{ "id": "max", "body": { "output_config": { "effort": "max" } } }]\n}',
     availableLabel: "Available (uncheck to hide from the model list)",
     unavailableHidden: "Unavailable (hidden)",
     deleteTitle: "Delete model metadata",
@@ -647,6 +651,7 @@ const en = {
     batchAccessHint:
       "Replaces each selected model's allowed role groups (moderators always have access).",
     batchConfigLabel: "Set OpenCode config for all selected",
+    batchConfigV2Label: "Set OpenCode V2 config for all selected",
     batchConfigMerge: "Merge (deep-merge into existing)",
     batchConfigOverwrite: "Overwrite (replace existing)",
     batchConfigMergeHint:
@@ -1364,6 +1369,8 @@ const en = {
     manual: "Manual setup (no script)",
     manualIntro:
       "Prefer the one-line installer above — it also wires up the VoidSwitch plugin (set the Claude Code models' reasoning effort, and pull the latest config from the gateway). If you can't run a script, paste this complete <code>opencode.json</code> instead: every available model is pre-listed with its tuned config, but you'll need to manually fetch it again whenever the model list changes.",
+    manualV1Only:
+      "This manual config targets OpenCode <strong>1.x</strong> (the singular <code>provider</code> block). On OpenCode 2.x use the installer above — the plugin registers the provider and injects the models itself.",
     manualStep1:
       "1. Save the config above — leave out <code>apiKey</code> so OpenCode prompts for it.",
     manualStep2:
