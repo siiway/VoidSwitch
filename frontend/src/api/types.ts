@@ -331,6 +331,8 @@ export interface ModelHealth {
   recent_since?: string | null;
   recent_avg_ttft_ms?: number | null;
   sufficient_data: boolean;
+  // Throughput over the sampled window: total tokens / summed request seconds.
+  tokens_per_second?: number | null;
 }
 
 export interface NodeHealthSample {
@@ -418,6 +420,7 @@ export interface GroupStats {
   success_rate_24h: number;
   avg_first_token_ms_24h?: number | null;
   avg_tokens_per_request_24h: number;
+  tokens_per_second_24h?: number | null;
 }
 
 export interface Announcement {
@@ -455,6 +458,9 @@ export interface Stats {
   success_rate_24h: number;
   avg_first_token_ms_24h?: number | null;
   avg_tokens_per_request_24h: number;
+  // Throughput: total tokens / summed request seconds (same formula as the
+  // Statistics page). Null when the window has no measurable duration.
+  tokens_per_second_24h?: number | null;
 }
 
 export interface AuditLog {

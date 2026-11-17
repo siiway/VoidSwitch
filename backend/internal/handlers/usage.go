@@ -336,11 +336,7 @@ func (a *App) usageAnalytics(c *gin.Context) {
 		perf.AvgTokensPerRequest =
 			math.Round(float64(totals.TotalTokens)/float64(totals.Requests)*10) / 10
 	}
-	if totalSeconds != nil && *totalSeconds > 0 {
-		secs := *totalSeconds
-		tps := math.Round(float64(totals.TotalTokens)/secs*100) / 100
-		perf.TokensPerSecond = &tps
-	}
+	perf.TokensPerSecond = tokensPerSecond(totals.TotalTokens, totalSeconds)
 
 	groupQuery := func(col, labelCol string) []usageGroupRow {
 		rows := []usageGroupRow{}

@@ -635,6 +635,16 @@ function requestDurationMs(
   return Number.isNaN(end) ? null : Math.max(0, end - start);
 }
 
+function tokensPerSecondOf(
+  r: RequestLog,
+  now: number,
+  liveEnabled: boolean,
+): string {
+  const ms = requestDurationMs(r, now, liveEnabled);
+  if (ms == null || ms <= 0 || !r.total_tokens) return "—";
+  return (r.total_tokens / (ms / 1000)).toFixed(2);
+}
+
 // Live request-log stream over SSE. EventSource can't attach the dashboard's
 // Authorization header, so this drives a fetch() ReadableStream and parses the
 // SSE ``data:`` frames by hand.
@@ -1331,6 +1341,7 @@ function RequestLogs({
             <TableHeaderCell>{tr("logs.colTtft" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.colDuration" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tokens" as TK)}</TableHeaderCell>
+            <TableHeaderCell>{tr("logs.tokensPerSec" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.tries" as TK)}</TableHeaderCell>
             <TableHeaderCell style={{ width: 96 }} />
           </TableRow>
@@ -1495,6 +1506,16 @@ function RequestLogs({
                 {formatDuration(requestDurationMs(r, durationNow, liveEnabled))}
               </TableCell>
               <TableCell>{formatGrouped(r.total_tokens, i18n.language || "en")}</TableCell>
+              <TableCell
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {tokensPerSecondOf(r, durationNow, liveEnabled)}
+              </TableCell>
               <TableCell>{r.attempts}</TableCell>
               <TableCell>
                 <div style={{ display: "flex", gap: 4 }}>

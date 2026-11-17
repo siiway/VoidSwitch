@@ -188,7 +188,7 @@ func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
 	minSamples := services.GetInt("upstream_min_samples", 10)
 
 	var rows []database.RequestLog
-	a.GDB.Select("model", "success", "first_token_ms", "ts").
+	a.GDB.Select("model", "success", "first_token_ms", "total_tokens", "started_at", "finished_at", "ts").
 		Where("ts >= ? AND model IS NOT NULL", since).Order("ts").Find(&rows)
 	byModel := map[string][]database.RequestLog{}
 	for i := range rows {
@@ -208,6 +208,8 @@ func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
 		var total, success int
 		var ttftSum float64
 		var ttftN int
+		var tokens int64
+		var seconds float64
 		for i := range sample {
 			total++
 			if sample[i].Success {
@@ -216,6 +218,10 @@ func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
 			if sample[i].FirstTokenMs != nil {
 				ttftSum += *sample[i].FirstTokenMs
 				ttftN++
+			}
+			tokens += sample[i].TotalTokens
+			if sample[i].FinishedAt != nil && sample[i].StartedAt != nil {
+				seconds += sample[i].FinishedAt.Sub(*sample[i].StartedAt).Seconds()
 			}
 		}
 		status := "learning"
@@ -247,6 +253,7 @@ func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
 			"best_success_rate":    rate,
 			"best_ttft_ms":         ttft,
 			"recent_since":         recentSince(&sample),
+			"tokens_per_second":    tokensPerSecond(tokens, &seconds),
 		}
 	}
 	return out

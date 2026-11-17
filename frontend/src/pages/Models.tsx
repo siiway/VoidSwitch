@@ -1628,6 +1628,12 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                                       health.recent_avg_ttft_ms == null
                                         ? "--"
                                         : String(Math.round(health.recent_avg_ttft_ms)),
+                                    )
+                                    .replace(
+                                      "{tps}",
+                                      health.tokens_per_second == null
+                                        ? "--"
+                                        : String(health.tokens_per_second),
                                     )}
                                 </Text>
                               </div>
