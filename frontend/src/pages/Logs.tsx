@@ -1991,6 +1991,7 @@ interface AuditFilters {
   action: string;
   target_type: string;
   actor_sub: string;
+  credential: string;
   ip: string;
   user_agent: string;
   // Time window. `timeMode` is UI-only (drives the preset dropdown); `start`/
@@ -2005,6 +2006,7 @@ const EMPTY_FILTERS: AuditFilters = {
   action: "",
   target_type: "",
   actor_sub: "",
+  credential: "",
   ip: "",
   user_agent: "",
   timeMode: "",
@@ -2019,6 +2021,7 @@ function auditFiltersFromParams(params: URLSearchParams): AuditFilters {
     action: params.get("action") || "",
     target_type: params.get("target_type") || "",
     actor_sub: params.get("actor_sub") || "",
+    credential: params.get("credential") || "",
     ip: params.get("ip") || "",
     user_agent: params.get("user_agent") || "",
   };
@@ -2070,6 +2073,7 @@ function AuditLogs({
     action: filters.action || undefined,
     target_type: filters.target_type || undefined,
     actor_sub: filters.actor_sub || undefined,
+    credential: filters.credential || undefined,
     ip: debouncedIp || undefined,
     user_agent: debouncedUa || undefined,
     start: filters.start || undefined,
@@ -2089,6 +2093,7 @@ function AuditLogs({
       filters.action,
       filters.target_type,
       filters.actor_sub,
+      filters.credential,
       debouncedIp,
       debouncedUa,
       filters.start,
@@ -2259,6 +2264,13 @@ function AuditLogs({
           style={{ minWidth: 150 }}
           onChange={(_, d) => setFilter("user_agent", d.value)}
         />
+        <Input
+          aria-label={ta("logs.credential" as TK)}
+          placeholder={ta("logs.filterCredential" as TK)}
+          value={filters.credential}
+          style={{ minWidth: 150 }}
+          onChange={(_, d) => setFilter("credential", d.value)}
+        />
         <TimeRangeFilter
           mode={filters.timeMode}
           start={filters.start}
@@ -2326,6 +2338,7 @@ function AuditLogs({
                 <TableHeaderCell>{ta("logs.detail" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{ta("logs.ip" as TK)}</TableHeaderCell>
                 <TableHeaderCell>{ta("logs.userAgent" as TK)}</TableHeaderCell>
+                <TableHeaderCell>{ta("logs.credential" as TK)}</TableHeaderCell>
                 {isOwner ? <TableHeaderCell>{ta("logs.sensitive" as TK)}</TableHeaderCell> : null}
               </TableRow>
             </TableHeader>
@@ -2434,6 +2447,18 @@ function AuditLogs({
                           {a.user_agent.length > 20 ? `${a.user_agent.slice(0, 20)}…` : a.user_agent}
                         </button>
                       </Tooltip>
+                    ) : "—"}
+                  </TableCell>
+                  <TableCell style={{ fontFamily: "monospace", color: tokens.colorNeutralForeground3 }}>
+                    {a.credential ? (
+                      <button
+                        type="button"
+                        className={cellStyles.clickable}
+                        title={ta("logs.clickToFilter" as TK)}
+                        onClick={() => setFilter("credential", a.credential ?? "")}
+                      >
+                        {a.credential}
+                      </button>
                     ) : "—"}
                   </TableCell>
                   {isOwner ? (

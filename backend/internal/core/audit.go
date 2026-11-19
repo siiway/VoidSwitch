@@ -31,6 +31,11 @@ type AuditInput struct {
 	UserAgent  *string
 	Sensitive  map[string]any // encrypted at rest when non-nil
 	SecretKey  string
+	// Credential is the platform API key fingerprint that performed the action.
+	// Nil for browser sessions.
+	Credential *string
+	// Via is the transport ("mcp" / "rest") when a platform API key acted.
+	Via string
 }
 
 // RecordAudit writes an audit_logs row. Sensitive detail (if provided) is
@@ -50,6 +55,11 @@ func RecordAudit(db *gorm.DB, in AuditInput) error {
 	if detail == nil {
 		detail = map[string]any{}
 	}
+	if in.Via != "" {
+		if _, exists := detail["via"]; !exists {
+			detail["via"] = in.Via
+		}
+	}
 	scope := in.Scope
 	if scope == "" {
 		scope = AuditScopeAdmin
@@ -67,6 +77,7 @@ func RecordAudit(db *gorm.DB, in AuditInput) error {
 		IP:                  in.IP,
 		UserAgent:           in.UserAgent,
 		SensitiveCiphertext: sensitive,
+		Credential:          in.Credential,
 	}
 	return db.Create(&row).Error
 }

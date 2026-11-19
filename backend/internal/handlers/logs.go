@@ -82,6 +82,9 @@ type auditLogView struct {
 	IP           *string         `json:"ip"`
 	UserAgent    *string         `json:"user_agent"`
 	HasSensitive bool            `json:"has_sensitive"`
+	// Credential is the platform API key fingerprint that performed the action,
+	// null when a browser session did.
+	Credential *string `json:"credential"`
 }
 
 func jsonAny(j database.JSON) any {
@@ -808,6 +811,9 @@ func (a *App) auditLogsQuery(c *gin.Context, uv *core.UserView) *gorm.DB {
 	if ua := c.Query("user_agent"); ua != "" {
 		q = q.Where("user_agent LIKE ?", "%"+ua+"%")
 	}
+	if cred := c.Query("credential"); cred != "" {
+		q = q.Where("credential = ?", cred)
+	}
 	if s, ok := parseTimeParam(c.Query("since")); ok {
 		q = q.Where("ts >= ?", s)
 	}
@@ -829,6 +835,7 @@ func toAuditLogView(r *database.AuditLog) auditLogView {
 		Action: r.Action, Scope: r.Scope, TargetType: r.TargetType,
 		TargetID: r.TargetID, Detail: jsonObject(r.Detail), IP: r.IP,
 		UserAgent: r.UserAgent, HasSensitive: r.SensitiveCiphertext != nil && *r.SensitiveCiphertext != "",
+		Credential: r.Credential,
 	}
 }
 
@@ -881,6 +888,15 @@ func (a *App) logsAuditFilters(c *gin.Context) {
 		targetTypes = []string{}
 	}
 
+	// Credential identifies the platform API key that acted, so an operator can
+	// narrow the table to one automation key.
+	var credentials []string
+	a.auditLogsQuery(c, uv).Where("credential IS NOT NULL AND credential <> ''").
+		Distinct().Order("credential").Pluck("credential", &credentials)
+	if credentials == nil {
+		credentials = []string{}
+	}
+
 	actors := make([]gin.H, 0, len(subs))
 	if len(subs) > 0 {
 		var userRows []database.User
@@ -900,6 +916,7 @@ func (a *App) logsAuditFilters(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"actions": actions, "scopes": scopes, "target_types": targetTypes, "actors": actors,
+		"credentials": credentials,
 	})
 }
 
@@ -956,7 +973,7 @@ func (a *App) logsAuditReveal(c *gin.Context) {
 	uv := core.GetUser(c)
 	if uv != nil && uv.User != nil {
 		sub := uv.User.Sub
-		_ = core.RecordAudit(a.GDB, core.AuditInput{
+		_ = a.audit(c, core.AuditInput{
 			Action: "audit.reveal", ActorSub: &sub, ActorName: servicesName(uv),
 			Scope: core.AuditScopeAdmin, TargetType: strPtr("audit"),
 			TargetID: strPtr(strconv.Itoa(r.ID)),

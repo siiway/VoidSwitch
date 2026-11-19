@@ -221,6 +221,23 @@ func splitModelsDevID(id string) (provider, model string, ok bool) {
 	return "", "", false
 }
 
+func (a *App) keylessProviderIDs() map[int]bool {
+	var rows []struct {
+		ProviderID int
+	}
+	a.GDB.Model(&database.ApiKey{}).
+		Select("provider_id").
+		Where("provider_id IS NOT NULL").
+		Group("provider_id").
+		Having("COUNT(*) FILTER (WHERE status = ?) = 0", string(constants.KeyStatusActive)).
+		Scan(&rows)
+	out := make(map[int]bool, len(rows))
+	for _, r := range rows {
+		out[r.ProviderID] = true
+	}
+	return out
+}
+
 // gatewayModels returns the OpenAI-compatible model list: every model the
 // presenting token may actually call. That is the enabled exposed models plus
 // the enabled providers' passthrough whitelists, each filtered by the token
@@ -260,9 +277,16 @@ func (a *App) advertisedModels(token *database.VoidToken, uv *core.UserView) ([]
 		data = append(data, item)
 	}
 
+	// A model whose every upstream sits on a keyless provider cannot serve a
+	// call, so it is not advertised: the list promises only callable ids.
+	keyless := a.keylessProviderIDs()
+
 	for i := range models {
 		m := &models[i]
 		if !m.Enabled || len(refs[m.ID]) == 0 {
+			continue
+		}
+		if !a.anyUpstreamServable(m.ID, keyless) {
 			continue
 		}
 		if !modelAllowedForToken(token, m.ModelID) {
@@ -284,6 +308,30 @@ func (a *App) advertisedModels(token *database.VoidToken, uv *core.UserView) ([]
 		push(gatewayModelItem(pt.id, 0, nil, pt.row, mdIndex))
 	}
 	return data, nil
+}
+
+// anyUpstreamServable reports whether at least one of a model's enabled route
+// upstreams belongs to a provider that still holds an active key. A model whose
+// whole route sits on keyless providers is not advertised at all.
+func (a *App) anyUpstreamServable(exposedModelID int, keyless map[int]bool) bool {
+	if len(keyless) == 0 {
+		return true
+	}
+	var route database.Route
+	if err := a.GDB.Select("id").Where("exposed_model_id = ?", exposedModelID).
+		First(&route).Error; err != nil {
+		return true
+	}
+	var providerIDs []int
+	a.GDB.Model(&database.RouteUpstream{}).
+		Where("route_id = ? AND enabled = ? AND provider_id IS NOT NULL", route.ID, true).
+		Pluck("provider_id", &providerIDs)
+	for _, pid := range providerIDs {
+		if !keyless[pid] {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) chatCompletions(c *gin.Context) {

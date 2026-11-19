@@ -398,7 +398,7 @@ func (a *App) meLoginTokenRotate(c *gin.Context) {
 	}
 	sub := uv.User.Sub
 	tid := strconv.Itoa(uv.User.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "me.login_token.rotate", ActorSub: &sub, ActorName: uv.User.Username,
 		Scope: core.AuditScopeSelf, TargetType: strPtr("user"), TargetID: &tid,
 		Detail: map[string]any{"prefix": prefix}, IP: strPtr(clientIP(c)),

@@ -73,7 +73,7 @@ func (a *App) auditModel(c *gin.Context, action, targetType string, targetID *st
 		return
 	}
 	sub := uv.User.Sub
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: action, ActorSub: &sub, ActorName: servicesName(uv),
 		Scope: core.AuditScopeAdmin, TargetType: &targetType, TargetID: targetID,
 		Detail: detail, IP: strPtr(clientIP(c)),

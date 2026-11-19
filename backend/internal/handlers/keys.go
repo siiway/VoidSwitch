@@ -110,8 +110,10 @@ func (a *App) keysCreate(c *gin.Context) {
 		Weight *int     `json:"weight"`
 		Note   *string  `json:"note"`
 	}
-	if err := c.ShouldBindJSON(&in); err != nil || len(in.Keys) == 0 {
-		a.fail(c, http.StatusUnprocessableEntity, "keys are required.")
+	// Keys are optional: a provider may be created (or a pool declared) before
+	// its credentials are known. The call is a no-op for an empty list.
+	if err := c.ShouldBindJSON(&in); err != nil {
+		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
 		return
 	}
 	var existing []string
@@ -169,7 +171,7 @@ func (a *App) keysCreate(c *gin.Context) {
 	}
 	sub, name := uv.User.Sub, servicesName(uv)
 	tid := strconv.Itoa(pid)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "key.add", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("provider"), TargetID: &tid,
 		Detail: map[string]any{"provider_name": provider.Name, "added": len(created)},
@@ -278,7 +280,7 @@ func (a *App) keysReveal(c *gin.Context) {
 	// unrecorded reveal defeats the point of storing the credential encrypted.
 	uv := core.GetUser(c)
 	sub := uv.User.Sub
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "key.reveal", ActorSub: &sub, ActorName: servicesName(uv),
 		Scope: core.AuditScopeAdmin, TargetType: strPtr("provider"),
 		TargetID: strPtr(strconv.Itoa(pid)),

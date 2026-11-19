@@ -90,19 +90,19 @@ Owners can view the plaintext of stored keys after confirming. Each reveal is re
 
 ## Programmatic key management
 
-Owners can enable a **key management API** (a `vsk-…` token) per provider, so that external integrations can
-manage *that provider's* keys. Tokens are created, rotated, revealed, and disabled from the provider row.
-
-Call `/provider-api` with `Authorization: Bearer vsk-…`:
+Key management is now part of [Platform API Keys](/en/admin/platform-api-keys): grant a key the
+`provider-key:<slug>.*` scope and use `/api/v1/providers/by-slug/<slug>/keys/**` to manage *that provider's*
+keys. The old `vsk-…` token and `/provider-api` mount are gone.
 
 | Method & path | Purpose |
 | --- | --- |
-| `GET /provider` | Confirm which provider the token belongs to |
-| `GET /keys` | List that provider's keys |
-| `POST /keys` | Add keys |
-| `PATCH /keys/{id}` | Change status / weight / note / pool |
-| `DELETE /keys/{id}` | Delete a key |
-| `POST /keys/reorder` | Reorder keys |
-| `POST /keys/refresh-balance` | Refresh every key's balance |
-| `POST /keys/{id}/refresh-balance` | Refresh one key's balance |
-| `POST /keys/cleanup` | Bulk-delete dead or out-of-balance keys (optionally scoped by `pool`) |
+| `GET /providers/by-slug/{slug}/keys` | List that provider's keys |
+| `POST /providers/by-slug/{slug}/keys` | Add keys (`keys` may be empty) |
+| `PATCH /providers/by-slug/{slug}/keys/{id}` | Change status / weight / note / pool |
+| `DELETE /providers/by-slug/{slug}/keys/{id}` | Delete a key |
+| `POST /providers/by-slug/{slug}/keys/reorder` | Reorder keys |
+| `POST /providers/by-slug/{slug}/keys/refresh-balance` | Refresh every key's balance |
+| `POST /providers/by-slug/{slug}/keys/cleanup` | Bulk-delete dead or out-of-balance keys |
+
+The scope must name the provider slug: `provider-key:acme.*` reaches only `acme`, and any other provider is
+refused.

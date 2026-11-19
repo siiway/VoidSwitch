@@ -10,13 +10,15 @@
 - **操作** — 一个 `资源.动词` 字符串（例如 `provider.update`、
   `announcement.update`、`key.reveal`）；
 - **范围** — `admin`（管理界面）、`self`（用户操作自己的资源）或 `system`（后台任务）；
-- **目标**、**详情**（非机密上下文）、IP 和 User Agent。
+- **目标**、**详情**（非机密上下文）、IP 和 User Agent；
+- **凭据** — 若操作来自[平台 API Key](/admin/platform-api-keys)，记录该 Key 的指纹
+  （`vsapi-ab12cd…wxyz`）与协议（`rest` / `mcp`），浏览器会话则为空。
 
 登录也会记录，并区分方式：交互式 Prism 登录（`auth.login`）与**登录 token** 登录
 （`auth.token_login`，详情中带 `method: login_token` 与令牌指纹）。因此当有人用紧急登录
 token 进入控制台时，审计记录会明确体现这一点。
 
-使用过滤器（操作、范围、操作者、目标类型、IP / User-Agent 以及**时间范围**）和搜索来缩小记录范围，
+使用过滤器（操作、范围、操作者、目标类型、IP / User-Agent、凭据以及**时间范围**）和搜索来缩小记录范围，
 并使用"跳转到 ID"定位到特定记录。时间范围支持最近 1 小时 / 24 小时 / 7 天 / 30 天等快捷区间，
 或自定义精确的起止时刻。
 

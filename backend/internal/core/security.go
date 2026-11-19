@@ -18,9 +18,8 @@ import (
 )
 
 const (
-	VoidTokenPrefix      = "vs-"
-	ProviderKeyAPIPrefix = "vsk-"
-	LoginTokenPrefix     = "vsl-"
+	VoidTokenPrefix  = "vs-"
+	LoginTokenPrefix = "vsl-"
 )
 
 // GenerateToken produces an opaque high-entropy token with the given prefix,
@@ -33,9 +32,15 @@ func GenerateToken(prefix string) (string, error) {
 	return prefix + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func GenerateVoidToken() (string, error)        { return GenerateToken(VoidTokenPrefix) }
-func GenerateProviderAPIToken() (string, error) { return GenerateToken(ProviderKeyAPIPrefix) }
-func GenerateLoginToken() (string, error)       { return GenerateToken(LoginTokenPrefix) }
+func GenerateVoidToken() (string, error)  { return GenerateToken(VoidTokenPrefix) }
+func GenerateLoginToken() (string, error) { return GenerateToken(LoginTokenPrefix) }
+
+// PlatformKeyFingerprint is the non-reversible label stored on a platform API
+// key and quoted in audit rows. The prefix is kept so a reader can tell which
+// credential type acted ("vsapi-ab12cd…wxyz").
+func PlatformKeyFingerprint(token string) string {
+	return "vsapi-" + TokenFingerprint(strings.TrimPrefix(token, "vsapi-"))
+}
 
 // HashToken is a deterministic SHA-256 hex hash for constant-time DB lookup.
 func HashToken(token string) string {

@@ -233,6 +233,9 @@ func UpsertUser(db *gorm.DB, cfg *config.Settings, ident *PrismIdentity) (*datab
 	_ = SyncAutoMemberships(db, existing.ID, autoGroups)
 	_ = SyncAutoAdminships(db, existing.ID, autoAdmins)
 	restoreAutoDisabledTokens(db, &existing)
+	// A user who is no longer staff loses automation access. Re-enabling is
+	// manual: the next promotion must not silently restore it.
+	_ = core.DisablePlatformKeysOnStaffLoss(db, existing.ID, existing.Role)
 	return &existing, nil
 }
 

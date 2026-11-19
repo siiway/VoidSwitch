@@ -265,10 +265,6 @@ type Provider struct {
 	RateLimitCooldownSeconds       int     `gorm:"column:rate_limit_cooldown_seconds;not null"`
 	AddedBy                        *int    `gorm:"column:added_by;index"`
 	AddedByName                    *string `gorm:"column:added_by_name;type:varchar(255)"`
-	KeyAPIEnabled                  bool    `gorm:"column:key_api_enabled;not null"`
-	KeyAPITokenHash                *string `gorm:"column:key_api_token_hash;type:varchar(64);uniqueIndex"`
-	KeyAPITokenCiphertext          *string `gorm:"column:key_api_token_ciphertext;type:text"`
-	KeyAPITokenPreview             *string `gorm:"column:key_api_token_preview;type:varchar(48)"`
 	PassthroughEnabled             bool    `gorm:"column:passthrough_enabled;not null"`
 	PassthroughModels              JSON    `gorm:"column:passthrough_models;type:json;not null"`
 	UpstreamCooldownSeconds        int     `gorm:"column:upstream_cooldown_seconds;not null"`
@@ -494,9 +490,41 @@ type AuditLog struct {
 	IP                  *string   `gorm:"column:ip;type:varchar(64)"`
 	UserAgent           *string   `gorm:"column:user_agent;type:varchar(512)"`
 	SensitiveCiphertext *string   `gorm:"column:sensitive_ciphertext;type:text"`
+	// Credential names the platform API key that performed the action
+	// ("vsapi-ab12cd…wxyz"). Null for actions taken through a browser session.
+	Credential *string `gorm:"column:credential;type:varchar(64)"`
 }
 
 func (AuditLog) TableName() string { return "audit_logs" }
+
+// ---- platform_api_keys ----------------------------------------------------
+
+// PlatformAPIKey is a staff credential (vsapi-…) for the platform API and the
+// MCP endpoint. Scopes are "category.action" strings ("model.edit"), with "*"
+// and "category.*" available as wildcards.
+type PlatformAPIKey struct {
+	Timestamped
+	ID              int        `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID          int        `gorm:"column:user_id;index;not null"`
+	Name            string     `gorm:"column:name;type:varchar(120);not null"`
+	KeyHash         string     `gorm:"column:key_hash;type:varchar(64);uniqueIndex;not null"`
+	KeyPrefix       string     `gorm:"column:key_prefix;type:varchar(32);not null"`
+	Scopes          JSON       `gorm:"column:scopes;type:json;not null"`
+	Enabled         bool       `gorm:"column:enabled;not null"`
+	DisabledReason  *string    `gorm:"column:disabled_reason;type:varchar(64)"`
+	ScopesGrantedAt *time.Time `gorm:"column:scopes_granted_at;type:timestamptz"`
+	ExpiresAt       *time.Time `gorm:"column:expires_at;type:timestamptz"`
+	LastUsedAt      *time.Time `gorm:"column:last_used_at;type:timestamptz"`
+
+	User *User `gorm:"foreignKey:UserID"`
+}
+
+func (PlatformAPIKey) TableName() string { return "platform_api_keys" }
+
+// PlatformAPIKeyDisabledLostStaff is the disabled_reason written when the owner
+// stopped being staff. Re-enabling is a deliberate manual action: becoming staff
+// again must not silently restore automation access.
+const PlatformAPIKeyDisabledLostStaff = "lost_staff"
 
 // BeforeCreate stamps TS server-side if zero.
 func (a *AuditLog) BeforeCreate(*gorm.DB) error {
@@ -594,6 +622,6 @@ func AllModels() []any {
 		&NodeHealthSample{}, &NodeGroup{}, &NodeGroupMember{}, &Setting{},
 		&ModelsDevCache{}, &RoleGroup{}, &RoleGroupMapping{}, &RoleGroupMembership{},
 		&RoleGroupAdminship{}, &Announcement{}, &AuditLog{}, &RequestLog{},
-		&UsageDaily{}, &SessionSpan{},
+		&UsageDaily{}, &SessionSpan{}, &PlatformAPIKey{},
 	}
 }

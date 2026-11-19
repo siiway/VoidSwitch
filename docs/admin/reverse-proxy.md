@@ -16,7 +16,7 @@ VoidSwitch 整体部署后，网关后端（`voidswitch:8080`）和前端的 ngi
 | ---- | ---- |
 | `/v1/` | 核心 API（`/v1/chat/completions`、`/v1/messages`、`/v1/models` 等） |
 | `/api/` | 控制台 API（`/api/auth/*`、`/api/me/*` 等） |
-| `/provider-api/` | 供应商密钥管理 API |
+| `/api/v1/` | 平台 API 与 MCP 端点（`vsapi-…` 鉴权） |
 | `/healthz` | 健康检查 |
 | `/install` | 安装脚本（`/install.sh`、`/install.ps1`） |
 | `/swagger`、`/docs`、`/redoc`、`/openapi.json` | API 文档 |
@@ -48,7 +48,7 @@ server {
     client_body_buffer_size 2m;
 
     # ---- API 反代 ----
-    location ~ ^/(v1|api|provider-api|healthz|install|install\.sh|install\.ps1|swagger|docs|redoc|openapi\.json)(/|$) {
+    location ~ ^/(v1|api|healthz|install|install\.sh|install\.ps1|swagger|docs|redoc|openapi\.json)(/|$) {
         proxy_pass http://voidswitch_backend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -120,7 +120,7 @@ voidswitch.example.com {
     }
 
     # API 反代（所有后端路径）
-    @api path /v1/* /api/* /provider-api/* /healthz /install /install.sh /install.ps1 /swagger /docs /redoc /openapi.json
+    @api path /v1/* /api/* /healthz /install /install.sh /install.ps1 /swagger /docs /redoc /openapi.json
     reverse_proxy @api 127.0.0.1:8080 {
         # 透传客户端真实 IP/协议
         header_up X-Real-IP {client_ip}

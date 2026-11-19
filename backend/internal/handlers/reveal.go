@@ -92,7 +92,7 @@ func (a *App) revealKeySearch(c *gin.Context) {
 	uv := core.GetUser(c)
 	if uv != nil && uv.User != nil {
 		sub := uv.User.Sub
-		_ = core.RecordAudit(a.GDB, core.AuditInput{
+		_ = a.audit(c, core.AuditInput{
 			Action: "key.search_reveal", ActorSub: &sub, ActorName: servicesName(uv),
 			Scope: core.AuditScopeAdmin, TargetType: strPtr("key"),
 			Detail: map[string]any{

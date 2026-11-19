@@ -199,8 +199,6 @@ type ProviderView struct {
 	SupportsOAuth                  bool              `json:"supports_oauth"`
 	AddedBy                        *int              `json:"added_by"`
 	AddedByName                    *string           `json:"added_by_name"`
-	KeyAPIEnabled                  bool              `json:"key_api_enabled"`
-	KeyAPITokenPreview             *string           `json:"key_api_token_preview"`
 	PassthroughEnabled             bool              `json:"passthrough_enabled"`
 	PassthroughModels              []string          `json:"passthrough_models"`
 	NewAPIMode                     string            `json:"new_api_mode"`
@@ -255,7 +253,6 @@ func BuildProviderView(p *database.Provider, keys []database.ApiKey) ProviderVie
 		CreatedAt:                p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		KeyCount: keyCount, ActiveKeyCount: active,
 		AddedBy: p.AddedBy, AddedByName: p.AddedByName,
-		KeyAPIEnabled: p.KeyAPIEnabled, KeyAPITokenPreview: p.KeyAPITokenPreview,
 		PassthroughEnabled: p.PassthroughEnabled, PassthroughModels: ptModels,
 		NewAPIMode: p.NewAPIMode, ProtectedErrorRetryEnabled: p.ProtectedErrorRetryEnabled,
 		SelectiveIgnoreRules: ignoreRules,

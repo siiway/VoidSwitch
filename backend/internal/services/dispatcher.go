@@ -233,8 +233,14 @@ func (d *Dispatcher) resolve() error {
 		} else if cand != nil {
 			now := time.Now().UTC()
 			keys, kerr := d.candidateKeys(cand.Provider, cand.Upstream.KeyPool, now)
-			if kerr != nil || len(keys) == 0 {
-				return fmt.Errorf("no usable key for model %q", d.req.ExposedModel)
+			if kerr != nil {
+				return kerr
+			}
+			// A provider with no usable key can never serve the call, so the request
+			// fails here with a message that names the provider instead of a generic
+			// "all upstreams failed".
+			if len(keys) == 0 {
+				return fmt.Errorf("provider %q has no usable key for model %q", cand.Provider.Name, d.req.ExposedModel)
 			}
 			d.seq = make([]Candidate, 0, len(keys))
 			for i := range keys {
@@ -264,6 +270,10 @@ func (d *Dispatcher) resolve() error {
 	}
 	now := time.Now().UTC()
 	var candidates []Candidate
+	// keyless names the providers skipped for having no usable key. Unlike a
+	// cooled-down upstream (which may recover), a provider without a key cannot
+	// serve the call, so it fails immediately and the reason is reported.
+	var keyless []string
 	for i := range upstreams {
 		u := &upstreams[i]
 		if u.ProviderID == nil {
@@ -277,7 +287,11 @@ func (d *Dispatcher) resolve() error {
 			continue
 		}
 		keys, err := d.candidateKeys(&provider, u.KeyPool, now)
-		if err != nil || len(keys) == 0 {
+		if err != nil {
+			continue
+		}
+		if len(keys) == 0 {
+			keyless = append(keyless, provider.Name)
 			continue
 		}
 		for i := range keys {
@@ -290,6 +304,10 @@ func (d *Dispatcher) resolve() error {
 		}
 	}
 	if len(candidates) == 0 {
+		if len(keyless) > 0 {
+			return fmt.Errorf("no usable upstream/key for model %q: %s has no usable key",
+				d.req.ExposedModel, strings.Join(keyless, ", "))
+		}
 		return fmt.Errorf("no usable upstream/key for model %q", d.req.ExposedModel)
 	}
 	d.seq = candidates

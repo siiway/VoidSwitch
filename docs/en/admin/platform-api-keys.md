@@ -1,0 +1,107 @@
+# Platform API Keys
+
+A **Platform API Key** (`vsapi-…`) is an automation credential reserved for staff
+(owner / co-owner / admin). One key drives both surfaces:
+
+| Surface | Address | Purpose |
+| --- | --- | --- |
+| REST | `/api/v1/**` | HTTP endpoints that mirror the MCP tools one-for-one |
+| MCP | `/api/v1/mcp` | MCP Streamable HTTP, for AI agents |
+
+It is fully separate from a [Void-Token](/en/admin/tokens): a Void-Token can only
+call the gateway (`/v1`), a Platform API Key can only call the management surface.
+Neither works on the other.
+
+## Creating one and choosing scopes
+
+Dashboard → **Platform API Keys** → **Create API key**. The secret is shown once,
+together with connect snippets you can copy.
+
+Each key carries a set of **scopes**, written `category.action` (e.g. `model.edit`):
+
+| Scope form | Meaning |
+| --- | --- |
+| `read` | Every read-only action |
+| `model.*` | A whole category |
+| `model.edit` | A single action |
+| `provider-key:acme.*` | Upstream key management for provider slug `acme` |
+
+**A key's permission is its scopes intersected with what its owner's current role
+may grant.** In practice:
+
+- The picker only offers what your role may grant (provider key management and
+  provider deletion are owner-only).
+- If your role is demoted, scopes beyond the new role stop working immediately —
+  no key edit needed.
+- Losing staff access disables every key you hold ("disabled — staff access lost").
+  **Regaining staff access does not re-enable them**; you must do it yourself.
+
+## Two hard limits
+
+- **Nothing reveals a stored secret.** There is no `*.reveal` action: upstream key
+  plaintext, audit sensitive payloads and Void-Token secrets are unreachable
+  through a Platform API Key.
+- **Staff only.** A non-staff caller is refused (403) even if the key row is still
+  enabled.
+
+## Calling it
+
+### MCP client
+
+```json
+{
+  "mcpServers": {
+    "voidswitch": {
+      "type": "http",
+      "url": "https://voidswitch.example.com/api/v1/mcp",
+      "headers": { "Authorization": "Bearer vsapi-…" }
+    }
+  }
+}
+```
+
+`tools/list` returns exactly the tools the key's scopes cover; tool names are
+`vs_` plus the scope with dots turned into underscores (`model.edit` →
+`vs_model_edit`). A tool outside the scopes is not listed at all.
+
+### REST
+
+```bash
+curl -s https://voidswitch.example.com/api/v1/whoami \
+  -H "Authorization: Bearer vsapi-…"
+
+curl -s https://voidswitch.example.com/api/v1/models \
+  -H "Authorization: Bearer vsapi-…"
+```
+
+`/whoami` returns the owner, role, effective scopes and the actions the key may
+call — the cheapest way to check a key before issuing real requests.
+
+### Python SDK
+
+A client ships in the repository (`sdk/python`):
+
+```python
+from voidswitch import Client
+
+vs = Client("https://voidswitch.example.com", api_key="vsapi-…")
+for model in vs.models.list():
+    print(model["model_id"], model["enabled"])
+```
+
+## Rate limit
+
+The platform API is rate-limited **per key**, 20 seconds / 30 requests by
+default. Both values are configurable in the **Platform API** group of
+[Settings](/en/admin/settings) (`0` = unlimited). Exceeding it returns `429`.
+
+## Audit
+
+Actions taken through a Platform API Key are audited like any other, and the row
+additionally records:
+
+- **Credential** — the key's fingerprint (`vsapi-ab12cd…wxyz`);
+- `via` in the detail — `rest` or `mcp`.
+
+So "who, with which key, over which protocol, did what" is answerable from a
+single row.

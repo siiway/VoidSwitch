@@ -190,7 +190,7 @@ func (a *App) roleGroupCreate(c *gin.Context) {
 	}
 	sub, name2 := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(g.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "role_group.create", ActorSub: &sub, ActorName: name2, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("role_group"), TargetID: &tid, Detail: map[string]any{"name": g.Name},
 		IP: strPtr(clientIP(c)),
@@ -245,7 +245,7 @@ func (a *App) roleGroupUpdate(c *gin.Context) {
 	}
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(g.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "role_group.update", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("role_group"), TargetID: &tid, Detail: map[string]any{"name": g.Name},
 		IP: strPtr(clientIP(c)),
@@ -274,7 +274,7 @@ func (a *App) roleGroupDelete(c *gin.Context) {
 	uv := core.GetUser(c)
 	sub := uv.User.Sub
 	tid := strconv.Itoa(g.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "role_group.delete", ActorSub: &sub, ActorName: servicesName(uv),
 		Scope: core.AuditScopeAdmin, TargetType: strPtr("role_group"), TargetID: &tid,
 		Detail: map[string]any{"name": g.Name}, IP: strPtr(clientIP(c)),
@@ -356,7 +356,7 @@ func (a *App) roleGroupMemberDelete(c *gin.Context) {
 	uv := core.GetUser(c)
 	sub := uv.User.Sub
 	tid := strconv.Itoa(id)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "role_group.member_remove", ActorSub: &sub, ActorName: servicesName(uv),
 		Scope: core.AuditScopeAdmin, TargetType: strPtr("role_group"), TargetID: &tid,
 		Detail: map[string]any{"user_id": uid}, IP: strPtr(clientIP(c)),
@@ -456,6 +456,15 @@ func (a *App) userUpdate(c *gin.Context) {
 			Where("user_id = ? AND deleted = ?", u.ID, false).
 			Updates(map[string]any{"enabled": false})
 	}
+	// Demoting a user out of staff also disables their platform API keys; the
+	// auth middleware would reject them anyway, but a disabled row is what the
+	// API Keys page shows.
+	if in.Role != nil {
+		if err := core.DisablePlatformKeysOnStaffLoss(a.GDB, u.ID, *in.Role); err != nil {
+			a.internal(c, err)
+			return
+		}
+	}
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(u.ID)
 	detail := map[string]any{}
@@ -465,7 +474,7 @@ func (a *App) userUpdate(c *gin.Context) {
 	if in.Enabled != nil {
 		detail["enabled"] = *in.Enabled
 	}
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "user.update", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("user"), TargetID: &tid, Detail: detail, IP: strPtr(clientIP(c)),
 	})
@@ -499,7 +508,7 @@ func (a *App) userForceLogout(c *gin.Context) {
 	}
 	sub, actor := uv.User.Sub, servicesName(uv)
 	tid := strconv.Itoa(u.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "user.force_logout", ActorSub: &sub, ActorName: actor,
 		Scope: core.AuditScopeAdmin, TargetType: strPtr("user"), TargetID: &tid,
 		Detail: map[string]any{"sub": u.Sub}, IP: strPtr(clientIP(c)),
@@ -633,7 +642,7 @@ func (a *App) adminTokenCreate(c *gin.Context) {
 	}
 	sub, aname := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(t.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "token.create", ActorSub: &sub, ActorName: aname, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("void_token"), TargetID: &tid,
 		Detail: map[string]any{"name": t.Name, "user_id": userID}, IP: strPtr(clientIP(c)),
@@ -703,7 +712,7 @@ func (a *App) adminTokenUpdate(c *gin.Context) {
 	uv := core.GetUser(c)
 	sub := uv.User.Sub
 	tid := strconv.Itoa(t.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "token.update", ActorSub: &sub, ActorName: servicesName(uv),
 		Scope: core.AuditScopeAdmin, TargetType: strPtr("void_token"), TargetID: &tid,
 		Detail: map[string]any{"name": t.Name, "enabled": t.Enabled},
@@ -734,7 +743,7 @@ func (a *App) adminTokenDelete(c *gin.Context) {
 	uv := core.GetUser(c)
 	sub := uv.User.Sub
 	tid := strconv.Itoa(t.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "token.delete", ActorSub: &sub, ActorName: servicesName(uv),
 		Scope: core.AuditScopeAdmin, TargetType: strPtr("void_token"), TargetID: &tid,
 		Detail: map[string]any{"name": t.Name}, IP: strPtr(clientIP(c)),

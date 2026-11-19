@@ -17,6 +17,7 @@ import { SettingsPage } from "./pages/Settings";
 import { Audit, Logs } from "./pages/Logs";
 import { Statistics } from "./pages/Statistics";
 import { MyToken } from "./pages/MyToken";
+import { PlatformAPIKeys } from "./pages/PlatformAPIKeys";
 import { Chat } from "./pages/Chat";
 import type { ReactNode } from "react";
 
@@ -111,6 +112,14 @@ export function App() {
           element={
             <Protected staff>
               <ModelRoute />
+            </Protected>
+          }
+        />
+        <Route
+          path="/api-keys"
+          element={
+            <Protected staff>
+              <PlatformAPIKeys />
             </Protected>
           }
         />

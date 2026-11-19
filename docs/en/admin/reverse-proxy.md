@@ -19,7 +19,7 @@ These paths should all point to the backend at `http://backend:8080`:
 | ---- | ----------- |
 | `/v1/` | Core API (`/v1/chat/completions`, `/v1/messages`, `/v1/models`, etc.) |
 | `/api/` | Dashboard API (`/api/auth/*`, `/api/me/*`, etc.) |
-| `/provider-api/` | Per-provider key management API |
+| `/api/v1/` | Platform API and MCP endpoint (`vsapi-…` auth) |
 | `/healthz` | Health check endpoint |
 | `/install` | Install scripts (`/install.sh`, `/install.ps1`) |
 | `/swagger`, `/docs`, `/redoc`, `/openapi.json` | API documentation |
@@ -48,7 +48,7 @@ server {
     client_max_body_size 25m;
 
     # ---- API reverse proxy ----
-    location ~ ^/(v1|api|provider-api|healthz|install|install\.sh|install\.ps1|swagger|docs|redoc|openapi\.json)(/|$) {
+    location ~ ^/(v1|api|healthz|install|install\.sh|install\.ps1|swagger|docs|redoc|openapi\.json)(/|$) {
         proxy_pass http://voidswitch_backend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -118,7 +118,7 @@ voidswitch.example.com {
     }
 
     # API reverse proxy (all backend paths)
-    @api path /v1/* /api/* /provider-api/* /healthz /install /install.sh /install.ps1 /swagger /docs /redoc /openapi.json
+    @api path /v1/* /api/* /healthz /install /install.sh /install.ps1 /swagger /docs /redoc /openapi.json
     reverse_proxy @api 127.0.0.1:8080 {
         # Forward the client's real IP / protocol
         header_up X-Real-IP {remote_host}

@@ -273,7 +273,7 @@ func (a *App) nodesCreate(c *gin.Context) {
 	}
 
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "node.create", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("node"), Detail: map[string]any{"count": len(out)},
 		IP: strPtr(clientIP(c)),
@@ -349,7 +349,7 @@ func (a *App) nodesUpdate(c *gin.Context) {
 	}
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(n.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "node.update", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("node"), TargetID: &tid, Detail: map[string]any{"url": n.URL},
 		IP: strPtr(clientIP(c)),
@@ -371,7 +371,7 @@ func (a *App) nodesDelete(c *gin.Context) {
 	}
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(id)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "node.delete", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("node"), TargetID: &tid, Detail: map[string]any{"url": n.URL},
 	})
@@ -501,7 +501,7 @@ func (a *App) nodeGroupsCreate(c *gin.Context) {
 	}
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(g.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "node_group.create", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("node_group"), TargetID: &tid, Detail: map[string]any{"name": g.Name},
 		IP: strPtr(clientIP(c)),
@@ -576,7 +576,7 @@ func (a *App) nodeGroupsDelete(c *gin.Context) {
 	}
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(id)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "node_group.delete", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("node_group"), TargetID: &tid, Detail: map[string]any{"name": g.Name},
 		IP: strPtr(clientIP(c)),

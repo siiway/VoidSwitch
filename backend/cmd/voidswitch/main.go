@@ -142,8 +142,12 @@ func buildRouter(app *handlers.App, cfg *config.Settings) *gin.Engine {
 
 	// Public gateway + installer.
 	handlers.RegisterGatewayRoutes(r.Group("/v1"), app)
+	// Platform API + MCP: the automation surface for staff-owned API keys.
+	// Mounted at /api/v1 so it sits under the same origin as the dashboard API,
+	// with its own credential (vsapi-…) rather than the session cookie.
+	handlers.RegisterPlatformAPIRoutes(r.Group("/api"), app)
+	handlers.RegisterPlatformMCPRoutes(r.Group("/api"), app)
 	handlers.RegisterInstallRoutes(r, app)
-	handlers.RegisterProviderAPIRoutes(r, app)
 	handlers.RegisterSPA(r, app)
 
 	api := r.Group("/api")
@@ -153,6 +157,7 @@ func buildRouter(app *handlers.App, cfg *config.Settings) *gin.Engine {
 	authed.Use(core.SessionAuth(app.GDB, cfg))
 	{
 		handlers.RegisterMeRoutes(authed, app)
+		handlers.RegisterMePlatformKeyRoutes(authed.Group("/me"), app)
 		handlers.RegisterModelRoutes(authed, app)
 		handlers.RegisterAnnouncementRoutes(authed, app)
 		handlers.RegisterUsageRoutes(authed, app)

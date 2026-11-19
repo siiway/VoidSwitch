@@ -33,7 +33,7 @@ func RegisterSPA(r *gin.Engine, a *App) {
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
 		// Never shadow backend-owned prefixes.
-		for _, prefix := range []string{"/api/", "/v1/", "/provider-api/", "/healthz", "/install", "/opencode/"} {
+		for _, prefix := range []string{"/api/", "/v1/", "/healthz", "/install", "/opencode/"} {
 			if strings.HasPrefix(p, prefix) || p == strings.TrimSuffix(prefix, "/") {
 				c.Status(404)
 				return

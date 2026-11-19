@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/siiway/voidswitch/internal/config"
+	"github.com/siiway/voidswitch/internal/core"
 	"github.com/siiway/voidswitch/internal/database"
 	"github.com/siiway/voidswitch/internal/redisx"
 	"github.com/siiway/voidswitch/internal/tasks"
@@ -32,6 +33,26 @@ func (a *App) fail(c *gin.Context, status int, msg string) {
 func (a *App) internal(c *gin.Context, err error) {
 	slog.Error("handler error", "path", c.Request.URL.Path, "err", err)
 	c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"detail": "Internal Server Error"})
+}
+
+// audit records one audit row, stamping the platform API key that performed the
+// action (nil for browser sessions) and the transport it used. Handlers call it
+// instead of core.RecordAudit directly so the credential attribution cannot be
+// forgotten on a new call site.
+func (a *App) audit(c *gin.Context, in core.AuditInput) error {
+	if cred := core.GetPlatformCredential(c); cred != nil {
+		if in.Credential == nil {
+			in.Credential = strPtr(cred.Fingerprint)
+		}
+		if in.Via == "" {
+			if cred.ViaMCP {
+				in.Via = "mcp"
+			} else {
+				in.Via = "rest"
+			}
+		}
+	}
+	return core.RecordAudit(a.GDB, in)
 }
 
 // clientIPHeader is the inbound header trusted for the real client IP. Defaults

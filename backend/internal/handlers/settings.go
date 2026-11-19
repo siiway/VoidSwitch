@@ -29,7 +29,7 @@ func (a *App) settingsUpdate(c *gin.Context) {
 	uv := core.GetUser(c)
 	sub := uv.User.Sub
 	name := services.BuildUserView(uv.User).Username
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "settings.update", ActorSub: &sub, ActorName: name,
 		Scope: core.AuditScopeAdmin, TargetType: strPtr("settings"),
 		Detail: map[string]any{"keys": keysOf(in.Values)}, IP: strPtr(clientIP(c)),
@@ -93,7 +93,7 @@ func (a *App) settingsCleanLogs(c *gin.Context) {
 	res := services.CleanupLogs(a.GDB)
 	uv := core.GetUser(c)
 	sub := uv.User.Sub
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "logs.cleanup", ActorSub: &sub, ActorName: servicesName(uv),
 		Scope: core.AuditScopeAdmin, TargetType: strPtr("logs"),
 		Detail: map[string]any{

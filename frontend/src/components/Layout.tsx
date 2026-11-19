@@ -24,6 +24,7 @@ import {
   DesktopRegular,
   DocumentBulletListRegular,
   KeyRegular,
+  KeyMultipleRegular,
   NavigationRegular,
   OpenRegular,
   PeopleRegular,
@@ -103,6 +104,13 @@ const SECTIONS: NavSection[] = [
       { to: "/models", label: "Models", labelKey: "nav.models", icon: <CubeRegular />, scope: "member" },
       { to: "/nodes", label: "Nodes", labelKey: "nav.nodes", icon: <CloudRegular />, scope: "staff" },
       { to: "/tokens", label: "Tokens", labelKey: "nav.tokens", icon: <KeyRegular />, scope: "owner" },
+      {
+        to: "/api-keys",
+        label: "Platform API Keys",
+        labelKey: "nav.platformApiKeys",
+        icon: <KeyMultipleRegular />,
+        scope: "staff",
+      },
     ],
   },
   {

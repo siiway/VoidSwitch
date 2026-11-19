@@ -82,19 +82,18 @@
 
 ## 编程式密钥管理
 
-所有者可以为每个供应商启用**密钥管理 API**（一个 `vsk-…` 令牌），
-以便外部集成可以管理*该供应商的*密钥。令牌从供应商行创建、轮换、显示和禁用。
-
-以 `Authorization: Bearer vsk-…` 调用 `/provider-api`：
+密钥管理已并入[平台 API Key](/admin/platform-api-keys)：为某把 Key 授予
+`provider-key:<slug>.*` scope，即可用 `/api/v1/providers/by-slug/<slug>/keys/**`
+管理*该供应商的*密钥。旧的 `vsk-…` 令牌与 `/provider-api` 已移除。
 
 | 方法与路径 | 作用 |
 | --- | --- |
-| `GET /provider` | 确认令牌对应的供应商 |
-| `GET /keys` | 列出该供应商的密钥 |
-| `POST /keys` | 添加密钥 |
-| `PATCH /keys/{id}` | 修改状态 / 权重 / 备注 / 池 |
-| `DELETE /keys/{id}` | 删除密钥 |
-| `POST /keys/reorder` | 重排顺序 |
-| `POST /keys/refresh-balance` | 批量刷新余额 |
-| `POST /keys/{id}/refresh-balance` | 刷新单个密钥余额 |
-| `POST /keys/cleanup` | 批量清理失效 / 余额不足的密钥（可限定 `pool`） |
+| `GET /providers/by-slug/{slug}/keys` | 列出该供应商的密钥 |
+| `POST /providers/by-slug/{slug}/keys` | 添加密钥（`keys` 可为空） |
+| `PATCH /providers/by-slug/{slug}/keys/{id}` | 修改状态 / 权重 / 备注 / 池 |
+| `DELETE /providers/by-slug/{slug}/keys/{id}` | 删除密钥 |
+| `POST /providers/by-slug/{slug}/keys/reorder` | 重排顺序 |
+| `POST /providers/by-slug/{slug}/keys/refresh-balance` | 批量刷新余额 |
+| `POST /providers/by-slug/{slug}/keys/cleanup` | 批量清理失效 / 余额不足的密钥 |
+
+scope 必须写明提供商 slug：`provider-key:acme.*` 只能管理 `acme`，触碰其他提供商会被拒绝。

@@ -85,16 +85,6 @@ export interface SelectiveIgnoreRule {
   body_substrings: string[];
 }
 
-// Per-provider key-management API credential (owner-only).
-export interface ProviderKeyApi {
-  provider_id: number;
-  provider_uuid?: string | null;
-  enabled: boolean;
-  token_preview?: string | null;
-  // Present only on enable / rotate / reveal.
-  token?: string;
-}
-
 export type KeySelectMode =
   | "round_robin"
   | "random"
@@ -214,6 +204,39 @@ export interface VoidToken {
 
 export interface VoidTokenWithSecret extends VoidToken {
   token: string;
+}
+
+// Platform API key: a staff credential (vsapi-…) for /api/v1 and the MCP
+// endpoint. `key` exists only in the create/rotate response.
+export interface PlatformAPIKey {
+  id: number;
+  user_id: number;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  enabled: boolean;
+  disabled_reason?: string | null;
+  expires_at?: string | null;
+  last_used_at?: string | null;
+  created_at: string;
+}
+
+export interface PlatformAPIKeyWithSecret extends PlatformAPIKey {
+  key: string;
+}
+
+export interface PlatformAPIKeyScope {
+  scope: string;
+  summary: string;
+  category?: string;
+  grantable: boolean;
+}
+
+export interface PlatformAPIKeyScopeCatalogue {
+  scopes: PlatformAPIKeyScope[];
+  role: string;
+  can_manage_provider_keys: boolean;
+  providers: { id: number; slug: string; name: string }[];
 }
 
 export interface ModelEntry {
@@ -481,6 +504,9 @@ export interface AuditLog {
   ip?: string | null;
   user_agent?: string | null;
   has_sensitive?: boolean;
+  // Platform API key fingerprint that performed the action; null for a browser
+  // session.
+  credential?: string | null;
 }
 
 export interface AuditActor {
@@ -493,6 +519,7 @@ export interface AuditFilterOptions {
   scopes: string[];
   target_types: string[];
   actors: AuditActor[];
+  credentials: string[];
 }
 
 export interface TokenRef {

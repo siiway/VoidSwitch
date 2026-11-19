@@ -87,12 +87,10 @@ func (a *App) providersList(c *gin.Context) {
 		v.SupportsRefresh = adapter.CanRefresh()
 		v.SupportsOAuth = adapter.CanOAuth()
 		if !uv.IsOwner() {
-			// Redact secret config and hide key-api state from non-owners.
+			// Redact secret config from non-owners.
 			for k := range v.ExtraHeaders {
 				v.ExtraHeaders[k] = "***"
 			}
-			v.KeyAPIEnabled = false
-			v.KeyAPITokenPreview = nil
 		}
 		out = append(out, v)
 	}
@@ -179,7 +177,7 @@ func (a *App) providerCreate(c *gin.Context) {
 		sensitive = map[string]any{"extra_headers": json.RawMessage(p.ExtraHeaders)}
 	}
 	tid := strconv.Itoa(p.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "provider.create", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("provider"), TargetID: &tid,
 		Detail:    map[string]any{"name": p.Name, "type": p.Type, "base_url": p.BaseURL},
@@ -229,7 +227,7 @@ func (a *App) providerUpdate(c *gin.Context) {
 	}
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(p.ID)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "provider.update", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("provider"), TargetID: &tid, Detail: map[string]any{"name": p.Name},
 		SecretKey: a.Cfg.Server.SecretKey, IP: strPtr(clientIP(c)),
@@ -261,7 +259,7 @@ func (a *App) providerDelete(c *gin.Context) {
 	}
 	sub, name := uv.User.Sub, services.BuildUserView(uv.User).Username
 	tid := strconv.Itoa(id)
-	_ = core.RecordAudit(a.GDB, core.AuditInput{
+	_ = a.audit(c, core.AuditInput{
 		Action: "provider.delete", ActorSub: &sub, ActorName: name, Scope: core.AuditScopeAdmin,
 		TargetType: strPtr("provider"), TargetID: &tid, Detail: map[string]any{"name": p.Name},
 	})
@@ -360,97 +358,6 @@ func (a *App) providerFetchModelKeys(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// key-api credential management (owner-only)
-func (a *App) keyAPIStatus(c *gin.Context) {
-	id, _ := strconv.Atoi(c.Param("id"))
-	var p database.Provider
-	if err := a.GDB.First(&p, id).Error; err != nil {
-		a.fail(c, http.StatusNotFound, "Provider not found.")
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"provider_id": p.ID, "provider_uuid": p.UUID,
-		"enabled": p.KeyAPIEnabled, "token_preview": p.KeyAPITokenPreview,
-	})
-}
-
-func (a *App) keyAPIAction(c *gin.Context) {
-	uv := core.GetUser(c)
-	id, _ := strconv.Atoi(c.Param("id"))
-	action := c.Param("action")
-	var p database.Provider
-	if err := a.GDB.First(&p, id).Error; err != nil {
-		a.fail(c, http.StatusNotFound, "Provider not found.")
-		return
-	}
-	// Rotating, enabling, disabling or revealing a key-management credential acts
-	// on a provider's secrets, so it belongs in the audit trail.
-	auditKeyAPI := func() {
-		if uv == nil || uv.User == nil {
-			return
-		}
-		sub := uv.User.Sub
-		_ = core.RecordAudit(a.GDB, core.AuditInput{
-			Action: "provider.key_api." + action, ActorSub: &sub, ActorName: servicesName(uv),
-			Scope: core.AuditScopeAdmin, TargetType: strPtr("provider"),
-			TargetID: strPtr(strconv.Itoa(p.ID)),
-			Detail:   map[string]any{"provider_name": p.Name, "action": action},
-			IP:       strPtr(clientIP(c)),
-		})
-	}
-	switch action {
-	case "enable", "rotate":
-		raw, _ := core.GenerateProviderAPIToken()
-		hash := core.HashToken(raw)
-		ct, err := cryptoutil.EncryptSecret(raw, a.Cfg.Server.SecretKey)
-		if err != nil {
-			a.internal(c, err)
-			return
-		}
-		preview := tokenPreview(raw)
-		a.GDB.Model(&p).Updates(map[string]any{
-			"key_api_enabled": true, "key_api_token_hash": hash,
-			"key_api_token_ciphertext": ct, "key_api_token_preview": preview,
-		})
-		auditKeyAPI()
-		c.JSON(http.StatusOK, gin.H{
-			"provider_id": p.ID, "provider_uuid": p.UUID, "enabled": true,
-			"token_preview": preview, "token": raw,
-		})
-	case "disable":
-		a.GDB.Model(&p).Updates(map[string]any{
-			"key_api_enabled": false, "key_api_token_hash": nil,
-			"key_api_token_ciphertext": nil, "key_api_token_preview": nil,
-		})
-		auditKeyAPI()
-		c.JSON(http.StatusOK, gin.H{"provider_id": p.ID, "provider_uuid": p.UUID, "enabled": false, "token_preview": nil})
-	case "reveal":
-		if !p.KeyAPIEnabled || p.KeyAPITokenCiphertext == nil {
-			a.fail(c, http.StatusBadRequest, "Key-management API is not enabled for this provider.")
-			return
-		}
-		raw, err := cryptoutil.DecryptSecret(*p.KeyAPITokenCiphertext, a.Cfg.Server.SecretKey)
-		if err != nil {
-			a.internal(c, err)
-			return
-		}
-		auditKeyAPI()
-		c.JSON(http.StatusOK, gin.H{
-			"provider_id": p.ID, "provider_uuid": p.UUID, "enabled": true,
-			"token_preview": p.KeyAPITokenPreview, "token": raw,
-		})
-	default:
-		a.fail(c, http.StatusNotFound, "unknown action")
-	}
-}
-
-func tokenPreview(raw string) string {
-	if len(raw) > 14 {
-		return raw[:8] + "…" + raw[len(raw)-4:]
-	}
-	return raw[:4] + "***"
-}
-
 // applyProviderPatch applies non-nil payload fields to the provider row.
 func applyProviderPatch(p *database.Provider, in *providerPayload) {
 	if in.Name != nil {
@@ -526,8 +433,6 @@ func RegisterProviderRoutes(g *gin.RouterGroup, a *App) {
 	g.PATCH("/providers/:id", a.providerUpdate)
 	g.DELETE("/providers/:id", core.RequireOwner(), a.providerDelete)
 	g.GET("/providers/:id/fetch-models/keys", a.providerFetchModelKeys)
-	g.GET("/providers/:id/key-api", core.RequireOwner(), a.keyAPIStatus)
-	g.POST("/providers/:id/key-api/:action", core.RequireOwner(), a.keyAPIAction)
 }
 
 var _ = gorm.ErrRecordNotFound

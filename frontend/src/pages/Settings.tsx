@@ -109,6 +109,13 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
     keys: ["session_ttl_minutes"],
   },
   {
+    titleKey: "settings.sectionPlatformApi",
+    keys: [
+      "platform_api_rate_limit_window_seconds",
+      "platform_api_rate_limit_max_requests",
+    ],
+  },
+  {
     titleKey: "settings.sectionLogs",
     keys: [
       "logs_page_size",
@@ -343,6 +350,8 @@ export function Settings() {
       log_cleanup_interval_seconds: t("settings.logCleanupInterval" as TK),
       logs_page_size: t("settings.logsPageSize" as TK),
       sse_max_connections_per_user: t("settings.sseMaxConnectionsPerUser" as TK),
+      platform_api_rate_limit_window_seconds: t("settings.platformApiRateWindow" as TK),
+      platform_api_rate_limit_max_requests: t("settings.platformApiRateMax" as TK),
       model_health_recent_request_count: t("settings.modelHealthRecentRequestCount" as TK),
       upstream_select_mode: t("settings.upstreamSelectMode" as TK),
       upstream_rank_algorithm: t("settings.upstreamRankAlgorithm" as TK),

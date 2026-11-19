@@ -1,5 +1,4 @@
 import {
-  Badge,
   Button,
   Checkbox,
   Dialog,
@@ -42,7 +41,6 @@ import {
   EditRegular,
   EyeRegular,
   KeyRegular,
-  ShieldKeyholeRegular,
 } from "@fluentui/react-icons";
 import { useState, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
@@ -57,7 +55,6 @@ import type {
   NewApiMode,
   NodeGroup,
   Provider,
-  ProviderKeyApi,
   SelectiveIgnoreRule,
 } from "../api/types";
 import type { Translations } from "../i18n/locales/en";
@@ -394,7 +391,7 @@ function SelectiveIgnoreRuleEditor({
 }
 
 export function Providers() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const notify = useNotify();
   const confirm = useConfirm();
@@ -422,10 +419,6 @@ export function Providers() {
   // not be edited while it was open.
   const [fetchPanelOpen, setFetchPanelOpen] = useState(false);
   // Per-provider key-management API credential (owner-only).
-  const [keyApiFor, setKeyApiFor] = useState<Provider | null>(null);
-  const [keyApi, setKeyApi] = useState<ProviderKeyApi | null>(null);
-  const [keyApiToken, setKeyApiToken] = useState("");
-  const [keyApiBusy, setKeyApiBusy] = useState(false);
   const [revealOpen, setRevealOpen] = useState(false);
   // Key picker for fetch-models
   const [keyPickerOpen, setKeyPickerOpen] = useState(false);
@@ -543,7 +536,7 @@ export function Providers() {
       setKeyPickerKeys(keys);
     } catch (e) {
       notify(
-        t("providers.keyApiActionFailed" as TK),
+        t("providers.fetchKeysFailed" as TK),
         e instanceof Error ? e.message : String(e),
         "error",
       );
@@ -718,51 +711,6 @@ export function Providers() {
       );
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function openKeyApi(p: Provider) {
-    setKeyApiFor(p);
-    setKeyApi(null);
-    setKeyApiToken("");
-    try {
-      const data = await api.get<ProviderKeyApi>(
-        `/api/admin/providers/${p.id}/key-api`,
-      );
-      setKeyApi(data);
-    } catch (e) {
-      notify(
-        t("providers.keyApiActionFailed" as TK),
-        e instanceof Error ? e.message : String(e),
-        "error",
-      );
-    }
-  }
-
-  async function keyApiAction(
-    action: "enable" | "rotate" | "reveal" | "disable",
-    okMsg: TK,
-  ) {
-    if (!keyApiFor) return;
-    setKeyApiBusy(true);
-    try {
-      const data = await api.post<ProviderKeyApi>(
-        `/api/admin/providers/${keyApiFor.id}/key-api/${action}`,
-      );
-      setKeyApi(data);
-      if (data.token) setKeyApiToken(data.token);
-      if (action !== "reveal") {
-        notify(t(okMsg), keyApiFor.name, "success");
-        providers.reload();
-      }
-    } catch (e) {
-      notify(
-        t("providers.keyApiActionFailed" as TK),
-        e instanceof Error ? e.message : String(e),
-        "error",
-      );
-    } finally {
-      setKeyApiBusy(false);
     }
   }
 
@@ -1044,17 +992,6 @@ export function Providers() {
                         appearance="subtle"
                         onClick={() => openEdit(p)}
                         aria-label={t("common.edit" as TK)}
-                      />
-                    </Tooltip>
-                  )}
-                  {isOwner && (
-                    <Tooltip content={t("providers.keyApi" as TK)} relationship="label">
-                      <Button
-                        size="small"
-                        icon={<ShieldKeyholeRegular />}
-                        appearance="subtle"
-                        onClick={() => openKeyApi(p)}
-                        aria-label={t("providers.keyApi" as TK)}
                       />
                     </Tooltip>
                   )}
@@ -1719,175 +1656,6 @@ export function Providers() {
         </PopoverSurface>
       </Popover>
 
-      <Dialog
-        open={keyApiFor !== null}
-        onOpenChange={(_, d) => {
-          if (!d.open) {
-            setKeyApiFor(null);
-            setKeyApi(null);
-            setKeyApiToken("");
-          }
-        }}
-      >
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>
-              {t("providers.keyApiTitle" as TK).replace(
-                "{name}",
-                keyApiFor?.name ?? "",
-              )}
-            </DialogTitle>
-            <DialogContent
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 12,
-                paddingTop: 8,
-              }}
-            >
-              <p style={{ color: tokens.colorNeutralForeground3, fontSize: 13 }}>
-                {t("providers.keyApiDesc" as TK)}
-              </p>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ fontWeight: 600 }}>
-                  {t("providers.keyApiStatus" as TK)}:
-                </span>
-                <Badge
-                  color={keyApi?.enabled ? "success" : "subtle"}
-                  appearance="filled"
-                >
-                  {keyApi?.enabled
-                    ? t("providers.keyApiEnabled" as TK)
-                    : t("providers.keyApiDisabled" as TK)}
-                </Badge>
-                {keyApi?.token_preview && !keyApiToken && (
-                  <code style={{ color: tokens.colorNeutralForeground3 }}>
-                    {keyApi.token_preview}
-                  </code>
-                )}
-              </div>
-
-              {keyApiToken && (
-                <Field label={t("providers.keyApiToken" as TK)}>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <Input
-                      readOnly
-                      value={keyApiToken}
-                      style={{ flex: 1, fontFamily: "monospace" }}
-                    />
-                    <Button
-                      onClick={() => {
-                        navigator.clipboard?.writeText(keyApiToken);
-                        notify(t("providers.keyApiCopied" as TK), "", "success");
-                      }}
-                    >
-                      {t("providers.keyApiCopy" as TK)}
-                    </Button>
-                  </div>
-                  <p
-                    style={{
-                      color: tokens.colorStatusWarningForeground1,
-                      fontSize: 12,
-                      marginTop: 4,
-                    }}
-                  >
-                    {t("providers.keyApiTokenOnce" as TK)}
-                  </p>
-                </Field>
-              )}
-
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {!keyApi?.enabled ? (
-                  <Button
-                    appearance="primary"
-                    disabled={keyApiBusy}
-                    onClick={() =>
-                      keyApiAction("enable", "providers.keyApiEnabledMsg" as TK)
-                    }
-                  >
-                    {t("providers.keyApiEnable" as TK)}
-                  </Button>
-                ) : (
-                  <>
-                    <Button
-                      disabled={keyApiBusy}
-                      onClick={async () => {
-                        const ok = await confirm({
-                          title: t("providers.keyApiRotate" as TK),
-                          message: t("providers.keyApiRotateConfirm" as TK),
-                          confirmLabel: t("providers.keyApiRotate" as TK),
-                          tone: "danger",
-                        });
-                        if (ok)
-                          keyApiAction(
-                            "rotate",
-                            "providers.keyApiRotatedMsg" as TK,
-                          );
-                      }}
-                    >
-                      {t("providers.keyApiRotate" as TK)}
-                    </Button>
-                    <Button
-                      disabled={keyApiBusy}
-                      onClick={() =>
-                        keyApiAction("reveal", "providers.keyApiToken" as TK)
-                      }
-                    >
-                      {t("providers.keyApiReveal" as TK)}
-                    </Button>
-                    <Button
-                      disabled={keyApiBusy}
-                      onClick={async () => {
-                        const ok = await confirm({
-                          title: t("providers.keyApiDisable" as TK),
-                          message: t("providers.keyApiDisableConfirm" as TK),
-                          confirmLabel: t("providers.keyApiDisable" as TK),
-                          tone: "danger",
-                        });
-                        if (ok)
-                          keyApiAction(
-                            "disable",
-                            "providers.keyApiDisabledMsg" as TK,
-                          );
-                      }}
-                    >
-                      {t("providers.keyApiDisable" as TK)}
-                    </Button>
-                  </>
-                )}
-              </div>
-            </DialogContent>
-            <DialogActions>
-              <Button
-                appearance="secondary"
-                // The Go backend serves no Swagger UI; the documented endpoint
-                // table lives in the usage site instead of a 404.
-                onClick={() =>
-                  window.open(
-                    i18n.language.startsWith("zh")
-                      ? "https://voidswitch.siiway.page/admin/keys"
-                      : "https://voidswitch.siiway.page/en/admin/keys",
-                    "_blank",
-                    "noopener,noreferrer",
-                  )
-                }
-              >
-                {t("providers.keyApiDocs" as TK)}
-              </Button>
-              <Button
-                appearance="primary"
-                onClick={() => {
-                  setKeyApiFor(null);
-                  setKeyApi(null);
-                  setKeyApiToken("");
-                }}
-              >
-                {t("common.close" as TK)}
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
     </div>
   );
 }
