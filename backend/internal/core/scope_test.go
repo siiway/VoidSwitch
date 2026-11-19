@@ -134,7 +134,8 @@ func TestGrantableScopes(t *testing.T) {
 func TestOwnerOnlyActionsNeverGrantableToAdmin(t *testing.T) {
 	ownerOnly := []string{
 		"user.edit", "setting.edit", "provider.delete",
-		"announcement.delete", "model.route.clear-cooldown",
+		"node.delete", "role-group.edit", "role-group.delete",
+		"role-group.member.remove", "model.route.clear-cooldown",
 	}
 	for _, action := range ownerOnly {
 		if ScopeGrantableBy("admin", action) {
@@ -150,12 +151,16 @@ func TestOwnerOnlyActionsNeverGrantableToAdmin(t *testing.T) {
 			t.Fatalf("owner with '*' should reach %q", action)
 		}
 	}
-	// The scope entries for those actions must not be offered to admins either.
-	if ScopeGrantableBy("admin", "user.*") {
-		t.Fatal("admin must not be able to grant user.*")
+	// A category wildcard stays grantable (it is how a whole category is handed
+	// over), but it must not carry the owner-only member of that category.
+	admin := EffectiveScopes([]string{"user.*", "node.*"}, "admin")
+	for _, s := range admin {
+		if s == "user.edit" || s == "node.delete" {
+			t.Fatalf("admin wildcard leaked owner-only %q: %v", s, admin)
+		}
 	}
-	if ScopeGrantableBy("admin", "setting.*") {
-		t.Fatal("admin must not be able to grant setting.*")
+	if len(admin) == 0 {
+		t.Fatal("admin wildcards should still expand to the admin surface")
 	}
 }
 

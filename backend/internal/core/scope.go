@@ -67,11 +67,11 @@ func actionTable() []Action {
 		{Name: "model.route.edit", Tier: TierAdmin, Category: "model", Summary: "Replace a model's routing plan."},
 		{Name: "model.route.clear-cooldown", Tier: TierAdmin, Category: "model", Summary: "Clear an upstream cooldown.", OwnerOnly: true},
 		{Name: "category.list", Tier: TierRead, Category: "model", Summary: "List model categories."},
-		{Name: "category.edit", Tier: TierAdmin, Category: "model", Summary: "Create, rename or delete a model category."},
+		{Name: "category.edit", Tier: TierAdmin, Category: "model", Summary: "Create a model category."},
 
 		{Name: "provider.list", Tier: TierRead, Category: "provider", Summary: "List providers (secrets redacted)."},
 		{Name: "provider.get", Tier: TierRead, Category: "provider", Summary: "Read one provider (secrets redacted)."},
-		{Name: "provider.edit", Tier: TierAdmin, Category: "provider", Summary: "Create or update a provider (a new provider may start without keys)."},
+		{Name: "provider.edit", Tier: TierAdmin, Category: "provider", Summary: "Create a provider (it may start without keys)."},
 		{Name: "provider.delete", Tier: TierAdmin, Category: "provider", Summary: "Delete a provider and its keys.", OwnerOnly: true},
 
 		{Name: "provider-key.list", Tier: TierProviderKey, Category: "provider-key", Summary: "List one provider's upstream keys."},
@@ -84,10 +84,10 @@ func actionTable() []Action {
 
 		{Name: "node.list", Tier: TierRead, Category: "node", Summary: "List egress nodes and node groups."},
 		{Name: "node.get", Tier: TierRead, Category: "node", Summary: "Read one egress node."},
-		{Name: "node.edit", Tier: TierAdmin, Category: "node", Summary: "Create or update an egress node."},
-		{Name: "node.delete", Tier: TierAdmin, Category: "node", Summary: "Delete an egress node."},
+		{Name: "node.edit", Tier: TierAdmin, Category: "node", Summary: "Create an egress node."},
+		{Name: "node.delete", Tier: TierAdmin, Category: "node", Summary: "Delete an egress node.", OwnerOnly: true},
 		{Name: "node.probe", Tier: TierAdmin, Category: "node", Summary: "Probe an egress node's health now."},
-		{Name: "node-group.edit", Tier: TierAdmin, Category: "node", Summary: "Create, update or delete a node group."},
+		{Name: "node-group.edit", Tier: TierAdmin, Category: "node", Summary: "Create a node group."},
 
 		{Name: "user.list", Tier: TierRead, Category: "user", Summary: "List users."},
 		{Name: "user.get", Tier: TierRead, Category: "user", Summary: "Read one user."},
@@ -96,10 +96,10 @@ func actionTable() []Action {
 
 		{Name: "role-group.list", Tier: TierRead, Category: "role-group", Summary: "List role groups."},
 		{Name: "role-group.get", Tier: TierRead, Category: "role-group", Summary: "Read one role group."},
-		{Name: "role-group.edit", Tier: TierAdmin, Category: "role-group", Summary: "Create or update a role group."},
-		{Name: "role-group.delete", Tier: TierAdmin, Category: "role-group", Summary: "Delete a role group."},
+		{Name: "role-group.edit", Tier: TierAdmin, Category: "role-group", Summary: "Create a role group.", OwnerOnly: true},
+		{Name: "role-group.delete", Tier: TierAdmin, Category: "role-group", Summary: "Delete a role group.", OwnerOnly: true},
 		{Name: "role-group.member.list", Tier: TierRead, Category: "role-group", Summary: "List a role group's members."},
-		{Name: "role-group.member.remove", Tier: TierAdmin, Category: "role-group", Summary: "Remove a member from a role group."},
+		{Name: "role-group.member.remove", Tier: TierAdmin, Category: "role-group", Summary: "Remove a member from a role group.", OwnerOnly: true},
 
 		{Name: "api-key.list", Tier: TierRead, Category: "api-key", Summary: "List platform API keys."},
 		{Name: "api-key.get", Tier: TierRead, Category: "api-key", Summary: "Read one platform API key."},
@@ -115,8 +115,8 @@ func actionTable() []Action {
 		{Name: "audit-log.filters", Tier: TierRead, Category: "audit-log", Summary: "List the audit filter values."},
 
 		{Name: "announcement.list", Tier: TierRead, Category: "announcement", Summary: "List announcements."},
-		{Name: "announcement.edit", Tier: TierAdmin, Category: "announcement", Summary: "Create or update an announcement."},
-		{Name: "announcement.delete", Tier: TierAdmin, Category: "announcement", Summary: "Delete an announcement.", OwnerOnly: true},
+		{Name: "announcement.edit", Tier: TierAdmin, Category: "announcement", Summary: "Create an announcement."},
+		{Name: "announcement.delete", Tier: TierAdmin, Category: "announcement", Summary: "Delete an announcement."},
 
 		{Name: "setting.get", Tier: TierRead, Category: "setting", Summary: "Read runtime settings."},
 		{Name: "setting.edit", Tier: TierAdmin, Category: "setting", Summary: "Change runtime settings.", OwnerOnly: true},
@@ -197,6 +197,15 @@ func ProviderKeyScopeAllows(scopes []string, slug, action string) bool {
 	return false
 }
 
+// splitCategoryWildcard splits "model.*" into ("model", true, true).
+func splitCategoryWildcard(scope string) (category string, wildcard bool, ok bool) {
+	head, tail, found := strings.Cut(scope, ".*")
+	if !found || tail != "" || head == "" {
+		return "", false, false
+	}
+	return head, true, true
+}
+
 func splitAction(action string) (category, verb string, ok bool) {
 	i := strings.LastIndexByte(action, '.')
 	if i <= 0 || i == len(action)-1 {
@@ -237,9 +246,9 @@ func adminGrantableScopes() []string {
 		"model.route.get", "model.route.edit",
 		"category.list", "category.edit",
 		"provider.list", "provider.get", "provider.edit",
-		"node.*", "node-group.*",
+		"node.list", "node.get", "node.edit", "node.probe", "node-group.edit",
 		"user.list", "user.get", "user.force-logout",
-		"role-group.*",
+		"role-group.list", "role-group.get", "role-group.member.list",
 		"api-key.*",
 		"request-log.list", "request-log.get", "request-log.filters",
 		"audit-log.*",
@@ -289,6 +298,8 @@ func ScopeGrantableBy(role, scope string) bool {
 	if scope == ScopeAll {
 		return allow[ScopeAll]
 	}
+	// Per-provider entries are granted whole (the slug is part of the entry), so
+	// they must be handled before the generic category-wildcard branch below.
 	if strings.HasPrefix(scope, ProviderScope+":") {
 		if !allow[ProviderScope+":*.*"] {
 			return false
@@ -304,6 +315,20 @@ func ScopeGrantableBy(role, scope string) bool {
 		_, declared := ActionByName(ProviderScope + "." + verb)
 		return declared
 	}
+	// A category wildcard is grantable when the category still has at least one
+	// action this role may grant. The wildcard never widens to an owner-only
+	// action: those are filtered out at use time.
+	if category, wildcard, ok := splitCategoryWildcard(scope); ok && wildcard {
+		for _, act := range Actions() {
+			if act.Category != category {
+				continue
+			}
+			if ScopeGrantableBy(role, act.Name) {
+				return true
+			}
+		}
+		return false
+	}
 	action, declared := ActionByName(scope)
 	if !declared {
 		return false
@@ -311,7 +336,7 @@ func ScopeGrantableBy(role, scope string) bool {
 	if action.OwnerOnly && !IsOwner(role) {
 		return false
 	}
-	return allow[action.Category+".*"] ||
+	return allow[ScopeAll] || allow[scope] || allow[action.Category+".*"] ||
 		(allow[ScopeRead] && action.Tier == TierRead)
 }
 
@@ -355,17 +380,28 @@ func EffectiveScopes(scopes []string, role string) []string {
 			out = append(out, grantable...)
 			continue
 		}
-		// A concrete action inside a granted category stays valid: "model.edit"
-		// inside "model.*".
-		if category, _, ok := splitAction(s); ok && allow[category+".*"] {
-			out = append(out, s)
-			continue
-		}
 		// Per-provider scopes never survive without an owner grant.
 		if strings.HasPrefix(s, ProviderScope+":") {
 			if allow[ProviderScope+":*.*"] {
 				out = append(out, s)
 			}
+			continue
+		}
+		// A category wildcard expands to the concrete actions of that category the
+		// role may still perform, so "model.*" cannot carry an owner-only action
+		// such as clearing a cooldown.
+		if category, wildcard, ok := splitCategoryWildcard(s); ok && wildcard {
+			for _, act := range Actions() {
+				if act.Category == category && ScopeGrantableBy(role, act.Name) {
+					out = append(out, act.Name)
+				}
+			}
+			continue
+		}
+		// A concrete action inside a granted category stays valid: "model.edit"
+		// inside "model.*".
+		if category, _, ok := splitAction(s); ok && allow[category+".*"] {
+			out = append(out, s)
 			continue
 		}
 	}

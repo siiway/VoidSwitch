@@ -118,25 +118,10 @@ func (a *App) mePlatformKeyGet(c *gin.Context) {
 	c.JSON(http.StatusOK, toPlatformKeyView(row))
 }
 
-// logsRequestDebug returns one request log with the full debug trail. A platform
-// API key never sees more than a staff dashboard session would, and never the
-// bodies: the per-attempt trail carries upstream addresses and key previews, so
-// it is redacted down to the same projection an admin already gets.
+// logsRequestDebug returns one request log's failover trail. It is deliberately
+// the same projection logsRequestDetail applies: the detail view already decides
+// what each tier may see (bodies are owner-only), so splitting the code paths
+// would only let them drift.
 func (a *App) logsRequestDebug(c *gin.Context) {
-	if cred := core.GetPlatformCredential(c); cred != nil && !cred.User.IsOwner() {
-		id, _ := strconv.Atoi(c.Param("id"))
-		var r database.RequestLog
-		if err := a.GDB.First(&r, id).Error; err != nil {
-			a.fail(c, http.StatusNotFound, "Request log not found.")
-			return
-		}
-		if !a.requestLogVisible(cred.User, r.UserSub) {
-			a.fail(c, http.StatusNotFound, "Request log not found.")
-			return
-		}
-		v := a.buildRequestLogDetail(&r, cred.User)
-		c.JSON(http.StatusOK, v)
-		return
-	}
 	a.logsRequestDetail(c)
 }

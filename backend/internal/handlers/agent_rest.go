@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -26,6 +27,20 @@ func authorizeAction(c *gin.Context, action string) bool {
 		return false
 	}
 	return true
+}
+
+// applyParamAlias registers a path parameter under the name the dashboard handler
+// reads it by. The public API names a model "model_id"; the handler behind it was
+// written for the dashboard, where the same value arrives as "id".
+func applyParamAlias(c *gin.Context, alias map[string]string) {
+	for argName, handlerName := range alias {
+		if argName == handlerName {
+			continue
+		}
+		if v := c.Param(argName); v != "" {
+			c.Params = setParam(c.Params, handlerName, v)
+		}
+	}
 }
 
 // authorizeProviderAction checks a provider-key action against the provider named
@@ -64,6 +79,7 @@ func RegisterPlatformAPIRoutes(r *gin.RouterGroup, a *App) {
 			} else if !authorizeAction(c, tool.Action) {
 				return
 			}
+			applyParamAlias(c, tool.ParamAlias)
 			tool.Handler(c)
 		})
 	}
@@ -75,12 +91,16 @@ func RegisterPlatformAPIRoutes(r *gin.RouterGroup, a *App) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"detail": "Missing API key."})
 			return
 		}
+		scopes := cred.Scopes
+		if scopes == nil {
+			scopes = []string{}
+		}
 		body := gin.H{
 			"user":   cred.User.User.Sub,
 			"role":   cred.User.Role,
 			"key":    cred.Key.Name,
 			"prefix": cred.Fingerprint,
-			"scopes": cred.Scopes,
+			"scopes": scopes,
 			"tools":  visibleToolNames(cred),
 		}
 		if len(cred.Scopes) == 0 {
@@ -128,7 +148,7 @@ func (a *App) platformRateLimit() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		ok, err := platformAcquire(a.RDB, c.Request.Context(), cred.Fingerprint, window, maximum)
+		ok, err := platformAcquire(a.RDB, c.Request.Context(), strconv.Itoa(cred.Key.ID), window, maximum)
 		if err != nil {
 			// Redis being unreachable must not turn a rate limit into an outage;
 			// log once per request path so the failure is visible.

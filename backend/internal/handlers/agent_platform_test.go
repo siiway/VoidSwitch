@@ -278,6 +278,66 @@ func TestPlatformAuditRecordsCredential(t *testing.T) {
 	}
 }
 
+// TestPlatformMCPPathParamsResolve calls a tool whose handler reads a differently
+// named path parameter, proving the MCP bridge registers both names.
+func TestPlatformMCPPathParamsResolve(t *testing.T) {
+	app, raw := platformTestApp(t, "owner", []string{"model.*"})
+	model := database.ExposedModel{
+		ModelID: "fast-coder", Enabled: true,
+		OpenCodeConfig: database.JSONOf(map[string]any{}), OpenCodeConfigV2: database.JSONOf(map[string]any{}),
+		AllowedRoleGroupIDs: database.JSONOf([]int{}), Capabilities: database.JSONOf(map[string]any{}),
+		Modalities: database.JSONOf(map[string]any{}),
+	}
+	if err := app.GDB.Create(&model).Error; err != nil {
+		t.Fatalf("create model: %v", err)
+	}
+	ts := httptest.NewServer(platformRouter(app))
+	defer ts.Close()
+
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:   ts.URL + "/api/v1/mcp",
+		HTTPClient: &http.Client{Transport: bearerTransport{token: raw}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "vs_model_route_get",
+		Arguments: map[string]any{"model_id": "fast-coder"},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("route tool failed: %s", toolErrorText(res))
+	}
+	if !strings.Contains(toolResultJSON(res), "fast-coder") {
+		t.Fatalf("route tool did not resolve the model: %s", toolResultJSON(res))
+	}
+}
+
+func toolErrorText(res *mcp.CallToolResult) string {
+	var b strings.Builder
+	for _, c := range res.Content {
+		if t, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(t.Text)
+		}
+	}
+	return b.String()
+}
+
+func toolResultJSON(res *mcp.CallToolResult) string {
+	enc, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		return ""
+	}
+	return string(enc)
+}
+
 // TestStaffLossDisablesKeys pins the lifecycle gate: losing staff access turns
 // every key off, and regaining it does not silently turn them back on.
 func TestStaffLossDisablesKeys(t *testing.T) {

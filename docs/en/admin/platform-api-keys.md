@@ -57,7 +57,8 @@ can neither write them into a key nor reach them through a `*` wildcard.
 | `user.edit` | Changes roles / enabled state (prevents self-escalation) |
 | `setting.edit` | Changes global settings |
 | `provider.delete` | Deletes a provider |
-| `announcement.delete` | Deletes an announcement |
+| `node.delete` | Deletes an egress node |
+| `role-group.edit` / `.delete` / `.member.remove` | Role group writes |
 | `model.route.clear-cooldown` | Clears an upstream cooldown |
 | `provider-key:<slug>.*` | Manages one provider's upstream keys |
 

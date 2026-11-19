@@ -225,7 +225,7 @@ func (a *App) mePlatformKeyUpdate(c *gin.Context) {
 		Scope: core.AuditScopeSelf, TargetType: strPtr("platform_api_key"), TargetID: &tid,
 		Detail: detail, IP: strPtr(clientIP(c)),
 	})
-	c.JSON(http.StatusOK, toPlatformKeyView(rowPtr))
+	c.JSON(http.StatusOK, toPlatformKeyView(&row))
 }
 
 func (a *App) mePlatformKeyDelete(c *gin.Context) {

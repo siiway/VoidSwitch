@@ -52,8 +52,7 @@ func TestEveryToolDeclaresItsPathParams(t *testing.T) {
 // single-object tool resolve to id=0: the synthetic context must carry the path
 // parameters the handler reads through c.Param.
 func TestBridgePopulatesGinParams(t *testing.T) {
-	b := &bridge{alias: map[string]string{}}
-	b.alias["model_id"] = "id"
+	b := &bridge{alias: map[string]string{"model_id": "id"}}
 
 	cases := []struct {
 		specPath string
@@ -71,10 +70,11 @@ func TestBridgePopulatesGinParams(t *testing.T) {
 			map[string]any{"slug": "acme", "key_id": float64(12)},
 			"/providers/by-slug/acme/keys/12", map[string]string{"slug": "acme", "key_id": "12"},
 		},
-		// A handler that reads c.Param("id") while the spec exposes model_id.
+		// A handler that reads c.Param("id") while the spec exposes model_id: the
+		// value must be registered under BOTH names or the handler sees "".
 		{
 			"/models/:model_id/route", map[string]any{"model_id": "x"},
-			"/models/x/route", map[string]string{"model_id": "x"},
+			"/models/x/route", map[string]string{"model_id": "x", "id": "x"},
 		},
 	}
 	for _, tc := range cases {
@@ -91,6 +91,53 @@ func TestBridgePopulatesGinParams(t *testing.T) {
 				t.Fatalf("%s: param %q = %q, want %q (all: %v)", tc.specPath, k, got[k], v, got)
 			}
 		}
+	}
+}
+
+// TestBridgedModelRouteResolves drives handlers that read c.Param("id") through
+// the bridge, which only works if the alias registers the value under that name
+// as well.
+func TestBridgedModelRouteResolves(t *testing.T) {
+	app, raw := platformTestApp(t, "owner", []string{"model.*"})
+	model := database.ExposedModel{
+		ModelID: "fast-coder", Enabled: true,
+		OpenCodeConfig: database.JSONOf(map[string]any{}), OpenCodeConfigV2: database.JSONOf(map[string]any{}),
+		AllowedRoleGroupIDs: database.JSONOf([]int{}), Capabilities: database.JSONOf(map[string]any{}),
+		Modalities: database.JSONOf(map[string]any{}),
+	}
+	if err := app.GDB.Create(&model).Error; err != nil {
+		t.Fatalf("create model: %v", err)
+	}
+	route := database.Route{ExposedModelID: model.ID, UpstreamSelectMode: "best",
+		UpstreamRankAlgorithm: "weighted", MaxUpstreamAttempts: 3,
+		UpstreamAllCooledBehavior: "ignore_cooldown"}
+	if err := app.GDB.Create(&route).Error; err != nil {
+		t.Fatalf("create route: %v", err)
+	}
+
+	r := platformRouter(app)
+	for _, path := range []string{
+		"/api/v1/models/fast-coder",
+		"/api/v1/models/fast-coder/route",
+	} {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s answered %d: %s", path, w.Code, w.Body.String())
+		}
+	}
+
+	// The cooldown route is owner-only in the dashboard, so an owner key reaches
+	// the handler; a missing upstream is the handler's own 404, not a path bug.
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost,
+		"/api/v1/models/fast-coder/route/upstreams/1/cooldown", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	r.ServeHTTP(w, req)
+	if w.Code == http.StatusNotFound && strings.Contains(w.Body.String(), "Model not found") {
+		t.Fatalf("cooldown route lost the model id: %d %s", w.Code, w.Body.String())
 	}
 }
 

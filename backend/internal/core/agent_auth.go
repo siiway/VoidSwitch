@@ -129,7 +129,7 @@ func PlatformKeyAuth(db *gorm.DB, viaMCP bool) gin.HandlerFunc {
 		// the dashboard's "last used" column and keeps the hot path write-free.
 		if key.LastUsedAt == nil || now.Sub(*key.LastUsedAt) > time.Minute {
 			if err := db.Model(&database.PlatformAPIKey{}).Where("id = ?", key.ID).
-				Update("last_used_at", now).Error; err == nil {
+				UpdateColumn("last_used_at", now).Error; err == nil {
 				key.LastUsedAt = &now
 			}
 		}

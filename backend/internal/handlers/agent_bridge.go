@@ -36,12 +36,10 @@ func (r bridgeResult) ok() bool { return r.Status >= 200 && r.Status < 300 }
 
 // bridge is the synthetic request builder for one tool invocation.
 type bridge struct {
-	app     *App
-	cred    *core.PlatformCredential
-	ip      string
-	ua      string
-	viaMCP  bool
-	request *http.Request
+	cred   *core.PlatformCredential
+	ip     string
+	ua     string
+	viaMCP bool
 	// alias maps an argument name to the path parameter name the handler reads.
 	alias map[string]string
 }
@@ -49,16 +47,16 @@ type bridge struct {
 func (a *App) newBridge(c *gin.Context) *bridge {
 	cred := core.GetPlatformCredential(c)
 	return &bridge{
-		app: a, cred: cred, ip: clientIP(c), ua: c.GetHeader("User-Agent"),
-		viaMCP: cred != nil && cred.ViaMCP, request: c.Request,
-		alias: map[string]string{},
+		cred: cred, ip: clientIP(c), ua: c.GetHeader("User-Agent"),
+		viaMCP: cred != nil && cred.ViaMCP,
+		alias:  map[string]string{},
 	}
 }
 
-// withPath records aliases from an argument name to the path parameter name the
-// handler reads, so "model_id" reaches a handler that calls c.Param("id").
+// withPath records ParamAlias entries ({public argument: handler parameter}) so
+// "model_id" also reaches a handler that calls c.Param("id").
 func (b *bridge) withPath(alias map[string]string) *bridge {
-	for handlerName, argName := range alias {
+	for argName, handlerName := range alias {
 		b.alias[argName] = handlerName
 	}
 	return b
@@ -99,6 +97,12 @@ func (b *bridge) split(specPath string, in map[string]any) (string, []gin.Param,
 		val := scalarString(v)
 		specPath = strings.Replace(specPath, seg, val, 1)
 		ginParams = append(ginParams, gin.Param{Key: name, Value: val})
+		// The handler may read the parameter under a different name
+		// ("model_id" in the public API, "id" in the dashboard handler), so the
+		// value is registered twice.
+		if handlerName, ok := b.alias[name]; ok && handlerName != name {
+			ginParams = append(ginParams, gin.Param{Key: handlerName, Value: val})
+		}
 		delete(rest, name)
 	}
 	return specPath, ginParams, rest

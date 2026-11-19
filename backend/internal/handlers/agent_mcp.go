@@ -130,10 +130,17 @@ func jsonValue(body []byte) any {
 // scopes cover are registered, so tools/list never advertises an operation the
 // call would reject.
 func (a *App) platformMCPServer(cred *core.PlatformCredential) *mcp.Server {
+	opts := &mcp.ServerOptions{SchemaCache: mcpSchemaCache}
+	if len(cred.Scopes) == 0 {
+		// An empty tool list is otherwise indistinguishable from "nothing to do";
+		// say why, since an agent has no other way to ask.
+		opts.Instructions = "This platform API key has no scopes its owner's current role may still grant. " +
+			"Ask a platform owner to re-scope the key (Settings → Platform API Keys)."
+	}
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "voidswitch",
 		Version: strings.TrimPrefix(Version, "v"),
-	}, &mcp.ServerOptions{SchemaCache: mcpSchemaCache})
+	}, opts)
 
 	for _, tool := range a.platformTools() {
 		tool := tool

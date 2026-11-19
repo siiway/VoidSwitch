@@ -49,7 +49,8 @@ Void-Token 明文都无法通过平台 API Key 获取。上游密钥列表也不
 | `user.edit` | 修改用户角色 / 启用状态（防止自我提权） |
 | `setting.edit` | 修改全局设置 |
 | `provider.delete` | 删除提供商 |
-| `announcement.delete` | 删除公告 |
+| `node.delete` | 删除节点 |
+| `role-group.edit` / `.delete` / `.member.remove` | 身份组写操作 |
 | `model.route.clear-cooldown` | 清除上游冷却 |
 | `provider-key:<slug>.*` | 管理某个提供商的上游密钥 |
 

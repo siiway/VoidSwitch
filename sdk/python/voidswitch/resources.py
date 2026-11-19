@@ -40,8 +40,11 @@ class Models(_Resource):
     def put_route(self, model_id: str, **fields: Any) -> dict[str, Any]:
         return self._c.put(f"/models/{_q(model_id)}/route", fields)
 
-    def clear_cooldown(self, model_id: str) -> dict[str, Any]:
-        return self._c.post(f"/models/{_q(model_id)}/route/clear-cooldown")
+    def clear_cooldown(self, model_id: str, upstream_id: int) -> dict[str, Any]:
+        """Clear one route upstream's cooldown."""
+        return self._c.post(
+            f"/models/{_q(model_id)}/route/upstreams/{upstream_id}/cooldown"
+        )
 
 
 class Categories(_Resource):

@@ -42,7 +42,7 @@ vs.models.get_route("fast-coder")
 vs.models.put_route("fast-coder", upstreams=[
     {"provider_id": 4, "upstream_model": "gpt-4o", "position": 1, "weight": 1},
 ])
-vs.models.clear_cooldown("fast-coder")
+vs.models.clear_cooldown("fast-coder", upstream_id=12)
 
 # 提供商（密钥字段可选，先建空提供商再补密钥）
 p = vs.providers.create("Acme", "openai")
@@ -90,4 +90,6 @@ except RateLimitError:
   服务端新增字段不会让 SDK 失效。
 - Key 管理类接口（`provider_keys.*`）按**提供商 slug** 定位，因为 scope 里写的是
   slug：`provider-key:acme.*`。
+- 仅所有者可用的动作（改用户、改设置、删提供商 / 节点、身份组写操作、清上游冷却、
+  提供商密钥管理）管理员既无法授予，也无法通过 `*` 触达。
 - 平台 API 按 Key 限流，默认 20 秒 30 次，可在设置的「平台 API」分组调整。
