@@ -141,6 +141,76 @@ func TestBridgedModelRouteResolves(t *testing.T) {
 	}
 }
 
+// TestModelDeleteUsesPublicID is the regression test for treating the public
+// model id as a primary key: the named model must be the one deleted, and a
+// numeric public id must not reach an unrelated row.
+func TestModelDeleteUsesPublicID(t *testing.T) {
+	app, raw := platformTestApp(t, "owner", []string{"model.*"})
+	mk := func(modelID string) database.ExposedModel {
+		m := database.ExposedModel{
+			ModelID: modelID, Enabled: true,
+			OpenCodeConfig: database.JSONOf(map[string]any{}), OpenCodeConfigV2: database.JSONOf(map[string]any{}),
+			AllowedRoleGroupIDs: database.JSONOf([]int{}), Capabilities: database.JSONOf(map[string]any{}),
+			Modalities: database.JSONOf(map[string]any{}),
+		}
+		if err := app.GDB.Create(&m).Error; err != nil {
+			t.Fatalf("create model %s: %v", modelID, err)
+		}
+		return m
+	}
+	named := mk("fast-coder")
+	// A numeric public id must address the row whose model_id is "1", not the row
+	// with primary key 1.
+	numeric := mk("1")
+
+	r := platformRouter(app)
+	del := func(path string) int {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodDelete, path, nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	if code := del("/api/v1/models/1"); code != http.StatusNoContent {
+		t.Fatalf("delete by public id answered %d", code)
+	}
+	var stillThere database.ExposedModel
+	if err := app.GDB.First(&stillThere, named.ID).Error; err != nil {
+		t.Fatalf("deleting public id 1 removed the row named fast-coder: %v", err)
+	}
+	var gone database.ExposedModel
+	if err := app.GDB.First(&gone, numeric.ID).Error; err == nil {
+		t.Fatal("the row whose model_id is 1 should have been deleted")
+	}
+
+	if code := del("/api/v1/models/fast-coder"); code != http.StatusNoContent {
+		t.Fatalf("delete by name answered %d", code)
+	}
+	if err := app.GDB.First(&stillThere, named.ID).Error; err == nil {
+		t.Fatal("row survived its own deletion")
+	}
+}
+
+// TestAdminMayDeleteAnnouncement pins the staff-level announcement deletion,
+// which matches the dashboard (me.go only requires IsStaff).
+func TestAdminMayDeleteAnnouncement(t *testing.T) {
+	app, raw := platformTestApp(t, "admin", []string{"announcement.list", "announcement.edit", "announcement.delete"})
+	row := database.Announcement{Title: "hi", Body: "b", CreatedByRole: "admin",
+		TargetRoleGroupIDs: database.JSONOf([]int{})}
+	if err := app.GDB.Create(&row).Error; err != nil {
+		t.Fatalf("create announcement: %v", err)
+	}
+	r := platformRouter(app)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodDelete, "/api/v1/announcements/"+strconv.Itoa(row.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("admin announcement delete answered %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestProviderKeyListResolvesSlug drives a real handler through the bridge, which
 // only works if the slug (and the provider id derived from it) survive the trip.
 func TestProviderKeyListResolvesSlug(t *testing.T) {

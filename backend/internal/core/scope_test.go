@@ -153,6 +153,9 @@ func TestOwnerOnlyActionsNeverGrantableToAdmin(t *testing.T) {
 	}
 	// A category wildcard stays grantable (it is how a whole category is handed
 	// over), but it must not carry the owner-only member of that category.
+	if !ScopeGrantableBy("admin", "announcement.delete") {
+		t.Fatal("announcement deletion is staff-level in the dashboard")
+	}
 	admin := EffectiveScopes([]string{"user.*", "node.*"}, "admin")
 	for _, s := range admin {
 		if s == "user.edit" || s == "node.delete" {

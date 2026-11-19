@@ -233,10 +233,10 @@ func containsScope(scopes []string, want string) bool {
 	return false
 }
 
-// adminGrantableScopes are the scopes a staff member may grant. Every action
-// reachable from these is owner-safe: the owner-only actions (user.edit,
-// setting.edit, provider.delete, announcement.delete, clear-cooldown) are named
-// individually so the wildcards below cannot carry them, and no wildcard covers
+// adminGrantableScopes are the scopes a staff member may grant. Actions are
+// listed individually wherever a category wildcard would otherwise carry an
+// owner-only member, so a category wildcard stays safe: it is expanded at use
+// time to the actions the current role may perform. No entry covers
 // ProviderScope (a provider-key grant must name a slug and stays owner-only).
 func adminGrantableScopes() []string {
 	return []string{
@@ -252,7 +252,7 @@ func adminGrantableScopes() []string {
 		"api-key.*",
 		"request-log.list", "request-log.get", "request-log.filters",
 		"audit-log.*",
-		"announcement.list", "announcement.edit",
+		"announcement.list", "announcement.edit", "announcement.delete",
 		"setting.get",
 	}
 }
@@ -261,7 +261,8 @@ func adminGrantableScopes() []string {
 func ownerGrantableScopes() []string {
 	return append(adminGrantableScopes(),
 		ScopeAll,
-		"user.edit", "setting.edit", "provider.delete", "announcement.delete",
+		"user.edit", "setting.edit", "provider.delete",
+		"node.delete", "role-group.edit", "role-group.delete", "role-group.member.remove",
 		"model.route.clear-cooldown",
 		ProviderScope+":*.*",
 	)

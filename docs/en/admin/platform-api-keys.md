@@ -62,8 +62,12 @@ can neither write them into a key nor reach them through a `*` wildcard.
 | `model.route.clear-cooldown` | Clears an upstream cooldown |
 | `provider-key:<slug>.*` | Manages one provider's upstream keys |
 
-An admin's `*` **expands to whatever the current role may still do** rather than
-collapsing to nothing.
+An admin's `*` and a category wildcard (`model.*`) both **expand to the concrete
+actions the current role may still perform**, so neither can carry an owner-only
+entry above; `*` also does not collapse to nothing after a demotion.
+
+`api-key.*` reaches **only the caller's own keys** — another staff member's
+credential can neither be read nor modified.
 
 ## Calling it
 

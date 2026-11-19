@@ -62,6 +62,23 @@ func setParam(params gin.Params, key, value string) gin.Params {
 	return append(params, gin.Param{Key: key, Value: value})
 }
 
+// ---- model id adapter ------------------------------------------------------
+
+// modelDeleteByPublicID resolves a public model id to its primary key and then
+// calls the dashboard handler, which deletes by id. Passing the public id
+// straight through would treat "fast-coder" as id 0 and, worse, let a numeric
+// public id delete an unrelated model.
+func (a *App) modelDeleteByPublicID(c *gin.Context) {
+	modelID := c.Param("model_id")
+	var m database.ExposedModel
+	if err := a.GDB.Select("id").Where("model_id = ?", modelID).First(&m).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Model not found.")
+		return
+	}
+	c.Params = setParam(c.Params, "id", strconv.Itoa(m.ID))
+	a.modelDelete(c)
+}
+
 // ---- by-slug adapters ------------------------------------------------------
 
 // providerKeysListBySlug lists one provider's upstream keys. The projection is
