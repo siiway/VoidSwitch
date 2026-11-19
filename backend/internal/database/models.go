@@ -504,17 +504,16 @@ func (AuditLog) TableName() string { return "audit_logs" }
 // and "category.*" available as wildcards.
 type PlatformAPIKey struct {
 	Timestamped
-	ID              int        `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID          int        `gorm:"column:user_id;index;not null"`
-	Name            string     `gorm:"column:name;type:varchar(120);not null"`
-	KeyHash         string     `gorm:"column:key_hash;type:varchar(64);uniqueIndex;not null"`
-	KeyPrefix       string     `gorm:"column:key_prefix;type:varchar(32);not null"`
-	Scopes          JSON       `gorm:"column:scopes;type:json;not null"`
-	Enabled         bool       `gorm:"column:enabled;not null"`
-	DisabledReason  *string    `gorm:"column:disabled_reason;type:varchar(64)"`
-	ScopesGrantedAt *time.Time `gorm:"column:scopes_granted_at;type:timestamptz"`
-	ExpiresAt       *time.Time `gorm:"column:expires_at;type:timestamptz"`
-	LastUsedAt      *time.Time `gorm:"column:last_used_at;type:timestamptz"`
+	ID             int        `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID         int        `gorm:"column:user_id;index;not null"`
+	Name           string     `gorm:"column:name;type:varchar(120);not null"`
+	KeyHash        string     `gorm:"column:key_hash;type:varchar(64);uniqueIndex;not null"`
+	KeyPrefix      string     `gorm:"column:key_prefix;type:varchar(32);not null"`
+	Scopes         JSON       `gorm:"column:scopes;type:json;not null"`
+	Enabled        bool       `gorm:"column:enabled;not null"`
+	DisabledReason *string    `gorm:"column:disabled_reason;type:varchar(64)"`
+	ExpiresAt      *time.Time `gorm:"column:expires_at;type:timestamptz"`
+	LastUsedAt     *time.Time `gorm:"column:last_used_at;type:timestamptz"`
 
 	User *User `gorm:"foreignKey:UserID"`
 }

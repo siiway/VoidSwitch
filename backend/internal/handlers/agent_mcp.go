@@ -86,7 +86,7 @@ func platformCredentialFromRequest(req *http.Request) *core.PlatformCredential {
 // ginContextForTool rebuilds a minimal gin context for the bridge, so handler
 // helpers that read clientIP / User-Agent see the real caller. The SDK hands
 // tool handlers the request context the transport created, which carries the
-// request-derived values set by PlatformKeyAuth's gin layer.
+// values PlatformKeyAuth's gin layer derived from the HTTP request.
 func ginContextForTool(ctx context.Context) (*gin.Context, bool) {
 	rc := platformRequestFromContext(ctx)
 	if rc == nil {
@@ -94,8 +94,7 @@ func ginContextForTool(ctx context.Context) (*gin.Context, bool) {
 	}
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/mcp", nil)
-	c.Request.Header.Set("User-Agent", rc.ua)
-	c.Request.Header.Set(clientIPHeader, rc.ip)
+	c.Set(clientIPContextKey, rc.ip)
 	c.Set(core.CtxUser, rc.cred.User)
 	c.Set(core.CtxPlatformKey, rc.cred)
 	c.Set(core.CtxPlatformVia, "mcp")
@@ -205,6 +204,7 @@ func (a *App) callPlatformToolByAction(ctx context.Context, action string, in ma
 		return errorResult("no request context"), nil, nil
 	}
 	b := a.newBridge(c)
+	b.withPath(tool.fixedParams())
 
 	if tool.ProviderScoped {
 		slug, _ := in["slug"].(string)

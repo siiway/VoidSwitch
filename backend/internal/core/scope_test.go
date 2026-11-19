@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestScopeAllows(t *testing.T) {
 	cases := []struct {
@@ -36,10 +39,6 @@ func TestScopeAllows(t *testing.T) {
 func TestReadScopeSatisfied(t *testing.T) {
 	if !ReadScopeSatisfied([]string{"read"}, "request-log.get") {
 		t.Fatal("read should satisfy a read-tier action")
-	}
-	if ReadScopeSatisfied([]string{"read"}, "request-log.get-debug") {
-		// get-debug is also read-tier by design: the handler still redacts.
-		t.Log("get-debug is read-tier")
 	}
 	if ReadScopeSatisfied([]string{"read"}, "setting.edit") {
 		t.Fatal("read must not satisfy a write action")
@@ -93,7 +92,7 @@ func TestEffectiveScopes(t *testing.T) {
 
 func TestNoRevealActions(t *testing.T) {
 	for _, act := range Actions() {
-		if containsSubstring(act.Name, "reveal") {
+		if strings.Contains(act.Name, "reveal") {
 			t.Fatalf("reveal actions must never be addressable by a platform key: %s", act.Name)
 		}
 	}
@@ -113,7 +112,7 @@ func TestGrantableScopes(t *testing.T) {
 	}
 	admin := GrantableScopes("admin")
 	for _, s := range admin {
-		if s == "provider.delete" || s == "provider-key:*.*" {
+		if s == "provider.delete" || s == "provider-key:*.*" || s == "*" {
 			t.Fatalf("admin must not be offered owner-only scope %q", s)
 		}
 	}
@@ -129,16 +128,70 @@ func TestGrantableScopes(t *testing.T) {
 	}
 }
 
-func containsSubstring(haystack, needle string) bool {
-	return len(needle) > 0 && len(haystack) >= len(needle) &&
-		indexOf(haystack, needle) >= 0
-}
-
-func indexOf(haystack, needle string) int {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return i
+// TestOwnerOnlyActionsNeverGrantableToAdmin pins the escalation guard: an admin
+// holding a platform key must not be able to edit users, settings or delete a
+// provider, no matter which wildcard the key carries.
+func TestOwnerOnlyActionsNeverGrantableToAdmin(t *testing.T) {
+	ownerOnly := []string{
+		"user.edit", "setting.edit", "provider.delete",
+		"announcement.delete", "model.route.clear-cooldown",
+	}
+	for _, action := range ownerOnly {
+		if ScopeGrantableBy("admin", action) {
+			t.Fatalf("admin must not be able to grant %q", action)
+		}
+		if AllowsAction([]string{"*"}, "admin", action) {
+			t.Fatalf("admin with '*' must not reach %q", action)
+		}
+		if !ScopeGrantableBy("owner", action) {
+			t.Fatalf("owner should be able to grant %q", action)
+		}
+		if !AllowsAction([]string{"*"}, "owner", action) {
+			t.Fatalf("owner with '*' should reach %q", action)
 		}
 	}
-	return -1
+	// The scope entries for those actions must not be offered to admins either.
+	if ScopeGrantableBy("admin", "user.*") {
+		t.Fatal("admin must not be able to grant user.*")
+	}
+	if ScopeGrantableBy("admin", "setting.*") {
+		t.Fatal("admin must not be able to grant setting.*")
+	}
+}
+
+// TestEffectiveScopesExpandsWildcard covers the demotion path: an owner's "*"
+// narrows to what an admin may do, rather than collapsing to nothing.
+func TestEffectiveScopesExpandsWildcard(t *testing.T) {
+	narrowed := EffectiveScopes([]string{"*"}, "admin")
+	if len(narrowed) == 0 {
+		t.Fatal("a demoted owner keeps the admin surface")
+	}
+	allow := map[string]bool{}
+	for _, s := range narrowed {
+		allow[s] = true
+	}
+	if allow["*"] || allow["provider-key:*.*"] || allow["provider.delete"] {
+		t.Fatalf("demotion must drop the owner-only surface: %v", narrowed)
+	}
+	if !allow["model.edit"] {
+		t.Fatalf("demotion must keep the admin surface: %v", narrowed)
+	}
+}
+
+// TestScopeGrantableByRejectsUnknown keeps the picker honest: a typo or an
+// undeclared verb is a 422 rather than a silently inert scope.
+func TestScopeGrantableByRejectsUnknown(t *testing.T) {
+	cases := []string{"key.reveal", "provider-key:acme.reveal", "provider-key:acme",
+		"provider-key:.add", "nonsense"}
+	for _, s := range cases {
+		if ScopeGrantableBy("owner", s) {
+			t.Fatalf("owner must not be able to grant %q", s)
+		}
+	}
+	if !ScopeGrantableBy("owner", "provider-key:acme.add") {
+		t.Fatal("owner should grant a per-provider key verb")
+	}
+	if !ScopeGrantableBy("owner", "provider-key:acme.*") {
+		t.Fatal("owner should grant a per-provider wildcard")
+	}
 }

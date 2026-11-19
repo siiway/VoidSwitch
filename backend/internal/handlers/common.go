@@ -59,6 +59,10 @@ func (a *App) audit(c *gin.Context, in core.AuditInput) error {
 // to X-Forwarded-For; overridable via VOIDSWITCH_CLIENT_IP_HEADER.
 var clientIPHeader = "X-Forwarded-For"
 
+// clientIPContextKey carries an explicit client address for synthetic requests
+// (the platform API bridge), whose headers are not a trustworthy source.
+const clientIPContextKey = "vs.clientip"
+
 // SetClientIPHeader configures which header carries the client IP (call once at
 // startup). An empty value keeps the X-Forwarded-For default.
 func SetClientIPHeader(header string) {
@@ -71,6 +75,11 @@ func SetClientIPHeader(header string) {
 // (the real client when behind a reverse proxy that appends hops) — matching the
 // Python backend, which used only the first X-Forwarded-For value.
 func clientIP(c *gin.Context) string {
+	if v, ok := c.Get(clientIPContextKey); ok {
+		if ip, _ := v.(string); ip != "" {
+			return ip
+		}
+	}
 	if h := c.GetHeader(clientIPHeader); h != "" {
 		if i := strings.IndexByte(h, ','); i >= 0 {
 			h = h[:i]

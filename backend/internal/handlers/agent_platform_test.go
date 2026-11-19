@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/siiway/voidswitch/internal/core"
 	"github.com/siiway/voidswitch/internal/database"
 	"github.com/siiway/voidswitch/internal/redisx"
+	"github.com/siiway/voidswitch/internal/services"
 )
 
 // platformTestApp builds an App over an in-memory sqlite database with one
@@ -32,8 +34,11 @@ func platformTestApp(t *testing.T, role string, scopes []string) (*App, string) 
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
 	if err := db.AutoMigrate(
-		&database.User{}, &database.PlatformAPIKey{}, &database.AuditLog{},
+		&database.User{}, &database.AuditLog{},
 		&database.Provider{}, &database.ApiKey{}, &database.ExposedModel{},
 		&database.Route{}, &database.RouteUpstream{}, &database.RoleGroup{},
 		&database.RoleGroupMembership{}, &database.RoleGroupAdminship{},
@@ -41,6 +46,25 @@ func platformTestApp(t *testing.T, role string, scopes []string) (*App, string) 
 		&database.Setting{}, &database.Announcement{}, &database.RequestLog{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	// platform_api_keys declares its timestamps as timestamptz, which the sqlite
+	// driver stores as text but refuses to scan back. The test schema mirrors the
+	// production columns with sqlite-native types.
+	if err := db.Exec(`CREATE TABLE platform_api_keys (
+		id integer PRIMARY KEY AUTOINCREMENT,
+		user_id integer NOT NULL,
+		name varchar(120) NOT NULL,
+		key_hash varchar(64) NOT NULL UNIQUE,
+		key_prefix varchar(32) NOT NULL,
+		scopes json NOT NULL DEFAULT '[]',
+		enabled boolean NOT NULL DEFAULT true,
+		disabled_reason varchar(64),
+		expires_at datetime,
+		last_used_at datetime,
+		created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`).Error; err != nil {
+		t.Fatalf("create platform_api_keys: %v", err)
 	}
 
 	username := "tester"
@@ -254,18 +278,115 @@ func TestPlatformAuditRecordsCredential(t *testing.T) {
 	}
 }
 
-// TestPlatformRateLimitUsesSetting keeps the limiter honest about its source.
+// TestStaffLossDisablesKeys pins the lifecycle gate: losing staff access turns
+// every key off, and regaining it does not silently turn them back on.
+func TestStaffLossDisablesKeys(t *testing.T) {
+	app, _ := platformTestApp(t, "admin", []string{"read"})
+	var before database.PlatformAPIKey
+	if err := app.GDB.First(&before).Error; err != nil {
+		t.Fatalf("seed key: %v", err)
+	}
+	if !before.Enabled {
+		t.Fatal("seed key should start enabled")
+	}
+
+	if err := core.DisablePlatformKeysOnStaffLoss(app.GDB, before.UserID, "member"); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	var disabled database.PlatformAPIKey
+	app.GDB.First(&disabled, before.ID)
+	if disabled.Enabled {
+		t.Fatal("key stayed enabled after the owner lost staff access")
+	}
+	if disabled.DisabledReason == nil || *disabled.DisabledReason != database.PlatformAPIKeyDisabledLostStaff {
+		t.Fatalf("disabled_reason = %v, want %q", disabled.DisabledReason, database.PlatformAPIKeyDisabledLostStaff)
+	}
+
+	// Becoming staff again is not enough: re-enabling is manual.
+	if err := core.DisablePlatformKeysOnStaffLoss(app.GDB, before.UserID, "admin"); err != nil {
+		t.Fatalf("no-op call: %v", err)
+	}
+	var after database.PlatformAPIKey
+	app.GDB.First(&after, before.ID)
+	if after.Enabled {
+		t.Fatal("promotion must not re-enable a key implicitly")
+	}
+}
+
+// TestPlatformRateLimitBranches covers the three outcomes of the limiter without
+// needing Redis: allow, deny (429) and an infrastructure error (fail open, so a
+// Redis outage does not take the platform API offline).
+func TestPlatformRateLimitBranches(t *testing.T) {
+	app, raw := platformTestApp(t, "owner", []string{"read"})
+	app.RDB = &redisx.Service{}
+	app.seedSettingForTest(t, "platform_api_rate_limit_window_seconds", 60)
+	app.seedSettingForTest(t, "platform_api_rate_limit_max_requests", 1)
+	if _, err := services.LoadSettings(app.GDB); err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	r := platformRouter(app)
+
+	call := func() int {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/models", nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	original := platformAcquire
+	t.Cleanup(func() { platformAcquire = original })
+
+	platformAcquire = func(*redisx.Service, context.Context, string, float64, int) (bool, error) {
+		return false, nil
+	}
+	if code := call(); code != http.StatusTooManyRequests {
+		t.Fatalf("denied call = %d, want 429", code)
+	}
+
+	platformAcquire = func(*redisx.Service, context.Context, string, float64, int) (bool, error) {
+		return false, errors.New("redis down")
+	}
+	if code := call(); code != http.StatusOK {
+		t.Fatalf("call during a Redis outage = %d, want 200 (fail open)", code)
+	}
+
+	platformAcquire = func(*redisx.Service, context.Context, string, float64, int) (bool, error) {
+		return true, nil
+	}
+	if code := call(); code != http.StatusOK {
+		t.Fatalf("allowed call = %d, want 200", code)
+	}
+}
+
+// seedSettingForTest writes one setting row.
+func (a *App) seedSettingForTest(t *testing.T, key string, value any) {
+	t.Helper()
+	if err := a.GDB.Save(&database.Setting{Key: key, Value: database.JSONOf(value)}).Error; err != nil {
+		t.Fatalf("seed setting %s: %v", key, err)
+	}
+}
+
+// TestPlatformRateLimitUsesSetting keeps the limiter honest about its source:
+// the window and budget come from the settings snapshot, so a value written to
+// the settings table is what the middleware reads.
 func TestPlatformRateLimitUsesSetting(t *testing.T) {
 	app, _ := platformTestApp(t, "admin", []string{"read"})
-	if got := app.settingOrDefaultInt("platform_api_rate_limit_max_requests", 30); got != 30 {
+	services.LoadSettings(app.GDB)
+	t.Cleanup(func() { services.LoadSettings(app.GDB) })
+
+	if got := services.GetInt("platform_api_rate_limit_max_requests", 30); got != 30 {
 		t.Fatalf("default rate limit = %d, want 30", got)
 	}
-	if err := app.GDB.Create(&database.Setting{
+	if err := app.GDB.Save(&database.Setting{
 		Key: "platform_api_rate_limit_max_requests", Value: database.JSONOf(7),
 	}).Error; err != nil {
 		t.Fatalf("seed setting: %v", err)
 	}
-	if got := app.settingOrDefaultInt("platform_api_rate_limit_max_requests", 30); got != 7 {
+	if _, err := services.LoadSettings(app.GDB); err != nil {
+		t.Fatalf("reload settings: %v", err)
+	}
+	if got := services.GetInt("platform_api_rate_limit_max_requests", 30); got != 7 {
 		t.Fatalf("configured rate limit = %d, want 7", got)
 	}
 }

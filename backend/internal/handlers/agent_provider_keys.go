@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -63,8 +64,45 @@ func setParam(params gin.Params, key, value string) gin.Params {
 
 // ---- by-slug adapters ------------------------------------------------------
 
+// providerKeysListBySlug lists one provider's upstream keys. The projection is
+// narrowed for platform callers: the dashboard's key preview (first four and
+// last four characters) is a partial plaintext, and a platform key must not be
+// able to read any part of a stored credential.
 func (a *App) providerKeysListBySlug(c *gin.Context) {
-	a.withProviderSlug(c, a.keysList)
+	if core.GetPlatformCredential(c) == nil {
+		a.withProviderSlug(c, a.keysList)
+		return
+	}
+	a.withProviderSlug(c, func(ctx *gin.Context) {
+		w := &platformKeyRedactingWriter{ResponseWriter: ctx.Writer, hidePreview: true}
+		ctx.Writer = w
+		a.keysList(ctx)
+	})
+}
+
+// platformKeyRedactingWriter strips fields a platform API key must never see
+// from a handler's JSON response.
+type platformKeyRedactingWriter struct {
+	gin.ResponseWriter
+	hidePreview bool
+}
+
+func (w *platformKeyRedactingWriter) Write(b []byte) (int, error) {
+	if !w.hidePreview {
+		return w.ResponseWriter.Write(b)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(b, &items); err != nil {
+		return w.ResponseWriter.Write(b)
+	}
+	for _, item := range items {
+		delete(item, "key_preview")
+	}
+	redacted, err := json.Marshal(items)
+	if err != nil {
+		return w.ResponseWriter.Write(b)
+	}
+	return w.ResponseWriter.Write(redacted)
 }
 
 func (a *App) providerKeysAddBySlug(c *gin.Context) {

@@ -47,75 +47,79 @@ type Action struct {
 	Category string
 	// Summary is the one-line description shown in tools/list and the UI.
 	Summary string
+	// OwnerOnly marks an action the dashboard gates behind RequireOwner. A
+	// platform key may not perform it unless its owner is an owner, and no admin
+	// may grant it — a staff member must not be able to escalate through a key.
+	OwnerOnly bool
 }
 
 // actionTable is the single source of truth for every exposed operation.
 func actionTable() []Action {
 	return []Action{
-		{"stats.get", TierRead, "stats", "Dashboard overview counters."},
+		{Name: "stats.get", Tier: TierRead, Category: "stats", Summary: "Dashboard overview counters."},
 
-		{"model.list", TierRead, "model", "List exposed models the caller can see."},
-		{"model.get", TierRead, "model", "Read one exposed model's metadata and route."},
-		{"model.edit", TierAdmin, "model", "Create or update an exposed model's metadata."},
-		{"model.batch", TierAdmin, "model", "Apply one metadata change to several models."},
-		{"model.delete", TierAdmin, "model", "Delete an exposed model and its route."},
-		{"model.route.get", TierRead, "model", "Read a model's routing plan."},
-		{"model.route.edit", TierAdmin, "model", "Replace a model's routing plan."},
-		{"model.route.clear-cooldown", TierAdmin, "model", "Clear an upstream cooldown."},
-		{"category.list", TierRead, "model", "List model categories."},
-		{"category.edit", TierAdmin, "model", "Create, rename or delete a model category."},
+		{Name: "model.list", Tier: TierRead, Category: "model", Summary: "List exposed models the caller can see."},
+		{Name: "model.get", Tier: TierRead, Category: "model", Summary: "Read one exposed model's metadata and route."},
+		{Name: "model.edit", Tier: TierAdmin, Category: "model", Summary: "Create or update an exposed model's metadata."},
+		{Name: "model.batch", Tier: TierAdmin, Category: "model", Summary: "Apply one metadata change to several models."},
+		{Name: "model.delete", Tier: TierAdmin, Category: "model", Summary: "Delete an exposed model and its route."},
+		{Name: "model.route.get", Tier: TierRead, Category: "model", Summary: "Read a model's routing plan."},
+		{Name: "model.route.edit", Tier: TierAdmin, Category: "model", Summary: "Replace a model's routing plan."},
+		{Name: "model.route.clear-cooldown", Tier: TierAdmin, Category: "model", Summary: "Clear an upstream cooldown.", OwnerOnly: true},
+		{Name: "category.list", Tier: TierRead, Category: "model", Summary: "List model categories."},
+		{Name: "category.edit", Tier: TierAdmin, Category: "model", Summary: "Create, rename or delete a model category."},
 
-		{"provider.list", TierRead, "provider", "List providers (secrets redacted)."},
-		{"provider.get", TierRead, "provider", "Read one provider (secrets redacted)."},
-		{"provider.edit", TierAdmin, "provider", "Create or update a provider. Keys are optional."},
-		{"provider.delete", TierAdmin, "provider", "Delete a provider and its keys."},
+		{Name: "provider.list", Tier: TierRead, Category: "provider", Summary: "List providers (secrets redacted)."},
+		{Name: "provider.get", Tier: TierRead, Category: "provider", Summary: "Read one provider (secrets redacted)."},
+		{Name: "provider.edit", Tier: TierAdmin, Category: "provider", Summary: "Create or update a provider (a new provider may start without keys)."},
+		{Name: "provider.delete", Tier: TierAdmin, Category: "provider", Summary: "Delete a provider and its keys.", OwnerOnly: true},
 
-		{"provider-key.list", TierProviderKey, "provider-key", "List one provider's upstream keys."},
-		{"provider-key.add", TierProviderKey, "provider-key", "Add upstream keys to a provider."},
-		{"provider-key.edit", TierProviderKey, "provider-key", "Update one upstream key's pool, weight, status or note."},
-		{"provider-key.delete", TierProviderKey, "provider-key", "Delete one upstream key."},
-		{"provider-key.reorder", TierProviderKey, "provider-key", "Reorder a provider's upstream keys."},
-		{"provider-key.refresh-balance", TierProviderKey, "provider-key", "Refresh upstream key balances."},
-		{"provider-key.cleanup", TierProviderKey, "provider-key", "Delete unusable upstream keys."},
+		{Name: "provider-key.list", Tier: TierProviderKey, Category: "provider-key", Summary: "List one provider's upstream keys."},
+		{Name: "provider-key.add", Tier: TierProviderKey, Category: "provider-key", Summary: "Add upstream keys to a provider."},
+		{Name: "provider-key.edit", Tier: TierProviderKey, Category: "provider-key", Summary: "Update one upstream key's pool, weight, status or note."},
+		{Name: "provider-key.delete", Tier: TierProviderKey, Category: "provider-key", Summary: "Delete one upstream key."},
+		{Name: "provider-key.reorder", Tier: TierProviderKey, Category: "provider-key", Summary: "Reorder a provider's upstream keys."},
+		{Name: "provider-key.refresh-balance", Tier: TierProviderKey, Category: "provider-key", Summary: "Refresh upstream key balances."},
+		{Name: "provider-key.cleanup", Tier: TierProviderKey, Category: "provider-key", Summary: "Delete unusable upstream keys."},
 
-		{"node.list", TierRead, "node", "List egress nodes and node groups."},
-		{"node.get", TierRead, "node", "Read one egress node."},
-		{"node.edit", TierAdmin, "node", "Create or update an egress node."},
-		{"node.delete", TierAdmin, "node", "Delete an egress node."},
-		{"node.probe", TierAdmin, "node", "Probe an egress node's health now."},
-		{"node-group.edit", TierAdmin, "node", "Create, update or delete a node group."},
+		{Name: "node.list", Tier: TierRead, Category: "node", Summary: "List egress nodes and node groups."},
+		{Name: "node.get", Tier: TierRead, Category: "node", Summary: "Read one egress node."},
+		{Name: "node.edit", Tier: TierAdmin, Category: "node", Summary: "Create or update an egress node."},
+		{Name: "node.delete", Tier: TierAdmin, Category: "node", Summary: "Delete an egress node."},
+		{Name: "node.probe", Tier: TierAdmin, Category: "node", Summary: "Probe an egress node's health now."},
+		{Name: "node-group.edit", Tier: TierAdmin, Category: "node", Summary: "Create, update or delete a node group."},
 
-		{"user.list", TierRead, "user", "List users."},
-		{"user.get", TierRead, "user", "Read one user."},
-		{"user.edit", TierAdmin, "user", "Change a user's role or enabled state."},
-		{"user.force-logout", TierAdmin, "user", "Invalidate a user's dashboard sessions."},
+		{Name: "user.list", Tier: TierRead, Category: "user", Summary: "List users."},
+		{Name: "user.get", Tier: TierRead, Category: "user", Summary: "Read one user."},
+		{Name: "user.edit", Tier: TierAdmin, Category: "user", Summary: "Change a user's role or enabled state.", OwnerOnly: true},
+		{Name: "user.force-logout", Tier: TierAdmin, Category: "user", Summary: "Invalidate a user's dashboard sessions."},
 
-		{"role-group.list", TierRead, "role-group", "List role groups."},
-		{"role-group.get", TierRead, "role-group", "Read one role group."},
-		{"role-group.edit", TierAdmin, "role-group", "Create or update a role group."},
-		{"role-group.delete", TierAdmin, "role-group", "Delete a role group."},
-		{"role-group.member.list", TierRead, "role-group", "List a role group's members."},
-		{"role-group.member.remove", TierAdmin, "role-group", "Remove a member from a role group."},
+		{Name: "role-group.list", Tier: TierRead, Category: "role-group", Summary: "List role groups."},
+		{Name: "role-group.get", Tier: TierRead, Category: "role-group", Summary: "Read one role group."},
+		{Name: "role-group.edit", Tier: TierAdmin, Category: "role-group", Summary: "Create or update a role group."},
+		{Name: "role-group.delete", Tier: TierAdmin, Category: "role-group", Summary: "Delete a role group."},
+		{Name: "role-group.member.list", Tier: TierRead, Category: "role-group", Summary: "List a role group's members."},
+		{Name: "role-group.member.remove", Tier: TierAdmin, Category: "role-group", Summary: "Remove a member from a role group."},
 
-		{"api-key.list", TierRead, "api-key", "List platform API keys."},
-		{"api-key.get", TierRead, "api-key", "Read one platform API key."},
-		{"api-key.edit", TierAdmin, "api-key", "Rename, enable, disable or re-scope an API key."},
-		{"api-key.delete", TierAdmin, "api-key", "Revoke a platform API key."},
-		{"api-key.rotate", TierAdmin, "api-key", "Rotate a platform API key's secret."},
+		{Name: "api-key.list", Tier: TierRead, Category: "api-key", Summary: "List platform API keys."},
+		{Name: "api-key.get", Tier: TierRead, Category: "api-key", Summary: "Read one platform API key."},
+		{Name: "api-key.edit", Tier: TierAdmin, Category: "api-key", Summary: "Rename, enable, disable or re-scope an API key."},
+		{Name: "api-key.delete", Tier: TierAdmin, Category: "api-key", Summary: "Revoke a platform API key."},
+		{Name: "api-key.rotate", Tier: TierAdmin, Category: "api-key", Summary: "Rotate a platform API key's secret."},
 
-		{"request-log.list", TierRead, "request-log", "Query gateway request logs."},
-		{"request-log.get", TierRead, "request-log", "Read one request log (owner-visible fields only)."},
-		{"request-log.get-debug", TierRead, "request-log", "Read one request log's full debug trail."},
-		{"request-log.filters", TierRead, "request-log", "List the request log filter values."},
-		{"audit-log.list", TierRead, "audit-log", "Query audit records."},
-		{"audit-log.filters", TierRead, "audit-log", "List the audit filter values."},
+		{Name: "request-log.list", Tier: TierRead, Category: "request-log", Summary: "Query gateway request logs."},
+		{Name: "request-log.get", Tier: TierRead, Category: "request-log", Summary: "Read one request log (owner-visible fields only)."},
+		{Name: "request-log.get-debug", Tier: TierRead, Category: "request-log", Summary: "Read one request log's full debug trail."},
+		{Name: "request-log.filters", Tier: TierRead, Category: "request-log", Summary: "List the request log filter values."},
+		{Name: "audit-log.list", Tier: TierRead, Category: "audit-log", Summary: "Query audit records."},
+		{Name: "audit-log.filters", Tier: TierRead, Category: "audit-log", Summary: "List the audit filter values."},
 
-		{"announcement.list", TierRead, "announcement", "List announcements."},
-		{"announcement.edit", TierAdmin, "announcement", "Create or update an announcement."},
-		{"announcement.delete", TierAdmin, "announcement", "Delete an announcement."},
+		{Name: "announcement.list", Tier: TierRead, Category: "announcement", Summary: "List announcements."},
+		{Name: "announcement.edit", Tier: TierAdmin, Category: "announcement", Summary: "Create or update an announcement."},
+		{Name: "announcement.delete", Tier: TierAdmin, Category: "announcement", Summary: "Delete an announcement.", OwnerOnly: true},
 
-		{"setting.get", TierRead, "setting", "Read runtime settings."},
-		{"setting.edit", TierAdmin, "setting", "Change runtime settings."},
+		{Name: "setting.get", Tier: TierRead, Category: "setting", Summary: "Read runtime settings."},
+		{Name: "setting.edit", Tier: TierAdmin, Category: "setting", Summary: "Change runtime settings.", OwnerOnly: true},
 	}
 }
 
@@ -220,25 +224,38 @@ func containsScope(scopes []string, want string) bool {
 	return false
 }
 
-// adminGrantableScopes are the scopes a staff member may grant. Nothing here
-// reaches a stored secret: there is deliberately no *.reveal action, no provider
-// deletion (it destroys credentials), and no provider-key scope (it can rotate
-// upstream credentials) — those stay owner-only.
+// adminGrantableScopes are the scopes a staff member may grant. Every action
+// reachable from these is owner-safe: the owner-only actions (user.edit,
+// setting.edit, provider.delete, announcement.delete, clear-cooldown) are named
+// individually so the wildcards below cannot carry them, and no wildcard covers
+// ProviderScope (a provider-key grant must name a slug and stays owner-only).
 func adminGrantableScopes() []string {
 	return []string{
 		ScopeRead,
 		"stats.get",
-		"model.*",
+		"model.list", "model.get", "model.edit", "model.batch", "model.delete",
+		"model.route.get", "model.route.edit",
+		"category.list", "category.edit",
 		"provider.list", "provider.get", "provider.edit",
 		"node.*", "node-group.*",
-		"user.*", "role-group.*", "api-key.*", "request-log.*", "audit-log.*",
-		"announcement.*", "setting.get", "setting.edit", "category.*",
+		"user.list", "user.get", "user.force-logout",
+		"role-group.*",
+		"api-key.*",
+		"request-log.list", "request-log.get", "request-log.filters",
+		"audit-log.*",
+		"announcement.list", "announcement.edit",
+		"setting.get",
 	}
 }
 
 // ownerGrantableScopes adds the owner-only surface.
 func ownerGrantableScopes() []string {
-	return append(adminGrantableScopes(), ScopeAll, "provider.delete", ProviderScope+":*.*")
+	return append(adminGrantableScopes(),
+		ScopeAll,
+		"user.edit", "setting.edit", "provider.delete", "announcement.delete",
+		"model.route.clear-cooldown",
+		ProviderScope+":*.*",
+	)
 }
 
 // GrantableScopes returns every scope the given role may put on a platform API
@@ -254,27 +271,69 @@ func GrantableScopes(role string) []string {
 }
 
 // ScopeGrantableBy reports whether the role may grant a specific scope entry.
-// Provider key scopes are owner-only because they can rotate upstream
-// credentials.
+// The entry must be one of the role's grant strings, a concrete action covered by
+// one of them, or a per-provider entry for an owner.
 func ScopeGrantableBy(role, scope string) bool {
 	scope = strings.TrimSpace(scope)
 	if scope == "" {
 		return false
 	}
-	for _, g := range GrantableScopes(role) {
-		if g == scope {
+	grantable := GrantableScopes(role)
+	allow := make(map[string]bool, len(grantable))
+	for _, g := range grantable {
+		allow[g] = true
+	}
+	if allow[scope] {
+		return true
+	}
+	if scope == ScopeAll {
+		return allow[ScopeAll]
+	}
+	if strings.HasPrefix(scope, ProviderScope+":") {
+		if !allow[ProviderScope+":*.*"] {
+			return false
+		}
+		rest := strings.TrimPrefix(scope, ProviderScope+":")
+		slug, verb, ok := strings.Cut(rest, ".")
+		if !ok || slug == "" || verb == "" {
+			return false
+		}
+		if verb == "*" {
 			return true
 		}
+		_, declared := ActionByName(ProviderScope + "." + verb)
+		return declared
 	}
-	// Wildcard families: "model.*" covers "model.edit", but the grant string is
-	// what gets written to the key, so only listed grant strings are accepted.
-	return false
+	action, declared := ActionByName(scope)
+	if !declared {
+		return false
+	}
+	if action.OwnerOnly && !IsOwner(role) {
+		return false
+	}
+	return allow[action.Category+".*"] ||
+		(allow[ScopeRead] && action.Tier == TierRead)
+}
+
+// AllowsAction reports whether a credential with these effective scopes may
+// perform an action, applying the owner-only gate. This is the single
+// authorisation predicate: the REST router, the MCP registry and the scope
+// picker all call it.
+func AllowsAction(scopes []string, role, action string) bool {
+	if act, ok := ActionByName(action); ok && act.OwnerOnly && !IsOwner(role) {
+		return false
+	}
+	return ReadScopeSatisfied(scopes, action)
 }
 
 // EffectiveScopes narrows a key's stored scopes to what its owner's current
 // role may still grant. A demoted owner keeps the key but loses the surfaces
 // their new role no longer covers, so a role change takes effect on the next
 // request without rewriting key rows.
+//
+// Wildcards are expanded against the role's grantable set rather than matched
+// literally: "*" held by a demoted owner must mean "everything an admin may
+// do", not "nothing" and not "everything".
 func EffectiveScopes(scopes []string, role string) []string {
 	grantable := GrantableScopes(role)
 	if len(grantable) == 0 || len(scopes) == 0 {
@@ -291,13 +350,18 @@ func EffectiveScopes(scopes []string, role string) []string {
 			out = append(out, s)
 			continue
 		}
+		// "*" expands to the role's whole grantable set.
+		if s == ScopeAll {
+			out = append(out, grantable...)
+			continue
+		}
 		// A concrete action inside a granted category stays valid: "model.edit"
 		// inside "model.*".
 		if category, _, ok := splitAction(s); ok && allow[category+".*"] {
 			out = append(out, s)
 			continue
 		}
-		// Per-provider scopes survive only for the role that may manage keys.
+		// Per-provider scopes never survive without an owner grant.
 		if strings.HasPrefix(s, ProviderScope+":") {
 			if allow[ProviderScope+":*.*"] {
 				out = append(out, s)
@@ -305,6 +369,19 @@ func EffectiveScopes(scopes []string, role string) []string {
 			continue
 		}
 	}
-	sort.Strings(out)
+	return dedupeSorted(out)
+}
+
+func dedupeSorted(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	sort.Strings(in)
+	out := in[:1]
+	for _, s := range in[1:] {
+		if s != out[len(out)-1] {
+			out = append(out, s)
+		}
+	}
 	return out
 }

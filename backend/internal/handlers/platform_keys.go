@@ -57,7 +57,7 @@ func normaliseScopes(raw []string, role string) ([]string, string) {
 		if s == "" {
 			continue
 		}
-		if !scopeGrantableForRole(role, s) {
+		if !core.ScopeGrantableBy(role, s) {
 			return nil, "Scope not permitted for your role: " + s
 		}
 		if seen[s] {
@@ -68,43 +68,6 @@ func normaliseScopes(raw []string, role string) ([]string, string) {
 	}
 	sort.Strings(out)
 	return out, ""
-}
-
-// scopeGrantableForRole accepts the wildcard families a role may write plus any
-// concrete action they already cover.
-func scopeGrantableForRole(role, scope string) bool {
-	for _, g := range core.GrantableScopes(role) {
-		if g == scope {
-			return true
-		}
-	}
-	// Per-provider entries: "provider-key:<slug>.*" / "provider-key:<slug>.<verb>".
-	if strings.HasPrefix(scope, core.ProviderScope+":") {
-		if !core.IsOwner(role) {
-			return false
-		}
-		rest := strings.TrimPrefix(scope, core.ProviderScope+":")
-		slug, verb, ok := strings.Cut(rest, ".")
-		if !ok || slug == "" || verb == "" {
-			return false
-		}
-		return true
-	}
-	// A concrete action inside a granted category ("model.edit" under "model.*").
-	action, ok := core.ActionByName(scope)
-	if !ok {
-		return false
-	}
-	if action.Tier == core.TierProviderKey {
-		return core.IsOwner(role)
-	}
-	category, _, _ := strings.Cut(scope, ".")
-	for _, g := range core.GrantableScopes(role) {
-		if g == core.ScopeAll || g == core.ScopeRead && action.Tier == core.TierRead || g == category+".*" {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *App) mePlatformKeys(c *gin.Context) {
@@ -157,11 +120,10 @@ func (a *App) mePlatformKeyCreate(c *gin.Context) {
 	if in.Name != nil && strings.TrimSpace(*in.Name) != "" {
 		name = strings.TrimSpace(*in.Name)
 	}
-	now := time.Now().UTC()
 	row := database.PlatformAPIKey{
 		UserID: uv.User.ID, Name: name, KeyHash: core.HashToken(raw),
 		KeyPrefix: core.PlatformKeyFingerprint(raw), Scopes: database.JSONOf(scopes),
-		Enabled: true, ScopesGrantedAt: &now, ExpiresAt: in.ExpiresAt,
+		Enabled: true, ExpiresAt: in.ExpiresAt,
 	}
 	if err := a.GDB.Create(&row).Error; err != nil {
 		a.internal(c, err)
@@ -182,14 +144,27 @@ func (a *App) mePlatformKeyCreate(c *gin.Context) {
 	})
 }
 
+// platformKeyForCaller loads one of the caller's own keys. A platform API key is
+// scoped to its owner: api-key.* governs that owner's keys, never another staff
+// member's, so automation cannot take over someone else's credential.
+func (a *App) platformKeyForCaller(c *gin.Context, id int) (*database.PlatformAPIKey, bool) {
+	uv := core.GetUser(c)
+	var row database.PlatformAPIKey
+	if err := a.GDB.Where("id = ? AND user_id = ?", id, uv.User.ID).First(&row).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "API key not found.")
+		return nil, false
+	}
+	return &row, true
+}
+
 func (a *App) mePlatformKeyUpdate(c *gin.Context) {
 	uv := core.GetUser(c)
 	id, _ := strconv.Atoi(c.Param("id"))
-	var row database.PlatformAPIKey
-	if err := a.GDB.Where("id = ?", id).First(&row).Error; err != nil {
-		a.fail(c, http.StatusNotFound, "API key not found.")
+	rowPtr, ok := a.platformKeyForCaller(c, id)
+	if !ok {
 		return
 	}
+	row := *rowPtr
 	var in struct {
 		Name      *string    `json:"name"`
 		Enabled   *bool      `json:"enabled"`
@@ -200,8 +175,13 @@ func (a *App) mePlatformKeyUpdate(c *gin.Context) {
 		a.fail(c, http.StatusUnprocessableEntity, "invalid payload.")
 		return
 	}
-	if in.Name != nil && strings.TrimSpace(*in.Name) != "" {
-		row.Name = strings.TrimSpace(*in.Name)
+	if in.Name != nil {
+		name := strings.TrimSpace(*in.Name)
+		if name == "" {
+			a.fail(c, http.StatusUnprocessableEntity, "name cannot be empty.")
+			return
+		}
+		row.Name = name
 	}
 	if in.Enabled != nil {
 		row.Enabled = *in.Enabled
@@ -245,7 +225,7 @@ func (a *App) mePlatformKeyUpdate(c *gin.Context) {
 		Scope: core.AuditScopeSelf, TargetType: strPtr("platform_api_key"), TargetID: &tid,
 		Detail: detail, IP: strPtr(clientIP(c)),
 	})
-	c.JSON(http.StatusOK, toPlatformKeyView(&row))
+	c.JSON(http.StatusOK, toPlatformKeyView(rowPtr))
 }
 
 func (a *App) mePlatformKeyDelete(c *gin.Context) {
@@ -276,20 +256,18 @@ func (a *App) mePlatformKeyDelete(c *gin.Context) {
 func (a *App) mePlatformKeyRotate(c *gin.Context) {
 	uv := core.GetUser(c)
 	id, _ := strconv.Atoi(c.Param("id"))
-	var row database.PlatformAPIKey
-	if err := a.GDB.Where("id = ? AND user_id = ?", id, uv.User.ID).First(&row).Error; err != nil {
-		a.fail(c, http.StatusNotFound, "API key not found.")
+	rowPtr, ok := a.platformKeyForCaller(c, id)
+	if !ok {
 		return
 	}
+	row := *rowPtr
 	raw, err := core.GenerateToken(platformKeyPrefix)
 	if err != nil {
 		a.internal(c, err)
 		return
 	}
-	now := time.Now().UTC()
 	row.KeyHash = core.HashToken(raw)
 	row.KeyPrefix = core.PlatformKeyFingerprint(raw)
-	row.ScopesGrantedAt = &now
 	if err := a.GDB.Save(&row).Error; err != nil {
 		a.internal(c, err)
 		return
@@ -315,21 +293,16 @@ func (a *App) mePlatformKeyRotate(c *gin.Context) {
 func (a *App) mePlatformKeyScopes(c *gin.Context) {
 	uv := core.GetUser(c)
 	grantable := core.GrantableScopes(uv.Role)
-	allowed := make(map[string]bool, len(grantable))
-	for _, g := range grantable {
-		allowed[g] = true
-	}
 	actions := core.Actions()
 	out := make([]gin.H, 0, len(actions)+len(grantable))
 	for _, g := range grantable {
 		out = append(out, gin.H{"scope": g, "summary": wildcardScopeSummary(g), "grantable": true})
 	}
 	for _, act := range actions {
-		grantable := allowed[act.Name] || allowed[act.Category+".*"] ||
-			(act.Tier == core.TierRead && allowed[core.ScopeRead])
+		grant := core.ScopeGrantableBy(uv.Role, act.Name)
 		out = append(out, gin.H{
 			"scope": act.Name, "summary": act.Summary,
-			"category": act.Category, "grantable": grantable,
+			"category": act.Category, "grantable": grant,
 		})
 	}
 	var providers []database.Provider

@@ -36,13 +36,14 @@ func GetPlatformCredential(c *gin.Context) *PlatformCredential {
 	return kc
 }
 
-// Allows reports whether the credential grants an action, honouring the "read"
-// shorthand for read-tier actions.
+// Allows reports whether the credential grants an action. The owner-only gate is
+// applied here as well as at grant time, so a demoted owner cannot reach an
+// owner-only action with a key that still carries the scope.
 func (p *PlatformCredential) Allows(action string) bool {
-	if p == nil {
+	if p == nil || p.User == nil {
 		return false
 	}
-	return ReadScopeSatisfied(p.Scopes, action)
+	return AllowsAction(p.Scopes, p.User.Role, action)
 }
 
 // AllowsProviderKey reports whether the credential may manage one provider's
@@ -124,9 +125,13 @@ func PlatformKeyAuth(db *gorm.DB, viaMCP bool) gin.HandlerFunc {
 		var scopes []string
 		database.DecodeJSON(key.Scopes, &scopes)
 		eff := EffectiveScopes(scopes, user.Role)
-		if len(eff) == 0 {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"detail": "This API key has no scopes available to your role."})
-			return
+		// Record the use, throttled: one UPDATE per key per minute is enough for
+		// the dashboard's "last used" column and keeps the hot path write-free.
+		if key.LastUsedAt == nil || now.Sub(*key.LastUsedAt) > time.Minute {
+			if err := db.Model(&database.PlatformAPIKey{}).Where("id = ?", key.ID).
+				Update("last_used_at", now).Error; err == nil {
+				key.LastUsedAt = &now
+			}
 		}
 		cred := &PlatformCredential{
 			Key: &key, User: uv, Scopes: eff, ViaMCP: viaMCP,

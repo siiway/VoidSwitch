@@ -111,17 +111,32 @@ func (a *App) userGet(c *gin.Context) {
 // mePlatformKeyGet returns one of the caller's platform API keys.
 func (a *App) mePlatformKeyGet(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	var row database.PlatformAPIKey
-	if err := a.GDB.Where("id = ?", id).First(&row).Error; err != nil {
-		a.fail(c, http.StatusNotFound, "API key not found.")
+	row, ok := a.platformKeyForCaller(c, id)
+	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, toPlatformKeyView(&row))
+	c.JSON(http.StatusOK, toPlatformKeyView(row))
 }
 
-// logsRequestDebug returns one request log with the full debug trail. The
-// existing detail view already answers "may I see the bodies"; this route just
-// keeps the agent-facing tool honest about what it returns.
+// logsRequestDebug returns one request log with the full debug trail. A platform
+// API key never sees more than a staff dashboard session would, and never the
+// bodies: the per-attempt trail carries upstream addresses and key previews, so
+// it is redacted down to the same projection an admin already gets.
 func (a *App) logsRequestDebug(c *gin.Context) {
+	if cred := core.GetPlatformCredential(c); cred != nil && !cred.User.IsOwner() {
+		id, _ := strconv.Atoi(c.Param("id"))
+		var r database.RequestLog
+		if err := a.GDB.First(&r, id).Error; err != nil {
+			a.fail(c, http.StatusNotFound, "Request log not found.")
+			return
+		}
+		if !a.requestLogVisible(cred.User, r.UserSub) {
+			a.fail(c, http.StatusNotFound, "Request log not found.")
+			return
+		}
+		v := a.buildRequestLogDetail(&r, cred.User)
+		c.JSON(http.StatusOK, v)
+		return
+	}
 	a.logsRequestDetail(c)
 }

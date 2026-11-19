@@ -881,7 +881,7 @@ const en = {
       "Per-provider. A key that manages one provider's upstream keys cannot touch another's.",
     needScope: "Select at least one scope.",
     ownerOnlyHint:
-      "Owner-only scopes (provider key management, provider deletion) are not available to your role.",
+      "Owner-only scopes (provider key management, provider deletion, user edits, settings, announcement deletion, clearing cooldowns) are not offered here, and an admin cannot reach them through *.",
     lostStaff: "disabled — staff access lost",
     createFailed: "Could not create the API key",
     secretTitle: "Your platform API key",

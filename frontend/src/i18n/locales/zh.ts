@@ -858,7 +858,8 @@ const zh: Translations = {
     providerKeysHint:
       "按提供商授予。管理某个提供商上游密钥的凭据无法触及其他提供商。",
     needScope: "请至少选择一项 scope。",
-    ownerOnlyHint: "仅所有者可用的 scope（提供商密钥管理、删除提供商）对你的角色不可用。",
+    ownerOnlyHint:
+      "仅所有者可用的 scope（提供商密钥管理、删除提供商、修改用户、修改设置、删除公告、清除上游冷却）不会出现在这里，管理员也无法通过 * 获得它们。",
     lostStaff: "已停用 —— 失去管理人员权限",
     createFailed: "创建 API Key 失败",
     secretTitle: "你的平台 API Key",

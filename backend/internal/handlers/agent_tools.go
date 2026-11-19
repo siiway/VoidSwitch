@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -26,7 +27,16 @@ type toolSpec struct {
 	// ProviderScoped marks provider-key actions, which need a provider slug in
 	// the path to be authorised (and are the reason a scope must name a slug).
 	ProviderScoped bool
+	// ParamAlias maps an argument name to the path parameter name the handler
+	// reads. The handler keeps its own name (some read "id" where the public API
+	// says "model_id"), and the bridge registers both.
+	ParamAlias map[string]string
 }
+
+// fixedParams is the alias map the bridge applies to a path parameter: the value
+// the caller supplies under the public name is also registered under the name
+// the handler reads.
+func (t toolSpec) fixedParams() map[string]string { return t.ParamAlias }
 
 // paramSpec describes one argument of a tool.
 type paramSpec struct {
@@ -71,8 +81,10 @@ func (a *App) platformTools() []toolSpec {
 		{Action: "model.delete", Method: http.MethodDelete, Path: "/models/:model_id", Handler: a.modelDelete,
 			Params: []paramSpec{{Name: "model_id", Type: "string", InPath: true, Desc: "Public model id."}}},
 		{Action: "model.route.get", Method: http.MethodGet, Path: "/models/:model_id/route", Handler: a.modelRouteGet,
-			Params: []paramSpec{{Name: "model_id", Type: "string", InPath: true, Desc: "Public model id."}}},
+			ParamAlias: map[string]string{"model_id": "id"},
+			Params:     []paramSpec{{Name: "model_id", Type: "string", InPath: true, Desc: "Public model id."}}},
 		{Action: "model.route.edit", Method: http.MethodPut, Path: "/models/:model_id/route", Handler: a.modelRoutePut,
+			ParamAlias: map[string]string{"model_id": "id"},
 			Params: []paramSpec{
 				{Name: "model_id", Type: "string", InPath: true, Desc: "Public model id."},
 				{Name: "upstreams", Type: "array", Desc: "Ordered upstream candidates {provider_id, upstream_model, key_pool, position, weight, enabled}."},
@@ -80,7 +92,11 @@ func (a *App) platformTools() []toolSpec {
 				{Name: "max_upstream_attempts", Type: "integer", Desc: "Attempt budget for this route."},
 			}},
 		{Action: "model.route.clear-cooldown", Method: http.MethodPost, Path: "/models/:model_id/route/clear-cooldown", Handler: a.routeClearCooldown,
-			Params: []paramSpec{{Name: "model_id", Type: "string", InPath: true, Desc: "Public model id."}}},
+			ParamAlias: map[string]string{"model_id": "id"},
+			Params: []paramSpec{
+				{Name: "model_id", Type: "string", InPath: true, Desc: "Public model id."},
+				{Name: "upstream_id", Type: "integer", Desc: "Route upstream id to clear; 0 clears every upstream of the route."},
+			}},
 		{Action: "category.list", Method: http.MethodGet, Path: "/model-categories", Handler: a.categoriesList,
 			Params: []paramSpec{}},
 		{Action: "category.edit", Method: http.MethodPost, Path: "/model-categories", Handler: a.categoriesCreate,
@@ -101,7 +117,6 @@ func (a *App) platformTools() []toolSpec {
 				{Name: "base_url", Type: "string", Desc: "Upstream base URL."},
 				{Name: "enabled", Type: "boolean", Desc: "Whether the provider is usable."},
 				{Name: "models", Type: "array", Desc: "Advertised upstream model ids."},
-				{Name: "keys", Type: "array", Desc: "Optional upstream keys to add now; omit to create the provider empty."},
 			}},
 		{Action: "provider.delete", Method: http.MethodDelete, Path: "/providers/:id", Handler: a.providerDelete,
 			Params: []paramSpec{{Name: "id", Type: "integer", InPath: true, Desc: "Provider id."}}},
@@ -198,6 +213,7 @@ func (a *App) platformTools() []toolSpec {
 		{Action: "role-group.member.list", Method: http.MethodGet, Path: "/role-groups/:id/members", Handler: a.roleGroupMembers,
 			Params: []paramSpec{{Name: "id", Type: "integer", InPath: true, Desc: "Role group id."}}},
 		{Action: "role-group.member.remove", Method: http.MethodDelete, Path: "/role-groups/:id/members/:user_id", Handler: a.roleGroupMemberDelete,
+			ParamAlias: map[string]string{"user_id": "userId"},
 			Params: []paramSpec{
 				{Name: "id", Type: "integer", InPath: true, Desc: "Role group id."},
 				{Name: "user_id", Type: "integer", InPath: true, Desc: "User id to remove."},
@@ -274,9 +290,10 @@ func (a *App) platformTools() []toolSpec {
 	}
 }
 
-// toolVisible reports whether the credential may call one tool. Provider-scoped
-// tools stay hidden until a scope names at least one provider, so an agent never
-// sees a tool it can only fail on.
+// visible reports whether the credential may call one tool. Provider-scoped
+// tools stay hidden until a scope names at least one provider: a generic
+// "provider-key.*" grants nothing, because managing every provider's credentials
+// must be an explicit per-provider decision.
 func (t toolSpec) visible(cred *core.PlatformCredential) bool {
 	if cred == nil {
 		return false
@@ -284,18 +301,22 @@ func (t toolSpec) visible(cred *core.PlatformCredential) bool {
 	if !t.ProviderScoped {
 		return cred.Allows(t.Action)
 	}
-	for _, s := range cred.Scopes {
-		if hasProviderSlugScope(s) {
+	return hasProviderSlugScope(cred.Scopes)
+}
+
+// hasProviderSlugScope reports whether any scope entry names a provider slug.
+func hasProviderSlugScope(scopes []string) bool {
+	for _, s := range scopes {
+		if !strings.HasPrefix(s, core.ProviderScope+":") {
+			continue
+		}
+		rest := strings.TrimPrefix(s, core.ProviderScope+":")
+		slug, verb, ok := strings.Cut(rest, ".")
+		if ok && slug != "" && verb != "" {
 			return true
 		}
 	}
 	return false
-}
-
-// hasProviderSlugScope reports whether a scope entry grants some provider's keys.
-func hasProviderSlugScope(scope string) bool {
-	return len(scope) > len(core.ProviderScope)+1 &&
-		scope[:len(core.ProviderScope)+1] == core.ProviderScope+":"
 }
 
 // authorizeProviderScope re-checks a provider-scoped tool against the slug in

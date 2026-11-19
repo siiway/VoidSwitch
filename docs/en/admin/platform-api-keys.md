@@ -24,7 +24,7 @@ Each key carries a set of **scopes**, written `category.action` (e.g. `model.edi
 | `read` | Every read-only action |
 | `model.*` | A whole category |
 | `model.edit` | A single action |
-| `provider-key:acme.*` | Upstream key management for provider slug `acme` |
+| `provider-key:acme.*` | Upstream key management for provider slug `acme` (owner-granted only) |
 
 **A key's permission is its scopes intersected with what its owner's current role
 may grant.** In practice:
@@ -36,13 +36,33 @@ may grant.** In practice:
 - Losing staff access disables every key you hold ("disabled — staff access lost").
   **Regaining staff access does not re-enable them**; you must do it yourself.
 
-## Two hard limits
+## Permission boundaries
 
-- **Nothing reveals a stored secret.** There is no `*.reveal` action: upstream key
-  plaintext, audit sensitive payloads and Void-Token secrets are unreachable
-  through a Platform API Key.
-- **Staff only.** A non-staff caller is refused (403) even if the key row is still
-  enabled.
+**Nothing reveals a stored secret.** There is no `*.reveal` action: upstream key
+plaintext, audit sensitive payloads and Void-Token secrets are unreachable through
+a Platform API Key. The upstream key list omits `key_preview` as well — in the
+dashboard that field is the first and last four characters of the credential. A
+request log's detailed trail is returned in the redacted staff projection, never
+with bodies.
+
+**Staff only.** A non-staff caller is refused (403) even if the key row is still
+enabled.
+
+**Some actions stay owner-only and cannot be granted.** These already sit behind
+`RequireOwner` in the dashboard, and a Platform API Key keeps that gate: an admin
+can neither write them into a key nor reach them through a `*` wildcard.
+
+| Action | Why |
+| --- | --- |
+| `user.edit` | Changes roles / enabled state (prevents self-escalation) |
+| `setting.edit` | Changes global settings |
+| `provider.delete` | Deletes a provider |
+| `announcement.delete` | Deletes an announcement |
+| `model.route.clear-cooldown` | Clears an upstream cooldown |
+| `provider-key:<slug>.*` | Manages one provider's upstream keys |
+
+An admin's `*` **expands to whatever the current role may still do** rather than
+collapsing to nothing.
 
 ## Calling it
 

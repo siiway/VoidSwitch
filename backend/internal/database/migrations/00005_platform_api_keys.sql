@@ -13,7 +13,6 @@ CREATE TABLE public.platform_api_keys (
     scopes json DEFAULT '[]'::json NOT NULL,
     enabled boolean DEFAULT true NOT NULL,
     disabled_reason character varying(64),
-    scopes_granted_at timestamp with time zone,
     expires_at timestamp with time zone,
     last_used_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -44,8 +43,6 @@ ALTER TABLE ONLY public.platform_api_keys
     ADD CONSTRAINT platform_api_keys_user_id_fkey FOREIGN KEY (user_id)
     REFERENCES public.users(id) ON DELETE CASCADE;
 
-ALTER SEQUENCE public.platform_api_keys_id_seq OWNED BY public.platform_api_keys.id;
-
 -- Audit rows now name the credential that performed an action, so "who" and
 -- "which key" are both answerable from one row.
 ALTER TABLE public.audit_logs ADD COLUMN credential character varying(64);
@@ -63,7 +60,11 @@ ALTER TABLE public.providers ADD COLUMN key_api_token_hash character varying(64)
 ALTER TABLE public.providers ADD COLUMN key_api_token_ciphertext text;
 ALTER TABLE public.providers ADD COLUMN key_api_token_preview character varying(48);
 
+-- The baseline carried a unique index on the token hash; dropping the column
+-- dropped it too, so rolling back has to recreate it.
+CREATE UNIQUE INDEX ix_providers_key_api_token_hash ON public.providers (key_api_token_hash);
+
 ALTER TABLE public.audit_logs DROP COLUMN credential;
 
+-- Dropping the table also drops the sequence it owns.
 DROP TABLE public.platform_api_keys;
-DROP SEQUENCE public.platform_api_keys_id_seq;
