@@ -44,6 +44,6 @@ Use the model's **exposed model ID** as the `model` field in your request. See [
 
 Clicking any model card opens a **model detail dialog**: the full description, capabilities / modalities,
 context and output limits, how many role groups grant access, the recent health summary (status, success
-rate, average TTFT, throughput in tok/s, sample count) and — staff only — each upstream candidate's own
+rate, average TTFT, throughput in tok/s — output tokens over the total duration, prompt tokens excluded, streamed requests only, hidden above the model throughput display ceiling — sample count) and — staff only — each upstream candidate's own
 success rate / TTFT / sample count and cooldown. Members see only the model's own information and the
 aggregated health, never the upstreams.

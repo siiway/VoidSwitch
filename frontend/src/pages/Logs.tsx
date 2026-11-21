@@ -635,9 +635,9 @@ function requestDurationMs(
   return Number.isNaN(end) ? null : Math.max(0, end - start);
 }
 
-// tokensPerSecondOf divides the tokens by the whole request duration, which is
-// only meaningful for a streamed response: a non-stream request's duration is a
-// single round trip, so it would report a five-figure rate. Those rows show "—".
+// tokensPerSecondOf is generated (output) tokens over the whole request duration.
+// Prompt tokens are excluded, and only a streamed response has a meaningful
+// duration — a non-stream request is a single round trip — so those rows show "—".
 function tokensPerSecondOf(
   r: RequestLog,
   now: number,
@@ -645,8 +645,8 @@ function tokensPerSecondOf(
 ): string {
   if (!r.stream) return "—";
   const ms = requestDurationMs(r, now, liveEnabled);
-  if (ms == null || ms <= 0 || !r.total_tokens) return "—";
-  return (r.total_tokens / (ms / 1000)).toFixed(2);
+  if (ms == null || ms <= 0 || !r.completion_tokens) return "—";
+  return (r.completion_tokens / (ms / 1000)).toFixed(2);
 }
 
 // Live request-log stream over SSE. EventSource can't attach the dashboard's
@@ -2338,7 +2338,7 @@ function AuditLogs({
       ) : !data ? null : (
         <>
           <div ref={containerRef}>
-          <DataTable ariaLabel={ta("logs.audit" as TK)} minWidth={1020}>
+          <DataTable ariaLabel={ta("logs.audit" as TK)} minWidth={1240}>
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>{ta("logs.id" as TK)}</TableHeaderCell>
@@ -2361,10 +2361,22 @@ function AuditLogs({
                   data-log-row={a.id}
                   className={a.id === highlightId ? hl.row : undefined}
                 >
-                  <TableCell style={{ color: tokens.colorNeutralForeground3, fontFamily: "monospace" }}>
+                  <TableCell
+                    style={{
+                      color: tokens.colorNeutralForeground3,
+                      fontFamily: "monospace",
+                      whiteSpace: "nowrap",
+                      width: 1,
+                    }}
+                  >
                     {a.id}
                   </TableCell>
-                  <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+                  <TableCell
+                    style={{
+                      color: tokens.colorNeutralForeground3,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {formatDate(a.ts)}
                   </TableCell>
                   <TableCell>

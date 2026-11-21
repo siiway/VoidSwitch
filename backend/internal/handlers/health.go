@@ -189,8 +189,15 @@ func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
 	minSamples := services.GetInt("upstream_min_samples", 10)
 
 	var rows []database.RequestLog
-	a.GDB.Select("model", "success", "first_token_ms", "total_tokens", "stream", "started_at", "finished_at", "ts").
+	a.GDB.Select("model", "success", "first_token_ms", "completion_tokens", "stream", "started_at", "finished_at", "ts").
 		Where("ts >= ? AND model IS NOT NULL", since).Order("ts").Find(&rows)
+	return aggregateModelHealth(rows, recentCount, minSamples)
+}
+
+// aggregateModelHealth is the pure part of the index: it turns one pass of rows
+// into per-model figures. Keeping it separate from the query makes the arithmetic
+// (which tokens count, which samples) testable without a database.
+func aggregateModelHealth(rows []database.RequestLog, recentCount, minSamples int) map[string]gin.H {
 	byModel := map[string][]database.RequestLog{}
 	for i := range rows {
 		if rows[i].Model == nil {
@@ -209,7 +216,7 @@ func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
 		var total, success int
 		var ttftSum float64
 		var ttftN int
-		var tokens int64
+		var outputTokens int64
 		var seconds float64
 		for i := range sample {
 			total++
@@ -221,7 +228,7 @@ func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
 				ttftN++
 			}
 			if sample[i].Stream {
-				tokens += sample[i].TotalTokens
+				outputTokens += sample[i].CompletionTokens
 				if sample[i].FinishedAt != nil && sample[i].StartedAt != nil {
 					seconds += sample[i].FinishedAt.Sub(*sample[i].StartedAt).Seconds()
 				}
@@ -256,7 +263,7 @@ func (a *App) modelHealthIndex(now time.Time) map[string]gin.H {
 			"best_success_rate":    rate,
 			"best_ttft_ms":         ttft,
 			"recent_since":         recentSince(&sample),
-			"tokens_per_second":    streamThroughput(tokens, seconds),
+			"tokens_per_second":    streamThroughput(outputTokens, seconds),
 		}
 	}
 	return out
