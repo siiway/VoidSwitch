@@ -8,6 +8,9 @@ To call the gateway you need a **Void-Token** — a personal client credential t
 2. Click to create a new token and give it a name (for example `laptop`, `ci`).
 3. Optional settings:
    - **Allowed models** — restrict this token to specific model IDs. Leave empty = all models you're authorized to call.
+     Type the IDs into the multi-line field (globs such as `openrouter/*` work), or click **Select models** to pick
+     from the platform catalog in a dialog (grouped like the Models page; picking appends the id), so you never
+     have to remember an id by heart.
    - **RPM limit** — the maximum number of requests per minute (0 = unlimited).
    - **Daily quota** — the maximum number of requests per day (0 = unlimited).
    - **Expiration** — the token stops working after this date.

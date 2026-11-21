@@ -939,6 +939,17 @@ const en = {
     deleteFailed: "Delete failed",
     renameFailed: "Rename failed",
     userIdHint: "User ID (blank = yourself)",
+    allowedModelsNote:
+      "Rows you type are kept as written, so a glob such as openrouter/* still works. The picker only adds.",
+    allowedModelsPlaceholder: "one model id per line (blank = every model)",
+    selectModels: "Select models",
+    selectModelsTitle: "Select allowed models",
+    selectModelsHint:
+      "The platform catalog, grouped like the Models page. Checking a row adds that id to the list.",
+    searchModels: "Search by name or id",
+    addSelected: "Add selected",
+    noModelsToPick: "No models available",
+    noModelsToPickHint: "The catalog is empty, or every model is disabled.",
     allowedModelsHint: "Allowed models (blank = all; one per line)",
     debugEnable: "Enable debug logging for this token",
     debugDisable: "Disable debug logging for this token",
@@ -1426,6 +1437,7 @@ const en = {
     pluginNote:
       "For manual plugin installation, including macOS / Linux, Windows, and Nix examples, open the <docs>OpenCode plugin guide</docs>.",
     createToken: "Create token",
+    createTitle: "Create a Void-Token",
     newTokenName: "New token name",
     name: "Name",
     fingerprint: "Fingerprint",

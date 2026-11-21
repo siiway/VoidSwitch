@@ -49,6 +49,7 @@ import {
   useNotify,
 } from "../components/ui";
 import { buildOpencodeConfig, type ModelInfo } from "../lib/opencodeConfig";
+import { ModelSelectField } from "../components/ModelSelectField";
 import { SecretDialog } from "./Tokens";
 
 interface Usage {
@@ -141,12 +142,15 @@ export function MyToken() {
       : "https://voidswitch.siiway.page";
   const tokensList = useAsync<VoidToken[]>(() => api.get("/api/me/tokens"));
   const usage = useAsync<Usage>(() => api.get("/api/me/usage"));
+  const [creating, setCreating] = useState(false);
   const [name, setName] = useState("default");
+  const [allowed, setAllowed] = useState("");
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [client, setClient] = useState("openai");
   const [pluginVersion, setPluginVersion] = useState<"v2" | "v1">("v2");
   const [editing, setEditing] = useState<VoidToken | null>(null);
   const [editName, setEditName] = useState("");
+  const [editAllowed, setEditAllowed] = useState("");
 
   // The manual (no-script) OpenCode config is only built once the user expands
   // that section, and the catalog + defaults are fetched fresh from the API each
@@ -194,12 +198,19 @@ export function MyToken() {
   }
 
   async function create() {
+    const allowed_models = allowed
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
     try {
       const created = await api.post<VoidTokenWithSecret>("/api/me/tokens", {
         name,
+        allowed_models,
       });
       setSecret(created);
+      setCreating(false);
       setName("default");
+      setAllowed("");
       tokensList.reload();
       usage.reload();
     } catch (e) {
@@ -284,12 +295,19 @@ export function MyToken() {
   function openEdit(token: VoidToken) {
     setEditing(token);
     setEditName(token.name);
+    setEditAllowed((token.allowed_models ?? []).join("\n"));
   }
 
   async function saveEdit() {
     if (!editing) return;
     try {
-      await api.patch(`/api/me/tokens/${editing.id}`, { name: editName.trim() || "default" });
+      await api.patch(`/api/me/tokens/${editing.id}`, {
+        name: editName.trim() || "default",
+        allowed_models: editAllowed
+          .split(/[\n,]/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+      });
       setEditing(null);
       tokensList.reload();
     } catch (e) {
@@ -582,21 +600,47 @@ export function MyToken() {
         </div>
       ) : null}
 
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          alignItems: "flex-end",
-          marginBottom: 20,
-        }}
-      >
-        <Field label={t("myToken.newTokenName" as TK)} style={{ flex: "0 0 240px" }}>
-          <Input value={name} onChange={(_, d) => setName(d.value)} />
-        </Field>
-        <Button appearance="primary" icon={<AddRegular />} onClick={create} data-shortcut="apply">
+      <div style={{ marginBottom: 20 }}>
+        <Button
+          appearance="primary"
+          icon={<AddRegular />}
+          onClick={() => {
+            setName("default");
+            setAllowed("");
+            setCreating(true);
+          }}
+          data-shortcut="apply"
+        >
           {t("myToken.createToken" as TK)}
         </Button>
       </div>
+
+      <Dialog open={creating} onOpenChange={(_, d) => !d.open && setCreating(false)}>
+        <DialogSurface style={{ maxWidth: 640 }}>
+          <DialogBody>
+            <DialogTitle>{t("myToken.createTitle" as TK)}</DialogTitle>
+            <DialogContent style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <Field label={t("myToken.newTokenName" as TK)}>
+                <Input value={name} onChange={(_, d) => setName(d.value)} />
+              </Field>
+              <ModelSelectField
+                label={t("tokens.allowedModelsHint" as TK)}
+                hint={t("tokens.allowedModelsNote" as TK)}
+                value={allowed}
+                onChange={setAllowed}
+              />
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setCreating(false)}>
+                {t("common.cancel" as TK)}
+              </Button>
+              <Button appearance="primary" onClick={create} data-shortcut="save">
+                {t("common.create" as TK)}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
       {tokensList.loading ? (
         <Loading />

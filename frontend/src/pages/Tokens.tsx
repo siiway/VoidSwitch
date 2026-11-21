@@ -17,7 +17,6 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
-  Textarea,
   Tooltip,
   tokens,
 } from "@fluentui/react-components";
@@ -51,6 +50,7 @@ import {
   useNotify,
 } from "../components/ui";
 import { EmptyState } from "../components/EmptyState";
+import { ModelSelectField } from "../components/ModelSelectField";
 import { KeyRevealDialog } from "../components/KeyRevealDialog";
 
 export function Tokens() {
@@ -68,6 +68,7 @@ export function Tokens() {
   const [secret, setSecret] = useState<VoidTokenWithSecret | null>(null);
   const [editing, setEditing] = useState<VoidToken | null>(null);
   const [editName, setEditName] = useState("");
+  const [editAllowed, setEditAllowed] = useState("");
   const [revealOpen, setRevealOpen] = useState(false);
   const [tokenSearch, setTokenSearch] = useState("");
   const [tokenFilterStatus, setTokenFilterStatus] = useState("");
@@ -168,12 +169,19 @@ export function Tokens() {
   function openEdit(t: VoidToken) {
     setEditing(t);
     setEditName(t.name);
+    setEditAllowed((t.allowed_models ?? []).join("\n"));
   }
 
   async function saveEdit() {
     if (!editing) return;
     try {
-      await api.patch(`/api/admin/tokens/${editing.id}`, { name: editName.trim() || "default" });
+      await api.patch(`/api/admin/tokens/${editing.id}`, {
+        name: editName.trim() || "default",
+        allowed_models: editAllowed
+          .split(/[\n,]/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+      });
       setEditing(null);
       list.reload();
     } catch (e) {
@@ -388,13 +396,12 @@ export function Tokens() {
               <Field label={tr("tokens.userIdHint" as TK)}>
                 <Input value={userId} onChange={(_, d) => setUserId(d.value)} />
               </Field>
-              <Field label={tr("tokens.allowedModelsHint" as TK)}>
-                <Textarea
-                  value={allowed}
-                  rows={3}
-                  onChange={(_, d) => setAllowed(d.value)}
-                />
-              </Field>
+              <ModelSelectField
+                label={tr("tokens.allowedModelsHint" as TK)}
+                hint={tr("tokens.allowedModelsNote" as TK)}
+                value={allowed}
+                onChange={setAllowed}
+              />
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setCreating(false)}>
@@ -416,6 +423,12 @@ export function Tokens() {
               <Field label={tr("tokens.name" as TK)}>
                 <Input value={editName} onChange={(_, d) => setEditName(d.value)} />
               </Field>
+              <ModelSelectField
+                label={tr("tokens.allowedModelsHint" as TK)}
+                hint={tr("tokens.allowedModelsNote" as TK)}
+                value={editAllowed}
+                onChange={setEditAllowed}
+              />
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setEditing(null)}>
