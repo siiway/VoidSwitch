@@ -13,6 +13,7 @@ upstream behaves like the real CLI, **efforts and all**.
 | Capability              | How it reaches the wire                                                                          |
 | ----------------------- | ------------------------------------------------------------------------------------------------ |
 | **Auth**                | Paste a `vs-…` token through the integration key method (`/connect`)                             |
+| **Management MCP**      | The gateway's `/api/v1/mcp` registered from a `vsapi-…` platform API key (palette-managed)       |
 | **Models**              | Pulled live from `GET <gateway>/v1/models`                                                       |
 | **Effort**              | `output_config.effort` ∈ `low · medium · high · xhigh · max`                                     |
 | **ultracode**           | Picker variant → `xhigh` effort                                                                  |
@@ -202,10 +203,49 @@ Palette commands (`Ctrl+P`, no session message) and external paths:
 | -------------------------------------------------------------- | --------------------------------------------------------- |
 | **VoidSwitch: sync models** (palette)                          | Refresh the available-model list from the gateway          |
 | **VoidSwitch: set gateway URL** (palette)                      | Switch gateways, then refresh the model list               |
+| **VoidSwitch: configure mcp server** (palette)                 | Setup / enable / disable / uninstall the MCP server        |
 | `opencode auth login` → VoidSwitch                             | Re-paste the token; refreshes the list on success          |
 
 Precedence: a per-turn model-variant pick (e.g. `…:low`) overrides the session
 command, which overrides the `effort` plugin option.
+
+## Management MCP server
+
+The gateway sells its management API (`/api/v1/mcp`) as an MCP server, authenticated
+with a **platform API key** (`vsapi-…`, staff only) — a different credential from the
+`vs-…` gateway token. The plugin registers it for you:
+
+```
+Ctrl+P → VoidSwitch: configure mcp server
+   ├─ Setup / re-configure   paste a vsapi-… key (empty keeps the stored one;
+   │                         a disabled server stays disabled)
+   ├─ Enable                 turn the server on
+   ├─ Disable                turn it off, keeping the key
+   └─ Uninstall              remove the server and delete the stored key
+```
+
+Setup probes `GET <gateway>/api/v1/whoami` first and refuses to save a key the
+gateway rejects (401/403, expired, disabled, non-staff); a gateway without the
+platform API answers 404/501 and says so instead. The server URL is never stored:
+it follows the current gateway, so switching gateways re-points the server and
+re-checks the key against the new host.
+
+**The scopes on the key are the permissions you hand the model.** Start with
+`read` scopes only and add what you actually need — a write scope lets injected
+context change providers, disable users or edit settings too. Revoke the key in
+the dashboard when you stop using it.
+
+The key lives in `$XDG_CONFIG_HOME/opencode/voidswitch-mcp.json` (falling back to
+`~/.config/opencode/voidswitch-mcp.json`; mode `0600` on POSIX) and is never
+written into `opencode.json`. Registration goes through `ctx.mcp.transform`, so
+the server exists only while the plugin is loaded — exactly where its tools are
+useful. Tools are exposed through Code Mode (the V2 default) rather than being
+dumped into the context.
+
+Builds without the second-level menu API get two standalone palette commands
+instead: **VoidSwitch: setup mcp server** and **VoidSwitch: uninstall mcp server**
+(no enable/disable). Builds without `ctx.mcp.transform` cannot register MCP
+servers at all; the palette disables the actions and says to upgrade.
 
 ## Claude Code feature parity
 

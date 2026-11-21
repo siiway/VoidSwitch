@@ -1,6 +1,6 @@
 {
   "name": "opencode-voidswitch",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Deep VoidSwitch integration for OpenCode V2 — dynamic models, effort/fast/thinking variants, and the full Claude Code request surface.",
   "type": "module",
   "license": "MIT",
@@ -13,7 +13,8 @@
   },
   "files": ["src"],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.0"

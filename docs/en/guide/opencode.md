@@ -33,8 +33,8 @@ irm https://voidswitch.siiway.org/install.ps1 | iex
 
 The V2 plugin is a **directory plugin** discovered automatically (all three parts land in
 `~/.config/opencode/plugins/voidswitch/`: `index.ts`, `rpc.ts`, `tui.ts`), so you do **not** need to edit
-`opencode.json`. Restart `opencode` afterwards. The `Ctrl+P` palette commands (sync models, set gateway) require
-OpenCode **≥ 2.3**; on older 2.x the plugin still works, just without the palette commands.
+`opencode.json`. Restart `opencode` afterwards. The `Ctrl+P` palette commands (sync models, set gateway, configure
+MCP server) require OpenCode **≥ 2.3**; on older 2.x the plugin still works, just without the palette commands.
 
 The installer bakes **the host you fetched it from** into the plugin's default gateway, so a self-hosted install
 points at its own gateway and the public instance at the public one. Precedence: plugin option or the
@@ -157,6 +157,49 @@ migrates the model cache automatically).
 This is distinct from **Sync from providers**: the latter (a button on the **Models** page) reshapes the *shared*
 catalog, registering catalog rows for models newly served by providers, and is a **staff-only** action. The palette
 refresh does not touch the shared catalog.
+
+## Configuring the management MCP server
+
+The plugin can also wire the gateway's **management MCP** (`/api/v1/mcp`) into OpenCode, so the agent can call
+platform API tools directly — models, providers, nodes, users, request logs, audit, stats and settings.
+
+1. In the dashboard sidebar, open [Platform API keys](/en/admin/platform-api-keys) → create a key with the scopes
+   you need, and copy the `vsapi-…` plaintext (shown once).
+2. Press `Ctrl+P` → **VoidSwitch: configure mcp server**.
+3. Pick **Setup** and paste the key. The plugin first checks it against `/api/v1/whoami`; an invalid, disabled,
+   expired or non-staff key is **never saved** — the gateway's own reason is shown verbatim. A key with no
+   effective scopes is saved, but the reply warns that it exposes no tools.
+
+The menu always lists four actions; the ones that do not apply are greyed out:
+
+| Action | Effect |
+| --- | --- |
+| Setup / re-configure | Replace the key (empty keeps the stored one); a disabled server stays disabled |
+| Enable | Turn the server on (greyed out while it is already enabled) |
+| Disable | Turn the server off but keep the key (greyed out while it is already disabled) |
+| Uninstall | Remove the server and erase the key stored on this machine |
+
+Worth knowing:
+
+- This wants a **platform API key** (`vsapi-…`), not a gateway token (`vs-…`): the former only reaches the
+  management surface, the latter only `/v1`, and neither works in the other's place. Platform API keys are
+  **staff-only**.
+- **The scopes on the key are the permissions you hand the model.** Start with `read` scopes only, then add
+  what you actually need; a write scope means injected context can also make the agent change providers,
+  disable users or edit settings. When you no longer need it, Uninstall and revoke the key under
+  [Platform API keys](/en/admin/platform-api-keys).
+- The URL is never stored separately — the server always follows the current gateway (`<gateway>/api/v1/mcp`).
+  Switching gateways from the palette **re-points it automatically** and re-checks the key against the new host;
+  if it does not work there, the palette tells you to run setup again.
+- The key lives in `$XDG_CONFIG_HOME/opencode/voidswitch-mcp.json` (falling back to
+  `~/.config/opencode/voidswitch-mcp.json` when `XDG_CONFIG_HOME` is unset; mode `0600` on POSIX) and is
+  **never written into** `opencode.json`; Uninstall deletes it. The key itself stays valid in the dashboard.
+- Tools are exposed through **Code Mode** (the V2 default), so dozens of tools are not dumped into the context at
+  once.
+- The key is visible while you paste it — TUI dialogs have no masked input — so mind screen sharing.
+- The palette commands (this one included) require OpenCode **≥ 2.3**; on a build without the second-level menu
+  API the palette only offers **VoidSwitch: setup mcp server** and **VoidSwitch: uninstall mcp server**, with no
+  enable / disable.
 
 ## Telling the plugin generations apart
 

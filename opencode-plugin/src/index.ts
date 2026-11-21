@@ -7,9 +7,11 @@
  *
  *   • auth        — paste a `vs-…` token via the integration key method
  *   • models      — pulled live from `<gateway>/v1/models`
- *   • palette     — Ctrl+P commands (sync models, set gateway) via the RPC
- *                   contract in rpc.ts and the TUI part in tui.ts; a directory
- *                   plugin loads all three parts together
+ *   • palette     — Ctrl+P commands (sync models, set gateway, configure MCP
+ *                   server) via the RPC contract in rpc.ts and the TUI part in
+ *                   tui.ts; a directory plugin loads all three parts together
+ *   • mcp         — the gateway's management API (`/api/v1/mcp`) registered as
+ *                   an OpenCode MCP server from a `vsapi-…` platform API key
  *   • effort      — `output_config.effort` ∈ low|medium|high|xhigh|max, picker variants
  *   • fast mode   — top-level `speed: "fast"` (Claude Code's /fast), picker variant
  *   • thinking    — adaptive extended thinking on 4.6+ models
@@ -28,11 +30,14 @@
  */
 
 import { Model, Plugin, Provider } from "@opencode/plugin";
-import { VoidSwitchRpc, type SyncResult } from "./rpc";
+import { VoidSwitchRpc, type McpStatusInfo, type SyncResult } from "./rpc";
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
+  mkdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -94,6 +99,13 @@ const CLIENT_VERSION_HEADER = "x-voidswitch-client-version";
 const CLIENT_VERSION_VALUE = "v2";
 /** Native per-conversation session id, forwarded so per-session key pinning works. */
 const SESSION_HEADER = "x-voidswitch-session";
+
+/** MCP server name registered with OpenCode; also the name used in the palette. */
+const MCP_SERVER_NAME = "voidswitch";
+/** Platform API keys carry this prefix; a `vs-…` token only drives the gateway. */
+const MCP_KEY_PREFIX = "vsapi-";
+/** A platform-API probe must not stall the palette when the gateway hangs. */
+const WHOAMI_TIMEOUT_MS = 10_000;
 
 /** Fallback model list when `/v1/models` is unreachable (offline picker). */
 const FALLBACK_MODELS = [
@@ -678,6 +690,95 @@ function persistDefaultModels(remote: {
 }
 
 // --------------------------------------------------------------------------- //
+// Platform MCP server sidecar (key + on/off state, never opencode.json)
+// --------------------------------------------------------------------------- //
+
+/** What the sidecar persists: key, the gateway's fingerprint for it, on/off. */
+interface McpState {
+  key: string;
+  enabled: boolean;
+  /** The gateway's own irreversible fingerprint, shown in status lines. */
+  prefix?: string;
+}
+
+/**
+ * Sidecar path under the user's config directory. It deliberately ignores
+ * `OPENCODE_CONFIG`, which may point at a project file — a secret must never
+ * land inside a repository.
+ */
+function mcpStatePath(): string {
+  return join(
+    process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"),
+    "opencode",
+    "voidswitch-mcp.json",
+  );
+}
+
+/**
+ * Read the sidecar; anything missing, malformed or not holding a platform key
+ * counts as "not installed", so a hand-edited file cannot register junk.
+ */
+function readMcpState(): McpState | undefined {
+  try {
+    const state = JSON.parse(readFileSync(mcpStatePath(), "utf8"));
+    const key = state?.key;
+    if (typeof key !== "string" || !key.startsWith(MCP_KEY_PREFIX))
+      return undefined;
+    return {
+      key,
+      enabled: state.enabled !== false,
+      prefix: typeof state.prefix === "string" ? state.prefix : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Persist the sidecar with owner-only permissions (or delete it for
+ * `undefined`). A failure is returned instead of thrown, so an unwritable path
+ * cannot leave memory and disk disagreeing.
+ */
+function writeMcpState(state: McpState | undefined): string | undefined {
+  const path = mcpStatePath();
+  try {
+    if (!state) {
+      if (existsSync(path)) unlinkSync(path);
+      return undefined;
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
+    chmodSync(path, 0o600);
+    return undefined;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
+/** Half-masked key preview (`vsapi-ab12cd…wxyz`), safe for status lines. */
+function maskPlatformKey(key: string): string {
+  if (key.length <= 16) return `${key.slice(0, 6)}…`;
+  return `${key.slice(0, 12)}…${key.slice(-4)}`;
+}
+
+/**
+ * A `mcp.servers.voidswitch` block the user may have written into
+ * `opencode.json` by hand. The plugin never writes one, but a leftover block
+ * would silently lose to the transform, so setup mentions it.
+ */
+function configMcpServer(): Record<string, any> | undefined {
+  try {
+    const path = opencodeConfigPath();
+    if (!existsSync(path)) return undefined;
+    const cfg = JSON.parse(stripJsonc(readFileSync(path, "utf8")));
+    const block = cfg?.mcp?.servers?.[MCP_SERVER_NAME];
+    return isPlainObject(block) ? block : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// --------------------------------------------------------------------------- //
 // Auth resolution (integration key method → credential)
 // --------------------------------------------------------------------------- //
 
@@ -879,6 +980,251 @@ export default Plugin.define({
     }
 
     // --------------------------------------------------------------------- //
+    // Platform MCP server (management tools, driven by a `vsapi-…` key)
+    // --------------------------------------------------------------------- //
+
+    /**
+     * The persisted key + on/off state, mirrored in memory so the transform
+     * closure always replays the current value.
+     */
+    let mcpState = readMcpState();
+
+    /**
+     * Whether this instance ever contributed the server. Only then may the
+     * transform drop the name on uninstall — a hand-written
+     * `mcp.servers.voidswitch` in `opencode.json` must survive untouched.
+     */
+    let mcpInstalled = mcpState !== undefined;
+
+    /** What a whoami probe learned about a platform key. */
+    type PlatformCheck = {
+      ok: boolean;
+      note: string;
+      tools: number;
+      prefix?: string;
+    };
+
+    /**
+     * Older 2.x builds have neither domain; every MCP action degrades to a
+     * clear message instead of throwing.
+     */
+    function hasMcpDomain(): boolean {
+      return (
+        typeof ctx.mcp?.transform === "function" &&
+        typeof ctx.mcp?.reload === "function"
+      );
+    }
+
+    /**
+     * Probe `GET <gateway>/api/v1/whoami` with a platform API key. A wrong,
+     * disabled, expired or non-staff key answers 401/403; the diagnostic text is
+     * passed through verbatim so the toast says what the gateway said.
+     */
+    async function verifyPlatformKey(key: string): Promise<PlatformCheck> {
+      const url = `${gateway}/api/v1/whoami`;
+      const fail = (note: string): PlatformCheck => ({
+        ok: false,
+        note,
+        tools: 0,
+      });
+      try {
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(WHOAMI_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          // A gateway without the platform API answers 404/501 with HTML; that
+          // is a wrong gateway, not a wrong key.
+          if (res.status === 404 || res.status === 501)
+            return fail(
+              `${url} is not served by this gateway — upgrade the gateway, or check the gateway URL.`,
+            );
+          return fail(
+            `the gateway rejected this key.\n${await describeHttpError(url, res, "GET")}`,
+          );
+        }
+        const body: any = await res.json();
+        const toolCount = Array.isArray(body?.tools) ? body.tools.length : 0;
+        const scopeCount = Array.isArray(body?.scopes) ? body.scopes.length : 0;
+        const warning =
+          scopeCount === 0
+            ? "\nwarning: this key has no effective scopes, so the server exposes no tools."
+            : "";
+        return {
+          ok: true,
+          note: `${body?.user ?? "?"} · ${body?.role ?? "?"} · ${toolCount} tools${warning}`,
+          tools: toolCount,
+          prefix: typeof body?.prefix === "string" ? body.prefix : undefined,
+        };
+      } catch (e) {
+        return fail(
+          `couldn't reach ${url}.\n${describeFetchError(url, e, "GET")}`,
+        );
+      }
+    }
+
+    /**
+     * Register the MCP server transform. It runs on every replay, so changing
+     * `mcpState` and calling `reload()` is the whole update path. The URL follows
+     * the resolved gateway instead of being stored, so switching gateways
+     * re-points the server rather than leaving a stale host behind.
+     */
+    async function registerMcp(): Promise<void> {
+      if (!hasMcpDomain()) {
+        console.error(
+          "[VoidSwitch] ctx.mcp.transform unavailable — the MCP server cannot be registered; upgrade OpenCode (2.3+).",
+        );
+        return;
+      }
+      await ctx.mcp.transform((editor) => {
+        const state = mcpState;
+        if (!state) {
+          // Only clean up a name this instance contributed; otherwise leave a
+          // hand-written `mcp.servers.voidswitch` alone.
+          if (mcpInstalled) editor.remove(MCP_SERVER_NAME);
+          return;
+        }
+        editor.set(MCP_SERVER_NAME, {
+          type: "remote",
+          url: `${gateway}/api/v1/mcp`,
+          headers: { Authorization: `Bearer ${state.key}` },
+          oauth: false,
+          disabled: !state.enabled,
+        });
+      });
+    }
+
+    /** Replay the MCP transforms; a no-op on builds without the domain. */
+    async function reloadMcp(): Promise<void> {
+      if (typeof ctx.mcp?.reload === "function") await ctx.mcp.reload();
+    }
+
+    /**
+     * Configure (or re-key) the server. An empty `rawKey` keeps the stored key,
+     * so re-pointing at a new gateway does not require pasting it again.
+     */
+    async function setupMcp(rawKey: string): Promise<SyncResult> {
+      if (!hasMcpDomain())
+        return {
+          ok: false,
+          note: "this OpenCode build cannot register MCP servers — upgrade to OpenCode 2.3 or newer.",
+        };
+      const typed = sanitizeInput(rawKey).trim();
+      const key = typed || mcpState?.key || "";
+      if (!key)
+        return {
+          ok: false,
+          note: "no key given — create a platform API key on the dashboard's Platform API Keys page first.",
+        };
+      if (!key.startsWith(MCP_KEY_PREFIX))
+        return {
+          ok: false,
+          note: `that is not a platform API key (they start with ${MCP_KEY_PREFIX}); a vs-… token only drives the gateway.`,
+        };
+      const check = await verifyPlatformKey(key);
+      if (!check.ok) return { ok: false, note: check.note };
+      // Re-keying or re-pointing must not silently turn a disabled server on.
+      const wasEnabled = mcpState?.enabled ?? true;
+      const next: McpState = {
+        key,
+        enabled: wasEnabled,
+        prefix: check.prefix ?? maskPlatformKey(key),
+      };
+      const failure = writeMcpState(next);
+      if (failure)
+        return {
+          ok: false,
+          note: `couldn't write ${mcpStatePath()}: ${failure}\nnothing changed.`,
+        };
+      mcpState = next;
+      mcpInstalled = true;
+      await reloadMcp();
+      const manual = configMcpServer();
+      const manualAuth =
+        typeof manual?.headers?.Authorization === "string"
+          ? manual.headers.Authorization
+          : "";
+      const clash =
+        manual && manualAuth !== `Bearer ${key}`
+          ? `\nnote: opencode.json also declares mcp.servers.${MCP_SERVER_NAME}; while the plugin is loaded its own server wins — delete that block to avoid confusion.`
+          : "";
+      const disabledNote = wasEnabled
+        ? ""
+        : "\nnote: it is currently disabled — pick Enable to turn it on.";
+      return {
+        ok: true,
+        note: `MCP server ready — ${check.note}\n${gateway}/api/v1/mcp${disabledNote}${clash}`,
+      };
+    }
+
+    /** Turn the server off/on without forgetting the key. */
+    async function setMcpEnabled(enabled: boolean): Promise<SyncResult> {
+      const current = mcpState;
+      if (!current) return { ok: false, note: "no MCP server configured yet." };
+      const next: McpState = { ...current, enabled };
+      const failure = writeMcpState(next);
+      if (failure)
+        return {
+          ok: false,
+          note: `couldn't write ${mcpStatePath()}: ${failure}\nnothing changed.`,
+        };
+      mcpState = next;
+      await reloadMcp();
+      return {
+        ok: true,
+        note: enabled
+          ? "MCP server enabled — OpenCode is reconnecting."
+          : "MCP server disabled — no tools until you enable it again.",
+      };
+    }
+
+    /** Remove the server and delete the stored key from this machine. */
+    async function uninstallMcp(): Promise<SyncResult> {
+      if (!mcpState) return { ok: false, note: "no MCP server configured." };
+      const failure = writeMcpState(undefined);
+      if (failure)
+        return {
+          ok: false,
+          note: `couldn't delete ${mcpStatePath()}: ${failure}\nthe server is still registered.`,
+        };
+      mcpState = undefined;
+      await reloadMcp();
+      return {
+        ok: true,
+        note: "MCP server removed — the stored platform API key was deleted from this machine.",
+      };
+    }
+
+    /** The TUI part's view of the server; the raw key never leaves the server. */
+    function mcpStatusView(): McpStatusInfo {
+      return {
+        name: MCP_SERVER_NAME,
+        supported: hasMcpDomain(),
+        installed: mcpState !== undefined,
+        enabled: mcpState?.enabled === true,
+        url: `${gateway}/api/v1/mcp`,
+        prefix: mcpState
+          ? (mcpState.prefix ?? maskPlatformKey(mcpState.key))
+          : "",
+      };
+    }
+
+    /**
+     * After a gateway switch the server has to re-point, and the stored key may
+     * belong to another host: verify it and say so in the sync note. A disabled
+     * server is not in use, so its key is not sent anywhere.
+     */
+    async function followGatewayForMcp(): Promise<string> {
+      const current = mcpState;
+      if (!current || !current.enabled || !hasMcpDomain()) return "";
+      await reloadMcp();
+      const check = await verifyPlatformKey(current.key);
+      return check.ok
+        ? `MCP server re-pointed to ${gateway} — ${check.tools} tools available.`
+        : `MCP server re-pointed to ${gateway}, but the stored key could not be verified there — run "VoidSwitch: configure mcp server" to paste one for this host.\n${check.note}`;
+    }
+
+    // --------------------------------------------------------------------- //
     // Provider registration
     // --------------------------------------------------------------------- //
 
@@ -1070,17 +1416,23 @@ export default Plugin.define({
       const infos = await fetchModels(await currentToken());
       persistModels(infos);
       await registerModels(infos);
+      const mcpNote = await followGatewayForMcp();
+      const notes = (...extra: string[]) =>
+        [extra.join(" "), mcpNote].filter(Boolean).join("\n");
       if (infos === FALLBACK_MODEL_INFOS)
         return {
           ok: false,
-          note:
+          note: notes(
             `Gateway is now ${gateway} (${gatewaySource}), but it rejected the current ` +
-            "credential — the picker falls back to the built-in list. " +
-            'Run "opencode auth login", pick VoidSwitch and paste a fresh vs-… token.',
+              "credential — the picker falls back to the built-in list. " +
+              'Run "opencode auth login", pick VoidSwitch and paste a fresh vs-… token.',
+          ),
         };
       return {
         ok: true,
-        note: `Gateway set to ${gateway} (${gatewaySource}) — ${infos.length} models loaded. Reopen the model picker to see changes.`,
+        note: notes(
+          `Gateway set to ${gateway} (${gatewaySource}) — ${infos.length} models loaded. Reopen the model picker to see changes.`,
+        ),
       };
     }
 
@@ -1106,6 +1458,16 @@ export default Plugin.define({
               ? (input as { url: string }).url
               : "",
           ),
+        mcpStatus: async () => mcpStatusView(),
+        mcpSetup: async (input) =>
+          setupMcp(
+            typeof (input as { key?: unknown })?.key === "string"
+              ? (input as { key: string }).key
+              : "",
+          ),
+        mcpEnable: async () => setMcpEnabled(true),
+        mcpDisable: async () => setMcpEnabled(false),
+        mcpUninstall: async () => uninstallMcp(),
       });
     }
 
@@ -1312,6 +1674,14 @@ export default Plugin.define({
 
     await registerAuth();
     await registerProvider();
+    // Register even without a stored key: the transform drops the server when
+    // there is none, and picking up a later setup only needs a reload. A failure
+    // here must not take the provider and RPC surface down with it.
+    try {
+      await registerMcp();
+    } catch (e) {
+      console.error("[VoidSwitch] MCP server registration failed:", e);
+    }
 
     // Seed the model inventory so the picker isn't empty before the first sync.
     const token = await currentToken();

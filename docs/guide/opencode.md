@@ -33,8 +33,8 @@ irm https://voidswitch.siiway.org/install.ps1 | iex
 
 V2 插件是**目录插件**，会被自动发现（三个 part 一起装进
 `~/.config/opencode/plugins/voidswitch/`：`index.ts`、`rpc.ts`、`tui.ts`），**无需**编辑
-`opencode.json`。安装后重启 `opencode` 即可。Ctrl+P 面板命令（同步模型、切换网关）要求
-OpenCode **≥ 2.3**；更旧的 2.x 上插件仍可用，只是没有面板命令。
+`opencode.json`。安装后重启 `opencode` 即可。Ctrl+P 面板命令（同步模型、切换网关、配置 MCP
+服务器）要求 OpenCode **≥ 2.3**；更旧的 2.x 上插件仍可用，只是没有面板命令。
 
 安装程序会把**你获取它的主机**写进插件的默认网关（安装时烤入），因此自托管部署装完即指向
 自己的网关，公共实例装完即指向公共实例。覆盖优先级：插件选项或 `VOIDSWITCH_URL` 环境变量 >
@@ -152,6 +152,45 @@ V2 的本地插件路径必须是一个**目录**，指向单个文件会被跳�
 
 这与**从供应商同步**是两件事：后者（**模型**页面上的按钮）会重塑*共享*目录，为供应商
 新服务的模型注册目录行，属于**仅限管理人员**的操作。面板的模型刷新不会改动共享目录。
+
+## 配置管理面 MCP 服务器
+
+插件还能把网关的**管理面 MCP**（`/api/v1/mcp`）接进 OpenCode，让 Agent 直接调用平台 API
+工具 —— 模型、提供商、节点、用户、请求日志、审计、统计、设置等。
+
+1. 控制台侧边栏 → [平台 API Key](/admin/platform-api-keys) → 创建一把带所需 scope 的 Key，
+   复制 `vsapi-…` 明文（只显示一次）。
+2. `Ctrl+P` → **VoidSwitch: configure mcp server**。
+3. 选 **Setup**，粘贴 Key。插件先用 `/api/v1/whoami` 校验；Key 无效、被停用、已过期或
+   你不是管理人员时**不会保存**，并原样显示网关返回的原因。Key 没有任何生效 scope 时仍会
+   保存，但会提示它不会暴露任何工具。
+
+菜单四项始终列出，用不了的会置灰：
+
+| 动作 | 作用 |
+| --- | --- |
+| Setup / re-configure | 换 Key（提交空值沿用已保存的那把）；已禁用的服务器保持禁用 |
+| Enable | 打开服务器（已启用时置灰） |
+| Disable | 关闭服务器但保留 Key（未启用时置灰） |
+| Uninstall | 删除服务器并擦除本机保存的 Key |
+
+要点：
+
+- 这里要的是**平台 API Key**（`vsapi-…`），不是网关令牌（`vs-…`）：前者只用于管理面，后者只
+  用于 `/v1`，两者互不通用；平台 API Key 仅对**管理人员**有效。
+- **Key 的 scope 就是交给模型的权限。** 建议先只授 `read` 类 scope，确认用法后再按需追加；
+  带写权限的 scope 意味着被注入的上下文也能让 Agent 改提供商、停用用户或改系统设置。不再
+  需要时 Uninstall，并在[平台 API Key](/admin/platform-api-keys) 里撤销那把 Key。
+- 服务器地址不单独保存，始终跟随当前网关（`<gateway>/api/v1/mcp`）。在面板里换了网关后会
+  **自动重新指向**，并复核这把 Key 在新网关是否可用；不可用时会提示你重新 setup。
+- Key 存在 `$XDG_CONFIG_HOME/opencode/voidswitch-mcp.json`（未设置时为
+  `~/.config/opencode/voidswitch-mcp.json`；POSIX 上权限 `0600`），**不写进** `opencode.json`；
+  Uninstall 会把它一并删除。Dashboard 里的那把 Key 不受影响。
+- 工具按 **Code Mode** 暴露（V2 默认），不会把几十个工具一次性塞进上下文。
+- 粘贴时 Key 会明文显示在输入框里（TUI 对话框没有掩码输入），注意屏幕共享。
+- 面板命令（含本项）需要 OpenCode **≥ 2.3**；在缺少二级菜单 API 的构建上，面板只提供
+  **VoidSwitch: setup mcp server** 与 **VoidSwitch: uninstall mcp server** 两条命令（没有
+  enable / disable）。
 
 ## 判断请求来自哪个插件
 
