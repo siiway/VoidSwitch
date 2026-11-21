@@ -40,7 +40,6 @@ import { api, API_BASE } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type {
   PlatformAPIKey,
-  PlatformAPIKeyScope,
   PlatformAPIKeyScopeCatalogue,
   PlatformAPIKeyWithSecret,
 } from "../api/types";
@@ -103,13 +102,11 @@ function CodeBlock({ code }: { code: string }) {
   );
 }
 
-type Category = "wildcard" | "action" | "provider";
-
 /**
- * The scope picker. Wildcard entries and concrete actions are rendered as two
- * groups; per-provider key scopes get one row per provider so a key can be
- * limited to a single provider's credentials (there is no "all providers" grant
- * on purpose).
+ * The scope picker. Only "read" is offered as a broad shorthand; every other
+ * grant is an individual action, grouped by category so a whole category can be
+ * selected at once. Per-provider key scopes get one row per provider, because a
+ * grant must name the provider it applies to.
  */
 function ScopePicker({
   catalogue,
@@ -132,24 +129,23 @@ function ScopePicker({
     onChange([...next]);
   }
 
-  function kindOf(scope: string): Category {
-    if (scope.startsWith("provider-key:")) return "provider";
-    if (scope === "*" || scope === "read" || scope.endsWith(".*")) return "wildcard";
-    return "action";
+  function toggleMany(scopes: string[], on: boolean) {
+    const next = new Set(chosen);
+    for (const s of scopes) {
+      if (on) next.add(s);
+      else next.delete(s);
+    }
+    onChange([...next]);
   }
 
-  const grantable = catalogue.scopes.filter((s) => s.grantable);
-  const wildcards = grantable.filter((s) => kindOf(s.scope) === "wildcard");
-  const actions = grantable.filter((s) => kindOf(s.scope) === "action");
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
         <Text weight="semibold" block style={{ marginBottom: 6 }}>
           {t("platformApiKeys.wildcards" as TK)}
         </Text>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-          {wildcards.map((s: PlatformAPIKeyScope) => (
+          {catalogue.broad.map((s) => (
             <Checkbox
               key={s.scope}
               checked={chosen.has(s.scope)}
@@ -161,18 +157,62 @@ function ScopePicker({
       </div>
 
       <div>
-        <Text weight="semibold" block style={{ marginBottom: 6 }}>
+        <Text weight="semibold" block style={{ marginBottom: 8 }}>
           {t("platformApiKeys.individualActions" as TK)}
         </Text>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-          {actions.map((s) => (
-            <Checkbox
-              key={s.scope}
-              checked={chosen.has(s.scope)}
-              onChange={(_, d) => toggle(s.scope, d.checked === true)}
-              label={s.scope}
-            />
-          ))}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+            maxHeight: 320,
+            overflowY: "auto",
+            paddingRight: 4,
+          }}
+        >
+          {catalogue.categories.map((group) => {
+            const scopes = group.actions.map((a) => a.scope);
+            const all = scopes.every((s) => chosen.has(s));
+            return (
+              <div key={group.category}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 4,
+                  }}
+                >
+                  <Checkbox
+                    checked={all}
+                    onChange={(_, d) => toggleMany(scopes, d.checked === true)}
+                    label={group.category}
+                  />
+                  <Tooltip
+                    content={t("platformApiKeys.selectWholeCategory" as TK)}
+                    relationship="description"
+                  >
+                    <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                      {t("platformApiKeys.actionCount" as TK).replace(
+                        "{count}",
+                        String(scopes.length),
+                      )}
+                    </Text>
+                  </Tooltip>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, paddingLeft: 26 }}>
+                  {group.actions.map((a) => (
+                    <Checkbox
+                      key={a.scope}
+                      checked={chosen.has(a.scope)}
+                      onChange={(_, d) => toggle(a.scope, d.checked === true)}
+                      label={a.scope}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -314,6 +354,39 @@ curl -s ${API_BASE}/api/v1/models \\
   );
 }
 
+// Connect snippets, shown the same way the Void-Token page shows them: one
+// placeholder key, three clients. The placeholder is spelled out in every snippet
+// so a copied block is never runnable by accident.
+function connectSnippets() {
+  const key = "vsapi-...";
+  return {
+    mcp: `{
+  "mcpServers": {
+    "voidswitch": {
+      "type": "http",
+      "url": "${API_BASE}/api/v1/mcp",
+      "headers": { "Authorization": "Bearer ${key}" }
+    }
+  }
+}`,
+    rest: `export VOIDSWITCH_BASE_URL=${API_BASE}/api/v1
+export VOIDSWITCH_API_KEY=${key}
+
+curl -s "$VOIDSWITCH_BASE_URL/whoami" \
+  -H "Authorization: Bearer $VOIDSWITCH_API_KEY"
+
+curl -s "$VOIDSWITCH_BASE_URL/models" \
+  -H "Authorization: Bearer $VOIDSWITCH_API_KEY"`,
+    python: `from voidswitch import Client
+
+vs = Client("${API_BASE}", api_key="${key}")
+
+print(vs.whoami())            # owner, role and the scopes in effect
+for model in vs.models.list():
+    print(model["model_id"], model["enabled"])`,
+  };
+}
+
 export function PlatformAPIKeys() {
   const { t } = useTranslation();
   type TK = keyof Translations;
@@ -329,6 +402,7 @@ export function PlatformAPIKeys() {
   const [name, setName] = useState("default");
   const [scopes, setScopes] = useState<string[]>(["read"]);
   const [created, setCreated] = useState<PlatformAPIKeyWithSecret | null>(null);
+  const [client, setClient] = useState("mcp");
   const [editing, setEditing] = useState<PlatformAPIKey | null>(null);
   const [editName, setEditName] = useState("");
   const [editScopes, setEditScopes] = useState<string[]>([]);
@@ -460,12 +534,63 @@ export function PlatformAPIKeys() {
           borderRadius: "10px",
         }}
       >
-        <Text weight="semibold" block style={{ marginBottom: 4 }}>
-          {t("platformApiKeys.about" as TK)}
+        <Text weight="semibold" block style={{ marginBottom: 2 }}>
+          {t("platformApiKeys.connect" as TK)}
         </Text>
-        <Text size={200} block style={{ color: tokens.colorNeutralForeground3 }}>
-          {t("platformApiKeys.aboutDesc" as TK)}
+        <Text
+          size={200}
+          block
+          style={{ color: tokens.colorNeutralForeground3, marginBottom: 10 }}
+        >
+          {t("platformApiKeys.connectDesc" as TK)}
         </Text>
+
+        <TabList
+          selectedValue={client}
+          onTabSelect={(_, d) => setClient(d.value as string)}
+          style={{ marginBottom: 10 }}
+        >
+          <Tab value="mcp">{t("platformApiKeys.mcpClient" as TK)}</Tab>
+          <Tab value="rest">{t("platformApiKeys.restApi" as TK)}</Tab>
+          <Tab value="python">{t("platformApiKeys.pythonSdk" as TK)}</Tab>
+        </TabList>
+
+        {client === "mcp" ? (
+          <>
+            <Text
+              size={200}
+              block
+              style={{ color: tokens.colorNeutralForeground3, marginBottom: 8 }}
+            >
+              {t("platformApiKeys.mcpHint" as TK)}
+            </Text>
+            <CodeBlock code={connectSnippets().mcp} />
+          </>
+        ) : null}
+        {client === "rest" ? (
+          <>
+            <Text
+              size={200}
+              block
+              style={{ color: tokens.colorNeutralForeground3, marginBottom: 8 }}
+            >
+              {t("platformApiKeys.restHint" as TK)}
+            </Text>
+            <CodeBlock code={connectSnippets().rest} />
+          </>
+        ) : null}
+        {client === "python" ? (
+          <>
+            <Text
+              size={200}
+              block
+              style={{ color: tokens.colorNeutralForeground3, marginBottom: 8 }}
+            >
+              {t("platformApiKeys.pythonHint" as TK)}
+            </Text>
+            <CodeBlock code={connectSnippets().python} />
+          </>
+        ) : null}
       </div>
 
       <div

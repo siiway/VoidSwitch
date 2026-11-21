@@ -301,38 +301,75 @@ func (a *App) mePlatformKeyRotate(c *gin.Context) {
 // caller may grant. The dashboard renders only the grantable ones.
 func (a *App) mePlatformKeyScopes(c *gin.Context) {
 	uv := core.GetUser(c)
-	grantable := core.GrantableScopes(uv.Role)
 	actions := core.Actions()
-	out := make([]gin.H, 0, len(actions)+len(grantable))
-	for _, g := range grantable {
-		out = append(out, gin.H{"scope": g, "summary": wildcardScopeSummary(g), "grantable": true})
-	}
+
+	// The picker works in categories: every action is grouped under its category
+	// so the dashboard can offer a per-category select-all, and only "read" is
+	// offered as a broad shorthand.
+	byCategory := make(map[string][]core.Action, 12)
+	order := make([]string, 0, 12)
 	for _, act := range actions {
-		grant := core.ScopeGrantableBy(uv.Role, act.Name)
-		out = append(out, gin.H{
-			"scope": act.Name, "summary": act.Summary,
-			"category": act.Category, "grantable": grant,
+		// Provider key actions need a provider slug, so they are offered per
+		// provider below rather than as a bare category.
+		if act.Tier == core.TierProviderKey {
+			continue
+		}
+		if !core.ScopeGrantableBy(uv.Role, act.Name) {
+			continue
+		}
+		if _, seen := byCategory[act.Category]; !seen {
+			order = append(order, act.Category)
+		}
+		byCategory[act.Category] = append(byCategory[act.Category], act)
+	}
+
+	categories := make([]gin.H, 0, len(order))
+	for _, cat := range order {
+		acts := byCategory[cat]
+		items := make([]gin.H, 0, len(acts))
+		for _, act := range acts {
+			items = append(items, gin.H{
+				"scope": act.Name, "summary": act.Summary, "grantable": true,
+			})
+		}
+		categories = append(categories, gin.H{"category": cat, "actions": items})
+	}
+
+	var broad []gin.H
+	if core.ScopeGrantableBy(uv.Role, core.ScopeRead) {
+		broad = append(broad, gin.H{
+			"scope": core.ScopeRead, "summary": wildcardScopeSummary(core.ScopeRead),
 		})
 	}
-	var providers []database.Provider
-	a.GDB.Select("slug", "name").Order("slug").Find(&providers)
+
+	var providers []providerScopeRef
+	if core.IsOwner(uv.Role) {
+		a.GDB.Model(&database.Provider{}).Select("id", "slug", "name").
+			Order("slug").Find(&providers)
+	}
+	if providers == nil {
+		providers = []providerScopeRef{}
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"scopes": out, "role": uv.Role,
+		"broad": broad, "categories": categories, "role": uv.Role,
 		"can_manage_provider_keys": core.IsOwner(uv.Role),
 		"providers":                providers,
 	})
 }
 
+// providerScopeRef is the provider entry the scope picker renders. It carries
+// json tags because database.Provider has none, so returning the row directly
+// serialised "Slug"/"Name" and the dashboard rendered "undefined (undefined)".
+type providerScopeRef struct {
+	ID   int    `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+// wildcardScopeSummary describes the one broad scope the picker offers.
 func wildcardScopeSummary(scope string) string {
-	switch scope {
-	case core.ScopeAll:
-		return "Every action this key's owner may perform."
-	case core.ScopeRead:
+	if scope == core.ScopeRead {
 		return "Every read-only action."
-	case core.ProviderScope + ":*.*":
-		return "Manage any provider's upstream keys."
-	case core.ProviderScope + ".*":
-		return "Manage the upstream keys of the providers listed below."
 	}
 	if category, ok := strings.CutSuffix(scope, ".*"); ok {
 		return "Every " + category + " action."

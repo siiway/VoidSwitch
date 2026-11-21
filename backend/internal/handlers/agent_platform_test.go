@@ -339,6 +339,72 @@ func toolResultJSON(res *mcp.CallToolResult) string {
 	return string(enc)
 }
 
+// TestScopeCatalogueShape pins the picker's payload: categories group the
+// actions, "read" is the only broad shorthand, and provider entries carry
+// lowercase keys (returning database.Provider directly serialised "Slug"/"Name"
+// and the dashboard rendered "undefined (undefined)").
+func TestScopeCatalogueShape(t *testing.T) {
+	app, _ := platformTestApp(t, "owner", []string{"read"})
+	createTestProvider(t, app, "acme")
+
+	var user database.User
+	if err := app.GDB.First(&user).Error; err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	uv, err := core.BuildUserView(app.GDB, &user)
+	if err != nil {
+		t.Fatalf("build user view: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/me/api-keys/scopes", nil)
+	ctx.Set(core.CtxUser, uv)
+	app.mePlatformKeyScopes(ctx)
+
+	var body struct {
+		Broad      []struct{ Scope string } `json:"broad"`
+		Categories []struct {
+			Category string `json:"category"`
+			Actions  []struct {
+				Scope string `json:"scope"`
+			} `json:"actions"`
+		} `json:"categories"`
+		Providers []map[string]any `json:"providers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(body.Broad) != 1 || body.Broad[0].Scope != "read" {
+		t.Fatalf("broad shorthands = %+v, want only read", body.Broad)
+	}
+	if len(body.Categories) == 0 {
+		t.Fatal("no categories returned")
+	}
+	modelCategory := false
+	for _, cat := range body.Categories {
+		if cat.Category == "model" && len(cat.Actions) > 0 {
+			modelCategory = true
+		}
+		if cat.Category == "provider-key" {
+			t.Fatal("provider-key actions must not appear as plain categories")
+		}
+	}
+	if !modelCategory {
+		t.Fatal("model actions are not grouped under a category")
+	}
+	if len(body.Providers) != 1 {
+		t.Fatalf("providers = %+v, want one", body.Providers)
+	}
+	for _, field := range []string{"id", "slug", "name"} {
+		if _, ok := body.Providers[0][field]; !ok {
+			t.Fatalf("provider entry is missing %q: %+v", field, body.Providers[0])
+		}
+	}
+	if body.Providers[0]["slug"] != "acme" {
+		t.Fatalf("provider slug = %v", body.Providers[0]["slug"])
+	}
+}
+
 // TestStaffLossDisablesKeys pins the lifecycle gate: losing staff access turns
 // every key off, and regaining it does not silently turn them back on.
 func TestStaffLossDisablesKeys(t *testing.T) {

@@ -231,12 +231,19 @@ export interface PlatformAPIKeyWithSecret extends PlatformAPIKey {
 export interface PlatformAPIKeyScope {
   scope: string;
   summary: string;
-  category?: string;
   grantable: boolean;
 }
 
+export interface PlatformAPIKeyScopeCategory {
+  category: string;
+  actions: PlatformAPIKeyScope[];
+}
+
 export interface PlatformAPIKeyScopeCatalogue {
-  scopes: PlatformAPIKeyScope[];
+  // The only broad shorthand offered: "read".
+  broad: PlatformAPIKeyScope[];
+  // Actions grouped by category, each offering a select-all.
+  categories: PlatformAPIKeyScopeCategory[];
   role: string;
   can_manage_provider_keys: boolean;
   providers: { id: number; slug: string; name: string }[];

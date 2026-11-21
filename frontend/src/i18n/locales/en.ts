@@ -73,6 +73,7 @@ const en = {
     providers: "Providers",
     models: "Models",
     nodes: "Nodes",
+    platformApiKeys: "Platform API Keys",
     tokens: "Tokens",
     users: "Users",
     roleGroups: "Role Groups",
@@ -852,11 +853,11 @@ const en = {
     goHome: "Go home",
   },
   platformApiKeys: {
+    connect: "Connect a client",
+    connectDesc:
+      "Point any MCP client or script at the endpoints below and authenticate with one of your platform API keys; what it may do is decided by that key's scopes.",
     title: "Platform API Keys",
     subtitle: "Staff credentials — one key drives both the REST API and MCP",
-    about: "What these keys are",
-    aboutDesc:
-      "A platform API key (vsapi-…) lets an automation client act as you against /api/v1 and the MCP endpoint /api/v1/mcp. Each key carries scopes; it can never do more than your current role allows, and it never reveals a stored secret.",
     create: "Create API key",
     createTitle: "Create platform API key",
     editTitle: "Edit platform API key",
@@ -873,6 +874,10 @@ const en = {
     deleteMsg: "Delete \"{name}\"? Any client using it stops working immediately.",
     emptyTitle: "No platform API keys",
     emptyDesc: "Create a key to let an agent or script drive the platform API.",
+    pythonSdk: "Python SDK",
+    pythonHint: "The SDK ships in the repository (sdk/python), has no dependencies, and returns the server's JSON as-is.",
+    selectWholeCategory: "Select every action in this category",
+    actionCount: "{count} actions",
     pickScopes: "Scopes",
     wildcards: "Broad scopes",
     individualActions: "Individual actions",
@@ -1384,7 +1389,7 @@ const en = {
   },
   myToken: {
     title: "My Tokens",
-    subtitle: "Your Void-Tokens and REST endpoint",
+    subtitle: "Your Void-Tokens, for calling AI models",
     connectDesc: "Point any client at the gateway using a <code>vs-…</code> token from below.",
     connect: "Connect a client",
     openaiSdk: "OpenAI SDK",

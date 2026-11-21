@@ -75,6 +75,7 @@ const zh: Translations = {
     providers: "提供商",
     models: "模型",
     nodes: "节点",
+    platformApiKeys: "平台 API Key",
     tokens: "令牌",
     users: "用户",
     roleGroups: "身份组",
@@ -830,11 +831,11 @@ const zh: Translations = {
     goHome: "返回主页",
   },
   platformApiKeys: {
+    connect: "连接客户端",
+    connectDesc:
+      "把任意 MCP 客户端或脚本指向下面的端点，用任意一把平台 API Key 鉴权；能做什么由该 Key 的 scope 决定。",
     title: "平台 API Key",
     subtitle: "管理人员凭据 —— 一把密钥同时驱动 REST API 与 MCP",
-    about: "这些密钥是什么",
-    aboutDesc:
-      "平台 API Key（vsapi-…）让自动化客户端以你的身份调用 /api/v1 与 MCP 端点 /api/v1/mcp。每把密钥都带 scope；它的权限不会超过你当前角色所允许的范围，也永远无法读取已存储的机密。",
     create: "创建 API Key",
     createTitle: "创建平台 API Key",
     editTitle: "编辑平台 API Key",
@@ -851,6 +852,10 @@ const zh: Translations = {
     deleteMsg: "删除“{name}”？正在使用它的客户端会立即失效。",
     emptyTitle: "还没有平台 API Key",
     emptyDesc: "创建一把密钥，让 Agent 或脚本可以驱动平台 API。",
+    pythonSdk: "Python SDK",
+    pythonHint: "仓库内附带 SDK（sdk/python），零依赖，返回值就是服务端 JSON。",
+    selectWholeCategory: "全选该分类下的全部动作",
+    actionCount: "{count} 个动作",
     pickScopes: "Scope",
     wildcards: "宽泛 Scope",
     individualActions: "单项操作",
@@ -1345,7 +1350,7 @@ const zh: Translations = {
   },
   myToken: {
     title: "我的令牌",
-    subtitle: "你的 Void-Tokens 和 REST 端点",
+    subtitle: "你的 Void-Tokens 用于调用 AI 模型",
     connectDesc: "使用下方的 <code>vs-…</code> 令牌将任何客户端指向网关。",
     connect: "连接客户端",
     openaiSdk: "OpenAI SDK",
