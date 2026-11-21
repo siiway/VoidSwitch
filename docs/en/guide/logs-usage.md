@@ -24,9 +24,10 @@ In the staff **by user** breakdown, usernames are clickable: clicking one opens 
 
 The **Logs** page has two views:
 
-- **Requests** — one row per gateway call: time, user, token, model, client IP, status, status code,
-  TTFT, **request duration**, token counts, retry count, and any error. Members only see their own requests;
-  staff see everyone's. IPv6 addresses are truncated with `…` in the cell — hover for the full address;
+- **Requests** — one row per gateway call: time, **user** (the user on the first line, the token that user's
+  request used underneath), model, client IP, request status, status code, TTFT, **request duration**,
+  token counts, retry count, and any error. Members only see their own requests; staff see everyone's.
+  Every cell uses the compact type scale, and both the request status and the status code are clickable filters. IPv6 addresses are truncated with `…` in the cell — hover for the full address;
   the ID never wraps. The request duration is the `started_at → now` span, ticking up every second **only while the live log stream is connected**
   (see "Live log stream (SSE)" below); while a request is **in progress** without a live stream it shows `—`. Once finished it freezes to `started_at → finished_at`. **TTFT** is only meaningful for streamed requests:
   it measures the time from when the gateway initiates the upstream request to when the first *real content token*
@@ -96,13 +97,17 @@ Each attempt's chain and its **redacted request / response headers** are always 
 that made an upstream attempt. **Role-group admins and members do not see request headers** — they only
 get the chain summary without headers or bodies.
 
-Request / response bodies are recorded only in these cases, and are visible only to **owner / co-owner**
-(always truncated by the **body capture cap**):
+Debug data (request/response headers, the per-attempt trail and the bodies) is **stored only when at least one
+of these holds**; the bodies themselves stay visible to **owner / co-owner** only (all truncated by the
+**body capture cap**):
 
-- The request's **Void-Token has debug enabled**: the request body, the non-stream response body, and the
-  upstream SSE of a streaming response are captured;
-- The request **errors** (upstream 4xx / 5xx): the error response body (usually the upstream JSON error) is
-  captured regardless of debug; a streaming SSE error body is not.
+- The request's **Void-Token has debug enabled**: the request body and the response body are always captured
+  (the non-stream body, and the upstream SSE of a streaming response);
+- The request **errors** (upstream 4xx / 5xx or a dispatch failure): the error response body (usually the
+  upstream JSON error) is captured regardless of debug, but the **request body is not**; a streaming SSE error
+  body is not captured.
+
+A successful request that satisfies neither keeps only the header- and body-free routing chain.
 
 The lower-left corner of the debug detail dialog has a button to download a redacted request JSON. The export
 puts the whole chain into a single `attempts` array, removes API keys, access tokens and proxy URLs, and

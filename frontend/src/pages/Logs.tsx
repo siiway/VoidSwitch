@@ -192,6 +192,44 @@ const useFilterStyles = makeStyles({
     cursor: "pointer",
     ":hover": { textDecoration: "underline" },
   },
+  // Secondary line inside a cell (the token under its user): smaller and dimmer
+  // than the primary value, still clickable.
+  clickableSmall: {
+    background: "none",
+    border: "none",
+    padding: 0,
+    margin: 0,
+    font: "inherit",
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+    textAlign: "left",
+    cursor: "pointer",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    maxWidth: "180px",
+    ":hover": { textDecoration: "underline" },
+  },
+  stacked: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "1px",
+    minWidth: 0,
+  },
+  // Every request-log cell uses the compact type scale the IP column used.
+  cell: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+    whiteSpace: "nowrap",
+    verticalAlign: "top",
+  },
+  cellMono: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+    fontFamily: tokens.fontFamilyMonospace,
+    whiteSpace: "nowrap",
+    verticalAlign: "top",
+  },
 });
 
 interface SelectOption {
@@ -1337,7 +1375,6 @@ function RequestLogs({
             <TableHeaderCell>{tr("logs.id" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.time" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.user" as TK)}</TableHeaderCell>
-            <TableHeaderCell>{tr("logs.token" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.model" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.colClientIp" as TK)}</TableHeaderCell>
             <TableHeaderCell>{tr("logs.colReqStatus" as TK)}</TableHeaderCell>
@@ -1357,60 +1394,48 @@ function RequestLogs({
               data-log-row={r.id}
               className={r.id === highlightId ? hl.row : undefined}
             >
-              <TableCell
-                style={{
-                  color: tokens.colorNeutralForeground3,
-                  fontFamily: "monospace",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {r.id}
-              </TableCell>
-              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+              <TableCell className={cellStyles.cellMono}>{r.id}</TableCell>
+              <TableCell className={cellStyles.cell}>
                 {formatDate(r.started_at ?? r.ts)}
               </TableCell>
-              <TableCell>
-                {r.user_sub ? (
-                  <button
-                    type="button"
-                    className={cellStyles.clickable}
-                    title={r.user_nickname ? `${r.user_nickname} · ${tr("logs.clickToFilter" as TK)}` : tr("logs.clickToFilter" as TK)}
-                    onClick={() => setFilter("user_sub", r.user_sub ?? "")}
-                  >
-                    <UserHandle
-                      handle={r.user_name ?? r.user_sub}
-                      nickname={r.user_nickname}
-                    />
-                  </button>
-                ) : (
-                  "—"
-                )}
-              </TableCell>
-              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
-                {r.token_id != null ? (
-                  <div>
-                    <button
-                      type="button"
-                      className={cellStyles.clickable}
-                      title={tr("logs.clickToFilter" as TK)}
-                      onClick={() => setFilter("token_id", String(r.token_id))}
-                    >
-                      {r.token_name ?? `#${r.token_id}`}
-                    </button>
-                    {r.token_owner_name ? (
-                      <Text size={100} block style={{ color: tokens.colorNeutralForeground3 }}>
+              <TableCell className={cellStyles.cell}>
+                {r.user_sub || r.token_id != null ? (
+                  <div className={cellStyles.stacked}>
+                    {r.user_sub ? (
+                      <button
+                        type="button"
+                        className={cellStyles.clickable}
+                        title={
+                          r.user_nickname
+                            ? `${r.user_nickname} · ${tr("logs.clickToFilter" as TK)}`
+                            : tr("logs.clickToFilter" as TK)
+                        }
+                        onClick={() => setFilter("user_sub", r.user_sub ?? "")}
+                      >
                         <UserHandle
-                          handle={r.token_owner_name}
-                          nickname={r.token_owner_nickname}
+                          handle={r.user_name ?? r.user_sub}
+                          nickname={r.user_nickname}
                         />
-                      </Text>
+                      </button>
+                    ) : (
+                      <span>—</span>
+                    )}
+                    {r.token_id != null ? (
+                      <button
+                        type="button"
+                        className={cellStyles.clickableSmall}
+                        title={tr("logs.clickToFilter" as TK)}
+                        onClick={() => setFilter("token_id", String(r.token_id))}
+                      >
+                        {r.token_name ?? `#${r.token_id}`}
+                      </button>
                     ) : null}
                   </div>
                 ) : (
                   "—"
                 )}
               </TableCell>
-              <TableCell>
+              <TableCell className={cellStyles.cell}>
                 {r.model ? (
                   <button
                     type="button"
@@ -1425,14 +1450,11 @@ function RequestLogs({
                 )}
               </TableCell>
               <TableCell
+                className={cellStyles.cellMono}
                 style={{
-                  color: tokens.colorNeutralForeground3,
-                  fontFamily: "monospace",
-                  fontSize: 12,
                   // Reserve room for an IPv4 address plus a little slack; longer
                   // values (IPv6) are ellipsized by the cell.
                   maxWidth: 130,
-                  whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                 }}
@@ -1456,26 +1478,38 @@ function RequestLogs({
                   "—"
                 )}
               </TableCell>
-              <TableCell>
-                <Badge
-                  color={
-                    r.req_status === "completed" ? "success" :
-                    r.req_status === "pending" ? "warning" :
-                    r.req_status === "cancelled" ? "subtle" :
-                    r.req_status === "terminated" ? "danger" :
-                    r.req_status === "error" ? "danger" : "subtle"
-                  }
-                  appearance="filled"
-                >
-                  {r.req_status === "pending" ? tr("logs.reqStatusPending" as TK) :
-                   r.req_status === "completed" ? tr("logs.reqStatusCompleted" as TK) :
-                   r.req_status === "cancelled" ? tr("logs.reqStatusCancelled" as TK) :
-                   r.req_status === "terminated" ? tr("logs.reqStatusTerminated" as TK) :
-                   r.req_status === "error" ? tr("logs.reqStatusError" as TK) :
-                   (r.req_status ?? "—")}
-                </Badge>
+              <TableCell className={cellStyles.cell}>
+                {r.req_status ? (
+                  <button
+                    type="button"
+                    className={cellStyles.clickable}
+                    title={tr("logs.clickToFilter" as TK)}
+                    onClick={() => setFilter("req_status", r.req_status ?? "")}
+                  >
+                    <Badge
+                      color={
+                        r.req_status === "completed" ? "success" :
+                        r.req_status === "pending" ? "warning" :
+                        r.req_status === "cancelled" ? "subtle" :
+                        r.req_status === "terminated" ? "danger" :
+                        r.req_status === "error" ? "danger" : "subtle"
+                      }
+                      appearance="filled"
+                      style={{ cursor: "pointer" }}
+                    >
+                      {r.req_status === "pending" ? tr("logs.reqStatusPending" as TK) :
+                       r.req_status === "completed" ? tr("logs.reqStatusCompleted" as TK) :
+                       r.req_status === "cancelled" ? tr("logs.reqStatusCancelled" as TK) :
+                       r.req_status === "terminated" ? tr("logs.reqStatusTerminated" as TK) :
+                       r.req_status === "error" ? tr("logs.reqStatusError" as TK) :
+                       r.req_status}
+                    </Badge>
+                  </button>
+                ) : (
+                  "—"
+                )}
               </TableCell>
-              <TableCell>
+              <TableCell className={cellStyles.cell}>
                 <button
                   type="button"
                   className={cellStyles.clickable}
@@ -1496,31 +1530,19 @@ function RequestLogs({
                   </Badge>
                 </button>
               </TableCell>
-              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
+              <TableCell className={cellStyles.cellMono}>
                 {r.first_token_ms != null ? `${Math.round(r.first_token_ms)}ms` : "—"}
               </TableCell>
-              <TableCell
-                style={{
-                  color: tokens.colorNeutralForeground3,
-                  fontFamily: "monospace",
-                  fontSize: 12,
-                  whiteSpace: "nowrap",
-                }}
-              >
+              <TableCell className={cellStyles.cellMono}>
                 {formatDuration(requestDurationMs(r, durationNow, liveEnabled))}
               </TableCell>
-              <TableCell>{formatGrouped(r.total_tokens, i18n.language || "en")}</TableCell>
-              <TableCell
-                style={{
-                  color: tokens.colorNeutralForeground3,
-                  fontFamily: "monospace",
-                  fontSize: 12,
-                  whiteSpace: "nowrap",
-                }}
-              >
+              <TableCell className={cellStyles.cellMono}>
+                {formatGrouped(r.total_tokens, i18n.language || "en")}
+              </TableCell>
+              <TableCell className={cellStyles.cellMono}>
                 {tokensPerSecondOf(r, durationNow, liveEnabled)}
               </TableCell>
-              <TableCell>{r.attempts}</TableCell>
+              <TableCell className={cellStyles.cellMono}>{r.attempts}</TableCell>
               <TableCell>
                 <div style={{ display: "flex", gap: 4 }}>
                   <Tooltip content={tr("logs.viewDetail" as TK)} relationship="label">

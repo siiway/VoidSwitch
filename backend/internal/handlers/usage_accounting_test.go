@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,7 @@ type logRowFields struct {
 	TotalTokens      int64
 	AttemptsSummary  database.JSON
 	DebugAttempts    database.JSON
+	Debug            bool
 }
 
 func readLogTestRow(t *testing.T, db *gorm.DB) logRowFields {
@@ -68,7 +70,7 @@ func readLogTestRow(t *testing.T, db *gorm.DB) logRowFields {
 	if err := db.Model(&database.RequestLog{}).
 		Select("provider_name", "provider_id", "key_id", "proxy_id", "upstream_url", "proxy_url",
 			"upstream_model", "attempts", "provider_attempts", "network_attempts", "total_tokens",
-			"attempts_summary", "debug_attempts").
+			"attempts_summary", "debug_attempts", "debug").
 		Where("id = ?", id).Scan(&out).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -260,5 +262,98 @@ func TestExportPayloadVisibilityTiers(t *testing.T) {
 				t.Fatalf("staff lost the masked key preview: %v", attempt)
 			}
 		})
+	}
+}
+
+// TestDebugCaptureIsConditional pins the rule: the debug projection is written
+// only when the token opted in or the request failed. A successful call from a
+// token without debug keeps the routing chain and nothing else.
+func TestDebugCaptureIsConditional(t *testing.T) {
+	cases := []struct {
+		tokenDebug, success, want bool
+	}{
+		{true, true, true},
+		{true, false, true},
+		{false, true, false},
+		{false, false, true},
+	}
+	for _, tc := range cases {
+		if got := debugCaptureEnabled(tc.tokenDebug, tc.success); got != tc.want {
+			t.Fatalf("debugCaptureEnabled(%v, %v) = %v, want %v",
+				tc.tokenDebug, tc.success, got, tc.want)
+		}
+	}
+}
+
+// TestSuccessfulRequestWithoutDebugKeepsNoTrail is the regression for a
+// successful non-debug call storing the full debug projection anyway.
+func TestSuccessfulRequestWithoutDebugKeepsNoTrail(t *testing.T) {
+	db := logTestDB(t)
+	app := &App{GDB: db}
+	db.Create(&database.VoidToken{
+		ID: 1, Name: "k", TokenHash: "kh", TokenPrefix: "vs-", UserID: 1,
+		AllowedModels: database.JSONOf([]string{}),
+	})
+
+	app.logRequest(logTestContext(t), requestLogInfo{
+		TokenID: 1, UserSub: "u1", Model: "test-model", Inbound: "openai",
+		Start: time.Now().UTC(), StatusCode: http.StatusOK, Success: true, Debug: false,
+		Attempts: []*services.AttemptRecord{{
+			Attempt: 1, Provider: strPtr("mock"), StatusCode: intRef(http.StatusOK),
+			ReqBody:  map[string]any{"messages": []any{}},
+			RespBody: map[string]any{"choices": []any{}},
+		}},
+		Usage: services.Usage{TotalTokens: 5},
+	})
+
+	row := readLogTestRow(t, db)
+	if row.Debug {
+		t.Fatal("a successful non-debug request must not be flagged as a debug row")
+	}
+	if len(row.AttemptsSummary) == 0 {
+		t.Fatal("the routing chain should still be recorded")
+	}
+	if len(row.DebugAttempts) != 0 {
+		t.Fatalf("debug trail stored for a successful non-debug request: %s", row.DebugAttempts)
+	}
+}
+
+// TestFailedRequestWithoutDebugKeepsResponseBodyOnly covers the failure
+// exception: the response body is kept so the error can be read, but the request
+// body is not (nobody opted into capturing it).
+func TestFailedRequestWithoutDebugKeepsResponseBodyOnly(t *testing.T) {
+	db := logTestDB(t)
+	app := &App{GDB: db}
+	db.Create(&database.VoidToken{
+		ID: 1, Name: "k", TokenHash: "kh", TokenPrefix: "vs-", UserID: 1,
+		AllowedModels: database.JSONOf([]string{}),
+	})
+	msg := "upstream mock returned 500: boom"
+
+	app.logRequest(logTestContext(t), requestLogInfo{
+		TokenID: 1, UserSub: "u1", Model: "test-model", Inbound: "openai",
+		Start: time.Now().UTC(), StatusCode: http.StatusBadGateway, Success: false,
+		Err:   &msg,
+		Debug: false,
+		Attempts: []*services.AttemptRecord{{
+			Attempt: 1, Provider: strPtr("mock"), StatusCode: intRef(http.StatusInternalServerError),
+			RespBody: map[string]any{"error": "boom"},
+			Error:    strPtr(msg),
+		}},
+	})
+
+	row := readLogTestRow(t, db)
+	if !row.Debug {
+		t.Fatal("a failed request should be flagged as a debug row")
+	}
+	if len(row.DebugAttempts) == 0 {
+		t.Fatal("a failed request should keep the debug trail")
+	}
+	trail := string(row.DebugAttempts)
+	if !strings.Contains(trail, "resp_body") {
+		t.Fatalf("response body missing from the failure trail: %s", trail)
+	}
+	if strings.Contains(trail, "req_body") {
+		t.Fatalf("request body recorded for a non-debug failure: %s", trail)
 	}
 }
