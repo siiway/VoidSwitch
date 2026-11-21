@@ -400,6 +400,7 @@ func (a *App) relay(c *gin.Context, inbound constants.ApiStyle, kind services.Re
 		Ctx: c.Request.Context(), DB: a.GDB, Cfg: a.Cfg, Pool: services.GetPool(),
 		ExposedModel: modelID, InboundStyle: inbound, Stream: stream, Body: body,
 		Kind: kind, TokenID: &token.ID, UserSub: &subPtr, Debug: token.DebugEnabled,
+		Capture: services.CapturePolicyFromSettings(),
 	}
 	disp := services.NewDispatcher(req)
 	res, err := disp.Do()

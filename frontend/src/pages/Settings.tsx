@@ -134,6 +134,13 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
     keys: ["models_card_min_width", "models_card_max_width", "model_tps_display_max"],
   },
   {
+    titleKey: "settings.sectionLogPolicy",
+    // A single pseudo-key renders the two policy objects as dropdowns: one per
+    // source and one per log level. The real keys are listed so they are not
+    // collected into the "Other" card.
+    keys: ["log_capture_policy", "log_access_policy"],
+  },
+  {
     titleKey: "settings.sectionOpencode",
     keys: [
       "opencode_default_model",
@@ -415,6 +422,8 @@ export function Settings() {
 
   function renderField(key: string) {
     if (!(key in values)) return null;
+    if (key === "log_access_policy") return null;
+    if (key === "log_capture_policy") return renderLogPolicy();
     // Hide proxy-pool settings that don't apply when switching is off,
     // and the static-proxy URL that only applies when switching is off.
     if (!proxySwitching && PROXY_SWITCHING_ONLY.has(key)) return null;
@@ -597,6 +606,91 @@ export function Settings() {
       );
     }
     return null;
+  }
+
+  // The two log policies render as one block of dropdowns: sources → level, then
+  // levels → the least privileged viewer allowed to read them.
+  function renderLogPolicy() {
+    const capture = (values.log_capture_policy ?? {}) as Record<string, unknown>;
+    const access = (values.log_access_policy ?? {}) as Record<string, unknown>;
+    const sources: { key: string; labelKey: string }[] = [
+      { key: "success", labelKey: "settings.logSourceSuccess" },
+      { key: "debug", labelKey: "settings.logSourceDebug" },
+      { key: "error", labelKey: "settings.logSourceError" },
+    ];
+    const levels = [
+      { value: "1", labelKey: "settings.logLevelNone" },
+      { value: "2", labelKey: "settings.logLevelHeaders" },
+      { value: "3", labelKey: "settings.logLevelBodies" },
+      { value: "4", labelKey: "settings.logLevelError" },
+    ];
+    const tiers = [
+      { value: "A", labelKey: "settings.logAccessUser" },
+      { value: "B", labelKey: "settings.logAccessRoleGroup" },
+      { value: "C", labelKey: "settings.logAccessAdmin" },
+      { value: "D", labelKey: "settings.logAccessOwner" },
+    ];
+
+    return (
+      <div key="log_capture_policy" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Text weight="semibold" size={300}>
+          {t("settings.logPolicyCapture" as TK)}
+        </Text>
+        {sources.map((source) => {
+          const current = String(capture[source.key] ?? "1");
+          return (
+            <Field key={source.key} label={t(source.labelKey as TK)}>
+              <Dropdown
+                value={levels.find((l) => l.value === current)?.labelKey
+                  ? t(levels.find((l) => l.value === current)!.labelKey as TK)
+                  : current}
+                selectedOptions={[current]}
+                disabled={!isOwner}
+                onOptionSelect={(_, d) =>
+                  d.optionValue &&
+                  set("log_capture_policy", { ...capture, [source.key]: Number(d.optionValue) })
+                }
+              >
+                {levels.map((level) => (
+                  <Option key={level.value} value={level.value}>
+                    {t(level.labelKey as TK)}
+                  </Option>
+                ))}
+              </Dropdown>
+            </Field>
+          );
+        })}
+
+        <Text weight="semibold" size={300} style={{ marginTop: 4 }}>
+          {t("settings.logPolicyAccess" as TK)}
+        </Text>
+        {levels.map((level) => {
+          const current = String(access[level.value] ?? "A");
+          return (
+            <Field key={level.value} label={t(level.labelKey as TK)}>
+              <Dropdown
+                value={t(
+                  (tiers.find((x) => x.value === current)?.labelKey ??
+                    "settings.logAccessUser") as TK,
+                )}
+                selectedOptions={[current]}
+                disabled={!isOwner}
+                onOptionSelect={(_, d) =>
+                  d.optionValue &&
+                  set("log_access_policy", { ...access, [level.value]: d.optionValue })
+                }
+              >
+                {tiers.map((tier) => (
+                  <Option key={tier.value} value={tier.value}>
+                    {t(tier.labelKey as TK)}
+                  </Option>
+                ))}
+              </Dropdown>
+            </Field>
+          );
+        })}
+      </div>
+    );
   }
 
   if (loaded.loading) return <Loading />;

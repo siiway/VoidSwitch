@@ -40,6 +40,15 @@ Settings are rendered generically by type: booleans appear as toggles, numbers a
   JWT stays valid. `0` (empty) = **follow the `expires_in` Prism returns at login**; a value of at least
   **60** minutes is used as-is; when Prism sends none and nothing is configured, the server config's
   `session_ttl_minutes` is used. A non-zero value below 60 is rejected on save.
+- **Log granularity** — two dropdown-only mappings: which requests keep what, and who may read
+  each level. The first maps the three sources (a **successful request**, a **debug-enabled token**, a
+  **failed request**) onto a retention level: `1` routing chain only, `2` request/response headers
+  (secrets redacted), `3` request body + response body (SSE included), `4` response body only (no SSE)
+  plus the error message. Defaults are `1 / 3 / 4`: a successful call keeps only the chain, a debug
+  token keeps everything, a failure keeps the error response body. The second maps each level onto the
+  least privileged viewer that may read it: `A` the user themself, `B` role-group admin, `C` admin,
+  `D` owner / co-owner; defaults `A / C / D / C`. Together they decide what a row stores and who can
+  read each group, instead of the old hard-coded behaviour.
 - **Logs & Retention** — page size, the auto-cleanup toggle and interval, and the retention windows for request / audit / debug logs
   (`0` = keep forever). Owners can also **clean up now**. The **body capture cap**
   (`log_body_capture_max_bytes`, bytes, default 262144, `0` = uncapped) bounds the request body, response

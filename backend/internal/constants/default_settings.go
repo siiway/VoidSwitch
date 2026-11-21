@@ -20,6 +20,8 @@ var DefaultSettingsJSON = map[string]json.RawMessage{
 	"debug_log_retention_days":               json.RawMessage("0"),
 	"heatmap_retention_days":                 json.RawMessage("365"),
 	"log_body_capture_max_bytes":             json.RawMessage("262144"),
+	"log_access_policy":                      json.RawMessage("{\"1\":\"A\",\"2\":\"C\",\"3\":\"D\",\"4\":\"C\"}"),
+	"log_capture_policy":                     json.RawMessage("{\"success\":1,\"debug\":3,\"error\":4}"),
 	"log_cleanup_enabled":                    json.RawMessage("true"),
 	"log_cleanup_interval_seconds":           json.RawMessage("86400"),
 	"logs_page_size":                         json.RawMessage("50"),

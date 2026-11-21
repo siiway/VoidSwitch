@@ -10,6 +10,7 @@ import (
 
 	"github.com/siiway/voidswitch/internal/core"
 	"github.com/siiway/voidswitch/internal/database"
+	"github.com/siiway/voidswitch/internal/services"
 )
 
 func firstAttempt(v any) map[string]any {
@@ -81,5 +82,57 @@ func TestBuildRequestLogDetailVisibility(t *testing.T) {
 				t.Fatalf("req_body visible=%v, want %v", debug["req_body"] != nil, tc.wantBodies)
 			}
 		})
+	}
+}
+
+// TestLogVisibilityHonoursAccessPolicy proves the level → viewer mapping is read
+// from settings instead of being hard-coded: moving level 3 down to an admin lets
+// an admin read bodies, and a level-2 row never has any to read.
+func TestLogVisibilityHonoursAccessPolicy(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:policy-%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&database.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&database.Setting{
+		Key: "log_access_policy",
+		Value: database.JSONOf(map[string]any{
+			"1": "A", "2": "C", "3": "C", "4": "C",
+		}),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := services.LoadSettings(db); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		// Restore the shipped defaults for any later test in this package.
+		empty, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:policy-empty-%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
+		if err == nil {
+			_ = empty.AutoMigrate(&database.Setting{})
+			_, _ = services.LoadSettings(empty)
+		}
+	})
+
+	app := &App{GDB: db}
+	admin := &core.UserView{Role: "admin"}
+	member := &core.UserView{Role: "member"}
+	bodies := &database.RequestLog{Success: true, LogLevel: services.LogLevelBodies}
+	headers := &database.RequestLog{Success: true, LogLevel: services.LogLevelHeaders}
+	respOnly := &database.RequestLog{Success: false, LogLevel: services.LogLevelError}
+
+	if vis := app.logVisibilityFor(bodies, admin); !vis.bodies || !vis.headers {
+		t.Fatalf("admin with level 3 mapped to C should read bodies: %+v", vis)
+	}
+	if vis := app.logVisibilityFor(bodies, member); vis.bodies || vis.headers {
+		t.Fatalf("a member must not read another tier's detail: %+v", vis)
+	}
+	if vis := app.logVisibilityFor(headers, admin); !vis.headers || vis.bodies {
+		t.Fatalf("a level-2 row has headers only: %+v", vis)
+	}
+	if vis := app.logVisibilityFor(respOnly, admin); !vis.bodies || vis.headers {
+		t.Fatalf("level 4 keeps the response body but not headers: %+v", vis)
 	}
 }

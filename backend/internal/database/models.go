@@ -571,8 +571,11 @@ type RequestLog struct {
 	// OpenCodePlugin is the plugin generation that served the request: "v1",
 	// "v2", or "" when it did not come through the plugin. Supersedes the
 	// boolean IsOpenCode, which is still written for older readers.
-	OpenCodePlugin  *string `gorm:"column:opencode_plugin;type:varchar(8)"`
-	Debug           bool    `gorm:"column:debug;index;not null"`
+	OpenCodePlugin *string `gorm:"column:opencode_plugin;type:varchar(8)"`
+	Debug          bool    `gorm:"column:debug;index;not null"`
+	// LogLevel records how much detail the row kept (1 chain only … 4 response
+	// body + error message). 0 = legacy row, gated by the pre-policy rules.
+	LogLevel        int16   `gorm:"column:log_level;not null;default:0"`
 	ReqMethod       *string `gorm:"column:req_method;type:varchar(16)"`
 	ReqHeaders      JSON    `gorm:"column:req_headers;type:json"`
 	ReqBody         JSON    `gorm:"column:req_body;type:json"`

@@ -387,6 +387,12 @@ for model in vs.models.list():
   };
 }
 
+// effective returns the set of scopes the key can actually exercise: the stored
+// scopes intersected with what its owner's role may still grant.
+function effective(key: PlatformAPIKey): Set<string> {
+  return new Set(key.effective_scopes);
+}
+
 export function PlatformAPIKeys() {
   const { t } = useTranslation();
   type TK = keyof Translations;
@@ -626,9 +632,9 @@ export function PlatformAPIKeys() {
             <TableRow>
               <TableHeaderCell>{t("platformApiKeys.name" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("platformApiKeys.prefix" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("platformApiKeys.scopes" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("platformApiKeys.status" as TK)}</TableHeaderCell>
-              <TableHeaderCell>{t("platformApiKeys.lastUsed" as TK)}</TableHeaderCell>
+              <TableHeaderCell style={{ width: 240 }}>{t("platformApiKeys.scopes" as TK)}</TableHeaderCell>
+              <TableHeaderCell style={{ width: 120 }}>{t("platformApiKeys.status" as TK)}</TableHeaderCell>
+              <TableHeaderCell style={{ width: 190 }}>{t("platformApiKeys.lastUsed" as TK)}</TableHeaderCell>
               <TableHeaderCell>{t("platformApiKeys.actions" as TK)}</TableHeaderCell>
             </TableRow>
           </TableHeader>
@@ -640,40 +646,48 @@ export function PlatformAPIKeys() {
                   {key.key_prefix}
                 </TableCell>
                 <TableCell>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                    {key.scopes.slice(0, 3).map((s) => (
-                      <Badge key={s} appearance="tint" size="small">
-                        {s}
-                      </Badge>
-                    ))}
-                    {key.scopes.length > 3 ? (
-                      <Badge appearance="outline" size="small">
-                        +{key.scopes.length - 3}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  {key.effective_scopes.length !== key.scopes.length ? (
-                    <Tooltip
-                      content={t("platformApiKeys.effectiveHint" as TK)}
-                      relationship="description"
-                    >
-                      <Text
-                        size={100}
-                        block
-                        style={{ color: tokens.colorNeutralForeground3, marginTop: 2 }}
-                      >
-                        {t("platformApiKeys.effectiveCount" as TK).replace(
-                          "{count}",
-                          String(key.effective_scopes.length),
-                        )}
-                      </Text>
-                    </Tooltip>
-                  ) : null}
+                  <Tooltip
+                    content={
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        {key.scopes.map((s) => (
+                          <span key={s}>
+                            {effective(key).has(s)
+                              ? s
+                              : t("platformApiKeys.scopeInactive" as TK).replace("{scope}", s)}
+                          </span>
+                        ))}
+                      </div>
+                    }
+                    relationship="description"
+                  >
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {key.scopes.slice(0, 3).map((s) => (
+                        <Badge
+                          key={s}
+                          appearance={effective(key).has(s) ? "tint" : "outline"}
+                          color={effective(key).has(s) ? undefined : "subtle"}
+                          size="small"
+                        >
+                          {s}
+                        </Badge>
+                      ))}
+                      {key.scopes.length > 3 ? (
+                        <Badge appearance="outline" size="small">
+                          +{key.scopes.length - 3}
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </Tooltip>
                 </TableCell>
                 <TableCell>
-                  {key.enabled
-                    ? t("common.enabled" as TK)
-                    : t("common.disabled" as TK)}
+                  <Badge
+                    color={key.enabled ? "success" : "subtle"}
+                    appearance="filled"
+                  >
+                    {key.enabled
+                      ? t("common.enabled" as TK)
+                      : t("common.disabled" as TK)}
+                  </Badge>
                   {key.disabled_reason === "lost_staff" ? (
                     <Text
                       size={100}

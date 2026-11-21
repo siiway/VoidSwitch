@@ -16,6 +16,7 @@ import (
 	"github.com/siiway/voidswitch/internal/core"
 	"github.com/siiway/voidswitch/internal/cryptoutil"
 	"github.com/siiway/voidswitch/internal/database"
+	"github.com/siiway/voidswitch/internal/services"
 )
 
 type requestLogView struct {
@@ -395,55 +396,101 @@ func (a *App) logsRequestsList(c *gin.Context) {
 	})
 }
 
+// logViewerTier maps the caller to the access ladder the log policy uses.
+func (a *App) logViewerTier(uv *core.UserView) string {
+	switch {
+	case uv.IsOwner():
+		return services.LogAccessOwner
+	case uv.IsStaff():
+		return services.LogAccessAdmin
+	case uv.IsRoleGroupAdmin():
+		return services.LogAccessRoleGroupAdmin
+	default:
+		return services.LogAccessUser
+	}
+}
+
+// rowLogLevel is the capture level of a stored row. Rows written before the policy
+// existed carry 0 and are read as level 3, which is the detail they could hold.
+func rowLogLevel(r *database.RequestLog) int {
+	if r.LogLevel <= 0 {
+		return services.LogLevelBodies
+	}
+	return services.ClampLogLevel(int(r.LogLevel))
+}
+
+// logVisibility is what one caller may see of one row.
+type logVisibility struct {
+	headers bool
+	bodies  bool
+}
+
+// logVisibilityFor applies the level → access mapping: the row's level decides
+// which groups it *holds*, and the mapping decides who may *read* each group.
+func (a *App) logVisibilityFor(r *database.RequestLog, uv *core.UserView) logVisibility {
+	level := rowLogLevel(r)
+	viewer := services.LogAccessRank(a.logViewerTier(uv))
+	out := logVisibility{}
+	// Headers are part of levels 2 and 3 only; level 4 deliberately drops them.
+	if level == services.LogLevelHeaders || level == services.LogLevelBodies {
+		out.headers = viewer >= services.LogAccessRank(services.LogAccessTier(services.LogLevelHeaders))
+	}
+	switch level {
+	case services.LogLevelBodies:
+		out.bodies = viewer >= services.LogAccessRank(services.LogAccessTier(services.LogLevelBodies))
+	case services.LogLevelError:
+		// Level 4 keeps the response body (non-SSE) as its only body.
+		out.bodies = viewer >= services.LogAccessRank(services.LogAccessTier(services.LogLevelError))
+	}
+	return out
+}
+
 // buildRequestLogDetail assembles the detail/export view for one row, applying
 // the caller's visibility once. The detail endpoint and the download endpoint
-// previously each repeated this logic and drifted apart (one leaked the proxy
-// URL and the failover trail to non-owners); they now share it.
+// share it so they cannot drift apart.
 func (a *App) buildRequestLogDetail(r *database.RequestLog, uv *core.UserView) requestLogDetailView {
 	labels := a.enrichRequestLogs([]database.RequestLog{*r})
 	v := requestLogDetailView{requestLogView: toRequestLogView(r)}
 	applyLogLabels(&v.requestLogView, r, labels)
 	v.ProxyID = r.ProxyID
-	v.UpstreamURL = r.UpstreamURL
 	v.ReqMethod = r.ReqMethod
-	if uv.IsOwner() {
-		v.KeyID = r.KeyID
-		if r.KeyID != nil {
-			var k database.ApiKey
-			if err := a.GDB.Select("id", "key_preview").First(&k, *r.KeyID).Error; err == nil {
-				v.KeyPreview = strPtr(k.KeyPreview)
-			}
-		}
-		v.ProxyURL = r.ProxyURL
-		v.DebugAttempts = jsonAny(r.DebugAttempts)
-		v.AttemptsSummary = jsonAny(r.AttemptsSummary)
-		return v
+
+	vis := a.logVisibilityFor(r, uv)
+	// The egress address (which can carry proxy credentials) travels with the
+	// headers group: it is an operator detail, not a caller detail.
+	if vis.headers {
+		v.UpstreamURL = r.UpstreamURL
 	}
-	// Non-owner: the routing chain is always visible (redacted); the provider key
-	// is a masked preview. Staff (admin and above) additionally get the
-	// per-attempt headers, but never bodies; role-group admins and members get
-	// neither headers nor bodies.
+	if uv.IsOwner() {
+		v.ProxyURL = r.ProxyURL
+	}
+
+	// Provider key: the raw id/preview only for owners, a masked preview for
+	// admins and role-group admins, and nothing for a member's own row.
+	if r.KeyID != nil && (uv.IsStaff() || uv.IsRoleGroupAdmin()) {
+		var k database.ApiKey
+		if err := a.GDB.Select("id", "key_preview").First(&k, *r.KeyID).Error; err == nil {
+			v.KeyID = r.KeyID
+			if uv.IsOwner() {
+				v.KeyPreview = strPtr(k.KeyPreview)
+			} else {
+				v.KeyPreview = strPtr(maskKeyPreview(k.KeyPreview))
+			}
+		}
+	}
+
 	v.AttemptsSummary = redactAttemptSummaries(jsonAny(r.AttemptsSummary))
-	if uv.IsStaff() {
-		if r.KeyID != nil {
-			var k database.ApiKey
-			if err := a.GDB.Select("id", "key_preview").First(&k, *r.KeyID).Error; err == nil {
-				v.KeyPreview = strPtr(maskKeyPreview(k.KeyPreview))
-				v.KeyID = r.KeyID
-			}
-		}
+	switch {
+	case vis.bodies:
+		v.DebugAttempts = jsonAny(r.DebugAttempts)
+	case vis.headers:
 		v.DebugAttempts = stripAttemptBodies(redactAttemptSummaries(jsonAny(r.DebugAttempts)))
-	} else if uv.IsRoleGroupAdmin() {
-		if r.KeyID != nil {
-			var k database.ApiKey
-			if err := a.GDB.Select("id", "key_preview").First(&k, *r.KeyID).Error; err == nil {
-				v.KeyPreview = strPtr(maskKeyPreview(k.KeyPreview))
-				v.KeyID = r.KeyID
-			}
-		}
-	} else {
-		// A member's own detail stays anonymous: the provider key identifies
-		// which credential pool served the request, an operator concern.
+	default:
+		v.DebugAttempts = nil
+	}
+	if !uv.IsStaff() && !uv.IsRoleGroupAdmin() {
+		// A member's own detail stays anonymous: the provider key identifies which
+		// credential pool served the request, an operator concern.
 		v.AttemptsSummary = stripAttemptKeys(v.AttemptsSummary)
 	}
 	return v
@@ -481,8 +528,6 @@ func (a *App) logsRequestDownload(c *gin.Context) {
 	}
 	v := a.buildRequestLogDetail(&r, uv)
 
-	// The export must not leak credentials or egress addresses. Owners get the
-	// bodies; everyone else gets metadata only.
 	payload := a.exportPayload(&v, uv, &r)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="voidswitch-request-%d.json"`, r.ID))
 	c.Header("Content-Type", "application/json; charset=utf-8")
@@ -510,7 +555,8 @@ func (a *App) exportPayload(v *requestLogDetailView, uv *core.UserView, r *datab
 	delete(m, "attempts_summary")
 	delete(m, "debug_attempts")
 	m["attempts"] = attempts
-	return downloadSafe(m, uv.IsOwner(), a.exportSecrets(r))
+	vis := a.logVisibilityFor(r, uv)
+	return downloadSafe(m, vis.bodies, a.exportSecrets(r))
 }
 
 // exportSecrets collects the values a request-log export must scrub anywhere

@@ -265,22 +265,25 @@ func TestExportPayloadVisibilityTiers(t *testing.T) {
 	}
 }
 
-// TestDebugCaptureIsConditional pins the rule: the debug projection is written
-// only when the token opted in or the request failed. A successful call from a
-// token without debug keeps the routing chain and nothing else.
+// TestDebugCaptureIsConditional pins the default source → level mapping: a debug
+// token wins over the outcome, otherwise the outcome decides, and a successful
+// call from a token without debug keeps the routing chain and nothing else.
 func TestDebugCaptureIsConditional(t *testing.T) {
+	policy := services.CapturePolicy{Success: 1, Debug: 3, Error: 4}
 	cases := []struct {
-		tokenDebug, success, want bool
+		tokenDebug bool
+		success    bool
+		want       int
 	}{
-		{true, true, true},
-		{true, false, true},
-		{false, true, false},
-		{false, false, true},
+		{true, true, 3},
+		{true, false, 3},
+		{false, true, 1},
+		{false, false, 4},
 	}
 	for _, tc := range cases {
-		if got := debugCaptureEnabled(tc.tokenDebug, tc.success); got != tc.want {
-			t.Fatalf("debugCaptureEnabled(%v, %v) = %v, want %v",
-				tc.tokenDebug, tc.success, got, tc.want)
+		if got := policy.LevelFor(tc.tokenDebug, !tc.success); got != tc.want {
+			t.Fatalf("LevelFor(debug=%v, failed=%v) = %d, want %d",
+				tc.tokenDebug, !tc.success, got, tc.want)
 		}
 	}
 }

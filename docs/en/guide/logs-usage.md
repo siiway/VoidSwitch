@@ -97,17 +97,18 @@ Each attempt's chain and its **redacted request / response headers** are always 
 that made an upstream attempt. **Role-group admins and members do not see request headers** — they only
 get the chain summary without headers or bodies.
 
-Debug data (request/response headers, the per-attempt trail and the bodies) is **stored only when at least one
-of these holds**; the bodies themselves stay visible to **owner / co-owner** only (all truncated by the
-**body capture cap**):
+How much a row keeps, and who may read it, is decided by **Log granularity** in
+[Settings](/en/admin/settings) rather than being hard-coded:
 
-- The request's **Void-Token has debug enabled**: the request body and the response body are always captured
-  (the non-stream body, and the upstream SSE of a streaming response);
-- The request **errors** (upstream 4xx / 5xx or a dispatch failure): the error response body (usually the
-  upstream JSON error) is captured regardless of debug, but the **request body is not**; a streaming SSE error
-  body is not captured.
+- **Source → level**: a successful request, a debug-enabled token and a failed request each map to a
+  retention level — `1` routing chain only, `2` request/response headers (secrets redacted), `3` request body
+  + response body (SSE included), `4` response body only (no SSE) plus the error message. Defaults `1 / 3 / 4`.
+- **Level → viewer**: each level maps to the least privileged viewer that may read it (`A` the user themself,
+  `B` role-group admin, `C` admin, `D` owner / co-owner), default `A / C / D / C`.
 
-A successful request that satisfies neither keeps only the header- and body-free routing chain.
+So the default behaviour is: a successful request keeps only the routing chain, a debug token records the
+request and response bodies (SSE included), and a failed request records the non-SSE error body plus the
+error message without the request body. Every body is truncated by the **body capture cap**.
 
 The lower-left corner of the debug detail dialog has a button to download a redacted request JSON. The export
 puts the whole chain into a single `attempts` array, removes API keys, access tokens and proxy URLs, and

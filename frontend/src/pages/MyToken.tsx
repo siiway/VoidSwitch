@@ -1,4 +1,5 @@
 import {
+  Badge,
   Button,
   Dialog,
   DialogActions,
@@ -624,7 +625,14 @@ export function MyToken() {
                 <TableCell>{fmt(token.total_requests)}</TableCell>
                 <TableCell>{fmt(token.total_tokens)}</TableCell>
                 <TableCell>
-                  {token.enabled ? t("common.enabled" as TK) : t("common.disabled" as TK)}
+                  <Badge
+                    color={token.enabled ? "success" : "subtle"}
+                    appearance="filled"
+                  >
+                    {token.enabled
+                      ? t("common.enabled" as TK)
+                      : t("common.disabled" as TK)}
+                  </Badge>
                 </TableCell>
                 <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                   {formatDate(token.last_used_at)}

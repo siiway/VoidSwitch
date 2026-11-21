@@ -107,11 +107,12 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 		networkAttempts = 1
 	}
 
-	// Debug data (headers and bodies) is kept when the token asked for it or the
-	// request failed. A successful request from a token without debug keeps only
-	// the routing chain: writing the full trail for every call bloated the logs
-	// and recorded bodies nobody had opted into.
-	debugData := debugCaptureEnabled(info.Debug, success)
+	// The capture level decides what this row keeps. The settings map a source
+	// (success / debug token / error) onto a level; level 1 stores only the
+	// routing chain, 2 adds headers, 3 adds bodies, and 4 keeps just the non-SSE
+	// response body plus the error message.
+	level := services.CapturePolicyFromSettings().LevelFor(info.Debug, !success)
+	debugData := level >= services.LogLevelHeaders
 
 	row := database.RequestLog{
 		TS:               start.UTC(),
@@ -143,6 +144,7 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 		IsOpenCode:       pluginVersion != "",
 		OpenCodePlugin:   nullableStr(pluginVersion),
 		Debug:            debugData,
+		LogLevel:         int16(level),
 		ReqMethod:        strPtr("POST"),
 	}
 	if len(chain) > 0 {
@@ -172,12 +174,6 @@ func (a *App) logRequest(c *gin.Context, info requestLogInfo) {
 		a.rollupUsage(userSub, usage.TotalTokens)
 		a.rollupSession(userSub, info.SessionKey, start)
 	}
-}
-
-// debugCaptureEnabled reports whether a request keeps its debug projection: the
-// token opted in, or the request failed and the trail is needed to diagnose it.
-func debugCaptureEnabled(tokenDebug, success bool) bool {
-	return tokenDebug || !success
 }
 
 func (a *App) bumpTokenUsage(tokenID int, tokens int64) {

@@ -43,6 +43,13 @@ func UpstreamFormat(style constants.ApiStyle) types.RelayFormat {
 	return InboundFormat(string(style))
 }
 
+// captureLevel is the level to apply to this request, given whether the attempt
+// failed. A debug-enabled token overrides the outcome.
+func (d *Dispatcher) captureLevel(failed bool) int {
+	level := d.req.Capture.LevelFor(d.req.Debug, failed)
+	return ClampLogLevel(level)
+}
+
 // credentialURLProvider is implemented by adapters whose upstream URL depends on
 // the credential (a composite key that carries an account id).
 type credentialURLProvider interface {
@@ -70,9 +77,11 @@ type DispatchRequest struct {
 	Kind         RelayKind
 	TokenID      *int
 	UserSub      *string
-	// Debug captures request/response bodies (and streamed SSE) into the
-	// per-attempt trail. Headers and the routing chain are always recorded.
+	// Debug marks a debug-enabled token; combined with Capture it decides how
+	// much of the request/response is stored.
 	Debug bool
+	// Capture is the source → level mapping from settings.
+	Capture CapturePolicy
 }
 
 // RelayKind is a coarse endpoint kind used for protocol conversion.
@@ -459,8 +468,13 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 		return nil, err
 	}
 	raw, _ := json.Marshal(upstreamBody)
-	if d.req.Debug {
-		rec.ReqBody = captureValue(upstreamBody, logBodyCaptureMax())
+	// The request body is attached after the outcome is known: only a level-3
+	// capture includes it, and a failed attempt must not gain one just because it
+	// was prepared before the response arrived.
+	withReqBody := func() {
+		if rec.ReqBody == nil {
+			rec.ReqBody = captureValue(upstreamBody, logBodyCaptureMax())
+		}
 	}
 
 	egress := ResolveEgress(d.req.DB, cand.Provider, d.req.Cfg.Server.SecretKey)
@@ -546,10 +560,24 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 		rec.StatusCode = intPtr(resp.StatusCode)
 		rec.ErrorClass = strPtr(string(adapter.Classify(resp.StatusCode, nil)))
 		rec.RespHeaders = redactedResponseHeaders(resp.Header)
-		// An error body carries the provider's real reason, so capture it even
-		// when the token has debug off (still capped by the same setting).
-		rec.RespBody = captureBody(b, logBodyCaptureMax())
-		errMsg := redactSecrets(fmt.Sprintf("upstream %s returned %d: %s", cand.Provider.Name, resp.StatusCode, truncate(string(b), 300)), plainKey)
+		level := d.captureLevel(true)
+		if level == LogLevelBodies || level == LogLevelError {
+			rec.RespBody = captureBody(b, logBodyCaptureMax())
+			rec.ReqBody = nil
+		} else if level == LogLevelHeaders {
+			rec.RespBody = nil
+		}
+		// Level 4 splits the response body out of the message; the others keep the
+		// short form with a truncated body, which is what the error column shows.
+		var errMsg string
+		if level == LogLevelError {
+			errMsg = redactSecrets(fmt.Sprintf("upstream %s returned %d", cand.Provider.Name, resp.StatusCode), plainKey)
+		} else {
+			errMsg = redactSecrets(fmt.Sprintf("upstream %s returned %d: %s", cand.Provider.Name, resp.StatusCode, truncate(string(b), 300)), plainKey)
+			if level == LogLevelBodies {
+				withReqBody()
+			}
+		}
 		rec.Error = strPtr(errMsg)
 		d.noteFailure(cand, resp.StatusCode)
 		return nil, fmt.Errorf("%s", errMsg)
@@ -564,10 +592,12 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 	inboundFormat := InboundFormat(string(d.req.InboundStyle))
 
 	if d.req.Stream {
+		level := d.captureLevel(false)
 		streamBody := io.ReadCloser(resp.Body)
-		if d.req.Debug {
+		if level == LogLevelBodies {
 			rec.respCapture = newBodyCapture(logBodyCaptureMax())
 			streamBody = &captureReader{src: resp.Body, c: rec.respCapture}
+			withReqBody()
 		}
 		stream := d.convertStream(streamBody, upstreamFormat, inboundFormat, cand.UpstreamModel)
 		ready := make(chan struct{})
@@ -586,8 +616,12 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	recordDuration()
-	if d.req.Debug {
+	level := d.captureLevel(false)
+	if level == LogLevelBodies || level == LogLevelError {
 		rec.RespBody = captureBody(bodyBytes, logBodyCaptureMax())
+	}
+	if level == LogLevelBodies {
+		withReqBody()
 	}
 	outBody, err := d.convertResponse(bodyBytes, upstreamFormat, inboundFormat, cand.UpstreamModel)
 	if err != nil {

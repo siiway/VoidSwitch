@@ -192,44 +192,6 @@ const useFilterStyles = makeStyles({
     cursor: "pointer",
     ":hover": { textDecoration: "underline" },
   },
-  // Secondary line inside a cell (the token under its user): smaller and dimmer
-  // than the primary value, still clickable.
-  clickableSmall: {
-    background: "none",
-    border: "none",
-    padding: 0,
-    margin: 0,
-    font: "inherit",
-    fontSize: tokens.fontSizeBase100,
-    color: tokens.colorNeutralForeground3,
-    textAlign: "left",
-    cursor: "pointer",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    maxWidth: "180px",
-    ":hover": { textDecoration: "underline" },
-  },
-  stacked: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "1px",
-    minWidth: 0,
-  },
-  // Every request-log cell uses the compact type scale the IP column used.
-  cell: {
-    fontSize: tokens.fontSizeBase100,
-    color: tokens.colorNeutralForeground3,
-    whiteSpace: "nowrap",
-    verticalAlign: "top",
-  },
-  cellMono: {
-    fontSize: tokens.fontSizeBase100,
-    color: tokens.colorNeutralForeground3,
-    fontFamily: tokens.fontFamilyMonospace,
-    whiteSpace: "nowrap",
-    verticalAlign: "top",
-  },
 });
 
 interface SelectOption {
@@ -1394,13 +1356,21 @@ function RequestLogs({
               data-log-row={r.id}
               className={r.id === highlightId ? hl.row : undefined}
             >
-              <TableCell className={cellStyles.cellMono}>{r.id}</TableCell>
-              <TableCell className={cellStyles.cell}>
+              <TableCell
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {r.id}
+              </TableCell>
+              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                 {formatDate(r.started_at ?? r.ts)}
               </TableCell>
-              <TableCell className={cellStyles.cell}>
+              <TableCell>
                 {r.user_sub || r.token_id != null ? (
-                  <div className={cellStyles.stacked}>
+                  <div>
                     {r.user_sub ? (
                       <button
                         type="button"
@@ -1421,21 +1391,23 @@ function RequestLogs({
                       <span>—</span>
                     )}
                     {r.token_id != null ? (
-                      <button
-                        type="button"
-                        className={cellStyles.clickableSmall}
-                        title={tr("logs.clickToFilter" as TK)}
-                        onClick={() => setFilter("token_id", String(r.token_id))}
-                      >
-                        {r.token_name ?? `#${r.token_id}`}
-                      </button>
+                      <Text size={100} block style={{ color: tokens.colorNeutralForeground3 }}>
+                        <button
+                          type="button"
+                          className={cellStyles.clickable}
+                          title={tr("logs.clickToFilter" as TK)}
+                          onClick={() => setFilter("token_id", String(r.token_id))}
+                        >
+                          {r.token_name ?? `#${r.token_id}`}
+                        </button>
+                      </Text>
                     ) : null}
                   </div>
                 ) : (
                   "—"
                 )}
               </TableCell>
-              <TableCell className={cellStyles.cell}>
+              <TableCell>
                 {r.model ? (
                   <button
                     type="button"
@@ -1450,11 +1422,14 @@ function RequestLogs({
                 )}
               </TableCell>
               <TableCell
-                className={cellStyles.cellMono}
                 style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  fontSize: 12,
                   // Reserve room for an IPv4 address plus a little slack; longer
                   // values (IPv6) are ellipsized by the cell.
                   maxWidth: 130,
+                  whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                 }}
@@ -1478,7 +1453,7 @@ function RequestLogs({
                   "—"
                 )}
               </TableCell>
-              <TableCell className={cellStyles.cell}>
+              <TableCell>
                 {r.req_status ? (
                   <button
                     type="button"
@@ -1509,7 +1484,7 @@ function RequestLogs({
                   "—"
                 )}
               </TableCell>
-              <TableCell className={cellStyles.cell}>
+              <TableCell>
                 <button
                   type="button"
                   className={cellStyles.clickable}
@@ -1530,19 +1505,31 @@ function RequestLogs({
                   </Badge>
                 </button>
               </TableCell>
-              <TableCell className={cellStyles.cellMono}>
+              <TableCell style={{ color: tokens.colorNeutralForeground3 }}>
                 {r.first_token_ms != null ? `${Math.round(r.first_token_ms)}ms` : "—"}
               </TableCell>
-              <TableCell className={cellStyles.cellMono}>
+              <TableCell
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {formatDuration(requestDurationMs(r, durationNow, liveEnabled))}
               </TableCell>
-              <TableCell className={cellStyles.cellMono}>
-                {formatGrouped(r.total_tokens, i18n.language || "en")}
-              </TableCell>
-              <TableCell className={cellStyles.cellMono}>
+              <TableCell>{formatGrouped(r.total_tokens, i18n.language || "en")}</TableCell>
+              <TableCell
+                style={{
+                  color: tokens.colorNeutralForeground3,
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {tokensPerSecondOf(r, durationNow, liveEnabled)}
               </TableCell>
-              <TableCell className={cellStyles.cellMono}>{r.attempts}</TableCell>
+              <TableCell>{r.attempts}</TableCell>
               <TableCell>
                 <div style={{ display: "flex", gap: 4 }}>
                   <Tooltip content={tr("logs.viewDetail" as TK)} relationship="label">
@@ -1641,9 +1628,8 @@ function RequestLogs({
                     <DetailRow
                       label={tr("logs.token" as TK)}
                       value={
-                        detailLog.token_owner_name
-                          ? `${detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")} (${detailLog.token_owner_name}${detailLog.token_owner_nickname ? ` · ${detailLog.token_owner_nickname}` : ""})`
-                          : detailLog.token_name ?? (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")
+                        detailLog.token_name ??
+                        (detailLog.token_id != null ? `#${detailLog.token_id}` : "—")
                       }
                     />
                     <DetailRow label={tr("logs.model" as TK)} value={detailLog.model ?? "—"} />
