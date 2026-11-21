@@ -203,3 +203,18 @@ func TestScopeGrantableByRejectsUnknown(t *testing.T) {
 		t.Fatal("owner should grant a per-provider wildcard")
 	}
 }
+
+// TestDebugLogActionSurvivesWildcardExpansion is the regression for an owner
+// seeing "request-log.get-debug (inactive for your role)": the action was missing
+// from the grantable lists, so it could not be granted or reached.
+func TestDebugLogActionSurvivesWildcardExpansion(t *testing.T) {
+	for _, role := range []string{"owner", "co-owner", "admin"} {
+		if !ScopeGrantableBy(role, "request-log.get-debug") {
+			t.Fatalf("%s should be able to grant request-log.get-debug", role)
+		}
+		eff := EffectiveScopes([]string{"*"}, role)
+		if !AllowsAction(eff, role, "request-log.get-debug") {
+			t.Fatalf("%s: effective scopes %v do not allow request-log.get-debug", role, eff)
+		}
+	}
+}

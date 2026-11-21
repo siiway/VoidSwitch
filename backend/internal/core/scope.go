@@ -256,7 +256,7 @@ func adminGrantableScopes() []string {
 		"user.list", "user.get", "user.force-logout",
 		"role-group.list", "role-group.get", "role-group.member.list",
 		"api-key.*",
-		"request-log.list", "request-log.get", "request-log.filters",
+		"request-log.list", "request-log.get", "request-log.get-debug", "request-log.filters",
 		"audit-log.*",
 		"announcement.list", "announcement.edit", "announcement.delete",
 		"setting.get",

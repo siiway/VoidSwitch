@@ -800,6 +800,7 @@ export function Layout() {
                     appearance="subtle"
                     icon={<SignOutRegular />}
                     onClick={logout}
+                    style={{ marginLeft: rail ? 0 : "auto" }}
                     aria-label={t("nav.signOut" as TranslationKey)}
                   />
                 </Tooltip>

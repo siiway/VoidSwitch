@@ -387,10 +387,18 @@ for model in vs.models.list():
   };
 }
 
-// effective returns the set of scopes the key can actually exercise: the stored
-// scopes intersected with what its owner's role may still grant.
-function effective(key: PlatformAPIKey): Set<string> {
-  return new Set(key.effective_scopes);
+// scopeActive reports whether one scope actually works for the key. The effective
+// set may contain "*" (an owner's blanket grant) and provider entries name a
+// slug, so plain set membership is not enough — this mirrors the backend's
+// matcher so a badge never claims a working scope is inactive.
+function scopeActive(key: PlatformAPIKey, scope: string): boolean {
+  const eff = key.effective_scopes;
+  if (eff.includes(scope)) return true;
+  // Provider scopes are only ever granted per slug, never by a blanket.
+  if (scope.startsWith("provider-key")) return false;
+  if (eff.includes("*")) return true;
+  const category = scope.split(".")[0];
+  return eff.includes(`${category}.*`);
 }
 
 export function PlatformAPIKeys() {
@@ -648,13 +656,16 @@ export function PlatformAPIKeys() {
                 <TableCell>
                   <Tooltip
                     content={
-                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, maxWidth: 420 }}>
                         {key.scopes.map((s) => (
-                          <span key={s}>
-                            {effective(key).has(s)
-                              ? s
-                              : t("platformApiKeys.scopeInactive" as TK).replace("{scope}", s)}
-                          </span>
+                          <Badge
+                            key={s}
+                            size="small"
+                            appearance={scopeActive(key, s) ? "tint" : "outline"}
+                            color={scopeActive(key, s) ? undefined : "subtle"}
+                          >
+                            {s}
+                          </Badge>
                         ))}
                       </div>
                     }
@@ -664,8 +675,8 @@ export function PlatformAPIKeys() {
                       {key.scopes.slice(0, 3).map((s) => (
                         <Badge
                           key={s}
-                          appearance={effective(key).has(s) ? "tint" : "outline"}
-                          color={effective(key).has(s) ? undefined : "subtle"}
+                          appearance={scopeActive(key, s) ? "tint" : "outline"}
+                          color={scopeActive(key, s) ? undefined : "subtle"}
                           size="small"
                         >
                           {s}
