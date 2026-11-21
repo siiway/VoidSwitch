@@ -882,6 +882,9 @@ const en = {
     needScope: "Select at least one scope.",
     ownerOnlyHint:
       "Owner-only scopes (provider key management, provider deletion, user edits, settings, announcement deletion, clearing cooldowns) are not offered here, and an admin cannot reach them through *.",
+    effectiveCount: "{count} in effect",
+    effectiveHint:
+      "Your role narrowed this key: some stored scopes no longer apply. The effective set is what /api/v1 and MCP enforce.",
     lostStaff: "disabled — staff access lost",
     createFailed: "Could not create the API key",
     secretTitle: "Your platform API key",
@@ -1087,6 +1090,10 @@ const en = {
     sectionPlatformApi: "Platform API",
     sectionSession: "Login & session",
     sectionLogs: "Logs & retention",
+    sectionModelDisplay: "Model display",
+    modelsCardMinWidth: "Model card minimum width (px)",
+    modelsCardMaxWidth: "Model card maximum width (px, 0 = stretch)",
+    modelTpsDisplayMax: "Hide model throughput above this tok/s (0 = never hide)",
     sectionOpencode: "OpenCode defaults",
     sectionModels: "Models & catalog",
     sectionOther: "Other",

@@ -3,6 +3,7 @@ package core
 import (
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Platform API key scopes are "category.action" strings ("model.edit",
@@ -72,6 +73,7 @@ func actionTable() []Action {
 		{Name: "provider.list", Tier: TierRead, Category: "provider", Summary: "List providers (secrets redacted)."},
 		{Name: "provider.get", Tier: TierRead, Category: "provider", Summary: "Read one provider (secrets redacted)."},
 		{Name: "provider.edit", Tier: TierAdmin, Category: "provider", Summary: "Create a provider (it may start without keys)."},
+		{Name: "provider.update", Tier: TierAdmin, Category: "provider", Summary: "Update a provider's settings."},
 		{Name: "provider.delete", Tier: TierAdmin, Category: "provider", Summary: "Delete a provider and its keys.", OwnerOnly: true},
 
 		{Name: "provider-key.list", Tier: TierProviderKey, Category: "provider-key", Summary: "List one provider's upstream keys."},
@@ -85,9 +87,12 @@ func actionTable() []Action {
 		{Name: "node.list", Tier: TierRead, Category: "node", Summary: "List egress nodes and node groups."},
 		{Name: "node.get", Tier: TierRead, Category: "node", Summary: "Read one egress node."},
 		{Name: "node.edit", Tier: TierAdmin, Category: "node", Summary: "Create an egress node."},
+		{Name: "node.update", Tier: TierAdmin, Category: "node", Summary: "Update an egress node."},
 		{Name: "node.delete", Tier: TierAdmin, Category: "node", Summary: "Delete an egress node.", OwnerOnly: true},
 		{Name: "node.probe", Tier: TierAdmin, Category: "node", Summary: "Probe an egress node's health now."},
 		{Name: "node-group.edit", Tier: TierAdmin, Category: "node", Summary: "Create a node group."},
+		{Name: "node-group.update", Tier: TierAdmin, Category: "node", Summary: "Update a node group."},
+		{Name: "node-group.delete", Tier: TierAdmin, Category: "node", Summary: "Delete a node group.", OwnerOnly: true},
 
 		{Name: "user.list", Tier: TierRead, Category: "user", Summary: "List users."},
 		{Name: "user.get", Tier: TierRead, Category: "user", Summary: "Read one user."},
@@ -245,8 +250,9 @@ func adminGrantableScopes() []string {
 		"model.list", "model.get", "model.edit", "model.batch", "model.delete",
 		"model.route.get", "model.route.edit",
 		"category.list", "category.edit",
-		"provider.list", "provider.get", "provider.edit",
-		"node.list", "node.get", "node.edit", "node.probe", "node-group.edit",
+		"provider.list", "provider.get", "provider.edit", "provider.update",
+		"node.list", "node.get", "node.edit", "node.update", "node.probe",
+		"node-group.edit", "node-group.update",
 		"user.list", "user.get", "user.force-logout",
 		"role-group.list", "role-group.get", "role-group.member.list",
 		"api-key.*",
@@ -262,22 +268,57 @@ func ownerGrantableScopes() []string {
 	return append(adminGrantableScopes(),
 		ScopeAll,
 		"user.edit", "setting.edit", "provider.delete",
-		"node.delete", "role-group.edit", "role-group.delete", "role-group.member.remove",
+		"node.delete", "node-group.delete",
+		"role-group.edit", "role-group.delete", "role-group.member.remove",
 		"model.route.clear-cooldown",
 		ProviderScope+":*.*",
 	)
 }
 
 // GrantableScopes returns every scope the given role may put on a platform API
-// key. Only staff get any at all.
+// key. Only staff get any at all. The result is a fresh slice, so a caller may
+// modify it.
 func GrantableScopes(role string) []string {
-	if IsOwner(role) {
-		return ownerGrantableScopes()
+	grants, _ := grantableFor(role)
+	if len(grants) == 0 {
+		return nil
 	}
-	if IsStaff(role) {
-		return adminGrantableScopes()
+	return append([]string(nil), grants...)
+}
+
+var (
+	grantableOnce     sync.Once
+	grantableAdmin    []string
+	grantableOwner    []string
+	grantableAdminSet map[string]bool
+	grantableOwnerSet map[string]bool
+)
+
+// grantableFor returns the grant list plus its set, built once. The lists are
+// static, and EffectiveScopes runs on the authentication hot path.
+func grantableFor(role string) ([]string, map[string]bool) {
+	grantableOnce.Do(func() {
+		grantableAdmin = adminGrantableScopes()
+		grantableOwner = ownerGrantableScopes()
+		grantableAdminSet = toSet(grantableAdmin)
+		grantableOwnerSet = toSet(grantableOwner)
+	})
+	switch {
+	case IsOwner(role):
+		return grantableOwner, grantableOwnerSet
+	case IsStaff(role):
+		return grantableAdmin, grantableAdminSet
+	default:
+		return nil, nil
 	}
-	return nil
+}
+
+func toSet(list []string) map[string]bool {
+	out := make(map[string]bool, len(list))
+	for _, s := range list {
+		out[s] = true
+	}
+	return out
 }
 
 // ScopeGrantableBy reports whether the role may grant a specific scope entry.
@@ -288,10 +329,9 @@ func ScopeGrantableBy(role, scope string) bool {
 	if scope == "" {
 		return false
 	}
-	grantable := GrantableScopes(role)
-	allow := make(map[string]bool, len(grantable))
-	for _, g := range grantable {
-		allow[g] = true
+	grantable, allow := grantableFor(role)
+	if len(grantable) == 0 {
+		return false
 	}
 	if allow[scope] {
 		return true
@@ -361,13 +401,9 @@ func AllowsAction(scopes []string, role, action string) bool {
 // literally: "*" held by a demoted owner must mean "everything an admin may
 // do", not "nothing" and not "everything".
 func EffectiveScopes(scopes []string, role string) []string {
-	grantable := GrantableScopes(role)
+	grantable, allow := grantableFor(role)
 	if len(grantable) == 0 || len(scopes) == 0 {
 		return nil
-	}
-	allow := make(map[string]bool, len(grantable))
-	for _, g := range grantable {
-		allow[g] = true
 	}
 	out := make([]string, 0, len(scopes))
 	for _, s := range scopes {

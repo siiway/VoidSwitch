@@ -26,7 +26,6 @@ import {
   KeyRegular,
   KeyMultipleRegular,
   NavigationRegular,
-  OpenRegular,
   PeopleRegular,
   PeopleTeamRegular,
   PlugConnectedRegular,
@@ -303,6 +302,7 @@ const useStyles = makeStyles({
   footerActions: {
     display: "flex",
     columnGap: "6px",
+    alignItems: "center",
   },
   main: {
     flex: 1,
@@ -369,29 +369,13 @@ const useStyles = makeStyles({
       transform: "translateX(0)",
     },
   },
-  // Desktop collapse: a narrow icon rail. `sidebarPeek` temporarily widens it
-  // when the pointer touches the left edge, floating above the main content so
-  // nothing reflows while the peek is showing.
+  // Desktop collapse: a narrow icon rail. Collapsing is a fixed state — the rail
+  // never expands on hover, so the layout only moves when the user asks it to.
   sidebarCollapsed: {
     width: "64px",
     ...shorthands.padding("0"),
     transitionProperty: "width",
     transitionDuration: tokens.durationNormal,
-  },
-  sidebarPeek: {
-    width: "256px",
-    position: "fixed",
-    top: 0,
-    bottom: 0,
-    left: 0,
-    zIndex: 100,
-    boxShadow: tokens.shadow16,
-  },
-  // Holds the rail's 64px of flow space while the peek is out of flow, so the
-  // main column does not jump left and right as the pointer crosses the edge.
-  railSpacer: {
-    width: "64px",
-    flexShrink: 0,
   },
   brandCollapsed: {
     justifyContent: "center",
@@ -438,8 +422,7 @@ export function Layout() {
   const [isNarrow, setIsNarrow] = useState(
     () => window.matchMedia("(max-width: 768px)").matches,
   );
-  // Desktop rail state, persisted so the choice survives a reload. The peek is
-  // transient: it only exists while the pointer sits at the left edge.
+  // Desktop rail state, persisted so the choice survives a reload.
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSE_KEY) === "1";
@@ -447,7 +430,6 @@ export function Layout() {
       return false;
     }
   });
-  const [peeking, setPeeking] = useState(false);
   const [proxySwitching, setProxySwitching] = useState(true);
   // Build string shown when the sidebar header is hovered. It comes from the
   // same public config call the shell already makes, so no extra request.
@@ -487,14 +469,6 @@ export function Layout() {
       /* ignore */
     }
   }, [collapsed]);
-
-  // Edge peek: while the rail is collapsed, hovering the rail itself slides the
-  // full sidebar out as an overlay (the pointer is already on it, so no hunting
-  // for a 6px strip). Leaving the sidebar folds it back. Desktop only — the
-  // narrow layout uses its own drawer.
-  useEffect(() => {
-    if (isNarrow || !collapsed) setPeeking(false);
-  }, [isNarrow, collapsed]);
 
   const toggleSidebar = useCallback(() => setSidebarOpen((p) => !p), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
@@ -540,7 +514,7 @@ export function Layout() {
           : "subtle";
 
   // The rail only exists on desktop; the narrow layout keeps its drawer.
-  const rail = collapsed && !isNarrow && !peeking;
+  const rail = collapsed && !isNarrow;
 
   return (
     <ToastProvider>
@@ -566,23 +540,12 @@ export function Layout() {
               }
           />
 
-          {/* The peek is out of flow, so hold the rail's width here; without
-              this the main column would jump as the pointer crosses the edge. */}
-          {!isNarrow && collapsed && peeking ? (
-            <div className={styles.railSpacer} />
-          ) : null}
-
           <aside
             className={mergeClasses(
               styles.sidebar,
               sidebarOpen && styles.sidebarOpen,
               !isNarrow && collapsed && styles.sidebarCollapsed,
-              !isNarrow && collapsed && peeking && styles.sidebarPeek,
             )}
-            onMouseEnter={() => {
-              if (!isNarrow && collapsed) setPeeking(true);
-            }}
-            onMouseLeave={() => setPeeking(false)}
           >
             <div
               className={mergeClasses(
@@ -667,23 +630,6 @@ export function Layout() {
             </nav>
 
             <div className={mergeClasses(styles.footer, rail && styles.footerCollapsed)}>
-              <a
-                href={docsUrlForLang(DOCS_URL, i18n.language)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={mergeClasses(styles.item, rail && styles.itemCollapsed)}
-                aria-label={t("nav.docs" as TranslationKey)}
-              >
-                <span className={styles.itemIcon}>
-                  <BookRegular />
-                </span>
-                {rail ? null : (
-                  <>
-                    <span style={{ flex: 1 }}>{t("nav.docs" as TranslationKey)}</span>
-                    <OpenRegular fontSize={16} />
-                  </>
-                )}
-              </a>
               <div
                 className={mergeClasses(
                   styles.userRow,
@@ -761,6 +707,20 @@ export function Layout() {
                     />
                   </Tooltip>
                 ) : null}
+                <Tooltip content={t("nav.docs" as TranslationKey)} relationship="label">
+                  <Button
+                    appearance="subtle"
+                    icon={<BookRegular />}
+                    onClick={() =>
+                      window.open(
+                        docsUrlForLang(DOCS_URL, i18n.language),
+                        "_blank",
+                        "noopener,noreferrer",
+                      )
+                    }
+                    aria-label={t("nav.docs" as TranslationKey)}
+                  />
+                </Tooltip>
                 <Menu
                   checkedValues={{ theme: [mode] }}
                   onCheckedValueChange={(_, data) => {
@@ -790,7 +750,6 @@ export function Layout() {
                             <WeatherSunnyRegular />
                           )
                         }
-                        style={{ flex: rail ? "0 0 auto" : 1 }}
                       />
                     </Tooltip>
                   </MenuTrigger>
@@ -841,11 +800,8 @@ export function Layout() {
                     appearance="subtle"
                     icon={<SignOutRegular />}
                     onClick={logout}
-                    style={{ flex: rail ? "0 0 auto" : 1 }}
                     aria-label={t("nav.signOut" as TranslationKey)}
-                  >
-                    {rail ? null : t("nav.signOut" as TranslationKey)}
-                  </Button>
+                  />
                 </Tooltip>
                 {rail ? (
                   <Tooltip

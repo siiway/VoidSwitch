@@ -43,6 +43,8 @@ func (a *App) authConfig(c *gin.Context) {
 			"model_health_recent_request_count", 50,
 		),
 		"proxy_switching_enabled":  services.GetBool("proxy_switching_enabled", true),
+		"models_card_min_width":    services.GetInt("models_card_min_width", 280),
+		"models_card_max_width":    services.GetInt("models_card_max_width", 0),
 		"announcements_home_count": services.GetInt("announcements_home_count", 3),
 		"chat_preset_questions":    services.GetSetting("chat_preset_questions"),
 	})

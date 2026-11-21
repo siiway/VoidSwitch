@@ -565,13 +565,36 @@ func parseCFKey(plaintext string) (accountID, token string) {
 	return "", plaintext
 }
 
+// UpstreamURLFor resolves {account_id} from the credential itself. The account id
+// only exists in the composite key, and the dispatcher builds the URL before it
+// builds the headers, so deriving it inside Headers left "{account_id}" in the
+// request path (Cloudflare answered 404 "Could not route to … %7Baccount_id%7D").
+func (p *CloudflareProvider) UpstreamURLFor(apiKey string) string {
+	accountID, token := parseCFKey(apiKey)
+	p.cfAccountID, p.cfToken = accountID, token
+	base := p.baseURLFor(accountID)
+	if p.Style == constants.ApiStyleAnthropic {
+		return base + p.MessagesSuffix
+	}
+	return base + p.ChatSuffix
+}
+
 func (p *CloudflareProvider) BaseURL() string {
+	return p.baseURLFor(p.cfAccountID)
+}
+
+// baseURLFor substitutes the account id into the base template. It is a plain
+// method rather than a BaseURL override on purpose: an embedded struct's
+// promoted UpstreamURL calls BaseProvider.BaseURL, so an override on
+// CloudflareProvider would never run (that is what left "{account_id}" in every
+// request path).
+func (p *CloudflareProvider) baseURLFor(accountID string) string {
 	raw := strings.TrimRight(p.Record.BaseURL, "/")
 	if raw == "" {
 		raw = p.DefaultBaseURL
 	}
-	if p.cfAccountID != "" {
-		raw = strings.Replace(raw, "{account_id}", p.cfAccountID, 1)
+	if accountID != "" {
+		raw = strings.Replace(raw, "{account_id}", accountID, 1)
 	}
 	return raw
 }

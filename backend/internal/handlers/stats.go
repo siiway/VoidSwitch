@@ -64,6 +64,22 @@ func tokensPerSecond(tokens int64, seconds *float64) *float64 {
 	return &tps
 }
 
+// streamThroughput is the throughput shown on model cards. It only trusts
+// streaming samples (a non-stream request's duration is one round trip, not
+// generation time, so counting it produced five-figure tok/s), and suppresses the
+// figure entirely above model_tps_display_max — a number that high is a sign of
+// bad accounting, not a fast model. 0 disables the ceiling.
+func streamThroughput(tokens int64, seconds float64) *float64 {
+	if seconds <= 0 {
+		return nil
+	}
+	tps := math.Round(float64(tokens)/seconds*100) / 100
+	if max := services.GetInt("model_tps_display_max", 1000); max > 0 && tps > float64(max) {
+		return nil
+	}
+	return &tps
+}
+
 func avgTokensPerReq(total, n int64) float64 {
 	if n == 0 {
 		return 0

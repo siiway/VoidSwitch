@@ -55,7 +55,10 @@ ALTER TABLE public.providers DROP COLUMN key_api_token_ciphertext;
 ALTER TABLE public.providers DROP COLUMN key_api_token_preview;
 
 -- +goose Down
+-- The baseline column is NOT NULL without a default; adding it to a populated
+-- table needs one, so it is dropped again to keep the rollback schema identical.
 ALTER TABLE public.providers ADD COLUMN key_api_enabled boolean DEFAULT false NOT NULL;
+ALTER TABLE public.providers ALTER COLUMN key_api_enabled DROP DEFAULT;
 ALTER TABLE public.providers ADD COLUMN key_api_token_hash character varying(64);
 ALTER TABLE public.providers ADD COLUMN key_api_token_ciphertext text;
 ALTER TABLE public.providers ADD COLUMN key_api_token_preview character varying(48);

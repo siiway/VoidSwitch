@@ -860,6 +860,9 @@ const zh: Translations = {
     needScope: "请至少选择一项 scope。",
     ownerOnlyHint:
       "仅所有者可用的 scope（提供商密钥管理、删除提供商、修改用户、修改设置、删除公告、清除上游冷却）不会出现在这里，管理员也无法通过 * 获得它们。",
+    effectiveCount: "实际生效 {count} 项",
+    effectiveHint:
+      "你的角色已收窄这把 Key：部分已存储的 scope 不再生效。'实际生效'集合才是 /api/v1 与 MCP 执行时的依据。",
     lostStaff: "已停用 —— 失去管理人员权限",
     createFailed: "创建 API Key 失败",
     secretTitle: "你的平台 API Key",
@@ -1054,6 +1057,10 @@ const zh: Translations = {
     sectionPlatformApi: "平台 API",
     sectionSession: "登录与会话",
     sectionLogs: "日志与保留",
+    sectionModelDisplay: "模型展示",
+    modelsCardMinWidth: "模型卡片最小宽度（px）",
+    modelsCardMaxWidth: "模型卡片最大宽度（px，0 = 自动撑满）",
+    modelTpsDisplayMax: "吞吐高于该值时隐藏（tok/s，0 = 不隐藏）",
     sectionOpencode: "OpenCode 默认值",
     sectionModels: "模型与目录",
     sectionOther: "其他",

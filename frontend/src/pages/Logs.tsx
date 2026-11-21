@@ -635,11 +635,15 @@ function requestDurationMs(
   return Number.isNaN(end) ? null : Math.max(0, end - start);
 }
 
+// tokensPerSecondOf divides the tokens by the whole request duration, which is
+// only meaningful for a streamed response: a non-stream request's duration is a
+// single round trip, so it would report a five-figure rate. Those rows show "—".
 function tokensPerSecondOf(
   r: RequestLog,
   now: number,
   liveEnabled: boolean,
 ): string {
+  if (!r.stream) return "—";
   const ms = requestDurationMs(r, now, liveEnabled);
   if (ms == null || ms <= 0 || !r.total_tokens) return "—";
   return (r.total_tokens / (ms / 1000)).toFixed(2);

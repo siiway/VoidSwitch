@@ -119,6 +119,14 @@ func (a *App) platformTools() []toolSpec {
 				{Name: "enabled", Type: "boolean", Desc: "Whether the provider is usable."},
 				{Name: "models", Type: "array", Desc: "Advertised upstream model ids."},
 			}},
+		{Action: "provider.update", Method: http.MethodPatch, Path: "/providers/:id", Handler: a.providerUpdate,
+			Params: []paramSpec{
+				{Name: "id", Type: "integer", InPath: true, Desc: "Provider id."},
+				{Name: "name", Type: "string", Desc: "Provider name."},
+				{Name: "base_url", Type: "string", Desc: "Upstream base URL."},
+				{Name: "enabled", Type: "boolean", Desc: "Whether the provider is usable."},
+				{Name: "models", Type: "array", Desc: "Advertised upstream model ids."},
+			}},
 		{Action: "provider.delete", Method: http.MethodDelete, Path: "/providers/:id", Handler: a.providerDelete,
 			Params: []paramSpec{{Name: "id", Type: "integer", InPath: true, Desc: "Provider id."}}},
 
@@ -175,6 +183,13 @@ func (a *App) platformTools() []toolSpec {
 				{Name: "enabled", Type: "boolean", Desc: "Whether the node is usable."},
 				{Name: "note", Type: "string", Desc: "Free-form note."},
 			}},
+		{Action: "node.update", Method: http.MethodPatch, Path: "/nodes/:id", Handler: a.nodesUpdate,
+			Params: []paramSpec{
+				{Name: "id", Type: "integer", InPath: true, Desc: "Node id."},
+				{Name: "url", Type: "string", Desc: "Node URL."},
+				{Name: "enabled", Type: "boolean", Desc: "Whether the node is usable."},
+				{Name: "note", Type: "string", Desc: "Free-form note."},
+			}},
 		{Action: "node.delete", Method: http.MethodDelete, Path: "/nodes/:id", Handler: a.nodesDelete,
 			Params: []paramSpec{{Name: "id", Type: "integer", InPath: true, Desc: "Node id."}}},
 		{Action: "node.probe", Method: http.MethodPost, Path: "/nodes/:id/probe", Handler: a.nodesProbe,
@@ -184,6 +199,14 @@ func (a *App) platformTools() []toolSpec {
 				{Name: "name", Type: "string", Desc: "Node group name."},
 				{Name: "probe_url", Type: "string", Desc: "Health probe URL."},
 			}},
+		{Action: "node-group.update", Method: http.MethodPatch, Path: "/node-groups/:id", Handler: a.nodeGroupsUpdate,
+			Params: []paramSpec{
+				{Name: "id", Type: "integer", InPath: true, Desc: "Node group id."},
+				{Name: "name", Type: "string", Desc: "Node group name."},
+				{Name: "probe_url", Type: "string", Desc: "Health probe URL."},
+			}},
+		{Action: "node-group.delete", Method: http.MethodDelete, Path: "/node-groups/:id", Handler: a.nodeGroupsDelete,
+			Params: []paramSpec{{Name: "id", Type: "integer", InPath: true, Desc: "Node group id."}}},
 
 		// ---- user --------------------------------------------------------
 		{Action: "user.list", Method: http.MethodGet, Path: "/users", Handler: a.usersList,
@@ -250,7 +273,7 @@ func (a *App) platformTools() []toolSpec {
 				{Name: "start", Type: "string", Desc: "RFC3339 lower bound."},
 				{Name: "end", Type: "string", Desc: "RFC3339 upper bound."},
 			}},
-		{Action: "request-log.get", Method: http.MethodGet, Path: "/request-logs/:id", Handler: a.logsRequestDetail,
+		{Action: "request-log.get", Method: http.MethodGet, Path: "/request-logs/:id", Handler: a.logsRequestSummary,
 			Params: []paramSpec{{Name: "id", Type: "integer", InPath: true, Desc: "Request log id."}}},
 		{Action: "request-log.get-debug", Method: http.MethodGet, Path: "/request-logs/:id/debug", Handler: a.logsRequestDebug,
 			Params: []paramSpec{{Name: "id", Type: "integer", InPath: true, Desc: "Request log id."}}},

@@ -192,6 +192,55 @@ func TestModelDeleteUsesPublicID(t *testing.T) {
 	}
 }
 
+// TestUpdateToolsAddressExistingObjects covers the *.update actions added for the
+// surfaces the dashboard can already patch.
+func TestUpdateToolsAddressExistingObjects(t *testing.T) {
+	app, raw := platformTestApp(t, "owner",
+		[]string{"provider.update", "node.update", "node-group.update", "node-group.delete"})
+	provider := createTestProvider(t, app, "acme")
+	node := database.Node{URL: "http://127.0.0.1:9000", Type: "http", Enabled: true,
+		Status: "active", Weight: 1}
+	if err := app.GDB.Create(&node).Error; err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	group := database.NodeGroup{Name: "pool", ProbeIntervalSeconds: 60}
+	if err := app.GDB.Create(&group).Error; err != nil {
+		t.Fatalf("create node group: %v", err)
+	}
+
+	call := func(method, path, body string) int {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+raw)
+		req.Header.Set("Content-Type", "application/json")
+		platformRouter(app).ServeHTTP(w, req)
+		return w.Code
+	}
+
+	if code := call(http.MethodPatch, "/api/v1/providers/"+strconv.Itoa(provider.ID),
+		`{"base_url":"https://changed.test"}`); code != http.StatusOK {
+		t.Fatalf("provider update answered %d", code)
+	}
+	var updated database.Provider
+	app.GDB.First(&updated, provider.ID)
+	if updated.BaseURL != "https://changed.test" {
+		t.Fatalf("provider base_url = %q", updated.BaseURL)
+	}
+
+	if code := call(http.MethodPatch, "/api/v1/nodes/"+strconv.Itoa(node.ID),
+		`{"note":"prod egress"}`); code != http.StatusOK {
+		t.Fatalf("node update answered %d", code)
+	}
+
+	if code := call(http.MethodPatch, "/api/v1/node-groups/"+strconv.Itoa(group.ID),
+		`{"name":"pool-2"}`); code != http.StatusOK {
+		t.Fatalf("node group update answered %d", code)
+	}
+	if code := call(http.MethodDelete, "/api/v1/node-groups/"+strconv.Itoa(group.ID), ""); code != http.StatusNoContent {
+		t.Fatalf("node group delete answered %d", code)
+	}
+}
+
 // TestAdminMayDeleteAnnouncement pins the staff-level announcement deletion,
 // which matches the dashboard (me.go only requires IsStaff).
 func TestAdminMayDeleteAnnouncement(t *testing.T) {

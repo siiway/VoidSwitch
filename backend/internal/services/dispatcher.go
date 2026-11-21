@@ -43,6 +43,12 @@ func UpstreamFormat(style constants.ApiStyle) types.RelayFormat {
 	return InboundFormat(string(style))
 }
 
+// credentialURLProvider is implemented by adapters whose upstream URL depends on
+// the credential (a composite key that carries an account id).
+type credentialURLProvider interface {
+	UpstreamURLFor(apiKey string) string
+}
+
 // Candidate is one viable (upstream, key) pair for a request.
 type Candidate struct {
 	Provider      *database.Provider
@@ -429,7 +435,13 @@ func (d *Dispatcher) attempt(cand Candidate) (*DispatchResult, error) {
 	}
 
 	adapter := ResolveAdapter(cand.Provider)
+	// Some providers embed credential-derived values in the URL (Cloudflare's
+	// account id), so the credential-aware form is preferred when the adapter
+	// offers one.
 	url := adapter.UpstreamURL()
+	if cu, ok := adapter.(credentialURLProvider); ok {
+		url = cu.UpstreamURLFor(plainKey)
+	}
 	headers := adapter.Headers(plainKey, nil)
 	rec.URL = strPtr(url)
 	rec.ReqHeaders = redactRequestHeaders(headers)

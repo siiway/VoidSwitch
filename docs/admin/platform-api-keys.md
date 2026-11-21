@@ -25,6 +25,15 @@
 | `model.edit` | 单个动作 |
 | `provider-key:acme.*` | 该提供商（slug 为 `acme`）的上游密钥管理（仅所有者可授予） |
 
+动作按 `分类.动词` 命名，覆盖模型（`model.*`）、模型分类（`category.*`）、提供商
+（`provider.list/get/edit/update/delete`）、提供商密钥（`provider-key.*`）、节点
+（`node.*`）、节点组（`node-group.*`）、用户（`user.*`）、身份组（`role-group.*`）、
+平台 API Key 自身（`api-key.*`）、请求日志（`request-log.*`）、审计日志
+（`audit-log.*`）、公告（`announcement.*`）、统计（`stats.get`）与设置（`setting.*`）。
+
+`*.edit` 是**创建**，`*.update` 是**修改既有对象**，两者是不同的 scope：只授予
+`provider.edit` 只能新建提供商，改不了已有的。
+
 **Key 的权限 = 自己的 scope ∩ 拥有者当前角色的可授予范围。** 因此：
 
 - 创建时只能勾选自己角色有权限的项（所有者才有提供商密钥管理与删除提供商）；
@@ -58,6 +67,9 @@ Void-Token 明文都无法通过平台 API Key 获取。上游密钥列表也不
 因此不会带出上表里的 owner-only 项；`*` 也不会因为降级而直接失效。
 
 `api-key.*` 只能管理**自己名下**的 Key，无法读取或改写其他管理人员的凭据。
+
+页面里显示的 scope 是**存储值**；角色被降级后，`实际生效` 的数量会变小，
+它才是 `/api/v1`、MCP 与 `/whoami` 真正执行的集合。
 
 ## 调用示例
 
@@ -102,6 +114,12 @@ vs = Client("https://voidswitch.example.com", api_key="vsapi-…")
 for model in vs.models.list():
     print(model["model_id"], model["enabled"])
 ```
+
+## 日志的两级读取
+
+`request-log.get` 返回一条请求记录的行投影（身份、状态、耗时、token 数）；
+`request-log.get-debug` 额外返回路由与故障转移轨迹。轨迹里的请求体只对所有者可见，
+其他角色拿到的是脱敏投影。
 
 ## 限流
 

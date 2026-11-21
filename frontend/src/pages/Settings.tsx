@@ -130,6 +130,10 @@ const SECTIONS: { titleKey: string; keys: string[] }[] = [
     ],
   },
   {
+    titleKey: "settings.sectionModelDisplay",
+    keys: ["models_card_min_width", "models_card_max_width", "model_tps_display_max"],
+  },
+  {
     titleKey: "settings.sectionOpencode",
     keys: [
       "opencode_default_model",
@@ -350,6 +354,9 @@ export function Settings() {
       log_cleanup_interval_seconds: t("settings.logCleanupInterval" as TK),
       logs_page_size: t("settings.logsPageSize" as TK),
       sse_max_connections_per_user: t("settings.sseMaxConnectionsPerUser" as TK),
+      models_card_min_width: t("settings.modelsCardMinWidth" as TK),
+      models_card_max_width: t("settings.modelsCardMaxWidth" as TK),
+      model_tps_display_max: t("settings.modelTpsDisplayMax" as TK),
       platform_api_rate_limit_window_seconds: t("settings.platformApiRateWindow" as TK),
       platform_api_rate_limit_max_requests: t("settings.platformApiRateMax" as TK),
       model_health_recent_request_count: t("settings.modelHealthRecentRequestCount" as TK),

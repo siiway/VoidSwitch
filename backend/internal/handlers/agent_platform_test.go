@@ -42,7 +42,8 @@ func platformTestApp(t *testing.T, role string, scopes []string) (*App, string) 
 		&database.Provider{}, &database.ApiKey{}, &database.ExposedModel{},
 		&database.Route{}, &database.RouteUpstream{}, &database.RoleGroup{},
 		&database.RoleGroupMembership{}, &database.RoleGroupAdminship{},
-		&database.Node{}, &database.NodeGroup{}, &database.ModelCategory{},
+		&database.Node{}, &database.NodeGroup{}, &database.NodeGroupMember{},
+		&database.ModelCategory{},
 		&database.Setting{}, &database.Announcement{}, &database.RequestLog{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)

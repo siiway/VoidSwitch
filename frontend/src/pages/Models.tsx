@@ -118,7 +118,11 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase300,
     wordBreak: "break-all",
   },
-  desc: { color: tokens.colorNeutralForeground2, minHeight: "18px" },
+  desc: {
+    color: tokens.colorNeutralForeground2,
+    minHeight: "18px",
+    whiteSpace: "pre-line",
+  },
   badges: { display: "flex", flexWrap: "wrap", gap: "6px", minWidth: 0 },
   badge: { maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   actions: { display: "flex", gap: "4px" },
@@ -405,6 +409,28 @@ export function Models() {
   const [create, setCreate] = useState<CreateState | null>(null);
   const [createPickerOpen, setCreatePickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Card sizing comes from the public config, so an operator can tune density
+  // without a rebuild.
+  const [cardMinWidth, setCardMinWidth] = useState(280);
+  const [cardMaxWidth, setCardMaxWidth] = useState(0);
+  useEffect(() => {
+    api
+      .get<{ models_card_min_width?: number; models_card_max_width?: number }>(
+        "/api/auth/config",
+      )
+      .then((c) => {
+        if (c.models_card_min_width && c.models_card_min_width > 0) {
+          setCardMinWidth(c.models_card_min_width);
+        }
+        setCardMaxWidth(c.models_card_max_width ?? 0);
+      })
+      .catch(() => {});
+  }, []);
+  const gridStyle = {
+    gridTemplateColumns: `repeat(auto-fill, minmax(${cardMinWidth}px, ${
+      cardMaxWidth > 0 ? `${cardMaxWidth}px` : "1fr"
+    }))`,
+  };
 
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [manageCategoriesOpen, setManageCategoriesOpen] = useState(false);
@@ -1511,7 +1537,7 @@ const cleanable = items.filter((m) => !m.provider && m.unserved === true);
                   </span>
                 </button>
                 {!isCollapsed && (
-                  <div className={styles.grid}>
+                  <div className={styles.grid} style={gridStyle}>
                     {g.models.map((m) => {
                       const health = m.health;
                       const hasConfig =
@@ -2688,7 +2714,11 @@ function ModelDetailDialog({
           </DialogTitle>
           <DialogContent>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {model.description ? <Text size={200}>{model.description}</Text> : null}
+              {model.description ? (
+                <Text size={200} style={{ whiteSpace: "pre-line" }}>
+                  {model.description}
+                </Text>
+              ) : null}
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {!model.enabled ? (

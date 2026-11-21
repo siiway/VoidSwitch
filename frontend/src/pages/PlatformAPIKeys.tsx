@@ -527,6 +527,23 @@ export function PlatformAPIKeys() {
                       </Badge>
                     ) : null}
                   </div>
+                  {key.effective_scopes.length !== key.scopes.length ? (
+                    <Tooltip
+                      content={t("platformApiKeys.effectiveHint" as TK)}
+                      relationship="description"
+                    >
+                      <Text
+                        size={100}
+                        block
+                        style={{ color: tokens.colorNeutralForeground3, marginTop: 2 }}
+                      >
+                        {t("platformApiKeys.effectiveCount" as TK).replace(
+                          "{count}",
+                          String(key.effective_scopes.length),
+                        )}
+                      </Text>
+                    </Tooltip>
+                  ) : null}
                 </TableCell>
                 <TableCell>
                   {key.enabled

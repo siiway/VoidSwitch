@@ -26,6 +26,17 @@ Each key carries a set of **scopes**, written `category.action` (e.g. `model.edi
 | `model.edit` | A single action |
 | `provider-key:acme.*` | Upstream key management for provider slug `acme` (owner-granted only) |
 
+Actions are named `category.verb` and cover models (`model.*`), model categories
+(`category.*`), providers (`provider.list/get/edit/update/delete`), provider keys
+(`provider-key.*`), nodes (`node.*`), node groups (`node-group.*`), users
+(`user.*`), role groups (`role-group.*`), the platform API keys themselves
+(`api-key.*`), request logs (`request-log.*`), audit records (`audit-log.*`),
+announcements (`announcement.*`), stats (`stats.get`) and settings (`setting.*`).
+
+`*.edit` **creates**, `*.update` **modifies an existing object** — they are
+separate scopes. Nothing but `provider.edit` can only create providers; it cannot
+change one that already exists.
+
 **A key's permission is its scopes intersected with what its owner's current role
 may grant.** In practice:
 
@@ -68,6 +79,9 @@ entry above; `*` also does not collapse to nothing after a demotion.
 
 `api-key.*` reaches **only the caller's own keys** — another staff member's
 credential can neither be read nor modified.
+
+The dashboard shows the **stored** scopes; after a demotion the `in effect` count
+shrinks, and that effective set is what `/api/v1`, MCP and `/whoami` enforce.
 
 ## Calling it
 
@@ -113,6 +127,12 @@ vs = Client("https://voidswitch.example.com", api_key="vsapi-…")
 for model in vs.models.list():
     print(model["model_id"], model["enabled"])
 ```
+
+## Two levels of log reading
+
+`request-log.get` returns one request row's projection (identity, status, latency,
+token counts); `request-log.get-debug` adds the routing and failover trail. Bodies
+inside that trail stay owner-only; other roles receive the redacted projection.
 
 ## Rate limit
 

@@ -18,30 +18,39 @@ const platformKeyPrefix = "vsapi-"
 // platformKeyView is the dashboard/API projection of a platform API key. The
 // secret is never part of it: it exists only in the create/rotate response.
 type platformKeyView struct {
-	ID             int        `json:"id"`
-	UserID         int        `json:"user_id"`
-	UserName       *string    `json:"user_name"`
-	UserNickname   *string    `json:"user_nickname"`
-	Name           string     `json:"name"`
-	KeyPrefix      string     `json:"key_prefix"`
-	Scopes         []string   `json:"scopes"`
-	Enabled        bool       `json:"enabled"`
-	DisabledReason *string    `json:"disabled_reason"`
-	ExpiresAt      *time.Time `json:"expires_at"`
-	LastUsedAt     *time.Time `json:"last_used_at"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID           int      `json:"id"`
+	UserID       int      `json:"user_id"`
+	UserName     *string  `json:"user_name"`
+	UserNickname *string  `json:"user_nickname"`
+	Name         string   `json:"name"`
+	KeyPrefix    string   `json:"key_prefix"`
+	Scopes       []string `json:"scopes"`
+	// EffectiveScopes is what the key can actually do right now: its stored
+	// scopes intersected with the owner's current role. It differs after a
+	// demotion, and is what /whoami reports.
+	EffectiveScopes []string   `json:"effective_scopes"`
+	Enabled         bool       `json:"enabled"`
+	DisabledReason  *string    `json:"disabled_reason"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	LastUsedAt      *time.Time `json:"last_used_at"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
-func toPlatformKeyView(k *database.PlatformAPIKey) platformKeyView {
+func toPlatformKeyView(k *database.PlatformAPIKey, role string) platformKeyView {
 	var scopes []string
 	database.DecodeJSON(k.Scopes, &scopes)
 	if scopes == nil {
 		scopes = []string{}
 	}
+	effective := core.EffectiveScopes(scopes, role)
+	if effective == nil {
+		effective = []string{}
+	}
 	return platformKeyView{
 		ID: k.ID, UserID: k.UserID, Name: k.Name, KeyPrefix: k.KeyPrefix,
-		Scopes: scopes, Enabled: k.Enabled, DisabledReason: k.DisabledReason,
-		ExpiresAt: k.ExpiresAt, LastUsedAt: k.LastUsedAt, CreatedAt: k.CreatedAt,
+		Scopes: scopes, EffectiveScopes: effective, Enabled: k.Enabled,
+		DisabledReason: k.DisabledReason, ExpiresAt: k.ExpiresAt,
+		LastUsedAt: k.LastUsedAt, CreatedAt: k.CreatedAt,
 	}
 }
 
@@ -79,7 +88,7 @@ func (a *App) mePlatformKeys(c *gin.Context) {
 	}
 	out := make([]platformKeyView, 0, len(rows))
 	for i := range rows {
-		v := toPlatformKeyView(&rows[i])
+		v := toPlatformKeyView(&rows[i], uv.Role)
 		v.UserName = uv.User.Username
 		v.UserNickname = uv.User.Name
 		out = append(out, v)
@@ -225,7 +234,7 @@ func (a *App) mePlatformKeyUpdate(c *gin.Context) {
 		Scope: core.AuditScopeSelf, TargetType: strPtr("platform_api_key"), TargetID: &tid,
 		Detail: detail, IP: strPtr(clientIP(c)),
 	})
-	c.JSON(http.StatusOK, toPlatformKeyView(&row))
+	c.JSON(http.StatusOK, toPlatformKeyView(&row, uv.Role))
 }
 
 func (a *App) mePlatformKeyDelete(c *gin.Context) {

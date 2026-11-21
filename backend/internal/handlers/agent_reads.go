@@ -115,7 +115,27 @@ func (a *App) mePlatformKeyGet(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, toPlatformKeyView(row))
+	c.JSON(http.StatusOK, toPlatformKeyView(row, core.GetUser(c).Role))
+}
+
+// logsRequestSummary returns one request log's row projection: identity, status,
+// latency, tokens and the labels. It deliberately omits the failover trail, which
+// is what request-log.get-debug adds.
+func (a *App) logsRequestSummary(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var r database.RequestLog
+	if err := a.GDB.First(&r, id).Error; err != nil {
+		a.fail(c, http.StatusNotFound, "Request log not found.")
+		return
+	}
+	if !a.requestLogVisible(core.GetUser(c), r.UserSub) {
+		a.fail(c, http.StatusNotFound, "Request log not found.")
+		return
+	}
+	labels := a.enrichRequestLogs([]database.RequestLog{r})
+	v := toRequestLogView(&r)
+	applyLogLabels(&v, &r, labels)
+	c.JSON(http.StatusOK, v)
 }
 
 // logsRequestDebug returns one request log's failover trail. It is deliberately

@@ -214,6 +214,9 @@ export interface PlatformAPIKey {
   name: string;
   key_prefix: string;
   scopes: string[];
+  // What the key can actually do now: stored scopes intersected with the owner's
+  // current role. Differs from `scopes` after a demotion.
+  effective_scopes: string[];
   enabled: boolean;
   disabled_reason?: string | null;
   expires_at?: string | null;
